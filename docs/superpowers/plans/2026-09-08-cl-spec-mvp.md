@@ -2629,7 +2629,7 @@ it as a failure, and the result has to say which kind of failure it was."
   (handler-case (values (apply function arguments) nil)
     (error (condition) (values nil condition))))
 
-(defun copy-counterexample (value)
+(defun copy-generated-value (value)
   "Return a copy of VALUE deep enough to survive check-it's in-place shrinking.
 
 CHECK-IT:SHRINK mutates a list generator's cached value with SETF NTH, and a
@@ -2639,8 +2639,8 @@ only shapes this backend's generators produce that check-it mutates; strings
 come back fresh from JOIN-LIST and scalars are immutable, so the recursion stops
 at both."
   (typecase value
-    (cons (mapcar #'copy-counterexample value))
-    ((and vector (not string)) (map 'vector #'copy-counterexample value))
+    (cons (mapcar #'copy-generated-value value))
+    ((and vector (not string)) (map 'vector #'copy-generated-value value))
     (t value)))
 
 (defun shrinking-test (function)
@@ -2685,7 +2685,7 @@ is what keeps this method from having to know the property's variables."
              ;; and deeply: for a compound argument the tuple's element is EQ to
              ;; the sub-generator's own cached value, which SHRINK-LIST-GENERATOR
              ;; mutates, so copying only the spine still loses the original.
-             (let ((arguments (copy-counterexample (cached-value generator))))
+             (let ((arguments (copy-generated-value (cached-value generator))))
                (multiple-value-bind (result condition) (call-property function arguments)
                  (when (or condition (null result))
                    (return (list :status (if condition :error :failed)
@@ -2693,7 +2693,7 @@ is what keeps this method from having to know the property's variables."
                                  :counterexample arguments
                                  :shrunk-counterexample
                                  (when shrink-p
-                                   (copy-counterexample
+                                   (copy-generated-value
                                     (shrink generator (shrinking-test function))))
                                  :condition condition)))))
           finally (return (list :status :passed :trials trials)))))
