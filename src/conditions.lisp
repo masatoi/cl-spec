@@ -18,7 +18,17 @@
            #:unknown-spec-name
            #:unknown-property
            #:unknown-property-name
-           #:no-generator-backend))
+           #:no-generator-backend
+           #:invalid-spec-form
+           #:invalid-spec-form-form
+           #:invalid-spec-form-reason
+           #:invalid-property-form
+           #:invalid-property-form-form
+           #:invalid-property-form-reason
+           #:generator-unavailable
+           #:generator-unavailable-spec
+           #:generator-unavailable-reason
+           #:unsupported-seed))
 
 (in-package #:cl-spec/src/conditions)
 
@@ -84,3 +94,62 @@
                              Load the CL-SPEC/CHECK-IT system to install one.")))
   (:documentation
    "Signalled when generation is requested while *GENERATOR-BACKEND* is NIL."))
+
+(define-condition invalid-spec-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-spec-form-form
+         :documentation "The spec DSL form that could not be normalized.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-spec-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid spec form~@[: ~A~]."
+                     (invalid-spec-form-form condition)
+                     (invalid-spec-form-reason condition))))
+  (:documentation
+   "Signalled when NORMALIZE-SPEC-FORM cannot make sense of a form."))
+
+(define-condition invalid-property-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-property-form-form
+         :documentation "The DEFPROPERTY option clause that could not be parsed.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-property-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid DEFPROPERTY clause~@[: ~A~]."
+                     (invalid-property-form-form condition)
+                     (invalid-property-form-reason condition))))
+  (:documentation
+   "Signalled when DEFPROPERTY cannot make sense of one of its option clauses."))
+
+(define-condition generator-unavailable (cl-spec-error)
+  ((spec :initarg :spec
+         :initform nil
+         :reader generator-unavailable-spec
+         :documentation "Spec no generator could be derived from.")
+   (reason :initarg :reason
+           :initform nil
+           :reader generator-unavailable-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "No generator can be derived from ~S~@[: ~A~]."
+                     (generator-unavailable-spec condition)
+                     (generator-unavailable-reason condition))))
+  (:documentation
+   "Signalled when an IR node has no generation strategy on this backend."))
+
+(define-condition unsupported-seed (cl-spec-error)
+  ()
+  (:report (lambda (condition stream)
+             (declare (ignore condition))
+             (format stream "Deriving a random state from an integer seed is ~
+                             not supported on ~A; reproducible property runs ~
+                             currently require SBCL."
+                     (lisp-implementation-type))))
+  (:documentation
+   "Signalled when an integer seed cannot be honoured on this implementation."))

@@ -15,10 +15,12 @@ testing and structured introspection.
 The specification lives in `docs/cl-spec-specification-v0.2-draft.md`; design
 documents live in `docs/superpowers/specs/`.
 
-**Current status: skeleton.** The condition hierarchy, the Semantic IR class
-hierarchy and the registry are implemented. Normalization, validation,
-explanation, generation, property execution, function checking, introspection
-and instrumentation are stubs that signal `not-implemented`.
+**Current status: MVP vertical slice.** Normalization, validation, structured
+explain, spec introspection, the check-it generator backend, `defproperty` and
+the property runner with seed, replay and shrinking are implemented. Function
+specs (`defspec-function`, `check-function`), custom generators
+(`defgenerator`), the `describe-*` printers, instrumentation and the cl-mcp
+adapter are still stubs that signal `not-implemented`.
 
 ## Development With cl-mcp
 
@@ -98,16 +100,9 @@ a single batch cleanup, so a mallet warning does not block a PR today.
 
 ## Implementation Order
 
-Follow §70 of the specification. Steps 1-3 (Semantic IR, registry protocol,
-hash-table registry) are done; the next step is 4, `defspec` normalization.
-The first milestone is the vertical slice of §67:
-
-```lisp
-(defspec positive-integer (and integer (range 1 *)))
-(validp 'positive-integer 10)
-(explain-data 'positive-integer -1)
-(sample 'positive-integer)
-```
+Follow §70 of the specification. Steps 1-15 (Semantic IR through seed / replay
+/ shrink integration) are done, including the vertical slice of §67; the next
+step is 16, Function Spec IR.
 
 ## Repository Structure
 

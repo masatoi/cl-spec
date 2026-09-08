@@ -20,6 +20,7 @@
                 #:property-tags
                 #:property-documentation
                 #:property-body
+                #:property-function
                 #:property-source-form
                 #:property-source-location
                 #:property-trials
@@ -92,3 +93,15 @@
       (register-property instance other)
       (ok (null (find-property 'transfer-preserves-total-balance)))
       (ok (eq instance (find-property 'transfer-preserves-total-balance other))))))
+
+(deftest a-property-carries-a-callable-body
+  (testing "PROPERTY-FUNCTION returns the compiled predicate"
+    (let ((property (make-instance 'property
+                                   :name 'p
+                                   :function (lambda (x) (plusp x))
+                                   :body '((plusp x)))))
+      (ok (funcall (property-function property) 1))
+      (ok (not (funcall (property-function property) -1))))
+    (testing "the source body is kept alongside the compiled function"
+      (ok (equal '((plusp x))
+                 (property-body (make-instance 'property :body '((plusp x)))))))))

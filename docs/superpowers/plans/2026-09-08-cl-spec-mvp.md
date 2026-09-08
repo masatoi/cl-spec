@@ -18,7 +18,11 @@
 - スタイル: Google Common Lisp Style Guide、2 スペースインデント、100 桁以内、トップレベルフォーム間に空行1つ、`(:use #:cl)` のみで他は `:import-from`。
 - 公開関数・マクロ・クラスには docstring 必須。
 - 各ファイルは `;;;; <path>` で始まり、`defpackage`、`(in-package ...)` と続く。
-- ランタイム `eval` と動的 `intern` は禁止。
+- ランタイム `eval` と動的 `intern` は **`src/` と `main.lisp` で**禁止。テストは、マクロ展開を
+  「実行して」契約を確かめる唯一の手段として `eval` / `intern` を使ってよい（`macroexpand-1`
+  だけでは契約の後半を証明できない）。既存の `tests/dsl-test.lisp` と `.mallet.lisp` の除外が
+  その前例。新たに `eval` を使うテストファイルは `.mallet.lisp` の `:for-paths` に追加すること
+  （Task 15 で一括して行う）。
 - テスト実行: `rove cl-spec.asd`。単一スイート: `(rove:run :cl-spec/tests/normalize-test)`。
 - Rove の `signals` は `restart-case` 内で発生した condition を確実には捕捉しない。本プロジェクトのコードは `restart-case` を使っていないので `signals` を使ってよいが、疑わしい場合は `handler-case` で包む。
 - lint（mallet）は advisory。指摘は PR をブロックしない。
@@ -251,21 +255,28 @@ Expected: FAIL — `cl-spec/src/resolve` パッケージが存在しない
   "Return the spec DESIGNATOR names, signalling UNKNOWN-SPEC when there is none.
 
 DESIGNATOR is either a spec object, which is returned unchanged, or a symbol
-looked up in REGISTRY."
+looked up in REGISTRY.  The lookup branches on the registry protocol's second
+value rather than on the spec itself, so a name registered with a NIL value
+stays distinguishable from a name that was never registered."
   (if (typep designator 'spec)
       designator
-      (or (registry-find-spec registry designator)
-          (error 'unknown-spec :name designator))))
+      (multiple-value-bind (spec foundp) (registry-find-spec registry designator)
+        (if foundp
+            spec
+            (error 'unknown-spec :name designator)))))
 
 (defun resolve-property (designator registry)
   "Return the property DESIGNATOR names, signalling UNKNOWN-PROPERTY otherwise.
 
 DESIGNATOR is either a property object, which is returned unchanged, or a
-symbol looked up in REGISTRY."
+symbol looked up in REGISTRY.  As with RESOLVE-SPEC, absence is read from the
+protocol's found-p value, not from the value found."
   (if (typep designator 'property)
       designator
-      (or (registry-find-property registry designator)
-          (error 'unknown-property :name designator))))
+      (multiple-value-bind (property foundp) (registry-find-property registry designator)
+        (if foundp
+            property
+            (error 'unknown-property :name designator)))))
 
 (defun context-registry (context)
   "Return the registry named by compilation CONTEXT, defaulting to *REGISTRY*.
@@ -294,7 +305,7 @@ git commit -m "feat: add designator resolution shared by every entry point"
 
 **Files:**
 - Modify: `src/normalize.lisp`
-- Test: `tests/normalize-test.lisp`
+- Test: `tests/normalize-test.lisp`, `tests/dsl-test.lisp`
 
 **Interfaces:**
 - Consumes: Task 1 の `invalid-spec-form`、`cl-spec/src/ir` の全 IR クラス
@@ -528,15 +539,42 @@ The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot."
 
 `:export` に `#:cl-type-name-p` は加えない（内部関数）。
 
-- [ ] **Step 4: テストが通ることを確認**
+- [ ] **Step 4: `tests/dsl-test.lisp` を現状に合わせる**
+
+`dsl-macros-signal-at-runtime` は `(defspec positive-integer (and integer (range 1 *)))` が
+`not-implemented` を signal すると assert している。これは normalizer 全体がスタブだった間だけ
+真であり、このタスクの後は偽になる。`defspec` の節を削り（残る3マクロはまだスタブなのでそのまま）、
+代わりに葉ノードだけを使う登録テストと、複合ヘッドがまだ拒否されることを示すテストを足す:
+
+```lisp
+(deftest defspec-registers-a-normalized-spec
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (testing "DEFSPEC normalizes its form and registers the result"
+      (eval '(cl-spec/src/dsl:defspec positive (satisfies plusp)))
+      (let ((spec (cl-spec/src/registry:find-spec 'positive)))
+        (ok spec)
+        (ok (eq :predicate (cl-spec/src/ir:spec-kind spec)))
+        (ok (eq 'positive (cl-spec/src/ir:spec-name spec)))
+        (ok (equal '(satisfies plusp) (cl-spec/src/ir:spec-source-form spec)))))))
+
+(deftest defspec-rejects-a-composite-head-for-now
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (testing "composite heads are not normalized yet"
+      (ok (signals (eval '(cl-spec/src/dsl:defspec positive-integer (and integer (range 1 *))))
+                   'cl-spec/src/conditions:invalid-spec-form)))))
+```
+
+`defspec-rejects-a-composite-head-for-now` は Task 4 で削除する。
+
+- [ ] **Step 5: テストが通ることを確認**
 
 Run: `rove cl-spec.asd`
-Expected: PASS
+Expected: PASS（全ファイル green）
 
-- [ ] **Step 5: コミット**
+- [ ] **Step 6: コミット**
 
 ```bash
-git add src/normalize.lisp tests/normalize-test.lisp
+git add src/normalize.lisp tests/normalize-test.lisp tests/dsl-test.lisp
 git commit -m "feat: normalize the leaf spec forms into Semantic IR"
 ```
 
@@ -591,8 +629,9 @@ git commit -m "feat: normalize the leaf spec forms into Semantic IR"
       (ok (equal '(range 1 *) (spec-source-form (first (spec-children spec))))))))
 ```
 
-`tests/dsl-test.lisp` の `defspec` に関する `not-implemented` 前提のテストを、実際に登録される
-ことを確かめるテストへ書き換える（既存の `no-eval` 抑止コメントはそのまま残す）:
+`tests/dsl-test.lisp` から Task 3 が置いた `defspec-rejects-a-composite-head-for-now` を削除し、
+`defspec-registers-a-normalized-spec` を複合ヘッドを使う形へ広げる（既存の `no-eval` 抑止コメントは
+そのまま残す）:
 
 ```lisp
 (deftest defspec-registers-a-normalized-spec
@@ -755,13 +794,26 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
       (ok (signals (explain-data 'absent 1 :registry registry) 'unknown-spec)))))
 ```
 
-`tests/validator-test.lisp` を書き換える:
+`tests/validator-test.lisp` を書き換える。`defpackage` は rove に加え
+`#:cl-spec/src/normalize` から `#:normalize-spec-form`、`#:cl-spec/src/validator` から
+`#:compile-validator #:validp #:validate`、`#:cl-spec/src/explain` から `#:explain-data`、
+`#:cl-spec/src/conditions` から `#:spec-violation #:spec-violation-value #:spec-violation-errors`、
+`#:cl-spec/src/registry` から `#:make-hash-table-registry #:registry-register-spec` を import する。
+
+fixture は**葉ノード**の `(range integer 1 *)` を使う。同じ spec の連言形
+`(and integer (range 1 *))` が §67 の例だが、複合ノードの explainer は Task 6 なので、
+ここでそれを使うとスイートが赤いまま Task 5 が終わってしまう。検査する6つの値に対して
+両者の可否は完全に一致する — 非整数は、連言なら `integer` の枝で、葉なら range 自身の
+基底型検査で落ちる。Task 6 で連言形へ戻す。
 
 ```lisp
 (deftest validp-agrees-with-explain-data
   (let ((registry (make-hash-table-registry)))
+    ;; Leaf form on purpose: the (AND INTEGER (RANGE 1 *)) spelling of this same
+    ;; spec is the section 67 example, and the explain tests exercise it once
+    ;; composite nodes exist.  Do not "simplify" it back before then.
     (registry-register-spec registry 'positive-integer
-                            (normalize-spec-form '(and integer (range 1 *))
+                            (normalize-spec-form '(range integer 1 *)
                                                  :name 'positive-integer))
     (testing "VALIDP is true exactly when EXPLAIN-DATA reports no errors"
       (dolist (value (list 10 -1 0 1 "foo" nil))
@@ -771,7 +823,7 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
 (deftest validate-returns-or-signals
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'positive-integer
-                            (normalize-spec-form '(and integer (range 1 *))
+                            (normalize-spec-form '(range integer 1 *)
                                                  :name 'positive-integer))
     (testing "a valid value is returned unchanged"
       (ok (eql 10 (validate 'positive-integer 10 :registry registry))))
@@ -784,7 +836,7 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
 
 (deftest compile-validator-produces-a-predicate
   (testing "the compiled function takes one argument and returns a boolean"
-    (let ((validator (compile-validator (normalize-spec-form '(and integer (range 1 *))))))
+    (let ((validator (compile-validator (normalize-spec-form '(range integer 1 *)))))
       (ok (funcall validator 5))
       (ok (not (funcall validator -5))))))
 ```
@@ -973,9 +1025,9 @@ MCP projection are derived from it."
 ```
 
 `src/validator.lisp` の `defpackage` の `:import-from #:cl-spec/src/conditions` を
-`#:spec-violation` に差し替え、`#:cl-spec/src/explain` から `#:compile-explainer`、
-`#:cl-spec/src/registry` から `#:*registry*`、`#:cl-spec/src/resolve` から `#:resolve-spec` を
-import する。`declaim` はそのまま。本体:
+`#:spec-violation` に差し替え、`#:cl-spec/src/ir` に `#:spec-name` を足し（`validate` が呼ぶ）、
+`#:cl-spec/src/explain` から `#:compile-explainer`、`#:cl-spec/src/registry` から `#:*registry*`、
+`#:cl-spec/src/resolve` から `#:resolve-spec` を import する。`declaim` はそのまま。本体:
 
 ```lisp
 (defun compile-validator (spec &key context)
@@ -1131,6 +1183,10 @@ git commit -m "feat: explain and validate the leaf spec nodes"
         (ok (null (funcall explainer '(1 (2 3)) nil)))
         (ok (funcall explainer '(1 "x") nil))))))
 ```
+
+あわせて `tests/validator-test.lisp` の fixture を、Task 5 が葉ノードに落としていた
+`(range integer 1 *)` から §67 の連言形 `(and integer (range 1 *))` へ戻す（3箇所）。
+理由を書いた「Leaf form on purpose」のコメントも削除する。
 
 - [ ] **Step 2: 失敗を確認**
 
@@ -2112,15 +2168,34 @@ Expected: FAIL — `and` が `generator-unavailable`、`sample` が `not-impleme
         (minimum :unbounded)
         (maximum :unbounded)
         (leftovers '()))
-    (dolist (child (and-spec-children spec))
-      (typecase child
-        (type-spec
-         (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
-        (range-spec
-         (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
-               minimum (tighter-minimum minimum (range-spec-minimum child))
-               maximum (tighter-maximum maximum (range-spec-maximum child))))
-        (t (push child leftovers))))
+    ;; Classification recurses: a REFERENCE-SPEC is resolved through the registry
+    ;; and a nested AND-SPEC is flattened, so that (and integer my-range) folds
+    ;; my-range's own bounds into the base rather than leaving them to the guard.
+    ;; A flat TYPECASE over the two leaf classes would compile that spec to an
+    ;; unbounded base under a guard that rejects every draw, which is the
+    ;; unbounded GUARD-GENERATOR recursion this whole design exists to avoid.
+    ;; *REFERENCE-TRAIL* guards the recursion, as in the REFERENCE-SPEC method.
+    (labels ((classify (child)
+               (typecase child
+                 (type-spec
+                  (setf base-type
+                        (merge-base-type base-type (type-spec-type-specifier child) spec)))
+                 (range-spec
+                  (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
+                        minimum (tighter-minimum minimum (range-spec-minimum child))
+                        maximum (tighter-maximum maximum (range-spec-maximum child))))
+                 (and-spec (mapc #'classify (and-spec-children child)))
+                 (reference-spec
+                  (let ((target (reference-spec-target child)))
+                    (if (member target *reference-trail*)
+                        (push child leftovers)
+                        (let ((resolved (registry-find-spec (context-registry context) target))
+                              (*reference-trail* (cons target *reference-trail*)))
+                          (if resolved
+                              (classify resolved)
+                              (push child leftovers))))))
+                 (t (push child leftovers)))))
+      (mapc #'classify (and-spec-children spec)))
     (when (and (null base-type)
                (not (and (eq minimum :unbounded) (eq maximum :unbounded))))
       (setf base-type 'real))
@@ -2301,7 +2376,10 @@ git commit -m "feat: fold AND constraints into one generator and wire up sample"
       (testing "shrinking defaults to on"
         (ok (getf (cl-spec/src/property:property-metadata property) :shrink)))
       (testing "the reverse index finds it from its target"
-        (ok (equal (list property) (cl-spec/src/registry:properties-for '+)))))))
+        ;; PROPERTIES-FOR returns names, not objects — see the docstrings on
+        ;; REGISTRY-PROPERTIES-FOR and PROPERTIES-FOR in src/registry.lisp.
+        (ok (equal '(addition-preserves-order)
+                   (cl-spec/src/registry:properties-for '+)))))))
 
 (deftest defproperty-stops-consuming-options-at-the-first-non-option
   (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
@@ -2551,6 +2629,20 @@ it as a failure, and the result has to say which kind of failure it was."
   (handler-case (values (apply function arguments) nil)
     (error (condition) (values nil condition))))
 
+(defun copy-generated-value (value)
+  "Return a copy of VALUE deep enough to survive check-it's in-place shrinking.
+
+CHECK-IT:SHRINK mutates a list generator's cached value with SETF NTH, and a
+tuple's element is the very object its sub-generator cached, so a shallow copy
+still loses the original counterexample.  Conses and non-string vectors are the
+only shapes this backend's generators produce that check-it mutates; strings
+come back fresh from JOIN-LIST and scalars are immutable, so the recursion stops
+at both."
+  (typecase value
+    (cons (mapcar #'copy-generated-value value))
+    ((and vector (not string)) (map 'vector #'copy-generated-value value))
+    (t value)))
+
 (defun shrinking-test (function)
   "Return the one-argument test CHECK-IT:SHRINK drives.
 
@@ -2589,8 +2681,11 @@ is what keeps this method from having to know the property's variables."
     (loop for trial from 1 to trials
           do (generate generator)
              ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
-             ;; place, so the counterexample must be copied out before it runs.
-             (let ((arguments (copy-list (cached-value generator))))
+             ;; place, so the counterexample must be copied out before it runs —
+             ;; and deeply: for a compound argument the tuple's element is EQ to
+             ;; the sub-generator's own cached value, which SHRINK-LIST-GENERATOR
+             ;; mutates, so copying only the spine still loses the original.
+             (let ((arguments (copy-generated-value (cached-value generator))))
                (multiple-value-bind (result condition) (call-property function arguments)
                  (when (or condition (null result))
                    (return (list :status (if condition :error :failed)
@@ -2598,7 +2693,8 @@ is what keeps this method from having to know the property's variables."
                                  :counterexample arguments
                                  :shrunk-counterexample
                                  (when shrink-p
-                                   (copy-list (shrink generator (shrinking-test function))))
+                                   (copy-generated-value
+                                    (shrink generator (shrinking-test function))))
                                  :condition condition)))))
           finally (return (list :status :passed :trials trials)))))
 ```
@@ -2695,7 +2791,7 @@ git commit -m "feat: run properties into a structured, seeded, shrunk result"
 
 **Interfaces:**
 - Consumes: Task 13 の `run-property`、Task 8 の `spec->data`、Task 2 の `resolve-property`
-- Produces: `run-properties (designators &key profile options registry)`、`replay-property (designator seed &key options registry)`（`seed` は整数でも `property-result` でもよい）、`property-data (property-designator &key registry)`
+- Produces: `run-properties (designators &key profile options registry)`、`replay-property (designator seed &key profile options registry)`（`seed` は整数でも `property-result` でもよい。`profile` は元の実行と一致していなければ再現しない）、`property-data (property-designator &key registry)`
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -2758,7 +2854,11 @@ git commit -m "feat: run properties into a structured, seeded, shrunk result"
         (let ((arguments (getf data :arguments)))
           (ok (= 2 (length arguments)))
           (ok (eq 'x (getf (first arguments) :variable)))
-          (ok (eq :and (getf (getf (first arguments) :spec) :kind)))))
+          ;; A bare symbol argument spec normalizes to a REFERENCE-SPEC, not to
+          ;; the target's own node — that late resolution is what makes forward
+          ;; references work.
+          (ok (eq :reference (getf (getf (first arguments) :spec) :kind)))
+          (ok (eq 'positive-integer (getf (getf (first arguments) :spec) :target)))))
       (testing "the body is readable rather than compiled away"
         (ok (equal '((> (+ x y) x)) (getf data :body)))))))
 ```
@@ -2783,18 +2883,27 @@ the others."
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
 
-(defun replay-property (property-designator seed &key options (registry *registry*))
+(defun replay-property (property-designator seed &key profile options (registry *registry*))
   "Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
 SEED is either the integer seed of an earlier run or the PROPERTY-RESULT that
 run produced, since section 15 shows both spellings and an agent holding a
-result should not have to dig the seed out of it."
-  (run-property property-designator
-                :seed (if (typep seed 'property-result)
-                          (property-result-seed seed)
-                          seed)
-                :options options
-                :registry registry))
+result should not have to dig the seed out of it.
+
+PROFILE must match the profile the original run used.  The seed alone is not
+enough: the profile selects the trial count, so replaying a failure found on
+trial 400 with a budget of 100 trials reports a pass.  A PROPERTY-RESULT cannot
+supply the profile either — its TRIALS slot holds the trial the run stopped at,
+not the count it was allowed."
+  (let ((effective-seed (if (typep seed 'property-result)
+                            (property-result-seed seed)
+                            seed)))
+    (check-type effective-seed (integer 0))
+    (run-property property-designator
+                  :seed effective-seed
+                  :profile profile
+                  :options options
+                  :registry registry)))
 ```
 
 `src/introspection.lisp` の `defpackage` に `#:cl-spec/src/property` から
@@ -3005,6 +3114,19 @@ adapter are still stubs that signal `not-implemented`.
 `CLAUDE.md` の "Implementation Order" 節を、次が §70 の step 16（Function Spec IR）である旨へ更新し、
 `README.md` に §67 の動く例を載せる。
 
+`.mallet.lisp` の `:for-paths` を、`eval` でマクロ展開を実行検証するテストファイル全部へ広げる:
+
+```lisp
+ (:for-paths ("tests/dsl-test.lisp"
+              "tests/property-runner-test.lisp"
+              "tests/introspection-test.lisp"
+              "tests/self-properties-test.lisp")
+   (:disable :no-eval))
+```
+
+ヘッダコメントも、これが DSL マクロの展開結果を実行して検証するための例外であることを
+1ファイルではなく1カテゴリの話として書き直す。
+
 - [ ] **Step 4: 全体を検証**
 
 新しい Lisp プロセスで（開発中の REPL ではなく）:
@@ -3034,6 +3156,6 @@ Expected: 実行できること。指摘は advisory なのでブロッカーで
 - [ ] **Step 5: コミット**
 
 ```bash
-git add tests/self-properties-test.lisp tests.lisp docs CLAUDE.md AGENTS.md README.md
+git add tests/self-properties-test.lisp tests.lisp docs CLAUDE.md AGENTS.md README.md .mallet.lisp
 git commit -m "test: check the framework with its own properties, and sync the docs"
 ```

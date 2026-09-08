@@ -364,6 +364,13 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
 1. `and` の子から type 制約と range 制約を集め、**1つの基底 generator に畳み込む**。
    `(and integer (range 1 100))` → `int-generator :lower-limit 1 :upper-limit 100`。棄却ゼロ。
    複数の range があれば区間の交わりを取る。交わりが空なら `generator-unavailable`。
+
+   **子の分類は再帰的に行う。** `reference-spec` は registry で解決してから分類し、
+   入れ子の `and-spec` は平坦に展開する。ここを IR の葉2クラスへの `typecase` で済ませると、
+   `(defspec my-range (and integer (range 1000000 1000010)))` を参照する `(and integer my-range)` が
+   「基底は無制約 int-generator、guard は my-range を要求」という形にコンパイルされ、
+   全draw が棄却されて `guard-generator` の無制限再帰でスタックが溢れる — 畳み込みが防ぐために
+   存在している、まさにその失敗モードを再現してしまう。再帰は `*reference-trail*` で保護する。
 2. 畳み込めなかった子（`satisfies`、`not` など）が残った時**だけ** `guard-generator` で包む。
    guard は and-spec 全体の validator。
 3. 基底 generator が決まらない `and`（`(and (satisfies foo) (satisfies bar))` など）は
@@ -387,9 +394,25 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    `(setf (nth i cached-value) shrunk-elem)` を行うため、縮小前の反例は失われる。
    **shrink を呼ぶ前に反例をコピーしておくこと。** check-it 自身も印字用に事前 stringify して回避している。
 
-3. **`shrink mapped-generator` は縮小しない。** 内側で計算した `shrunk-elem` を `setf` せずに捨てており、
-   実質 no-op である。したがって `vector-of` の反例は縮小されない。MVP の既知の限界として記録し、
-   独自 shrink の実装は post-MVP に回す。
+   **コピーは深くなければならない。** `(defmethod generate ((generator tuple-generator))
+   (mapcar #'generate (sub-generators generator)))` が返す各要素は、`generate` の `:around`
+   によって各 sub-generator の `cached-value` と同一オブジェクトになる。`list-of` /
+   `vector-of` / 入れ子 `tuple` の引数では、`shrink-list-generator` の `elem-wise-shrink` が
+   `(setf (nth i cached-value) ...)` でその共有オブジェクトを書き換えるため、
+   `copy-list` でスパインだけ複製しても反例は壊れる。cons と（文字列以外の）ベクタを
+   再帰的に複製する。文字列は `join-list` が毎回新しく作るので複製不要。
+
+3. **`shrink mapped-generator` は一見 no-op に見えるが、実際には縮小される。** ループ内で
+   `(shrink sub-generator ...)` の戻り値をローカル変数 `shrunk-elem` に束縛するが、その変数自体は
+   どこにも `setf` されず捨てられる。しかし `shrink` の呼び出しそのものが副作用として
+   sub-generator 自身の `cached-value` スロットを破壊的に書き換える
+   （例えば `shrink-list-generator` の `elem-wise-shrink` は `(setf (nth i cached-value) ...)` を
+   *その sub-generator の* `cached-value` に対して行う）。メソッドの最終形
+   `(apply mapping (mapcar #'cached-value sub-generators))` は、その書き換え後の値を
+   sub-generators から読み直してから `mapping` を再適用しており、捨てられた `shrunk-elem` を
+   経由していない。したがって `vector-of` の反例は正しく縮小される。実測でも確認済み：
+   `(vector-of (range integer 1 100))` を引数に取る property が `#(100 61 34)` で失敗したとき、
+   `shrunk-counterexample` は `#(51)` になった。
 
 4. **`check-it:*size*` が数値の上下限を握り潰す。** `int-generator-function` /
    `real-generator-function` は与えられた limit を `(min (abs limit) *size*)` で丸める。
@@ -401,11 +424,37 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    `run-generated-test` が `generate` の周りで `check-it:*size*` をその値まで引き上げる。
    引き上げは束縛なので他の生成に漏れない。
 
-5. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
+5. **`real-generator-function` の finite/finite 分岐にバグがある。** 下限の計算が
+   `(abs low)` ではなく `(abs high)` を読む。
+
+   ```lisp
+   (let ((new-high (* (min (abs high) *size*) (signum high)))
+         (new-low  (* (min (abs high) *size*) (signum low))))   ; ← (abs low) であるべき
+     (+ (random (float (- new-high new-low))) new-low))
+   ```
+
+   下限と上限が 0 をまたがない限り区間が幅0に潰れ、`(random 0.0)` が TYPE-ERROR を出す。
+   `(range 1 100)` は 3.4-4 の対策で `*size*` を 100 に上げるため、まさにこれを踏む。
+   対策: 有限×有限の実数範囲は下限を 0 へ平行移動してから生成し、`mapped-generator` で
+   戻す。下限が 0 なら `(signum 0)` が 0 になり正しい式と一致するので、バグの影響がない。
+   片側が `*` の分岐にはこのバグは無いのでそのまま通す。`shrink` は実数を縮小しない
+   （下記6）ので、`mapped-generator` を挟んでも失うものは無い。
+
+   **平行移動した分、`*required-size*` は区間幅も見なければならない。** 3.4-4 の
+   `max(|min|, |max|)` だけでは、0 をまたぐ範囲で足りない。`(range real -10 10)` は
+   required-size 10 のまま内側 generator に `[0, 20]` を渡すことになり、check-it が
+   `[0, 10]` にクランプして写像後は `[-10, 0]` — 宣言した範囲の上半分が到達不能になる。
+   値は妥当なままなので validity のテストでは捕まらない。有限×有限では
+   `(ceiling (abs (- maximum minimum)))` も併せて折り込む。
+
+   下限と上限が等しい退化した範囲は generator を作らず、その唯一の値を定数として返す。
+   check-it は非 generator を定数として扱うので、これで `(random 0.0)` を回避できる。
+
+6. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
    「can't shrink over non-discrete search space」として値をそのまま返す。
    実数を引数に取る property の反例は縮小されない。
 
-6. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
+7. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
    ただし既定値の出所としては `default-trials`（`check-it:*num-trials*` を live read する）を使い続ける。
 
 ### 3.5 `sample` / `generator-for`
@@ -512,6 +561,15 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 `(replay-property 'foo result)` である。第2引数に**整数 seed と `property-result` の両方**を受ける。
 `property-result` が来たらその seed を使う。
 
+**`:profile` も受ける。** profile が trial 数を決めるため、seed だけでは再現にならない。
+400 回目の trial で見つかった失敗を 100 回しか回さない profile で再生すれば `:passed` が返る —
+再現を目的とする操作で最も避けたい沈黙の偽陰性である。`property-result` からは profile を
+復元できない。`trials` スロットは「実際に走った回数」であって「許された回数」ではないからである。
+
+seed が `property-result` でも非負整数でもない場合は `replay-property` の境界で弾く。
+NIL をそのまま通すと `run-property` が新しい seed を引いてしまい、再現のつもりの呼び出しが
+黙って別の実行になる。
+
 ---
 
 ## 5. Condition
@@ -532,7 +590,10 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 
 - `src/resolve.lisp` — designator（シンボル or オブジェクト）→ spec / property の解決と、
   compile context からの registry 取り出し。explain / validator / generator / introspection /
-  property-runner がすべて必要とする共通の責務なので、`src/registry.lisp` を触らずにここへ置く
+  property-runner がすべて必要とする共通の責務なので、`src/registry.lisp` を触らずにここへ置く。
+  未登録の判定は `registry-find-spec` / `registry-find-property` の**第2返り値**で行う。
+  registry は docstring で `(values entry found-p)` を約束しており、第1値だけを見ると
+  「NIL として登録された名前」と「未登録」が区別できない
 - `src/backends/check-it-generators.lisp` — IR → check-it generator の写像。backend プロトコルの
   結線と trial ループ（`src/backends/check-it.lisp`）とは別の責務なので分ける。
   `package-inferred-system` なので `.asd` の変更は不要
@@ -604,11 +665,14 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 
 ## 10. MVP の既知の限界（doc に明記する）
 
-- `vector-of` の反例は縮小されない（check-it の `shrink mapped-generator` が no-op、3.4-3）
-- 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-5）
+- 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-6）
+- 有限×有限の実数範囲は check-it のバグ（3.4-5）を避けるため平行移動して生成する
 - 再帰 spec は generator を持てない（`generator-unavailable`）。validation と explain は動く
 - `not` / 単体の `satisfies` / `instance-of` は generator を持てない
 - `and` の generator は制約畳み込みのヒューリスティックに依存する。畳み込めない組み合わせは
   `generator-unavailable`
+- 畳み込めなかった述語を包む guard は、依然として check-it の無制限再帰の上に載っている。
+  満たす値が存在しない、あるいは極端に稀な述語（`(and integer (satisfies never-true))` など）は
+  スタックを溢れさせる。retry 上限を持つ guard は post-MVP
 - 整数 seed による replay は SBCL のみ。他実装では `unsupported-seed`
 - コンパイル結果はキャッシュしない。`validp` を巨大なループで回す用途は想定しない（§59）

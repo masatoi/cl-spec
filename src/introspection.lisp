@@ -11,6 +11,45 @@
                 #:not-implemented)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
+  (:import-from #:cl-spec/src/ir
+                #:spec
+                #:spec-name
+                #:spec-kind
+                #:spec-source-form
+                #:spec-source-location
+                #:spec-children
+                #:type-spec
+                #:type-spec-type-specifier
+                #:reference-spec
+                #:reference-spec-target
+                #:predicate-spec
+                #:predicate-spec-predicate
+                #:member-spec
+                #:member-spec-values
+                #:range-spec
+                #:range-spec-base-type
+                #:range-spec-minimum
+                #:range-spec-maximum
+                #:instance-of-spec
+                #:instance-of-spec-class-name)
+  (:import-from #:cl-spec/src/resolve
+                #:resolve-spec
+                #:resolve-property)
+  (:import-from #:cl-spec/src/property
+                #:property-name
+                #:property-arguments
+                #:property-targets
+                #:property-kind
+                #:property-tags
+                #:property-documentation
+                #:property-body
+                #:property-source-form
+                #:property-source-location
+                #:property-trials
+                #:property-metadata)
+  (:import-from #:cl-spec/src/utils/source-location
+                #:source-location-file
+                #:source-location-package)
   (:export #:describe-spec
            #:describe-property
            #:spec-data
@@ -18,28 +57,90 @@
 
 (in-package #:cl-spec/src/introspection)
 
-(defun spec-data (spec-designator &optional (registry *registry*))
+(defun source-location->data (location)
+  "Return LOCATION as a plain plist, or NIL when there is no location.
+
+Expanding it here is what keeps the opaque location object out of the public
+introspection API."
+  (when location
+    (list :file (source-location-file location)
+          :package (source-location-package location))))
+
+(defgeneric node-attributes (spec)
+  (:documentation "Return the SPEC-DATA keys specific to SPEC's node type."))
+
+(defmethod node-attributes ((spec spec))
+  nil)
+
+(defmethod node-attributes ((spec type-spec))
+  (list :type (type-spec-type-specifier spec)))
+
+(defmethod node-attributes ((spec reference-spec))
+  (list :target (reference-spec-target spec)))
+
+(defmethod node-attributes ((spec predicate-spec))
+  (list :predicate (predicate-spec-predicate spec)))
+
+(defmethod node-attributes ((spec member-spec))
+  (list :values (member-spec-values spec)))
+
+(defmethod node-attributes ((spec range-spec))
+  (list :base-type (range-spec-base-type spec)
+        :min (range-spec-minimum spec)
+        :max (range-spec-maximum spec)))
+
+(defmethod node-attributes ((spec instance-of-spec))
+  (list :class-name (instance-of-spec-class-name spec)))
+
+(defun spec->data (spec)
+  "Return the SPEC-DATA plist for one IR node, recursing into its children.
+
+Every node carries the same keys whether or not they have a value, so that a
+consumer never has to distinguish an absent key from a NIL one."
+  (append (list :name (spec-name spec)
+                :kind (spec-kind spec))
+          (node-attributes spec)
+          (list :source-form (spec-source-form spec)
+                :source-location (source-location->data (spec-source-location spec)))
+          (let ((children (spec-children spec)))
+            (when children
+              (list :children (mapcar #'spec->data children))))))
+
+(defun spec-data (spec-designator &key (registry *registry*))
   "Return a plist describing the registered spec named by SPEC-DESIGNATOR.
 
-The plist has the shape
-
-  (:name <symbol> :kind <keyword> :source-form <form>
+  (:name <symbol> :kind <keyword> <node specific keys>
+   :source-form <form> :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
-and is what SPEC-DATA's JSON and MCP projections are built from.
+:CHILDREN is present only on nodes that have children.  This is what the JSON
+and MCP projections are built from."
+  (spec->data (resolve-spec spec-designator registry)))
 
-Not implemented yet."
-  (declare (ignore spec-designator registry))
-  (error 'not-implemented :operator 'spec-data))
+(defun property-data (property-designator &key (registry *registry*))
+  "Return a plist describing the registered property named by PROPERTY-DESIGNATOR.
 
-(defun property-data (property-designator &optional (registry *registry*))
-  "Return a plist describing the registered property named by
-PROPERTY-DESIGNATOR: its name, targets, kind, argument specs, tags,
-documentation, source form, source location and trial configuration.
+  (:name <symbol> :kind <keyword> :targets (<symbol> ...) :tags (<tag> ...)
+   :documentation <string> :trials <plist>
+   :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
+   :body (<form> ...) :source-form <form>
+   :source-location (:file <string> :package <string>) :metadata <plist>)
 
-Not implemented yet."
-  (declare (ignore property-designator registry))
-  (error 'not-implemented :operator 'property-data))
+The body is the author's source rather than the compiled function, because a
+compiled function cannot be read (specification §39)."
+  (let ((property (resolve-property property-designator registry)))
+    (list :name (property-name property)
+          :kind (property-kind property)
+          :targets (property-targets property)
+          :tags (property-tags property)
+          :documentation (property-documentation property)
+          :trials (property-trials property)
+          :arguments (loop for (variable spec) in (property-arguments property)
+                           collect (list :variable variable :spec (spec->data spec)))
+          :body (property-body property)
+          :source-form (property-source-form property)
+          :source-location (source-location->data (property-source-location property))
+          :metadata (property-metadata property))))
 
 (defun describe-spec (spec-designator &optional (stream *standard-output*))
   "Print a human readable rendering of (SPEC-DATA SPEC-DESIGNATOR) to STREAM.
