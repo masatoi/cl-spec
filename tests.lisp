@@ -7,7 +7,8 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
-  (:import-from #:cl-spec/tests/conditions-test))
+  (:import-from #:cl-spec/tests/conditions-test)
+  (:import-from #:cl-spec/tests/utils/source-location-test))
 
 (in-package #:cl-spec/tests)
 
