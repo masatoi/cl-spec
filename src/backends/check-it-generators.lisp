@@ -228,3 +228,63 @@ the bounds the spec asks for.  The caller binds it around GENERATE; returning it
 rather than binding it here lets one binding cover a whole trial loop."
   (let ((*required-size* 0))
     (values (spec-generator spec context) *required-size*)))
+
+(defun merge-base-type (current new spec)
+  "Return the base type implied by both CURRENT and NEW, signalling on conflict."
+  (cond ((null current) new)
+        ((null new) current)
+        ((eq current new) current)
+        ((and (member current '(integer real)) (member new '(integer real))) 'integer)
+        (t (error 'generator-unavailable
+                  :spec spec
+                  :reason (format nil "conflicting base types ~S and ~S" current new)))))
+
+(defun tighter-minimum (current new)
+  "Return the greater of two lower bounds, treating :UNBOUNDED as no bound."
+  (cond ((eq new :unbounded) current)
+        ((eq current :unbounded) new)
+        (t (max current new))))
+
+(defun tighter-maximum (current new)
+  "Return the lesser of two upper bounds, treating :UNBOUNDED as no bound."
+  (cond ((eq new :unbounded) current)
+        ((eq current :unbounded) new)
+        (t (min current new))))
+
+(defmethod spec-generator ((spec and-spec) context)
+  ;; Folding rather than guarding is a correctness requirement, not an
+  ;; optimisation: check-it's GUARD-GENERATOR retries by recursing into GENERATE
+  ;; with no depth limit, so a guard that rejects often enough overflows the
+  ;; stack.  Narrowing the base generator removes the rejection entirely.
+  (let ((base-type nil)
+        (minimum :unbounded)
+        (maximum :unbounded)
+        (leftovers '()))
+    (dolist (child (and-spec-children spec))
+      (typecase child
+        (type-spec
+         (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
+        (range-spec
+         (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
+               minimum (tighter-minimum minimum (range-spec-minimum child))
+               maximum (tighter-maximum maximum (range-spec-maximum child))))
+        (t (push child leftovers))))
+    (when (and (null base-type)
+               (not (and (eq minimum :unbounded) (eq maximum :unbounded))))
+      (setf base-type 'real))
+    (when (null base-type)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "an AND needs a type or range conjunct to generate from"))
+    (when (and (not (eq minimum :unbounded))
+               (not (eq maximum :unbounded))
+               (> minimum maximum))
+      (error 'generator-unavailable :spec spec :reason "the folded range is empty"))
+    (let ((base (if (and (eq minimum :unbounded) (eq maximum :unbounded))
+                    (type-specifier-generator base-type spec)
+                    (bounded-generator base-type minimum maximum spec))))
+      (if leftovers
+          (make-instance 'guard-generator
+                         :guard (compile-validator spec :context context)
+                         :sub-generator base)
+          base))))

@@ -10,8 +10,6 @@
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:current-generator-backend
-                #:compile-generator
-                #:generate-value
                 #:run-generated-test)
   (:import-from #:cl-spec/src/backends/check-it
                 #:check-it-backend
@@ -48,11 +46,9 @@
     (ok (integerp (default-trials)))
     (ok (plusp (default-trials)))))
 
-(deftest backend-methods-are-stubs
-  (testing "the three protocol methods are specialised but not yet written"
+(deftest run-generated-test-is-still-a-stub
+  (testing "RUN-GENERATED-TEST is specialised but not yet written"
     (let ((backend (install-check-it-backend)))
-      (ok (signals (compile-generator backend :any-spec) 'not-implemented))
-      (ok (signals (generate-value backend :any-generator) 'not-implemented))
       (ok (signals (run-generated-test backend :any-property)
                    'not-implemented)))))
 
@@ -138,3 +134,22 @@
     (testing "a self referential spec signals instead of recursing forever"
       (ok (handler-case (progn (draws-for 'int-tree :count 1 :registry registry) nil)
             (generator-unavailable () t))))))
+
+(deftest and-folds-its-constraints-into-one-generator
+  (testing "a type and a range collapse into a bounded generator"
+    (let ((values (draws-for '(and integer (range 1 100)))))
+      (ok (every (lambda (value) (and (integerp value) (<= 1 value 100))) values))))
+  (testing "the section 67 example generates without a rejection loop"
+    (ok (every (lambda (value) (and (integerp value) (>= value 1)))
+               (draws-for '(and integer (range 1 *))))))
+  (testing "overlapping ranges intersect"
+    (ok (every (lambda (value) (<= 10 value 20))
+               (draws-for '(and integer (range 1 20) (range 10 100))))))
+  (testing "a leftover predicate becomes a guard, not a lost constraint"
+    (ok (every #'oddp (draws-for '(and integer (range 1 100) (satisfies oddp))))))
+  (testing "an AND with nothing to generate from is refused"
+    (ok (handler-case (progn (draws-for '(and (satisfies oddp) (satisfies plusp)) :count 1) nil)
+          (generator-unavailable () t))))
+  (testing "an empty interval is refused rather than looping"
+    (ok (handler-case (progn (draws-for '(and integer (range 10 20) (range 30 40)) :count 1) nil)
+          (generator-unavailable () t)))))

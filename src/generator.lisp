@@ -9,17 +9,23 @@
 (defpackage #:cl-spec/src/generator
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented
                 #:no-generator-backend)
   (:import-from #:cl-spec/src/ir
                 #:spec)
+  (:import-from #:cl-spec/src/registry
+                #:*registry*)
+  (:import-from #:cl-spec/src/resolve
+                #:resolve-spec)
+  (:import-from #:cl-spec/src/utils/random
+                #:seed->random-state)
   (:export #:*generator-backend*
            #:current-generator-backend
            #:compile-generator
            #:generate-value
            #:run-generated-test
            #:generator-for
-           #:sample))
+           #:sample
+           #:backend-default-trials))
 
 (in-package #:cl-spec/src/generator)
 
@@ -52,21 +58,31 @@ SEED, when supplied, makes the value reproducible (specification §15)."))
 The backend owns trial generation, failure detection and shrinking; the caller
 owns interpretation of the result."))
 
-(defun generator-for (spec-designator &key context options)
+(defgeneric backend-default-trials (backend)
+  (:documentation "Return the trial count BACKEND uses when a property names none.
+
+The core cannot read check-it's own default, so the backend answers for it."))
+
+(defun generator-for (spec-designator &key context options (registry *registry*))
   "Return a compiled generator for SPEC-DESIGNATOR using the current backend.
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
+The result is opaque to everything but the backend and GENERATE-VALUE."
+  (let ((spec (resolve-spec spec-designator registry)))
+    (compile-generator (current-generator-backend) spec
+                       :context (or context (list :registry registry))
+                       :options options)))
 
-Not implemented yet."
-  (declare (ignore spec-designator context options))
-  (error 'not-implemented :operator 'generator-for))
-
-(defun sample (spec-designator &key (count 10) seed)
+(defun sample (spec-designator &key (count 10) seed (registry *registry*))
   "Return a list of COUNT values generated from SPEC-DESIGNATOR.
 
-SEED, when supplied, makes the sequence reproducible.  Intended for inspecting
-what a spec admits, from the REPL or from an LLM agent.
-
-Not implemented yet."
-  (declare (ignore spec-designator count seed))
-  (error 'not-implemented :operator 'sample))
+SEED, when supplied, makes the whole sequence reproducible.  Intended for
+inspecting what a spec admits, from the REPL or from an agent."
+  (let ((backend (current-generator-backend))
+        (generator (generator-for spec-designator :registry registry)))
+    (flet ((draw ()
+             (loop repeat count collect (generate-value backend generator))))
+      (if seed
+          (let ((*random-state* (seed->random-state seed)))
+            (draw))
+          (draw)))))

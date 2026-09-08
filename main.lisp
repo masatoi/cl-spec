@@ -82,7 +82,8 @@
                 #:generate-value
                 #:run-generated-test
                 #:generator-for
-                #:sample)
+                #:sample
+                #:backend-default-trials)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
@@ -209,6 +210,7 @@
            #:run-generated-test
            #:generator-for
            #:sample
+           #:backend-default-trials
            ;; Properties
            #:property
            #:property-name
