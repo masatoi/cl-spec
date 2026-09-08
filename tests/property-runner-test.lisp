@@ -12,6 +12,7 @@
                 #:property-result-property
                 #:property-result-trials
                 #:property-result-seed
+                #:property-result-profile
                 #:property-result-counterexample
                 #:property-result-shrunk-counterexample
                 #:property-result-condition
@@ -199,6 +200,77 @@
                      (property-result-counterexample replayed)))
           (ok (= (property-result-trials normal-run)
                  (property-result-trials replayed))))))))
+
+(deftest replay-from-a-result-uses-its-recorded-profile
+  ;; This is the regression test for the round-trip defect recorded as D5 Form A in
+  ;; docs/cl-spec-defect-corpus.md: REPLAY-PROPERTY's docstring recommends passing the
+  ;; PROPERTY-RESULT itself so an agent need not dig the seed out of it, but before this
+  ;; fix PROPERTY-RESULT has no profile slot, so that spelling silently replays under
+  ;; :NORMAL's trial budget instead of the profile the original run actually used.
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec d5-thousand (range integer 1 1000)))
+    ;; D5-INNER fails for exactly one value in a thousand.  :NORMAL's 5-trial budget
+    ;; is far too small to reliably find it; :THOROUGH's 20000-trial budget is large
+    ;; enough that it virtually always does.  That gap is what makes a replay under
+    ;; the wrong profile observable rather than a matter of luck.
+    (eval '(cl-spec/src/dsl:defproperty d5-inner ((x d5-thousand))
+             (:trials (:normal 5 :thorough 20000))
+             (/= x 500)))
+    (let ((first-run (run-property 'd5-inner :profile :thorough)))
+      (testing "the large profile finds the rare failure"
+        (ok (eq :failed (property-result-status first-run))))
+      (testing "replaying with the result object and no :profile argument reproduces
+the failure"
+        ;; This is the documented spelling: pass the result, not the seed, and no
+        ;; :PROFILE.  Before the fix, this assertion sees :PASSED instead of :FAILED,
+        ;; because the replay silently ran under :NORMAL's 5-trial budget.
+        (let ((replayed (replay-property 'd5-inner first-run)))
+          (ok (eq :failed (property-result-status replayed)))
+          (ok (equal (property-result-counterexample first-run)
+                     (property-result-counterexample replayed))))))))
+
+(deftest replay-profile-argument-overrides-the-results-profile
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec d5-thousand (range integer 1 1000)))
+    (eval '(cl-spec/src/dsl:defproperty d5-inner ((x d5-thousand))
+             (:trials (:normal 5 :thorough 20000))
+             (/= x 500)))
+    (let* ((first-run (run-property 'd5-inner :profile :thorough))
+           (direct-normal (run-property 'd5-inner
+                                        :profile :normal
+                                        :seed (property-result-seed first-run)))
+           (overridden (replay-property 'd5-inner first-run :profile :normal)))
+      (testing "an explicit :profile wins over the profile recorded on the result"
+        (ok (eq (property-result-status direct-normal) (property-result-status overridden)))
+        (ok (= (property-result-trials direct-normal) (property-result-trials overridden)))
+        (ok (eq :normal (property-result-profile overridden)))))))
+
+(deftest replay-with-an-integer-seed-still-requires-an-explicit-profile
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty always-holds ((x small))
+             (:trials (:normal 5))
+             (integerp x)))
+    (let* ((first-run (run-property 'always-holds))
+           (replayed (replay-property 'always-holds (property-result-seed first-run))))
+      (testing "an integer seed carries no profile, so the default :normal still applies,
+exactly as before this fix"
+        (ok (eq :normal (property-result-profile replayed)))
+        (ok (eq (property-result-status first-run) (property-result-status replayed)))
+        (ok (= (property-result-trials first-run) (property-result-trials replayed)))))))
+
+(deftest property-result-profile-is-populated-on-pass-and-fail
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty holds ((x small)) (:trials (:normal 5)) (integerp x)))
+    (eval '(cl-spec/src/dsl:defproperty fails ((x small)) (:trials (:normal 5)) (and x nil)))
+    (testing "a passing run records its effective profile"
+      (ok (eq :normal (property-result-profile (run-property 'holds)))))
+    (testing "a failing run records its effective profile"
+      (ok (eq :normal (property-result-profile (run-property 'fails)))))
+    (testing "an explicitly chosen profile is recorded verbatim, even one the property's
+:trials table has no entry for"
+      (ok (eq :smoke (property-result-profile (run-property 'holds :profile :smoke)))))))
 
 (deftest replay-rejects-invalid-seeds
   (with-fresh-registry

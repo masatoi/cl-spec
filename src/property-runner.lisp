@@ -27,6 +27,7 @@
            #:property-result-property
            #:property-result-trials
            #:property-result-seed
+           #:property-result-profile
            #:property-result-counterexample
            #:property-result-shrunk-counterexample
            #:property-result-condition
@@ -55,6 +56,14 @@
          :initform nil
          :reader property-result-seed
          :documentation "Random seed the run started from, for replay.")
+   (profile :initarg :profile
+            :initform nil
+            :reader property-result-profile
+            :documentation "Effective profile the run resolved its trial count from.
+TRIALS records only the trial the run stopped at, not the budget it was
+allowed, and that budget cannot be recovered from it -- REPLAY-PROPERTY needs
+this slot to reproduce a run faithfully when it is handed the result instead
+of the bare seed.")
    (counterexample :initarg :counterexample
                    :initform nil
                    :reader property-result-counterexample
@@ -112,7 +121,12 @@ backend."
   (let* ((property (resolve-property property-designator registry))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))
-         (trials (resolve-trials property profile backend))
+         ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
+         ;; is self-describing -- :PROFILE :NORMAL tells an agent what ran, where NIL
+         ;; would not -- and so replaying from the result reproduces this run by
+         ;; construction rather than by both paths happening to default the same way.
+         (effective-profile (or profile :normal))
+         (trials (resolve-trials property effective-profile backend))
          (start (get-internal-real-time))
          ;; One binding covers generation and shrinking alike, because the whole
          ;; trial loop lives inside this single call.
@@ -128,6 +142,7 @@ backend."
                    :property (property-name property)
                    :trials (getf outcome :trials)
                    :seed effective-seed
+                   :profile effective-profile
                    :counterexample (name-arguments property (getf outcome :counterexample))
                    :shrunk-counterexample (name-arguments
                                            property (getf outcome :shrunk-counterexample))
@@ -153,7 +168,13 @@ result should not have to dig the seed out of it.
 PROFILE selects a trial count from the property's :TRIALS table (§33), exactly
 as run-property does. The PROFILE must match the original run's PROFILE for the
 replay to reproduce it faithfully — the seed alone is not sufficient, because a
-different profile changes the trial count.
+different profile changes the trial count. When SEED is a PROPERTY-RESULT, that
+result carries its own PROPERTY-RESULT-PROFILE, and this function uses it when
+PROFILE is not supplied -- so the recommended spelling, passing the result with
+no :PROFILE, is faithful. An explicitly supplied PROFILE always wins over the
+result's, so a caller can deliberately replay under a different budget. An
+integer SEED carries no profile, so that spelling still requires the caller to
+supply a matching PROFILE.
 
 SEED must be a property-result or a non-negative integer, or an error is
 signalled."
@@ -166,6 +187,8 @@ signalled."
                 :seed (if (typep seed 'property-result)
                           (property-result-seed seed)
                           seed)
-                :profile profile
+                :profile (or profile
+                             (and (typep seed 'property-result)
+                                  (property-result-profile seed)))
                 :options options
                 :registry registry))

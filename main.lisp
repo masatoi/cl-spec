@@ -108,6 +108,7 @@
                 #:property-result-property
                 #:property-result-trials
                 #:property-result-seed
+                #:property-result-profile
                 #:property-result-counterexample
                 #:property-result-shrunk-counterexample
                 #:property-result-condition
@@ -240,6 +241,7 @@
            #:property-result-property
            #:property-result-trials
            #:property-result-seed
+           #:property-result-profile
            #:property-result-counterexample
            #:property-result-shrunk-counterexample
            #:property-result-condition
