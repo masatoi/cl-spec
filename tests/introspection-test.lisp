@@ -13,6 +13,12 @@
                 #:registry-register-spec)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
+  ;; No symbols imported: the body reaches CL-SPEC/SRC/DSL:DEFSPEC and
+  ;; CL-SPEC/SRC/DSL:DEFPROPERTY through package-qualified references inside
+  ;; EVAL, but package-inferred-system only infers a dependency from
+  ;; DEFPACKAGE's :USE/:IMPORT-FROM clauses, so the edge still has to be
+  ;; declared here.
+  (:import-from #:cl-spec/src/dsl)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
