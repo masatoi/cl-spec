@@ -10,9 +10,10 @@
   (:import-from #:check-it
                 #:*num-trials*
                 #:generate
-                #:*size*)
-  (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
+                #:*size*
+                #:cached-value
+                #:shrink
+                #:tuple-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator)
   (:import-from #:cl-spec/src/generator
@@ -21,6 +22,10 @@
                 #:generate-value
                 #:run-generated-test
                 #:backend-default-trials)
+  (:import-from #:cl-spec/src/property
+                #:property-arguments
+                #:property-function
+                #:property-metadata)
   (:import-from #:cl-spec/src/utils/random
                 #:seed->random-state)
   (:export #:check-it-backend
@@ -70,12 +75,64 @@ its own specials rather than per-generator options."
   (declare (ignore backend))
   *num-trials*)
 
+(defun call-property (function arguments)
+  "Apply FUNCTION to ARGUMENTS, returning (values RESULT CONDITION).
+
+A signalled condition is data here rather than a stack unwind: section 13 counts
+it as a failure, and the result has to say which kind of failure it was."
+  (handler-case (values (apply function arguments) nil)
+    (error (condition) (values nil condition))))
+
+(defun shrinking-test (function)
+  "Return the one-argument test CHECK-IT:SHRINK drives.
+
+SHRINK hands the test a whole argument list, and an error during shrinking means
+the smaller value still fails."
+  (lambda (arguments)
+    (handler-case (apply function arguments)
+      (error () nil))))
+
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
   "Run PROPERTY through check-it, shrinking any counterexample.
 
-Not implemented yet."
-  (declare (ignore backend property options))
-  (error 'not-implemented :operator 'run-generated-test))
+Returns the plist the caller assembles into a PROPERTY-RESULT:
+
+  (:status :passed | :failed | :error
+   :trials <integer>
+   :counterexample <list of values>
+   :shrunk-counterexample <list of values>
+   :condition <condition or NIL>)
+
+Counterexamples are positional.  Naming the arguments is the caller's job, which
+is what keeps this method from having to know the property's variables."
+  (let* ((context (list :registry (getf options :registry)))
+         (trials (getf options :trials))
+         (function (property-function property))
+         (shrink-p (getf (property-metadata property) :shrink t))
+         (compiled (loop for (nil spec) in (property-arguments property)
+                         collect (compile-generator backend spec :context context)))
+         ;; One binding covers generation and shrinking alike, and has to be
+         ;; wide enough for the widest bound any argument asks for.
+         (*size* (reduce #'max compiled
+                         :key #'compiled-generator-size :initial-value *size*))
+         (generator (make-instance 'tuple-generator
+                                   :sub-generators
+                                   (mapcar #'compiled-generator-generator compiled))))
+    (loop for trial from 1 to trials
+          do (generate generator)
+             ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
+             ;; place, so the counterexample must be copied out before it runs.
+             (let ((arguments (copy-list (cached-value generator))))
+               (multiple-value-bind (result condition) (call-property function arguments)
+                 (when (or condition (null result))
+                   (return (list :status (if condition :error :failed)
+                                 :trials trial
+                                 :counterexample arguments
+                                 :shrunk-counterexample
+                                 (when shrink-p
+                                   (copy-list (shrink generator (shrinking-test function))))
+                                 :condition condition)))))
+          finally (return (list :status :passed :trials trials)))))
 
 (defun install-check-it-backend ()
   "Install a CHECK-IT-BACKEND into *GENERATOR-BACKEND* and return it.

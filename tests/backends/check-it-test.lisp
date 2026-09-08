@@ -3,14 +3,12 @@
 (defpackage #:cl-spec/tests/backends/check-it-test
   (:use #:cl)
   (:import-from #:rove
-                #:deftest #:testing #:ok #:signals)
+                #:deftest #:testing #:ok)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented
                 #:generator-unavailable)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
-                #:current-generator-backend
-                #:run-generated-test)
+                #:current-generator-backend)
   (:import-from #:cl-spec/src/backends/check-it
                 #:check-it-backend
                 #:install-check-it-backend
@@ -45,12 +43,6 @@
   (testing "the default trial count is taken from CHECK-IT:*NUM-TRIALS*"
     (ok (integerp (default-trials)))
     (ok (plusp (default-trials)))))
-
-(deftest run-generated-test-is-still-a-stub
-  (testing "RUN-GENERATED-TEST is specialised but not yet written"
-    (let ((backend (install-check-it-backend)))
-      (ok (signals (run-generated-test backend :any-property)
-                   'not-implemented)))))
 
 (defun draws-for (form &key (count 30) (registry (make-hash-table-registry)))
   "Generate COUNT values from FORM's generator, honouring the size its bounds need."
