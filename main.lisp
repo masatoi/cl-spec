@@ -54,6 +54,17 @@
                 #:properties-for
                 #:properties-with-tag
                 #:clear-registry)
+  (:import-from #:cl-spec/src/normalize
+                #:normalize-spec-form
+                #:*spec-primitives*)
+  (:import-from #:cl-spec/src/validator
+                #:compile-validator
+                #:validp
+                #:validate)
+  (:import-from #:cl-spec/src/explain
+                #:compile-explainer
+                #:explain-data
+                #:explain)
   (:export ;; Conditions
            #:cl-spec-error
            #:not-implemented
@@ -102,6 +113,17 @@
            #:list-properties
            #:properties-for
            #:properties-with-tag
-           #:clear-registry))
+           #:clear-registry
+           ;; Normalization
+           #:normalize-spec-form
+           #:*spec-primitives*
+           ;; Validation
+           #:compile-validator
+           #:validp
+           #:validate
+           ;; Structured explain
+           #:compile-explainer
+           #:explain-data
+           #:explain))
 
 (in-package #:cl-spec/main)
