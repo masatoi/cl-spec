@@ -29,6 +29,12 @@
       (setf (gethash 'transfer *instrumented-functions*) #'identity)
       (ok (instrumented-function-p 'transfer)))))
 
+(deftest instrumentation-tracks-presence-not-truthiness
+  (testing "INSTRUMENTED-FUNCTION-P is true for a present key even when its value is NIL"
+    (let ((*instrumented-functions* (make-hash-table :test #'eq)))
+      (setf (gethash 'transfer *instrumented-functions*) nil)
+      (ok (instrumented-function-p 'transfer)))))
+
 (deftest instrumentation-entry-points-are-stubs
   (testing "INSTRUMENT-FUNCTION and UNINSTRUMENT-FUNCTION signal NOT-IMPLEMENTED"
     (ok (signals (instrument-function 'transfer) 'not-implemented))
