@@ -1752,10 +1752,14 @@ git commit -m "feat: add registry protocol and hash-table backend"
 (in-package #:cl-spec/tests/normalize-test)
 
 (deftest mvp-primitives-are-declared
-  (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec heads"
-    (ok (equal '(type satisfies and or not member range list-of vector-of
-                 cons-of tuple nullable instance-of)
-               *spec-primitives*))))
+  (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
+    (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
+                 "LIST-OF" "VECTOR-OF" "CONS-OF" "TUPLE" "NULLABLE"
+                 "INSTANCE-OF")
+               *spec-primitives*)))
+  (testing "heads are names, so they survive being written in another package"
+    (ok (every #'stringp *spec-primitives*))
+    (ok (member (symbol-name 'range) *spec-primitives* :test #'string=))))
 
 (deftest normalize-is-a-stub
   (testing "NORMALIZE-SPEC-FORM signals NOT-IMPLEMENTED until it is written"
@@ -1862,10 +1866,15 @@ Expected: FAIL。`cl-spec/src/normalize` が見つからない。
 (in-package #:cl-spec/src/normalize)
 
 (defparameter *spec-primitives*
-  '(type satisfies and or not member range list-of vector-of cons-of tuple
-    nullable instance-of)
-  "Spec DSL heads the MVP normalizer accepts (specification §9, §52).
-Anything else is either a reference to a registered spec or an error.")
+  '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
+    "LIST-OF" "VECTOR-OF" "CONS-OF" "TUPLE" "NULLABLE"
+    "INSTANCE-OF")
+  "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
+
+Heads are matched by SYMBOL-NAME, not by symbol identity: a DSL form is written
+in the user's own package, so RANGE in (RANGE 1 *) there is not EQ to the RANGE
+interned here.  Anything not named in this list is either a reference to a
+registered spec or an error.")
 
 (declaim (ftype (function (t &key (:name symbol) (:source-location list)) spec)
                 normalize-spec-form))
