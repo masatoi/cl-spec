@@ -174,12 +174,17 @@ relationship from :PROPERTIES-ABOUT: the sorted names of properties registered
 :PACKAGE is the name of SYMBOL's home package, or NIL when SYMBOL is
 uninterned (specification §8).
 
-SEMANTIC-DATA never signals, even when REGISTRY knows nothing about SYMBOL: it
-returns the full shape with every value NIL or empty. This is a deliberate
-asymmetry with SPEC-DATA, which signals UNKNOWN-SPEC for an unregistered name.
-Callers such as cl-mcp's describe_symbol call this on arbitrary symbols, most
-of which have nothing registered, so signalling would force every caller to
-handle a condition for what is the common case. Every key listed above is
+SEMANTIC-DATA never signals for an unknown symbol: it returns the full shape
+with every value NIL or empty. This is a deliberate asymmetry with SPEC-DATA,
+which signals UNKNOWN-SPEC for an unregistered name. Callers such as cl-mcp's
+describe_symbol call this on arbitrary symbols, most of which have nothing
+registered, so signalling would force every caller to handle a condition for
+what is the common case.
+
+That guarantee covers an unknown symbol, not an unknown value: SYMBOL must be
+a symbol, and passing anything else signals a TYPE-ERROR from SYMBOL-PACKAGE
+before any lookup runs. A caller that takes a name from outside the image --
+from JSON, say -- resolves it to a symbol first. Every key listed above is
 always present, whatever its value: a key that appears and disappears with its
 value would break JSON consumers, matching the rule SPEC-DATA already
 follows."
