@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Roswell
+        env:
+          LISP: sbcl-bin/2.5.0
+        run: |
+          curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
+          echo "$HOME/.roswell/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          ros --version
+          ros install rove
+
+      - name: Assert the core system does not pull in check-it
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: |
+          ros run --eval '(ql:quickload :cl-spec :silent t)' \
+                  --eval '(uiop:quit (if (find-package "CHECK-IT") 1 0))'
+
+      - name: Compile from a cold cache with warnings visible
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: |
+          # No quickload here: this must be the first thing that touches
+          # cl-spec in this process. Quickloading cl-spec and then
+          # force-compiling it in that same already-loaded image would
+          # redefine every generic function and method the load just
+          # defined, burying a real warning under ~100
+          # REDEFINITION-WITH-DEFGENERIC/DEFMETHOD ones. ASDF resolves
+          # cl-spec through CL_SOURCE_REGISTRY on its own, so compile-system
+          # here compiles straight into a fresh, cold fasl cache.
+          ros run --eval '(asdf:compile-system :cl-spec :force :all)' \
+                  --eval '(uiop:quit 0)'
+
+      - name: Run tests
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: rove cl-spec.asd

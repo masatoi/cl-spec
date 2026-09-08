@@ -1,21 +1,27 @@
-(defsystem "cl-spec"
+;;;; cl-spec.asd
+
+(asdf:defsystem "cl-spec"
+  :class :package-inferred-system
+  :description "Executable semantic IR and property framework for Common Lisp programs"
+  :author "Satoshi Imai"
+  :license "MIT"
   :version "0.1.0"
-  :author ""
-  :license ""
-  :depends-on ()
-  :components ((:module "src"
-                :components
-                ((:file "main"))))
-  :description ""
+  :depends-on ("cl-spec/main")
   :in-order-to ((test-op (test-op "cl-spec/tests"))))
 
-(defsystem "cl-spec/tests"
-  :author ""
-  :license ""
+(asdf:defsystem "cl-spec/check-it"
+  :description "check-it based generator and property execution backend for cl-spec"
+  :author "Satoshi Imai"
+  :license "MIT"
+  :version "0.1.0"
   :depends-on ("cl-spec"
-               "rove")
-  :components ((:module "tests"
-                :components
-                ((:file "main"))))
-  :description "Test system for cl-spec"
-  :perform (test-op (op c) (symbol-call :rove :run c)))
+               "check-it"
+               "cl-spec/src/backends/check-it"))
+
+(asdf:defsystem "cl-spec/instrument"
+  :description "Runtime function instrumentation for cl-spec function specs"
+  :author "Satoshi Imai"
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("cl-spec"
+               "cl-spec/src/instrument"))
