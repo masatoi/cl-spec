@@ -2791,7 +2791,7 @@ git commit -m "feat: run properties into a structured, seeded, shrunk result"
 
 **Interfaces:**
 - Consumes: Task 13 の `run-property`、Task 8 の `spec->data`、Task 2 の `resolve-property`
-- Produces: `run-properties (designators &key profile options registry)`、`replay-property (designator seed &key options registry)`（`seed` は整数でも `property-result` でもよい）、`property-data (property-designator &key registry)`
+- Produces: `run-properties (designators &key profile options registry)`、`replay-property (designator seed &key profile options registry)`（`seed` は整数でも `property-result` でもよい。`profile` は元の実行と一致していなければ再現しない）、`property-data (property-designator &key registry)`
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -2883,18 +2883,27 @@ the others."
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
 
-(defun replay-property (property-designator seed &key options (registry *registry*))
+(defun replay-property (property-designator seed &key profile options (registry *registry*))
   "Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
 SEED is either the integer seed of an earlier run or the PROPERTY-RESULT that
 run produced, since section 15 shows both spellings and an agent holding a
-result should not have to dig the seed out of it."
-  (run-property property-designator
-                :seed (if (typep seed 'property-result)
-                          (property-result-seed seed)
-                          seed)
-                :options options
-                :registry registry))
+result should not have to dig the seed out of it.
+
+PROFILE must match the profile the original run used.  The seed alone is not
+enough: the profile selects the trial count, so replaying a failure found on
+trial 400 with a budget of 100 trials reports a pass.  A PROPERTY-RESULT cannot
+supply the profile either — its TRIALS slot holds the trial the run stopped at,
+not the count it was allowed."
+  (let ((effective-seed (if (typep seed 'property-result)
+                            (property-result-seed seed)
+                            seed)))
+    (check-type effective-seed (integer 0))
+    (run-property property-designator
+                  :seed effective-seed
+                  :profile profile
+                  :options options
+                  :registry registry)))
 ```
 
 `src/introspection.lisp` の `defpackage` に `#:cl-spec/src/property` から

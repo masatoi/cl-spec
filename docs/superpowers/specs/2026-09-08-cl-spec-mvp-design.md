@@ -553,6 +553,15 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 `(replay-property 'foo result)` である。第2引数に**整数 seed と `property-result` の両方**を受ける。
 `property-result` が来たらその seed を使う。
 
+**`:profile` も受ける。** profile が trial 数を決めるため、seed だけでは再現にならない。
+400 回目の trial で見つかった失敗を 100 回しか回さない profile で再生すれば `:passed` が返る —
+再現を目的とする操作で最も避けたい沈黙の偽陰性である。`property-result` からは profile を
+復元できない。`trials` スロットは「実際に走った回数」であって「許された回数」ではないからである。
+
+seed が `property-result` でも非負整数でもない場合は `replay-property` の境界で弾く。
+NIL をそのまま通すと `run-property` が新しい seed を引いてしまい、再現のつもりの呼び出しが
+黙って別の実行になる。
+
 ---
 
 ## 5. Condition
