@@ -18,8 +18,7 @@
                 #:guard-generator
                 #:mapped-generator)
   (:import-from #:cl-spec/src/conditions
-                #:generator-unavailable
-                #:unknown-spec)
+                #:generator-unavailable)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-kind
@@ -45,9 +44,8 @@
                 #:vector-of-spec
                 #:reference-spec
                 #:reference-spec-target)
-  (:import-from #:cl-spec/src/registry
-                #:registry-find-spec)
   (:import-from #:cl-spec/src/resolve
+                #:resolve-spec
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
@@ -236,8 +234,7 @@ shifted width or half the declared range goes unreachable."
       (error 'generator-unavailable
              :spec spec
              :reason "recursive specs have no generator in this version"))
-    (let ((resolved (or (registry-find-spec registry target)
-                        (error 'unknown-spec :name target)))
+    (let ((resolved (resolve-spec target registry))
           (*reference-trail* (cons target *reference-trail*)))
       (spec-generator resolved context))))
 
@@ -304,8 +301,7 @@ identically to (AND A B C).  Anything else is collected into LEFTOVERS."
            (error 'generator-unavailable
                   :spec spec
                   :reason "recursive specs have no generator in this version"))
-         (let ((resolved (or (registry-find-spec registry target)
-                             (error 'unknown-spec :name target)))
+         (let ((resolved (resolve-spec target registry))
                (*reference-trail* (cons target *reference-trail*)))
            (multiple-value-setq (base-type minimum maximum leftovers)
              (fold-and-children (list resolved) context spec

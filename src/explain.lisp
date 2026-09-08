@@ -7,8 +7,7 @@
 (defpackage #:cl-spec/src/explain
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:invalid-spec-form
-                #:unknown-spec)
+                #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-name
@@ -43,8 +42,7 @@
                 #:tuple-spec
                 #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/registry
-                #:*registry*
-                #:registry-find-spec)
+                #:*registry*)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
@@ -283,8 +281,7 @@ explainers ask this before walking a value the caller supplied."
     ;; references, redefinition and recursive specs all work: compiling the
     ;; target eagerly would either capture a stale definition or never terminate.
     (lambda (value path)
-      (let ((resolved (or (registry-find-spec registry target)
-                          (error 'unknown-spec :name target))))
+      (let ((resolved (resolve-spec target registry)))
         (funcall (compile-node resolved (list :registry registry)) value path)))))
 
 (defun compile-explainer (spec &key context)
