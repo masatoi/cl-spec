@@ -3211,13 +3211,37 @@ ros run --eval '(ql:quickload :cl-spec :silent t)' \
 
 Expected: WARNING / STYLE-WARNING が出力されないこと。
 
-- [ ] **Step 11: lint とコミット**
+- [ ] **Step 11: `.mallet.lisp` を作成**
+
+`tests/dsl-test.lisp` の `dsl-macros-signal-at-runtime` は `(eval '(defspec ...))` で
+マクロ展開の**実行時**挙動を検証する。これは mallet の `no-eval` ルールに触れるが、
+「展開は成功し、実行時に `not-implemented` が出る」という本タスクの設計そのものを
+検証している唯一の手段であり、`macroexpand-1` だけでは証明できない。cl-mcp と同じく
+パス限定でルールを外す。
+
+```lisp
+;;;; .mallet.lisp
+;;;;
+;;;; tests/dsl-test.lisp evaluates the DSL macros' expansions on purpose: the
+;;;; skeleton's contract is that expansion succeeds while the expansion's
+;;;; execution signals NOT-IMPLEMENTED, and MACROEXPAND-1 alone cannot show the
+;;;; second half.  The rule stays on everywhere else.
+
+(:mallet-config
+ (:extends :default)
+ (:for-paths ("tests/dsl-test.lisp")
+   (:disable :no-eval)))
+```
+
+- [ ] **Step 12: lint とコミット**
 
 ```bash
 mallet src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp main.lisp tests.lisp
 git add -A
 git commit -m "feat: add function specs, introspection and the surface DSL"
 ```
+
+Expected: `✓ No problems found.`
 
 ---
 
