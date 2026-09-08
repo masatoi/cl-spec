@@ -5,7 +5,13 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
+                #:invalid-spec-form)
+  (:import-from #:cl-spec/src/ir
+                #:spec-name #:spec-source-form #:spec-source-location #:spec-kind
+                #:type-spec-type-specifier #:reference-spec-target
+                #:predicate-spec-predicate #:member-spec-values
+                #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum
+                #:instance-of-spec-class-name)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form
                 #:*spec-primitives*))
@@ -15,14 +21,83 @@
 (deftest mvp-primitives-are-declared
   (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
     (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
-                 "LIST-OF" "VECTOR-OF" "CONS-OF" "TUPLE" "NULLABLE"
-                 "INSTANCE-OF")
+                 "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "INSTANCE-OF")
                *spec-primitives*)))
-  (testing "heads are names, so they survive being written in another package"
-    (ok (every #'stringp *spec-primitives*))
-    (ok (member (symbol-name 'range) *spec-primitives* :test #'string=))))
+  (testing "CONS-OF is gone, matching the MVP spec list in section 52"
+    (ok (not (member "CONS-OF" *spec-primitives* :test #'string=)))))
 
-(deftest normalize-is-a-stub
-  (testing "NORMALIZE-SPEC-FORM signals NOT-IMPLEMENTED until it is written"
-    (ok (signals (normalize-spec-form '(and integer (satisfies plusp)))
-                 'not-implemented))))
+(deftest bare-symbols-split-into-types-and-references
+  (testing "a COMMON-LISP type name becomes a TYPE-SPEC"
+    (let ((spec (normalize-spec-form 'integer)))
+      (ok (eq :type (spec-kind spec)))
+      (ok (eq 'integer (type-spec-type-specifier spec)))))
+  (testing "NULL is a type, not a reference"
+    (ok (eq :type (spec-kind (normalize-spec-form 'null)))))
+  (testing "any other symbol becomes a REFERENCE-SPEC"
+    (let ((spec (normalize-spec-form 'positive-integer)))
+      (ok (eq :reference (spec-kind spec)))
+      (ok (eq 'positive-integer (reference-spec-target spec)))))
+  (testing "a symbol in another package is a reference even if it names a class"
+    (ok (eq :reference (spec-kind (normalize-spec-form 'cl-user::my-class))))))
+
+(deftest explicit-leaf-heads
+  (testing "(TYPE ...) wraps a type specifier"
+    (ok (equal '(vector fixnum)
+               (type-spec-type-specifier (normalize-spec-form '(type (vector fixnum)))))))
+  (testing "(SATISFIES ...) records the predicate"
+    (ok (eq 'plusp (predicate-spec-predicate (normalize-spec-form '(satisfies plusp))))))
+  (testing "(MEMBER ...) keeps its values unnormalized"
+    (ok (equal '(:a :b :c) (member-spec-values (normalize-spec-form '(member :a :b :c))))))
+  (testing "(INSTANCE-OF ...) records the class name"
+    (ok (eq 'my-class
+            (instance-of-spec-class-name (normalize-spec-form '(instance-of my-class)))))))
+
+(deftest range-accepts-both-arities
+  (testing "two arguments leave the base type unspecified"
+    (let ((spec (normalize-spec-form '(range 1 100))))
+      (ok (null (range-spec-base-type spec)))
+      (ok (eql 1 (range-spec-minimum spec)))
+      (ok (eql 100 (range-spec-maximum spec)))))
+  (testing "three arguments name the base type"
+    (let ((spec (normalize-spec-form '(range integer 1 100))))
+      (ok (eq 'integer (range-spec-base-type spec)))))
+  (testing "* becomes :UNBOUNDED"
+    (let ((spec (normalize-spec-form '(range 1 *))))
+      (ok (eql 1 (range-spec-minimum spec)))
+      (ok (eq :unbounded (range-spec-maximum spec)))))
+  (testing "a non numeric base type is rejected"
+    (ok (signals (normalize-spec-form '(range character 1 2)) 'invalid-spec-form))))
+
+(deftest heads-are-matched-by-name-not-identity
+  (testing "a head interned in another package still normalizes"
+    (let ((head (intern "SATISFIES" (or (find-package "CL-USER") *package*))))
+      (ok (eq :predicate (spec-kind (normalize-spec-form (list head 'plusp))))))))
+
+(deftest normalization-records-provenance
+  (testing "the top level spec keeps name, source form and location"
+    (let ((spec (normalize-spec-form '(satisfies plusp)
+                                     :name 'positive
+                                     :source-location '(:file "x.lisp" :package "CL-USER"))))
+      (ok (eq 'positive (spec-name spec)))
+      (ok (equal '(satisfies plusp) (spec-source-form spec)))
+      (ok (equal '(:file "x.lisp" :package "CL-USER") (spec-source-location spec))))))
+
+(deftest rejected-forms
+  (testing "CONS-OF is reported as post-MVP rather than as an unknown head"
+    (let ((condition (handler-case (progn (normalize-spec-form '(cons-of integer integer)) nil)
+                       (invalid-spec-form (c) c))))
+      (ok condition)
+      (ok (search "post-MVP" (princ-to-string condition)))))
+  (testing "an unknown head is rejected"
+    (ok (signals (normalize-spec-form '(vector-or-list integer)) 'invalid-spec-form)))
+  (testing "a non symbol head is rejected"
+    (ok (signals (normalize-spec-form '((1 2) 3)) 'invalid-spec-form)))
+  (testing "a bare literal is rejected"
+    (ok (signals (normalize-spec-form 42) 'invalid-spec-form)))
+  (testing "wrong arity is rejected"
+    (ok (signals (normalize-spec-form '(satisfies plusp oddp)) 'invalid-spec-form))))
+
+(deftest spec-objects-pass-through
+  (testing "an already normalized spec is returned unchanged"
+    (let ((spec (normalize-spec-form 'integer)))
+      (ok (eq spec (normalize-spec-form spec))))))
