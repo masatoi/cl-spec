@@ -100,6 +100,28 @@
                 #:run-property
                 #:run-properties
                 #:replay-property)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec
+                #:function-spec-name
+                #:function-spec-argument-specs
+                #:function-spec-return-spec
+                #:function-spec-preconditions
+                #:function-spec-postconditions
+                #:function-spec-source-form
+                #:function-spec-source-location
+                #:function-spec-metadata
+                #:register-function-spec
+                #:check-function)
+  (:import-from #:cl-spec/src/introspection
+                #:describe-spec
+                #:describe-property
+                #:spec-data
+                #:property-data)
+  (:import-from #:cl-spec/src/dsl
+                #:defspec
+                #:defspec-function
+                #:defproperty
+                #:defgenerator)
   (:export ;; Conditions
            #:cl-spec-error
            #:not-implemented
@@ -194,6 +216,28 @@
            #:property-result-elapsed
            #:run-property
            #:run-properties
-           #:replay-property))
+           #:replay-property
+           ;; Function specs
+           #:function-spec
+           #:function-spec-name
+           #:function-spec-argument-specs
+           #:function-spec-return-spec
+           #:function-spec-preconditions
+           #:function-spec-postconditions
+           #:function-spec-source-form
+           #:function-spec-source-location
+           #:function-spec-metadata
+           #:register-function-spec
+           #:check-function
+           ;; Introspection
+           #:describe-spec
+           #:describe-property
+           #:spec-data
+           #:property-data
+           ;; DSL
+           #:defspec
+           #:defspec-function
+           #:defproperty
+           #:defgenerator))
 
 (in-package #:cl-spec/main)

@@ -16,7 +16,11 @@
   (:import-from #:cl-spec/tests/explain-test)
   (:import-from #:cl-spec/tests/generator-test)
   (:import-from #:cl-spec/tests/property-test)
-  (:import-from #:cl-spec/tests/property-runner-test))
+  (:import-from #:cl-spec/tests/property-runner-test)
+  (:import-from #:cl-spec/tests/function-spec-test)
+  (:import-from #:cl-spec/tests/introspection-test)
+  (:import-from #:cl-spec/tests/dsl-test)
+  (:import-from #:cl-spec/tests/main-test))
 
 (in-package #:cl-spec/tests)
 
