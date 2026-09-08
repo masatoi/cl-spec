@@ -1,0 +1,117 @@
+# CLAUDE.md
+
+## Agent Guidelines
+
+@prompts/repl-driven-development.md
+@prompts/common-lisp-expert.md
+
+## Project Overview
+
+cl-spec is an executable semantic IR and property framework for Common Lisp
+programs, designed for both humans and LLM coding agents. It provides
+machine-readable specifications, runtime contract checking, property-based
+testing and structured introspection.
+
+The specification lives in `docs/cl-spec-specification-v0.2-draft.md`; design
+documents live in `docs/superpowers/specs/`.
+
+**Current status: skeleton.** The condition hierarchy, the Semantic IR class
+hierarchy and the registry are implemented. Normalization, validation,
+explanation, generation, property execution, function checking and
+instrumentation are stubs that signal `not-implemented`.
+
+## Development With cl-mcp
+
+This project is developed with cl-mcp's tools:
+
+- **Lisp code operations** (search, read, edit, eval): use `clgrep-search`,
+  `lisp-read-file`, `lisp-edit-form`, `repl-eval`, `run-tests` per
+  `prompts/repl-driven-development.md`
+- **Shell commands**: only for `git`, `mallet` and user-requested commands
+- cl-spec itself does **not** depend on cl-mcp. Never add it to `:depends-on`
+
+## Systems
+
+| System | Contents | Extra dependency |
+|---|---|---|
+| `cl-spec` | Semantic IR, registry, validation, explain, introspection, DSL | none |
+| `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
+| `cl-spec/instrument` | runtime function instrumentation | none |
+| `cl-spec/tests` | test suite | `rove` |
+
+The core system must never load `check-it`. The generator backend is injected
+at load time into `cl-spec:*generator-backend*` by `cl-spec/check-it`.
+
+## Package Naming
+
+ASDF `package-inferred-system`: the package name equals the file path.
+
+| File | Package |
+|---|---|
+| `src/ir.lisp` | `cl-spec/src/ir` |
+| `src/backends/check-it.lisp` | `cl-spec/src/backends/check-it` |
+| `tests/ir-test.lisp` | `cl-spec/tests/ir-test` |
+| `main.lisp` | `cl-spec/main`, nickname `cl-spec` |
+
+Adding a file requires no `.asd` change; dependencies are inferred from
+`:import-from`. New test files **must** be added to `tests.lisp`, otherwise
+they are never run.
+
+Never reference the `cl-spec` nickname from inside `src/`: ASDF reads it as a
+dependency on the root system and the graph becomes circular.
+
+## Testing & Linting
+
+```bash
+rove cl-spec.asd                                  # full suite
+mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp
+```
+
+Single suite from the REPL:
+
+```lisp
+(rove:run :cl-spec/tests/registry-test)
+```
+
+Before opening a PR: `(asdf:compile-system :cl-spec :force :all)` to surface
+warnings (`:force t` recompiles nothing here — this is a package-inferred
+system, so the work lives in the per-file subsystems that only `:force :all`
+reaches), then the full suite, then mallet. Lint is currently advisory:
+findings are tracked for a single batch cleanup, so a mallet warning does not
+block a PR today.
+
+## Code Style
+
+- Google Common Lisp Style Guide
+- 2-space indent, <=100 columns
+- Blank line between top-level forms
+- Lower-case lisp-case: `my-function`, `*special*`, `+constant+`, `something-p`
+- Docstrings required on public functions, macros and classes — stubs included
+- Each file starts with `;;;; <path>`, then `defpackage`, then `(in-package ...)`
+- `(:use #:cl)` only; take everything else through `:import-from`
+- Stubs signal `(error 'not-implemented :operator '<name>)` and declare their
+  arguments ignored
+
+## Implementation Order
+
+Follow §70 of the specification. Steps 1-3 (Semantic IR, registry protocol,
+hash-table registry) are done; the next step is 4, `defspec` normalization.
+The first milestone is the vertical slice of §67:
+
+```lisp
+(defspec positive-integer (and integer (range 1 *)))
+(validp 'positive-integer 10)
+(explain-data 'positive-integer -1)
+(sample 'positive-integer)
+```
+
+## Repository Structure
+
+```
+main.lisp         Public API re-export (no logic)
+tests.lisp        Aggregate test system and rove runner
+src/              Implementation, one responsibility per file
+tests/            Rove suites, mirrored naming (*-test.lisp)
+docs/             Specification and design documents
+prompts/          System prompts for AI agents
+```
