@@ -58,16 +58,32 @@ introspection を実装するときに、アクセサを公開するか、`spec-
 
 ## 5. registry への到達手段が API 全体で不揃い
 
-**決着**（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md` §2.6）: 全エントリポイントを
-`:registry` キーワード引数へ統一した。
+**部分的に決着**（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md` §2.6）: designator を
+受ける公開関数のうち11個だけを `:registry` キーワードへ統一した。対象は `validp` `validate`
+`explain-data` `explain` `generator-for` `sample` `run-property` `run-properties`
+`replay-property` `spec-data` `property-data`（全て `src/validator.lisp` `src/explain.lisp`
+`src/generator.lisp` `src/property-runner.lisp` `src/introspection.lisp` で実測確認済み）。
 
-- 位置引数 `&optional (registry *registry*)`: registry front-end、`register-property`、`register-function-spec`、`instrument-function`、`spec-data`、`property-data`
-- `:context` キーワード: `compile-validator`、`compile-explainer`、`compile-generator`
-- 手段なし（動的束縛でしか差し替えられない）: `validp`、`validate`、`explain-data`、`explain`、`describe-spec`、`describe-property`、`check-function`、`run-property`
+残りは§2.6が明示的に据え置くと決めた、意図的な不揃いである。
 
-`describe-spec` は optional 引数が stream だが、対応するデータ関数 `spec-data` は同じ位置が registry になっている。
+- registry front-end（`find-spec` `list-specs` `find-function-spec` `list-function-specs`
+  `find-property` `list-properties` `properties-for` `properties-with-tag`、いずれも
+  `src/registry.lisp`）と `register-spec` `register-property`（`src/property.lisp`）
+  `register-function-spec`（`src/function-spec.lisp`）`instrument-function`（`src/instrument.lisp`）
+  は `&optional (registry *registry*)` の位置引数のまま。§2.6は「互換のため残す」と明言している。
+  `register-property` / `register-function-spec` は `main.lisp` から re-export される public API
+  でもあり、統一対象11個には最初から含まれていない — `:registry` キーワードで呼べると仮定した
+  コードはこの2つに対して型エラーになる。
+- `compile-validator` / `compile-explainer` / `compile-generator` は `&key context` のまま。
+  §2.6は「context は registry を含む compile 時の環境であり、registry 単体とは別物」として
+  意図的に変更対象から外している。
+- `describe-spec` / `describe-property`（`&optional (stream *standard-output*)`、registry を
+  受ける引数自体が無い）と `check-function`（`&key trials seed options`、同じく registry 引数が
+  無い）には到達手段がまだ無い。動的束縛でしか差し替えられない。
 
-個々のシグネチャは仕様書 §51 と一致しており、単体では正当化できる。ただし §8 が registry を protocol 化した理由の一つは test isolation と実験的 spec の隔離なので、動的束縛でしか差し替えられない関数が多いのは設計意図と噛み合わない。実装がシグネチャを固定してしまう前に方針を決める。
+したがって元々この項目が指摘していた不揃いは、11関数については解消されたが、それ以外の関数では
+今もそのまま残っている。ただしこれはもう「未決定だから揃っていない」のではなく、§2.6が下した
+意図的な設計判断（互換性優先、あるいは context と registry を混ぜない）である。
 
 なお `register-spec` は `(name spec &optional registry)` で、兄弟の `register-function-spec` / `register-property` はオブジェクトだけを取って名前を導出する。これは `src/registry.lisp` のヘッダコメントに理由が書いてあるが、export 一覧からは見えない。
 

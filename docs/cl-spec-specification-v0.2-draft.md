@@ -2641,7 +2641,7 @@ semantic oracle
 (spec-data 'positive-integer)
 (validp 'positive-integer 10)
 (explain-data 'positive-integer -1)
-(sample-spec 'positive-integer)
+(sample 'positive-integer)
 ```
 
 が動作する。
