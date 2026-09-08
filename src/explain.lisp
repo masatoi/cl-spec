@@ -134,10 +134,14 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
           (unless (funcall predicate value)
             (list (error-datum :predicate-failed path value
                                :predicate predicate :expected expected)))
-        (error (condition)
+        ((and error (not (or undefined-function program-error))) (condition)
           ;; A predicate applied to the wrong kind of value is a fact about the
           ;; value, not a bug in the caller: VALIDP must answer NIL rather than
-          ;; unwind.
+          ;; unwind. UNDEFINED-FUNCTION (a typo'd predicate name) and
+          ;; PROGRAM-ERROR (a predicate called with the wrong number of
+          ;; arguments) are authoring bugs instead, and are left to propagate
+          ;; so the reader is pointed at the broken spec rather than told the
+          ;; value is bad.
           (list (error-datum :predicate-errored path value
                              :predicate predicate :expected expected
                              :condition-type (type-of condition)

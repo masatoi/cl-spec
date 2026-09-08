@@ -30,7 +30,9 @@
     (testing "VALIDP is true exactly when EXPLAIN-DATA reports no errors"
       (dolist (value (list 10 -1 0 1 "foo" nil))
         (ok (eq (and (validp 'positive-integer value :registry registry) t)
-                (and (getf (explain-data 'positive-integer value :registry registry) :valid) t)))))))
+                (and (getf (explain-data 'positive-integer value :registry registry)
+                           :valid)
+                     t)))))))
 
 (deftest validate-returns-or-signals
   (let ((registry (make-hash-table-registry)))
@@ -45,6 +47,20 @@
         (ok condition)
         (ok (eql -1 (spec-violation-value condition)))
         (ok (spec-violation-errors condition))))))
+
+(deftest predicate-errors-distinguish-value-bugs-from-spec-bugs
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'positive
+                            (normalize-spec-form '(satisfies plusp) :name 'positive))
+    (registry-register-spec registry 'broken
+                            ;; PLUSSPP does not exist: a typo the author made, not a fact
+                            ;; about any value handed to VALIDP.
+                            (normalize-spec-form '(satisfies plusspp) :name 'broken))
+    (testing "a predicate applied to the wrong kind of value still answers NIL"
+      (ok (not (validp 'positive "foo" :registry registry))))
+    (testing "an undefined predicate signals rather than reporting the value as invalid"
+      (ok (handler-case (progn (validp 'broken 1 :registry registry) nil)
+            (undefined-function () t))))))
 
 (deftest compile-validator-produces-a-predicate
   (testing "the compiled function takes one argument and returns a boolean"

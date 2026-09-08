@@ -44,11 +44,20 @@
       (ok (eq :predicate-failed (getf datum :kind)))
       (ok (eq 'plusp (getf datum :predicate)))
       (ok (equal '(:satisfies plusp) (getf datum :expected)))))
-  (testing "a predicate that signals is reported as :PREDICATE-ERRORED, not propagated"
+  (testing "a predicate signalling on a wrong-typed value is :PREDICATE-ERRORED, not propagated"
     (let ((datum (first (errors-for '(satisfies plusp) "foo"))))
       (ok (eq :predicate-errored (getf datum :kind)))
       (ok (getf datum :condition-type))
-      (ok (stringp (getf datum :condition-report))))))
+      (ok (stringp (getf datum :condition-report)))))
+  (testing "an undefined predicate propagates instead of being reported as a bad value"
+    ;; A typo'd predicate name is a bug in the spec, not a fact about the
+    ;; value: rendering it as :PREDICATE-ERRORED would send the reader after
+    ;; the wrong thing.
+    (ok (handler-case (progn (errors-for '(satisfies plusspp) 1) nil)
+          (undefined-function () t))))
+  (testing "a predicate called with the wrong number of arguments also propagates"
+    (ok (handler-case (progn (errors-for '(satisfies cons) 1) nil)
+          (program-error () t)))))
 
 (deftest member-and-range-failures
   (testing "MEMBER reports the admissible values"
