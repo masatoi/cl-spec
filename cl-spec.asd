@@ -1,21 +1,10 @@
-(defsystem "cl-spec"
-  :version "0.1.0"
-  :author ""
-  :license ""
-  :depends-on ()
-  :components ((:module "src"
-                :components
-                ((:file "main"))))
-  :description ""
-  :in-order-to ((test-op (test-op "cl-spec/tests"))))
+;;;; cl-spec.asd
 
-(defsystem "cl-spec/tests"
-  :author ""
-  :license ""
-  :depends-on ("cl-spec"
-               "rove")
-  :components ((:module "tests"
-                :components
-                ((:file "main"))))
-  :description "Test system for cl-spec"
-  :perform (test-op (op c) (symbol-call :rove :run c)))
+(asdf:defsystem "cl-spec"
+  :class :package-inferred-system
+  :description "Executable semantic IR and property framework for Common Lisp programs"
+  :author "Satoshi Imai"
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("cl-spec/main")
+  :in-order-to ((test-op (test-op "cl-spec/tests"))))
