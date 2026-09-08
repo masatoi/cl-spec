@@ -3663,7 +3663,9 @@ jobs:
 
 - [ ] **Step 2: lint workflow を作成**
 
-`.github/workflows/lint.yml`:
+`.github/workflows/lint.yml`。mallet はリポジトリルートの `.mallet.lisp`（Task 7 で
+作成済み。`tests/dsl-test.lisp` の `no-eval` だけをパス限定で無効化）を自動発見するので、
+CI 側に追加の設定は要らない。
 
 ```yaml
 name: Lint
