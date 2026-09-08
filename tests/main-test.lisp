@@ -45,3 +45,17 @@ example when a :IMPORT-FROM clause is dropped from MAIN.LISP but the matching
     (dolist (name *mvp-api*)
       (let ((symbol (find-symbol name "CL-SPEC")))
         (ok (symbol-reachable-p symbol))))))
+
+(deftest new-public-symbols-are-reachable
+  (testing "the conditions the MVP added are external in CL-SPEC"
+    (dolist (name '("INVALID-SPEC-FORM" "INVALID-SPEC-FORM-FORM" "INVALID-SPEC-FORM-REASON"
+                    "GENERATOR-UNAVAILABLE" "GENERATOR-UNAVAILABLE-SPEC"
+                    "GENERATOR-UNAVAILABLE-REASON" "UNSUPPORTED-SEED"))
+      (multiple-value-bind (symbol status) (find-symbol name "CL-SPEC")
+        (ok symbol)
+        (ok (eq :external status)))))
+  (testing "source locations can be read without reaching into an internal package"
+    (dolist (name '("SOURCE-LOCATION-FILE" "SOURCE-LOCATION-PACKAGE"))
+      (multiple-value-bind (symbol status) (find-symbol name "CL-SPEC")
+        (ok symbol)
+        (ok (eq :external status))))))

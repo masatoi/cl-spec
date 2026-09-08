@@ -6,7 +6,13 @@
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented
-                #:not-implemented-operator)
+                #:not-implemented-operator
+                #:unknown-spec)
+  (:import-from #:cl-spec/src/registry
+                #:make-hash-table-registry
+                #:registry-register-spec)
+  (:import-from #:cl-spec/src/normalize
+                #:normalize-spec-form)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
@@ -30,7 +36,6 @@ signals, or NIL if it signals no such condition."
 
 (deftest introspection-entry-points-are-stubs
   (testing "each signals NOT-IMPLEMENTED naming itself"
-    (ok (signals (spec-data 'positive-integer) 'not-implemented))
     (ok (signals (property-data 'addition-preserves-order) 'not-implemented))
     (ok (signals (describe-spec 'positive-integer) 'not-implemented))
     (ok (signals (describe-property 'addition-preserves-order)
@@ -38,8 +43,6 @@ signals, or NIL if it signals no such condition."
 
 (deftest introspection-entry-points-name-themselves
   (testing "the signalled condition's operator names the entry point that signalled it"
-    (ok (eq 'spec-data
-            (signalled-operator (lambda () (spec-data 'positive-integer)))))
     (ok (eq 'property-data
             (signalled-operator
              (lambda () (property-data 'addition-preserves-order)))))
@@ -48,3 +51,30 @@ signals, or NIL if it signals no such condition."
     (ok (eq 'describe-property
             (signalled-operator
              (lambda () (describe-property 'addition-preserves-order)))))))
+
+(deftest spec-data-projects-the-ir
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'positive-integer
+                            (normalize-spec-form
+                             '(and integer (range 1 *))
+                             :name 'positive-integer
+                             :source-location '(:file "x.lisp" :package "CL-USER")))
+    (let ((data (spec-data 'positive-integer :registry registry)))
+      (testing "the top level carries name, kind and the author's source form"
+        (ok (eq 'positive-integer (getf data :name)))
+        (ok (eq :and (getf data :kind)))
+        (ok (equal '(and integer (range 1 *)) (getf data :source-form))))
+      (testing "the source location is expanded rather than opaque"
+        (ok (equal '(:file "x.lisp" :package "CL-USER") (getf data :source-location))))
+      (testing "children are projected recursively with node specific keys"
+        (let ((children (getf data :children)))
+          (ok (= 2 (length children)))
+          (ok (eq :type (getf (first children) :kind)))
+          (ok (eq 'integer (getf (first children) :type)))
+          (ok (eq :range (getf (second children) :kind)))
+          (ok (eql 1 (getf (second children) :min)))
+          (ok (eq :unbounded (getf (second children) :max)))))
+      (testing "a leaf carries no :CHILDREN key"
+        (ok (not (member :children (first (getf data :children)))))))
+    (testing "an unregistered name signals UNKNOWN-SPEC"
+      (ok (signals (spec-data 'absent :registry registry) 'unknown-spec)))))

@@ -18,7 +18,14 @@
                 #:unknown-spec-name
                 #:unknown-property
                 #:unknown-property-name
-                #:no-generator-backend)
+                #:no-generator-backend
+                #:invalid-spec-form
+                #:invalid-spec-form-form
+                #:invalid-spec-form-reason
+                #:generator-unavailable
+                #:generator-unavailable-spec
+                #:generator-unavailable-reason
+                #:unsupported-seed)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-name
@@ -28,6 +35,9 @@
                 #:spec-metadata
                 #:spec-kind
                 #:spec-children)
+  (:import-from #:cl-spec/src/utils/source-location
+                #:source-location-file
+                #:source-location-package)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:hash-table-registry
@@ -136,6 +146,13 @@
            #:unknown-property
            #:unknown-property-name
            #:no-generator-backend
+           #:invalid-spec-form
+           #:invalid-spec-form-form
+           #:invalid-spec-form-reason
+           #:generator-unavailable
+           #:generator-unavailable-spec
+           #:generator-unavailable-reason
+           #:unsupported-seed
            ;; Semantic IR
            #:spec
            #:spec-name
@@ -145,6 +162,8 @@
            #:spec-metadata
            #:spec-kind
            #:spec-children
+           #:source-location-file
+           #:source-location-package
            ;; Registry
            #:*registry*
            #:hash-table-registry
