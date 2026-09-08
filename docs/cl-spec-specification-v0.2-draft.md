@@ -1231,9 +1231,20 @@ machine-readable
 
 cl-mcp側がそれをtoolとして公開する。
 
+§28の `describe_symbol` はcl-spec単独の値を返す関数ではなく、joinである。signature、CL型宣言、
+CLOS methods、source locationはcl-mcp側だけが持つ情報であり、cl-specのregistryには存在しない。
+したがって `describe_symbol` はcl-mcp側に実装する。
+
+cl-spec側はそのjoinの半分——registryが持っている情報——を1回の呼び出しで返す `semantic-data` を
+提供する。これにより、cl-mcp側は `find-spec` ・`find-function-spec` ・`find-property` ・
+`properties-for` のように個別のindexを列挙しなくてよい。registryのindex構成はcl-specの内部実装
+であり、それを別リポジトリに漏らさないための境界がこの関数である。
+
 想定API：
 
 ```text
+semantic_data
+
 list_specs
 describe_spec
 
@@ -1605,6 +1616,12 @@ pretty printed stringしか取得できない
 だけでsemantic informationを取得できる。
 
 主要なdefinition objectは元S-expressionとnormalized representationの双方を保持する。
+
+Introspection-firstの原則はconsumer側にも及ぶ。consumerはregistryが `find-spec` ・
+`find-function-spec` ・`find-property` ・`properties-for` のように複数のindexへ分かれている
+ことを知らなくても、あるsymbolについて何が分かっているかを問い合わせられなければならない。
+`semantic-data` (specification §27) がその入口であり、consumerはregistryの内部構造を列挙する
+必要がない。
 
 ---
 
@@ -2026,6 +2043,7 @@ describe-spec
 describe-property
 spec-data
 property-data
+semantic-data
 
 ```
 
