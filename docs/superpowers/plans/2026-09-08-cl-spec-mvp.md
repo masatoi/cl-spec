@@ -794,13 +794,26 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
       (ok (signals (explain-data 'absent 1 :registry registry) 'unknown-spec)))))
 ```
 
-`tests/validator-test.lisp` を書き換える:
+`tests/validator-test.lisp` を書き換える。`defpackage` は rove に加え
+`#:cl-spec/src/normalize` から `#:normalize-spec-form`、`#:cl-spec/src/validator` から
+`#:compile-validator #:validp #:validate`、`#:cl-spec/src/explain` から `#:explain-data`、
+`#:cl-spec/src/conditions` から `#:spec-violation #:spec-violation-value #:spec-violation-errors`、
+`#:cl-spec/src/registry` から `#:make-hash-table-registry #:registry-register-spec` を import する。
+
+fixture は**葉ノード**の `(range integer 1 *)` を使う。同じ spec の連言形
+`(and integer (range 1 *))` が §67 の例だが、複合ノードの explainer は Task 6 なので、
+ここでそれを使うとスイートが赤いまま Task 5 が終わってしまう。検査する6つの値に対して
+両者の可否は完全に一致する — 非整数は、連言なら `integer` の枝で、葉なら range 自身の
+基底型検査で落ちる。Task 6 で連言形へ戻す。
 
 ```lisp
 (deftest validp-agrees-with-explain-data
   (let ((registry (make-hash-table-registry)))
+    ;; Leaf form on purpose: the (AND INTEGER (RANGE 1 *)) spelling of this same
+    ;; spec is the section 67 example, and the explain tests exercise it once
+    ;; composite nodes exist.  Do not "simplify" it back before then.
     (registry-register-spec registry 'positive-integer
-                            (normalize-spec-form '(and integer (range 1 *))
+                            (normalize-spec-form '(range integer 1 *)
                                                  :name 'positive-integer))
     (testing "VALIDP is true exactly when EXPLAIN-DATA reports no errors"
       (dolist (value (list 10 -1 0 1 "foo" nil))
@@ -810,7 +823,7 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
 (deftest validate-returns-or-signals
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'positive-integer
-                            (normalize-spec-form '(and integer (range 1 *))
+                            (normalize-spec-form '(range integer 1 *)
                                                  :name 'positive-integer))
     (testing "a valid value is returned unchanged"
       (ok (eql 10 (validate 'positive-integer 10 :registry registry))))
@@ -823,7 +836,7 @@ git commit -m "feat: normalize composite spec forms and wire up defspec"
 
 (deftest compile-validator-produces-a-predicate
   (testing "the compiled function takes one argument and returns a boolean"
-    (let ((validator (compile-validator (normalize-spec-form '(and integer (range 1 *))))))
+    (let ((validator (compile-validator (normalize-spec-form '(range integer 1 *)))))
       (ok (funcall validator 5))
       (ok (not (funcall validator -5))))))
 ```
@@ -1012,9 +1025,9 @@ MCP projection are derived from it."
 ```
 
 `src/validator.lisp` の `defpackage` の `:import-from #:cl-spec/src/conditions` を
-`#:spec-violation` に差し替え、`#:cl-spec/src/explain` から `#:compile-explainer`、
-`#:cl-spec/src/registry` から `#:*registry*`、`#:cl-spec/src/resolve` から `#:resolve-spec` を
-import する。`declaim` はそのまま。本体:
+`#:spec-violation` に差し替え、`#:cl-spec/src/ir` に `#:spec-name` を足し（`validate` が呼ぶ）、
+`#:cl-spec/src/explain` から `#:compile-explainer`、`#:cl-spec/src/registry` から `#:*registry*`、
+`#:cl-spec/src/resolve` から `#:resolve-spec` を import する。`declaim` はそのまま。本体:
 
 ```lisp
 (defun compile-validator (spec &key context)
@@ -1170,6 +1183,10 @@ git commit -m "feat: explain and validate the leaf spec nodes"
         (ok (null (funcall explainer '(1 (2 3)) nil)))
         (ok (funcall explainer '(1 "x") nil))))))
 ```
+
+あわせて `tests/validator-test.lisp` の fixture を、Task 5 が葉ノードに落としていた
+`(range integer 1 *)` から §67 の連言形 `(and integer (range 1 *))` へ戻す（3箇所）。
+理由を書いた「Leaf form on purpose」のコメントも削除する。
 
 - [ ] **Step 2: 失敗を確認**
 
