@@ -28,6 +28,32 @@
                 #:spec-metadata
                 #:spec-kind
                 #:spec-children)
+  (:import-from #:cl-spec/src/registry
+                #:*registry*
+                #:hash-table-registry
+                #:make-hash-table-registry
+                #:registry-find-spec
+                #:registry-register-spec
+                #:registry-list-specs
+                #:registry-find-function-spec
+                #:registry-register-function-spec
+                #:registry-list-function-specs
+                #:registry-find-property
+                #:registry-register-property
+                #:registry-list-properties
+                #:registry-properties-for
+                #:registry-properties-with-tag
+                #:registry-clear
+                #:find-spec
+                #:list-specs
+                #:register-spec
+                #:find-function-spec
+                #:list-function-specs
+                #:find-property
+                #:list-properties
+                #:properties-for
+                #:properties-with-tag
+                #:clear-registry)
   (:export ;; Conditions
            #:cl-spec-error
            #:not-implemented
@@ -50,6 +76,32 @@
            #:spec-source-location
            #:spec-metadata
            #:spec-kind
-           #:spec-children))
+           #:spec-children
+           ;; Registry
+           #:*registry*
+           #:hash-table-registry
+           #:make-hash-table-registry
+           #:registry-find-spec
+           #:registry-register-spec
+           #:registry-list-specs
+           #:registry-find-function-spec
+           #:registry-register-function-spec
+           #:registry-list-function-specs
+           #:registry-find-property
+           #:registry-register-property
+           #:registry-list-properties
+           #:registry-properties-for
+           #:registry-properties-with-tag
+           #:registry-clear
+           #:find-spec
+           #:list-specs
+           #:register-spec
+           #:find-function-spec
+           #:list-function-specs
+           #:find-property
+           #:list-properties
+           #:properties-for
+           #:properties-with-tag
+           #:clear-registry))
 
 (in-package #:cl-spec/main)
