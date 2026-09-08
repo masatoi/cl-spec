@@ -71,6 +71,28 @@
       (ok (eq :function-spec (registry-find-function-spec registry 'transfer)))
       (ok (equal '(transfer) (registry-list-function-specs registry))))))
 
+(deftest found-p-distinguishes-a-nil-value-from-absence
+  (testing "REGISTRY-FIND-SPEC reports found-p T for a name registered with value NIL"
+    (let ((registry (make-hash-table-registry)))
+      (registry-register-spec registry 'nil-valued-spec nil)
+      (multiple-value-bind (spec foundp) (registry-find-spec registry 'nil-valued-spec)
+        (ok (null spec))
+        (ok (eq t foundp)))
+      (multiple-value-bind (spec foundp) (registry-find-spec registry 'never-registered-spec)
+        (ok (null spec))
+        (ok (null foundp)))))
+  (testing "REGISTRY-FIND-FUNCTION-SPEC reports found-p T for a name registered with value NIL"
+    (let ((registry (make-hash-table-registry)))
+      (registry-register-function-spec registry 'nil-valued-function-spec nil)
+      (multiple-value-bind (function-spec foundp)
+          (registry-find-function-spec registry 'nil-valued-function-spec)
+        (ok (null function-spec))
+        (ok (eq t foundp)))
+      (multiple-value-bind (function-spec foundp)
+          (registry-find-function-spec registry 'never-registered-function-spec)
+        (ok (null function-spec))
+        (ok (null foundp))))))
+
 (deftest properties-are-indexed-by-target-and-tag
   (testing "a property is reachable by name, by target symbol and by tag"
     (let ((registry (make-hash-table-registry)))
