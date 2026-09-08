@@ -18,6 +18,20 @@
       (ok (evenp (length location)))
       (ok (equal (package-name *package*) (getf location :package))))))
 
+(deftest current-source-location-captures-load-truename
+  (testing "*LOAD-TRUENAME* becomes the :FILE namestring when not compiling a file"
+    (let ((*compile-file-truename* nil)
+          (*load-truename* #P"/tmp/loaded-example.lisp"))
+      (ok (equal (namestring #P"/tmp/loaded-example.lisp")
+                 (source-location-file (current-source-location)))))))
+
+(deftest current-source-location-prefers-compile-file-truename
+  (testing "*COMPILE-FILE-TRUENAME* wins over *LOAD-TRUENAME* when both are bound"
+    (let ((*compile-file-truename* #P"/tmp/compiled-example.lisp")
+          (*load-truename* #P"/tmp/loaded-example.lisp"))
+      (ok (equal (namestring #P"/tmp/compiled-example.lisp")
+                 (source-location-file (current-source-location)))))))
+
 (deftest source-location-readers
   (testing "readers project the plist without knowing its layout"
     (let ((location (list :file "/tmp/example.lisp" :package "EXAMPLE")))
