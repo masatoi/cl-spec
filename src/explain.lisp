@@ -336,8 +336,19 @@ descriptor, which is why the common cases are unwrapped here."
                indent
                (conjunct-mark (getf conjunct :status))
                (format-expected (getf conjunct :expected))))
-     (dolist (child (getf datum :errors))
-       (print-explain-error child stream (+ indent 2))))
+     ;; The checklist line above already rendered the failing conjunct's own
+     ;; descriptor, so recursing into an :ERRORS entry with that same
+     ;; :EXPECTED would print it again -- exactly the case when the failing
+     ;; conjunct is a leaf.  A conjunct that is itself a collection or
+     ;; disjunction reports errors under a different :EXPECTED (an element's,
+     ;; or none at all for a nested :CONJUNCT-FAILED/​:NO-BRANCH-MATCHED), so
+     ;; those still carry real structure and are still printed.
+     (let* ((failed-conjunct (find :failed (getf datum :conjuncts)
+                                   :key (lambda (c) (getf c :status))))
+            (failed-expected (getf failed-conjunct :expected)))
+       (dolist (child (getf datum :errors))
+         (unless (equal (getf child :expected) failed-expected)
+           (print-explain-error child stream (+ indent 2))))))
     (:no-branch-matched
      (format stream "~vTno branch matched~%" indent)
      (dolist (branch (getf datum :branches))
