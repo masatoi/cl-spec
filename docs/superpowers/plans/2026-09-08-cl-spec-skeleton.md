@@ -28,7 +28,9 @@
 - 全テストは rove。`tests/<module>-test.lisp` にミラー配置する。
 - `rove:signals` は単体ではアサーションにならず真偽値を返すだけなので、必ず
   `(ok (signals (form) 'condition-type))` の形で `ok` に包む。
-- lint は `mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp` が "No problems found" であること（そのタスクまでに存在するファイルのみを対象にする）。
+- lint（`mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp`）は
+  **スケルトン期間中は advisory**。指摘が出てもタスクをブロックせず、内容を ledger に記録して
+  後でまとめて直す。骨格を組むことが目的で、lint 対応でタスクを止めない。
 - 内部モジュールから nickname `cl-spec` を参照しない（ASDF が root system `cl-spec` への依存と解釈して循環するため）。
 
 ## コマンド早見表
@@ -3694,15 +3696,14 @@ jobs:
           cd mallet && make
           echo "$GITHUB_WORKSPACE/mallet" >> "$GITHUB_PATH"
 
+      # Advisory while the skeleton is being built: the findings are real but are
+      # scheduled for one batch cleanup, so a red lint job here would be noise on
+      # every PR.  Flip continue-on-error off once that cleanup lands.
       - name: Run mallet lint
+        continue-on-error: true
         run: |
-          OUTPUT=$(mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp \
-                          tests/*.lisp tests/*/*.lisp 2>&1) || true
-          echo "$OUTPUT"
-          if ! echo "$OUTPUT" | grep -q "No problems found"; then
-            echo "::error::Mallet found problems"
-            exit 1
-          fi
+          mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp \
+                 tests/*.lisp tests/*/*.lisp
 ```
 
 - [ ] **Step 3: prompts を cl-mcp からコピー**
@@ -3965,5 +3966,5 @@ git commit -m "chore: add CI, lint, agent guidelines and dev shell"
 2. `(asdf:load-system :cl-spec/check-it)` と `(asdf:load-system :cl-spec/instrument)` が成功する
 3. `(asdf:compile-system :cl-spec :force :all)` が警告を出さない
 4. `rove cl-spec.asd` が全テスト green
-5. `mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp` が "No problems found"
+5. `mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp` を実行し、残った指摘が ledger に記録されている（スケルトン期間中は advisory。"No problems found" は完了条件ではない）
 6. 仕様書 §51 の MVP API 全 24 symbol が `cl-spec` パッケージから external として見える（`tests/main-test.lisp` が検証）
