@@ -97,6 +97,24 @@
     (draws-for '(range integer 20 100) :count 1)
     (ok (= 10 check-it:*size*))))
 
+(deftest a-straddling-real-range-draws-from-both-halves
+  ;; REAL-RANGE-GENERATOR shifts a finite/finite real range to start at zero
+  ;; before handing it to check-it, to work around a bug in check-it's
+  ;; REAL-GENERATOR-FUNCTION (see the docstring).  BOUNDED-GENERATOR has to
+  ;; size *REQUIRED-SIZE* for that shifted, wider interval or the upper half
+  ;; of a range straddling zero never gets drawn.
+  (let ((values (draws-for '(range real -10 10) :count 200)))
+    (testing "every value stays inside the declared range"
+      (ok (every (lambda (value) (<= -10 value 10)) values)))
+    (testing "values are drawn from above zero"
+      (ok (some (lambda (value) (> value 0)) values)))
+    (testing "values are drawn from below zero"
+      (ok (some (lambda (value) (< value 0)) values)))))
+
+(deftest a-degenerate-real-range-yields-its-single-value
+  (testing "every draw from (range real 5 5) is 5, and it does not signal"
+    (ok (every (lambda (value) (= value 5)) (draws-for '(range real 5 5))))))
+
 (deftest references-are-followed
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'small

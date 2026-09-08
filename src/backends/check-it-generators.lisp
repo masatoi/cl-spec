@@ -104,7 +104,10 @@ so FLOAT and RATIONAL are absent rather than silently wrong."
 
 (defun real-range-generator (lower upper)
   "Return a generator producing reals in [LOWER, UPPER], where either bound may
-be check-it's open-bound marker, *.
+be check-it's open-bound marker, *.  A degenerate range (LOWER and UPPER equal
+and finite) returns LOWER itself: check-it's GENERATE treats a non-generator as
+a constant, and an interval of width zero admits exactly LOWER anyway -- this
+also sidesteps the bug below, which would otherwise call (RANDOM 0.0) for it.
 
 Works around a bug in check-it's REAL-GENERATOR-FUNCTION: when both bounds are
 finite, its lower-bound calculation reads (ABS UPPER) where it should read
@@ -116,14 +119,18 @@ of a zero lower bound is 0 under both the correct and the buggy formula, so the
 bug has no effect there, and the draw is mapped back by adding LOWER.  An open
 bound is passed through unshifted: check-it's asymmetric branches (one bound *)
 do not have this bug."
-  (if (or (eq lower '*) (eq upper '*))
-      (make-instance 'real-generator :lower-limit lower :upper-limit upper)
-      (make-instance 'mapped-generator
-                     :mapping (lambda (value) (+ value lower))
-                     :sub-generators
-                     (list (make-instance 'real-generator
-                                          :lower-limit 0
-                                          :upper-limit (- upper lower))))))
+  (cond
+    ((or (eq lower '*) (eq upper '*))
+     (make-instance 'real-generator :lower-limit lower :upper-limit upper))
+    ((= lower upper)
+     lower)
+    (t
+     (make-instance 'mapped-generator
+                    :mapping (lambda (value) (+ value lower))
+                    :sub-generators
+                    (list (make-instance 'real-generator
+                                         :lower-limit 0
+                                         :upper-limit (- upper lower)))))))
 
 (defmethod spec-generator ((spec type-spec) context)
   (declare (ignore context))
@@ -134,10 +141,16 @@ do not have this bug."
 
 :UNBOUNDED is written back as check-it's own open bound marker, *.  Each finite
 bound also raises *REQUIRED-SIZE*: without it check-it clamps the bound away and
-generates outside the range."
+generates outside the range.  When both bounds are finite, the interval's width
+raises it too: REAL-RANGE-GENERATOR asks check-it for the shifted interval
+[0, MAXIMUM - MINIMUM], which is wider than either bound's own magnitude
+whenever MINIMUM and MAXIMUM straddle zero, and *SIZE* has to cover that
+shifted width or half the declared range goes unreachable."
   (dolist (bound (list minimum maximum))
     (unless (eq bound :unbounded)
       (setf *required-size* (max *required-size* (ceiling (abs bound))))))
+  (when (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))
+    (setf *required-size* (max *required-size* (ceiling (abs (- maximum minimum))))))
   (let ((lower (if (eq minimum :unbounded) '* minimum))
         (upper (if (eq maximum :unbounded) '* maximum)))
     (case base-type
