@@ -417,6 +417,16 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    片側が `*` の分岐にはこのバグは無いのでそのまま通す。`shrink` は実数を縮小しない
    （下記6）ので、`mapped-generator` を挟んでも失うものは無い。
 
+   **平行移動した分、`*required-size*` は区間幅も見なければならない。** 3.4-4 の
+   `max(|min|, |max|)` だけでは、0 をまたぐ範囲で足りない。`(range real -10 10)` は
+   required-size 10 のまま内側 generator に `[0, 20]` を渡すことになり、check-it が
+   `[0, 10]` にクランプして写像後は `[-10, 0]` — 宣言した範囲の上半分が到達不能になる。
+   値は妥当なままなので validity のテストでは捕まらない。有限×有限では
+   `(ceiling (abs (- maximum minimum)))` も併せて折り込む。
+
+   下限と上限が等しい退化した範囲は generator を作らず、その唯一の値を定数として返す。
+   check-it は非 generator を定数として扱うので、これで `(random 0.0)` を回避できる。
+
 6. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
    「can't shrink over non-discrete search space」として値をそのまま返す。
    実数を引数に取る property の反例は縮小されない。
@@ -625,8 +635,7 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 
 - `vector-of` の反例は縮小されない（check-it の `shrink mapped-generator` が no-op、3.4-3）
 - 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-6）
-- 有限×有限の実数範囲は check-it のバグ（3.4-5）を避けるため平行移動して生成する。
-  下限と上限が等しい退化した範囲（`(range 5 5)` など）は依然として `(random 0.0)` を踏む
+- 有限×有限の実数範囲は check-it のバグ（3.4-5）を避けるため平行移動して生成する
 - 再帰 spec は generator を持てない（`generator-unavailable`）。validation と explain は動く
 - `not` / 単体の `satisfies` / `instance-of` は generator を持てない
 - `and` の generator は制約畳み込みのヒューリスティックに依存する。畳み込めない組み合わせは
