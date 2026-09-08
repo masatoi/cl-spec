@@ -5,7 +5,16 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
+                #:not-implemented
+                #:invalid-spec-form)
+  (:import-from #:cl-spec/src/ir
+                #:spec-kind
+                #:spec-name
+                #:spec-source-form)
+  (:import-from #:cl-spec/src/registry
+                #:*registry*
+                #:make-hash-table-registry
+                #:find-spec)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
                 #:defspec-function
@@ -56,9 +65,7 @@
       (ok (eq 'small-integer (second (second expansion)))))))
 
 (deftest dsl-macros-signal-at-runtime
-  (testing "evaluating an expansion reaches a stub and signals NOT-IMPLEMENTED"
-    (ok (signals (eval '(defspec positive-integer (and integer (range 1 *))))
-                 'not-implemented))
+  (testing "evaluating an expansion of DEFSPEC-FUNCTION, DEFPROPERTY or DEFGENERATOR reaches a stub and signals NOT-IMPLEMENTED"
     (ok (signals (eval '(defspec-function transfer
                          (:args (amount positive-money))
                          (:returns transaction)))
@@ -70,3 +77,19 @@
                  'not-implemented))
     (ok (signals (eval '(defgenerator small-integer () (random 100)))
                  'not-implemented))))
+
+(deftest defspec-registers-a-normalized-spec
+  (let ((*registry* (make-hash-table-registry)))
+    (testing "DEFSPEC normalizes its form and registers the result"
+      (eval '(defspec positive (satisfies plusp)))
+      (let ((spec (find-spec 'positive)))
+        (ok spec)
+        (ok (eq :predicate (spec-kind spec)))
+        (ok (eq 'positive (spec-name spec)))
+        (ok (equal '(satisfies plusp) (spec-source-form spec)))))))
+
+(deftest defspec-rejects-a-composite-head-for-now
+  (let ((*registry* (make-hash-table-registry)))
+    (testing "composite heads are not normalized yet"
+      (ok (signals (eval '(defspec positive-integer (and integer (range 1 *))))
+                   'invalid-spec-form)))))
