@@ -17,7 +17,14 @@
                 #:unknown-spec-name
                 #:unknown-property
                 #:unknown-property-name
-                #:no-generator-backend))
+                #:no-generator-backend
+                #:invalid-spec-form
+                #:invalid-spec-form-form
+                #:invalid-spec-form-reason
+                #:generator-unavailable
+                #:generator-unavailable-spec
+                #:generator-unavailable-reason
+                #:unsupported-seed))
 
 (in-package #:cl-spec/tests/conditions-test)
 
@@ -69,3 +76,28 @@
   (testing "the report tells the user which system installs a backend"
     (ok (search "CL-SPEC/CHECK-IT"
                 (princ-to-string (make-condition 'no-generator-backend))))))
+
+(deftest normalization-failures-carry-the-form
+  (testing "INVALID-SPEC-FORM keeps the form and the reason"
+    (let ((condition (make-condition 'invalid-spec-form
+                                     :form '(cons-of a b)
+                                     :reason "post-MVP")))
+      (ok (equal '(cons-of a b) (invalid-spec-form-form condition)))
+      (ok (equal "post-MVP" (invalid-spec-form-reason condition)))
+      (ok (typep condition 'cl-spec-error))
+      (ok (search "post-MVP" (princ-to-string condition))))))
+
+(deftest generator-failures-name-the-spec
+  (testing "GENERATOR-UNAVAILABLE keeps the spec and the reason"
+    (let ((condition (make-condition 'generator-unavailable
+                                     :spec :placeholder
+                                     :reason "NOT has no generation strategy")))
+      (ok (eq :placeholder (generator-unavailable-spec condition)))
+      (ok (typep condition 'cl-spec-error))
+      (ok (search "NOT has no generation strategy" (princ-to-string condition))))))
+
+(deftest unsupported-seed-names-the-implementation
+  (testing "UNSUPPORTED-SEED reports which implementation is missing support"
+    (let ((condition (make-condition 'unsupported-seed)))
+      (ok (typep condition 'cl-spec-error))
+      (ok (search (lisp-implementation-type) (princ-to-string condition))))))
