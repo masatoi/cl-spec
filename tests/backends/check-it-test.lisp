@@ -71,6 +71,30 @@
       (let ((spec (normalize-spec-form form)))
         (ok (every (lambda (value) (validp spec value)) (draws-for form)))))))
 
+(deftest bounded-collection-elements-stay-in-range
+  ;; A bare (list-of integer) never exercises BOUNDED-GENERATOR's clamping
+  ;; work, because unbounded integers already draw from the full [-*size*,
+  ;; *size*] window. A bounded element does: LIST-OF-SPEC and VECTOR-OF-SPEC
+  ;; used to defer the element generator into a closure that only ran at
+  ;; generate time, after *REQUIRED-SIZE*'s binding was gone, so the element's
+  ;; range never reached CHECK-IT:*SIZE* and got clamped away.
+  (testing "every element of a LIST-OF a bounded range stays inside that range"
+    (ok (every (lambda (list) (every (lambda (value) (<= 20 value 100)) list))
+               (draws-for '(list-of (range integer 20 100))))))
+  (testing "every element of a VECTOR-OF a bounded range stays inside that range"
+    (ok (every (lambda (vector) (every (lambda (value) (<= 20 value 100)) vector))
+               (draws-for '(vector-of (range integer 20 100)))))))
+
+(deftest a-single-child-member-or-or-does-not-crash-check-it
+  ;; CHECK-IT:COMPUTE-WEIGHTS computes (log 1) for a lone sub-generator and
+  ;; then divides by the resulting zero, signalling a floating point error
+  ;; instead of CL-SPEC's own conditions. A single child needs no weighted
+  ;; choice at all.
+  (testing "a one-valued MEMBER generates its single value"
+    (ok (every (lambda (value) (eq :ok value)) (draws-for '(member :ok)))))
+  (testing "a one-child OR generates values admitted by its child"
+    (ok (every #'integerp (draws-for '(or integer))))))
+
 (deftest ranges-wider-than-check-its-default-size-are-honoured
   ;; check-it clamps every numeric limit to CHECK-IT:*SIZE*, which is 10 by
   ;; default.  Without the required-size accounting these two draw 10 and -10,

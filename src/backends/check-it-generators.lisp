@@ -170,17 +170,29 @@ shifted width or half the declared range goes unreachable."
 (defmethod spec-generator ((spec member-spec) context)
   (declare (ignore context))
   (let ((values (member-spec-values spec)))
-    (when (null values)
-      (error 'generator-unavailable :spec spec :reason "an empty MEMBER admits nothing"))
-    (make-instance 'or-generator :sub-generators (copy-list values))))
+    (cond
+      ((null values)
+       (error 'generator-unavailable :spec spec :reason "an empty MEMBER admits nothing"))
+      ;; CHECK-IT:COMPUTE-WEIGHTS divides by (1- LEN), so a single-valued
+      ;; MEMBER would signal a floating point error inside check-it rather
+      ;; than generating its one admissible value. check-it's GENERATE treats
+      ;; a non-generator as a constant, so returning the value directly is
+      ;; equivalent to wrapping it and skips the weighting machinery entirely.
+      ((null (rest values)) (first values))
+      (t (make-instance 'or-generator :sub-generators (copy-list values))))))
 
 (defmethod spec-generator ((spec or-spec) context)
   (let ((children (or-spec-children spec)))
-    (when (null children)
-      (error 'generator-unavailable :spec spec :reason "an empty OR admits nothing"))
-    (make-instance 'or-generator
-                   :sub-generators (mapcar (lambda (child) (spec-generator child context))
-                                           children))))
+    (cond
+      ((null children)
+       (error 'generator-unavailable :spec spec :reason "an empty OR admits nothing"))
+      ;; A single child needs no weighted choice, and check-it's
+      ;; COMPUTE-WEIGHTS divides by zero when asked to choose among one
+      ;; generator, so return it directly rather than wrapping it.
+      ((null (rest children)) (spec-generator (first children) context))
+      (t (make-instance 'or-generator
+                        :sub-generators (mapcar (lambda (child) (spec-generator child context))
+                                                children))))))
 
 (defmethod spec-generator ((spec nullable-spec) context)
   (make-instance 'or-generator
@@ -194,13 +206,22 @@ shifted width or half the declared range goes unreachable."
 
 (defmethod spec-generator ((spec list-of-spec) context)
   (let ((element (collection-spec-element-spec spec)))
-    ;; check-it calls the generator function once per element per draw, which is
-    ;; what lets it shrink each element independently.
+    ;; Compile the element once, eagerly, purely so its bounds reach
+    ;; *REQUIRED-SIZE* while COMPILE-SPEC-GENERATOR's binding is still in
+    ;; effect -- the value itself is discarded. check-it still needs a fresh
+    ;; generator per element for element-wise shrinking, which the closure
+    ;; below provides; it calls the generator function once per element per
+    ;; draw.
+    (spec-generator element context)
     (make-instance 'list-generator
                    :generator-function (lambda () (spec-generator element context)))))
 
 (defmethod spec-generator ((spec vector-of-spec) context)
   (let ((element (collection-spec-element-spec spec)))
+    ;; See LIST-OF-SPEC's method: the eager call below exists only to raise
+    ;; *REQUIRED-SIZE*; the closure still supplies a fresh generator per
+    ;; element.
+    (spec-generator element context)
     (make-instance 'mapped-generator
                    :mapping (lambda (items) (coerce items 'vector))
                    :sub-generators
