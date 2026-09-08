@@ -12,7 +12,8 @@
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
+                #:not-implemented
+                #:invalid-property-form)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -90,13 +91,31 @@ quietly swallow an existing property's first body form."
   "Return the clause in OPTIONS headed by KEYWORD, or NIL."
   (find keyword options :key #'first))
 
+(defun trials-plist-p (value)
+  "Return true when VALUE is a well formed :TRIALS plist.
+
+A well formed plist alternates a profile keyword and its integer trial count,
+for example (:SMOKE 5 :NORMAL 200).  (:TRIALS 25) -- a plausible mis-write for
+a flat trial count -- is not one: VALUE is 25 here, not a list at all, and
+would otherwise reach RESOLVE-TRIALS's GETF and signal an unrelated
+SIMPLE-TYPE-ERROR."
+  (and (listp value)
+       (evenp (length value))
+       (loop for (profile count) on value by #'cddr
+             always (and (keywordp profile) (integerp count)))))
+
 (defun expand-property-definition (whole name arguments body source-location)
   "Return the form DEFPROPERTY expands into.
 
 Unlike the other expanders this runs at macroexpansion time, because the
 predicate has to be compiled into a real function rather than kept as a list."
   (multiple-value-bind (documentation options forms) (parse-property-body body)
-    (let ((shrink-clause (option-clause options :shrink)))
+    (let ((shrink-clause (option-clause options :shrink))
+          (trials-clause (option-clause options :trials)))
+      (when (and trials-clause (not (trials-plist-p (second trials-clause))))
+        (error 'invalid-property-form
+               :form trials-clause
+               :reason "expected a plist, e.g. (:trials (:smoke 5 :normal 100))"))
       `(register-property
         (make-instance 'property
                        :name ',name
@@ -106,7 +125,7 @@ predicate has to be compiled into a real function rather than kept as a list."
                        :targets ',(rest (option-clause options :about))
                        :kind ',(second (option-clause options :kind))
                        :tags ',(rest (option-clause options :tags))
-                       :trials ',(second (option-clause options :trials))
+                       :trials ',(second trials-clause)
                        :documentation ,documentation
                        :body ',forms
                        :source-form ',whole

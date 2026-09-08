@@ -172,8 +172,19 @@
     ;; Define a property where :smoke runs only 5 trials but :normal runs 200.
     ;; This ensures a failure at the higher trial count.
     (eval '(cl-spec/src/dsl:defproperty profile-sensitive ((x small))
-             (:trials (:smoke 5) (:normal 200))
+             (:trials (:smoke 5 :normal 200))
              (< x 500)))
+    ;; DEFPROPERTY's :TRIALS clause takes exactly one plist argument, not one
+    ;; sub-list per profile: (:trials (:smoke 5) (:normal 200)) would parse,
+    ;; but EXPAND-PROPERTY-DEFINITION only keeps the first sub-list, silently
+    ;; dropping :NORMAL and leaving RESOLVE-TRIALS to fall back to the
+    ;; backend's default trial count instead of 200. Asserting the full plist
+    ;; survived DEFPROPERTY is what makes the rest of this test discriminate
+    ;; the fix from that bug, rather than passing whichever trial count wins.
+    (testing "both profiles survive DEFPROPERTY, not just the first sub-clause"
+      (ok (equal '(:smoke 5 :normal 200)
+                 (cl-spec/src/property:property-trials
+                  (cl-spec/src/registry:find-property 'profile-sensitive)))))
     ;; Run under :normal profile to guarantee finding a failure.
     (let ((normal-run (run-property 'profile-sensitive :profile :normal)))
       (testing "the property fails under :normal profile"

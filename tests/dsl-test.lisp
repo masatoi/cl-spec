@@ -119,3 +119,20 @@ stub and signals NOT-IMPLEMENTED"
     (testing "forms after the first non option stay in the body"
       (ok (= 2 (length (cl-spec/src/property:property-body
                         (cl-spec/src/registry:find-property 'stops-at-the-body))))))))
+
+(deftest defproperty-validates-its-trials-clause
+  (testing "(:trials 25), a plausible mis-write for a flat trial count, is rejected"
+    ;; Left unvalidated, 25 reaches RESOLVE-TRIALS's GETF and signals an
+    ;; unrelated SIMPLE-TYPE-ERROR instead of naming the actual problem.
+    (ok (signals (eval '(cl-spec/src/dsl:defproperty bad-trials ((x integer))
+                          (:trials 25)
+                          (integerp x)))
+                 'cl-spec/src/conditions:invalid-property-form)))
+  (testing "a well formed :TRIALS plist is accepted"
+    (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+      (eval '(cl-spec/src/dsl:defproperty good-trials ((x integer))
+              (:trials (:smoke 5 :normal 200))
+              (integerp x)))
+      (ok (equal '(:smoke 5 :normal 200)
+                 (cl-spec/src/property:property-trials
+                  (cl-spec/src/registry:find-property 'good-trials)))))))
