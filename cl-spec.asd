@@ -17,3 +17,11 @@
   :depends-on ("cl-spec"
                "check-it"
                "cl-spec/src/backends/check-it"))
+
+(asdf:defsystem "cl-spec/instrument"
+  :description "Runtime function instrumentation for cl-spec function specs"
+  :author "Satoshi Imai"
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("cl-spec"
+               "cl-spec/src/instrument"))
