@@ -83,3 +83,91 @@
         (ok (null (getf data :errors)))))
     (testing "an unregistered name signals UNKNOWN-SPEC"
       (ok (signals (explain-data 'absent 1 :registry registry) 'unknown-spec)))))
+
+(deftest and-short-circuits-and-reports-the-checklist
+  (testing "a conjunction that holds reports nothing"
+    (ok (null (errors-for '(and integer (satisfies plusp)) 10))))
+  (testing "the first failing conjunct stops the walk"
+    (let* ((datum (first (errors-for '(and integer (satisfies plusp)) "foo")))
+           (conjuncts (getf datum :conjuncts)))
+      (ok (eq :conjunct-failed (getf datum :kind)))
+      (ok (equal '(:failed :unchecked) (mapcar (lambda (c) (getf c :status)) conjuncts)))
+      (ok (equal '(:type integer) (getf (first conjuncts) :expected)))))
+  (testing "conjuncts before the failure are marked satisfied"
+    (let ((conjuncts (getf (first (errors-for '(and integer (satisfies plusp)) -1)) :conjuncts)))
+      (ok (equal '(:satisfied :failed) (mapcar (lambda (c) (getf c :status)) conjuncts)))))
+  (testing "the failing child's own errors are carried under :ERRORS"
+    (let ((datum (first (errors-for '(and integer (satisfies plusp)) -1))))
+      (ok (eq :predicate-failed (getf (first (getf datum :errors)) :kind)))))
+  (testing "the empty conjunction admits everything"
+    (ok (null (errors-for '(and) :anything)))))
+
+(deftest or-collects-every-branch
+  (testing "one matching branch is enough"
+    (ok (null (errors-for '(or integer string) "x"))))
+  (testing "when all branches fail their errors are kept"
+    (let ((datum (first (errors-for '(or integer string) :keyword))))
+      (ok (eq :no-branch-matched (getf datum :kind)))
+      (ok (= 2 (length (getf datum :branches))))
+      (ok (every (lambda (branch) (getf branch :errors)) (getf datum :branches)))))
+  (testing "the empty disjunction admits nothing"
+    (ok (errors-for '(or) :anything))))
+
+(deftest not-and-nullable
+  (testing "NOT fails exactly when its child holds"
+    (ok (null (errors-for '(not integer) "x")))
+    (ok (eq :negation-failed (getf (first (errors-for '(not integer) 1)) :kind))))
+  (testing "NULLABLE admits NIL and delegates otherwise"
+    (ok (null (errors-for '(nullable integer) nil)))
+    (ok (null (errors-for '(nullable integer) 1)))
+    (ok (errors-for '(nullable integer) "x"))))
+
+(deftest collections-report-the-failing-position
+  (testing "LIST-OF rejects a non list"
+    (ok (eq :not-a-list (getf (first (errors-for '(list-of integer) 5)) :kind))))
+  (testing "LIST-OF reports the index of every bad element"
+    (let ((errors (errors-for '(list-of integer) '(1 "x" 3 "y"))))
+      (ok (= 2 (length errors)))
+      (ok (equal '((1) (3)) (mapcar (lambda (e) (getf e :path)) errors)))))
+  (testing "VECTOR-OF rejects a non vector and reports indices"
+    (ok (eq :not-a-vector (getf (first (errors-for '(vector-of integer) '(1 2))) :kind)))
+    (ok (equal '((1)) (mapcar (lambda (e) (getf e :path))
+                              (errors-for '(vector-of integer) #(1 "x"))))))
+  (testing "TUPLE checks the length before the positions"
+    (ok (eq :wrong-length (getf (first (errors-for '(tuple integer string) '(1))) :kind)))
+    (ok (null (errors-for '(tuple integer string) '(1 "x"))))
+    (ok (equal '((0)) (mapcar (lambda (e) (getf e :path))
+                              (errors-for '(tuple integer string) '("a" "x"))))))
+  (testing "nested collections accumulate the path root first"
+    (ok (equal '((1 0))
+               (mapcar (lambda (e) (getf e :path))
+                       (errors-for '(list-of (list-of integer)) '((1) ("x"))))))))
+
+(deftest references-resolve-at-call-time
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'target (normalize-spec-form 'integer :name 'target))
+    (let ((explainer (compile-explainer (normalize-spec-form 'target)
+                                        :context (list :registry registry))))
+      (testing "the reference resolves through the registry"
+        (ok (null (funcall explainer 1 nil)))
+        (ok (funcall explainer "x" nil)))
+      (testing "redefining the target changes what an existing explainer accepts"
+        (registry-register-spec registry 'target (normalize-spec-form 'string :name 'target))
+        (ok (funcall explainer 1 nil))
+        (ok (null (funcall explainer "x" nil))))
+      (testing "an unregistered target signals UNKNOWN-SPEC when checked"
+        (let ((other (compile-explainer (normalize-spec-form 'absent)
+                                        :context (list :registry registry))))
+          (ok (signals (funcall other 1 nil) 'unknown-spec)))))))
+
+(deftest recursive-specs-can-be-checked
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'int-tree
+                            (normalize-spec-form '(or integer (tuple int-tree int-tree))
+                                                 :name 'int-tree))
+    (testing "a self referential spec terminates on well founded values"
+      (let ((explainer (compile-explainer (normalize-spec-form 'int-tree)
+                                          :context (list :registry registry))))
+        (ok (null (funcall explainer 1 nil)))
+        (ok (null (funcall explainer '(1 (2 3)) nil)))
+        (ok (funcall explainer '(1 "x") nil))))))

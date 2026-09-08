@@ -8,7 +8,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form
-                #:not-implemented)   ; EXPLAIN stays a stub until Task 7
+                #:not-implemented   ; EXPLAIN stays a stub until Task 7
+                #:unknown-spec)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-name
@@ -27,9 +28,24 @@
                 #:instance-of-spec
                 #:instance-of-spec-class-name
                 #:reference-spec
-                #:reference-spec-target)
+                #:reference-spec-target
+                #:and-spec
+                #:and-spec-children
+                #:or-spec
+                #:or-spec-children
+                #:not-spec
+                #:not-spec-inner-spec
+                #:nullable-spec
+                #:nullable-spec-inner-spec
+                #:collection-spec
+                #:collection-spec-element-spec
+                #:list-of-spec
+                #:vector-of-spec
+                #:tuple-spec
+                #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry*
+                #:registry-find-spec)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
@@ -77,6 +93,18 @@ reads to learn what a value should have been."))
 
 (defmethod expected-descriptor ((spec reference-spec))
   (list :spec (reference-spec-target spec)))
+
+(defmethod expected-descriptor ((spec list-of-spec))
+  (list :list-of (expected-descriptor (collection-spec-element-spec spec))))
+
+(defmethod expected-descriptor ((spec vector-of-spec))
+  (list :vector-of (expected-descriptor (collection-spec-element-spec spec))))
+
+(defmethod expected-descriptor ((spec tuple-spec))
+  (list* :tuple (mapcar #'expected-descriptor (tuple-spec-element-specs spec))))
+
+(defmethod expected-descriptor ((spec not-spec))
+  (list :not (expected-descriptor (not-spec-inner-spec spec))))
 
 (defgeneric compile-node (spec context)
   (:documentation "Compile SPEC into a function of (VALUE PATH).
@@ -149,6 +177,112 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
       (let ((class (find-class class-name nil)))
         (unless (and class (typep value class))
           (list (error-datum :not-an-instance path value :expected expected)))))))
+
+(defun proper-list-p (object)
+  "Return true when OBJECT is a proper list.
+
+LENGTH and the LOOP list iteration both signal on a dotted list, so collection
+explainers ask this before walking a value the caller supplied."
+  (loop for tail = object then (cdr tail)
+        do (cond ((null tail) (return t))
+                 ((not (consp tail)) (return nil)))))
+
+(defmethod compile-node ((spec and-spec) context)
+  (let* ((children (and-spec-children spec))
+         (compiled (mapcar (lambda (child) (compile-node child context)) children))
+         (descriptors (mapcar #'expected-descriptor children)))
+    (lambda (value path)
+      ;; Short-circuiting is both the safe reading and the one section 22's
+      ;; example shows: a later conjunct may only be meaningful once the
+      ;; earlier ones hold, as (satisfies plusp) is only meaningful for a number.
+      (loop for child-function in compiled
+            for index from 0
+            for child-errors = (funcall child-function value path)
+            when child-errors
+              return (list (error-datum
+                            :conjunct-failed path value
+                            :conjuncts (loop for descriptor in descriptors
+                                             for position from 0
+                                             collect (list :expected descriptor
+                                                           :status (cond ((< position index)
+                                                                          :satisfied)
+                                                                         ((= position index)
+                                                                          :failed)
+                                                                         (t :unchecked))))
+                            :errors child-errors))))))
+
+(defmethod compile-node ((spec or-spec) context)
+  (let* ((children (or-spec-children spec))
+         (compiled (mapcar (lambda (child) (compile-node child context)) children))
+         (descriptors (mapcar #'expected-descriptor children)))
+    (lambda (value path)
+      (let ((branch-errors (mapcar (lambda (function) (funcall function value path))
+                                   compiled)))
+        (unless (some #'null branch-errors)
+          (list (error-datum :no-branch-matched path value
+                             :branches (mapcar (lambda (descriptor errors)
+                                                 (list :expected descriptor :errors errors))
+                                               descriptors branch-errors))))))))
+
+(defmethod compile-node ((spec not-spec) context)
+  (let ((inner (compile-node (not-spec-inner-spec spec) context))
+        (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (when (null (funcall inner value path))
+        (list (error-datum :negation-failed path value :expected expected))))))
+
+(defmethod compile-node ((spec nullable-spec) context)
+  (let ((inner (compile-node (nullable-spec-inner-spec spec) context)))
+    (lambda (value path)
+      (unless (null value)
+        (funcall inner value path)))))
+
+(defmethod compile-node ((spec list-of-spec) context)
+  (let ((element (compile-node (collection-spec-element-spec spec) context))
+        (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (if (not (proper-list-p value))
+          (list (error-datum :not-a-list path value :expected expected))
+          (loop for item in value
+                for index from 0
+                append (funcall element item (cons index path)))))))
+
+(defmethod compile-node ((spec vector-of-spec) context)
+  (let ((element (compile-node (collection-spec-element-spec spec) context))
+        (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (if (not (vectorp value))
+          (list (error-datum :not-a-vector path value :expected expected))
+          (loop for index from 0 below (length value)
+                append (funcall element (aref value index) (cons index path)))))))
+
+(defmethod compile-node ((spec tuple-spec) context)
+  (let* ((element-specs (tuple-spec-element-specs spec))
+         (compiled (mapcar (lambda (child) (compile-node child context)) element-specs))
+         (arity (length element-specs))
+         (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (cond
+        ((not (or (proper-list-p value) (vectorp value)))
+         (list (error-datum :not-a-sequence path value :expected expected)))
+        ((/= (length value) arity)
+         (list (error-datum :wrong-length path value :expected expected
+                            :expected-length arity :actual-length (length value))))
+        (t
+         (loop for function in compiled
+               for index from 0
+               append (funcall function (elt value index) (cons index path))))))))
+
+(defmethod compile-node ((spec reference-spec) context)
+  (let ((target (reference-spec-target spec))
+        (registry (context-registry context)))
+    ;; Resolving on every call rather than at compile time is what makes forward
+    ;; references, redefinition and recursive specs all work: compiling the
+    ;; target eagerly would either capture a stale definition or never terminate.
+    (lambda (value path)
+      (let ((resolved (or (registry-find-spec registry target)
+                          (error 'unknown-spec :name target))))
+        (funcall (compile-node resolved (list :registry registry)) value path)))))
 
 (defun compile-explainer (spec &key context)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
