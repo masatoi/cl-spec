@@ -97,6 +97,7 @@
 
 (define-condition invalid-spec-form (cl-spec-error)
   ((form :initarg :form
+         :initform nil
          :reader invalid-spec-form-form
          :documentation "The spec DSL form that could not be normalized.")
    (reason :initarg :reason
@@ -128,6 +129,7 @@
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec
+         :initform nil
          :reader generator-unavailable-spec
          :documentation "Spec no generator could be derived from.")
    (reason :initarg :reason

@@ -91,7 +91,12 @@
         (ok (eq t (getf data :valid)))
         (ok (null (getf data :errors)))))
     (testing "an unregistered name signals UNKNOWN-SPEC"
-      (ok (signals (explain-data 'absent 1 :registry registry) 'unknown-spec)))))
+      (ok (signals (explain-data 'absent 1 :registry registry) 'unknown-spec)))
+    (testing "an anonymous spec object reports its source form as :SPEC, not NIL"
+      ;; (RANGE 1 10) has no registered name, so :SPEC used to fall back to
+      ;; NIL and EXPLAIN would print literally "does not satisfy NIL."
+      (let ((data (explain-data (normalize-spec-form '(range 1 10)) 99)))
+        (ok (equal '(range 1 10) (getf data :spec)))))))
 
 (deftest and-short-circuits-and-reports-the-checklist
   (testing "a conjunction that holds reports nothing"

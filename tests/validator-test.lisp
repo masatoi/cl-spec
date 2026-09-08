@@ -11,6 +11,7 @@
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation
                 #:spec-violation-value
+                #:spec-violation-path
                 #:spec-violation-errors)
   (:import-from #:cl-spec/src/registry
                 #:make-hash-table-registry
@@ -47,6 +48,31 @@
         (ok condition)
         (ok (eql -1 (spec-violation-value condition)))
         (ok (spec-violation-errors condition))))))
+
+(deftest validate-signals-with-the-failing-path
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'ints
+                            (normalize-spec-form '(list-of integer) :name 'ints))
+    (testing "PATH is populated from the first structured error, not left NIL"
+      ;; A top level scalar failure has an empty path, so this needs a spec
+      ;; that actually nests -- otherwise the assertion would pass whether or
+      ;; not PATH were ever populated.
+      (let ((condition (handler-case
+                            (progn (validate 'ints '(1 2 "x" 4) :registry registry) nil)
+                          (spec-violation (c) c))))
+        (ok condition)
+        (ok (equal '(2) (spec-violation-path condition)))
+        (ok (search "at path (2)" (princ-to-string condition)))))))
+
+(deftest validate-names-an-anonymous-spec-by-its-source-form
+  (testing "an anonymous spec object reports its source form, not NIL"
+    ;; (RANGE 1 10) has no registered name, so :SPEC used to fall back to NIL
+    ;; and the report read literally "99 does not satisfy NIL."
+    (let ((condition (handler-case
+                          (progn (validate (normalize-spec-form '(range 1 10)) 99) nil)
+                        (spec-violation (c) c))))
+      (ok condition)
+      (ok (search "does not satisfy (RANGE 1 10)" (princ-to-string condition))))))
 
 (deftest predicate-errors-distinguish-value-bugs-from-spec-bugs
   (let ((registry (make-hash-table-registry)))

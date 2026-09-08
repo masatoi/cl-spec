@@ -174,8 +174,21 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
 
 NAME is the symbol the resulting spec will be registered under, or NIL for an
 anonymous inline spec.  SOURCE-LOCATION is a plist as produced by
-CL-SPEC/SRC/UTILS/SOURCE-LOCATION:CURRENT-SOURCE-LOCATION.  Both are attached to
-the top level node only; children carry their own source form and nothing else.
+CL-SPEC/SRC/UTILS/SOURCE-LOCATION:CURRENT-SOURCE-LOCATION.  When FORM is parsed
+from a symbol or a list, both are attached to the top level node only; children
+carry their own source form and nothing else.
+
+When FORM is already a SPEC object -- the branch programmatic and agent-driven
+composition relies on -- it is returned unchanged, and NAME/SOURCE-LOCATION are
+NOT attached even when supplied.  SPEC's NAME slot has no writer, and the same
+object may already be registered elsewhere or shared as a child of another
+spec, so setting it in place could rename that other registration or a nested
+node out from under whoever else holds a reference to it. Attaching a
+different name would require returning a copy instead, which would need a
+clone protocol across every concrete SPEC subclass; nothing in this codebase
+needs that yet, so it has not been built. Callers that must name an
+already-built spec should register it directly (see
+CL-SPEC/SRC/REGISTRY:REGISTER-SPEC) rather than relying on NAME here.
 
 The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot."
   (cond

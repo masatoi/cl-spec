@@ -85,7 +85,14 @@
       (ok (equal '(cons-of a b) (invalid-spec-form-form condition)))
       (ok (equal "post-MVP" (invalid-spec-form-reason condition)))
       (ok (typep condition 'cl-spec-error))
-      (ok (search "post-MVP" (princ-to-string condition))))))
+      (ok (search "post-MVP" (princ-to-string condition)))))
+  (testing "FORM defaults to NIL rather than leaving the slot unbound"
+    ;; An unbound slot would fail inside the :REPORT lambda itself the first
+    ;; time INVALID-SPEC-FORM is signalled without a :FORM initarg, masking
+    ;; whatever the real problem was.
+    (let ((condition (make-condition 'invalid-spec-form :reason "no form given")))
+      (ok (null (invalid-spec-form-form condition)))
+      (ok (stringp (princ-to-string condition))))))
 
 (deftest generator-failures-name-the-spec
   (testing "GENERATOR-UNAVAILABLE keeps the spec and the reason"
@@ -94,7 +101,11 @@
                                      :reason "NOT has no generation strategy")))
       (ok (eq :placeholder (generator-unavailable-spec condition)))
       (ok (typep condition 'cl-spec-error))
-      (ok (search "NOT has no generation strategy" (princ-to-string condition))))))
+      (ok (search "NOT has no generation strategy" (princ-to-string condition)))))
+  (testing "SPEC defaults to NIL rather than leaving the slot unbound"
+    (let ((condition (make-condition 'generator-unavailable :reason "no spec given")))
+      (ok (null (generator-unavailable-spec condition)))
+      (ok (stringp (princ-to-string condition))))))
 
 (deftest unsupported-seed-names-the-implementation
   (testing "UNSUPPORTED-SEED reports which implementation is missing support"

@@ -10,7 +10,6 @@
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
                 #:spec
-                #:spec-name
                 #:spec-kind
                 #:spec-source-form
                 #:type-spec
@@ -45,7 +44,8 @@
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
-                #:context-registry)
+                #:context-registry
+                #:spec-display-name)
   (:export #:compile-explainer
            #:explain-data
            #:explain
@@ -303,7 +303,7 @@ MCP projection are derived from it."
          (errors (funcall (compile-explainer spec :context (list :registry registry))
                           value nil)))
     (list :valid (null errors)
-          :spec (if (symbolp spec-designator) spec-designator (spec-name spec))
+          :spec (spec-display-name spec-designator spec)
           :value value
           :path nil
           :errors errors)))

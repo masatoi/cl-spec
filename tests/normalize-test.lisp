@@ -109,7 +109,14 @@
 (deftest spec-objects-pass-through
   (testing "an already normalized spec is returned unchanged"
     (let ((spec (normalize-spec-form 'integer)))
-      (ok (eq spec (normalize-spec-form spec))))))
+      (ok (eq spec (normalize-spec-form spec)))))
+  (testing "NAME is not attached to an already normalized spec, even when supplied"
+    ;; SPEC's NAME slot has no writer and the object may be shared or already
+    ;; registered elsewhere, so NORMALIZE-SPEC-FORM cannot safely rename it in
+    ;; place; see the docstring for why this is documented rather than fixed.
+    (let ((spec (normalize-spec-form 'integer)))
+      (ok (eq spec (normalize-spec-form spec :name 'renamed)))
+      (ok (null (spec-name (normalize-spec-form spec :name 'renamed)))))))
 
 (deftest composite-heads
   (testing "AND collects normalized children in order"

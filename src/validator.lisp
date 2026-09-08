@@ -10,14 +10,14 @@
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation)
   (:import-from #:cl-spec/src/ir
-                #:spec
-                #:spec-name)
+                #:spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
-                #:resolve-spec)
+                #:resolve-spec
+                #:spec-display-name)
   (:export #:compile-validator
            #:validp
            #:validate))
@@ -55,8 +55,8 @@ EXPLAIN-DATA so that callers do not have to re-run the check."
                           value nil)))
     (when errors
       (error 'spec-violation
-             :spec (if (symbolp spec-designator) spec-designator (spec-name spec))
+             :spec (spec-display-name spec-designator spec)
              :value value
-             :path nil
+             :path (getf (first errors) :path)
              :errors errors))
     value))
