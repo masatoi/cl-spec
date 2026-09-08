@@ -32,8 +32,10 @@ DESIGNATOR is either a spec object, which is returned unchanged, or a symbol
 looked up in REGISTRY."
   (if (typep designator 'spec)
       designator
-      (or (registry-find-spec registry designator)
-          (error 'unknown-spec :name designator))))
+      (multiple-value-bind (entry found-p) (registry-find-spec registry designator)
+        (if found-p
+            entry
+            (error 'unknown-spec :name designator)))))
 
 (defun resolve-property (designator registry)
   "Return the property DESIGNATOR names, signalling UNKNOWN-PROPERTY otherwise.
@@ -42,8 +44,10 @@ DESIGNATOR is either a property object, which is returned unchanged, or a
 symbol looked up in REGISTRY."
   (if (typep designator 'property)
       designator
-      (or (registry-find-property registry designator)
-          (error 'unknown-property :name designator))))
+      (multiple-value-bind (entry found-p) (registry-find-property registry designator)
+        (if found-p
+            entry
+            (error 'unknown-property :name designator)))))
 
 (defun context-registry (context)
   "Return the registry named by compilation CONTEXT, defaulting to *REGISTRY*.

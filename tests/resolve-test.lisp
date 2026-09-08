@@ -50,3 +50,15 @@
       (ok (eq registry (context-registry (list :registry registry)))))
     (testing "an empty context falls back to *REGISTRY*"
       (ok (eq cl-spec/src/registry:*registry* (context-registry nil))))))
+
+(deftest resolving-a-spec-registered-as-nil
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'nil-spec nil)
+    (testing "a symbol registered as NIL resolves to NIL"
+      (ok (null (resolve-spec 'nil-spec registry))))))
+
+(deftest resolving-a-property-registered-as-nil
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-property registry 'nil-prop nil)
+    (testing "a symbol registered as NIL resolves to NIL"
+      (ok (null (resolve-property 'nil-prop registry))))))
