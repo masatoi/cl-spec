@@ -9,6 +9,7 @@
   (:import-from #:rove)
   (:import-from #:cl-spec/tests/conditions-test)
   (:import-from #:cl-spec/tests/utils/source-location-test)
+  (:import-from #:cl-spec/tests/utils/random-test)
   (:import-from #:cl-spec/tests/ir-test)
   (:import-from #:cl-spec/tests/registry-test)
   (:import-from #:cl-spec/tests/resolve-test)
