@@ -143,3 +143,36 @@
       (testing "the shrunk counterexample is still a well-formed list of in-range integers"
         (ok (and (listp shrunk)
                  (every (lambda (value) (and (integerp value) (<= 1 value 100))) shrunk)))))))
+
+(deftest replay-reproduces-a-run
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 1000)))
+    ;; The range is wider than check-it's default size on purpose: the run only
+    ;; reaches a counterexample if the required-size accounting works.
+    (eval '(cl-spec/src/dsl:defproperty replayable ((x small))
+             (:trials (:normal 200))
+             (< x 500)))
+    (let ((first-run (run-property 'replayable)))
+      (testing "the property does fail, so there is something to reproduce"
+        (ok (eq :failed (property-result-status first-run))))
+      (testing "an integer seed reproduces the counterexample"
+        (let ((again (replay-property 'replayable (property-result-seed first-run))))
+          (ok (equal (property-result-counterexample first-run)
+                     (property-result-counterexample again)))
+          (ok (= (property-result-trials first-run) (property-result-trials again)))))
+      (testing "a result object may be passed in place of its seed"
+        (let ((again (replay-property 'replayable first-run)))
+          (ok (eql (property-result-seed first-run) (property-result-seed again)))
+          (ok (equal (property-result-counterexample first-run)
+                     (property-result-counterexample again))))))))
+
+(deftest run-properties-runs-each-one
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty holds ((x small)) (:trials (:normal 5)) (integerp x)))
+    (eval '(cl-spec/src/dsl:defproperty fails ((x small)) (:trials (:normal 5)) (and x nil)))
+    (let ((results (run-properties '(holds fails))))
+      (testing "one result per designator, in order"
+        (ok (= 2 (length results)))
+        (ok (equal '(holds fails) (mapcar #'property-result-property results)))
+        (ok (equal '(:passed :failed) (mapcar #'property-result-status results)))))))

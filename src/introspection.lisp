@@ -33,7 +33,20 @@
                 #:instance-of-spec
                 #:instance-of-spec-class-name)
   (:import-from #:cl-spec/src/resolve
-                #:resolve-spec)
+                #:resolve-spec
+                #:resolve-property)
+  (:import-from #:cl-spec/src/property
+                #:property-name
+                #:property-arguments
+                #:property-targets
+                #:property-kind
+                #:property-tags
+                #:property-documentation
+                #:property-body
+                #:property-source-form
+                #:property-source-location
+                #:property-trials
+                #:property-metadata)
   (:import-from #:cl-spec/src/utils/source-location
                 #:source-location-file
                 #:source-location-package)
@@ -104,14 +117,30 @@ consumer never has to distinguish an absent key from a NIL one."
 and MCP projections are built from."
   (spec->data (resolve-spec spec-designator registry)))
 
-(defun property-data (property-designator &optional (registry *registry*))
-  "Return a plist describing the registered property named by
-PROPERTY-DESIGNATOR: its name, targets, kind, argument specs, tags,
-documentation, source form, source location and trial configuration.
+(defun property-data (property-designator &key (registry *registry*))
+  "Return a plist describing the registered property named by PROPERTY-DESIGNATOR.
 
-Not implemented yet."
-  (declare (ignore property-designator registry))
-  (error 'not-implemented :operator 'property-data))
+  (:name <symbol> :kind <keyword> :targets (<symbol> ...) :tags (<tag> ...)
+   :documentation <string> :trials <plist>
+   :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
+   :body (<form> ...) :source-form <form>
+   :source-location (:file <string> :package <string>) :metadata <plist>)
+
+The body is the author's source rather than the compiled function, because a
+compiled function cannot be read (specification §39)."
+  (let ((property (resolve-property property-designator registry)))
+    (list :name (property-name property)
+          :kind (property-kind property)
+          :targets (property-targets property)
+          :tags (property-tags property)
+          :documentation (property-documentation property)
+          :trials (property-trials property)
+          :arguments (loop for (variable spec) in (property-arguments property)
+                           collect (list :variable variable :spec (spec->data spec)))
+          :body (property-body property)
+          :source-form (property-source-form property)
+          :source-location (source-location->data (property-source-location property))
+          :metadata (property-metadata property))))
 
 (defun describe-spec (spec-designator &optional (stream *standard-output*))
   "Print a human readable rendering of (SPEC-DATA SPEC-DESIGNATOR) to STREAM.

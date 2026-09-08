@@ -6,8 +6,6 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
-  (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
@@ -136,22 +134,24 @@ backend."
                    :condition (getf outcome :condition)
                    :elapsed elapsed)))
 
-(defun run-properties (property-designators &key profile options)
-  "Run each property in PROPERTY-DESIGNATORS and return a list of PROPERTY-RESULT.
+(defun run-properties (property-designators &key profile options (registry *registry*))
+  "Run each property in PROPERTY-DESIGNATORS and return the results in order.
 
-Every property is run even when an earlier one fails, so that one call reports
-the whole picture.
+Each run draws its own seed, so one failure can be replayed without re-running
+the others."
+  (mapcar (lambda (designator)
+            (run-property designator :profile profile :options options :registry registry))
+          property-designators))
 
-Not implemented yet."
-  (declare (ignore property-designators profile options))
-  (error 'not-implemented :operator 'run-properties))
-
-(defun replay-property (property-designator seed &key options)
+(defun replay-property (property-designator seed &key options (registry *registry*))
   "Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
-Given the same seed and the same property definition the generated sequence is
-identical, which is what makes a reported failure reproducible.
-
-Not implemented yet."
-  (declare (ignore property-designator seed options))
-  (error 'not-implemented :operator 'replay-property))
+SEED is either the integer seed of an earlier run or the PROPERTY-RESULT that
+run produced, since section 15 shows both spellings and an agent holding a
+result should not have to dig the seed out of it."
+  (run-property property-designator
+                :seed (if (typep seed 'property-result)
+                          (property-result-seed seed)
+                          seed)
+                :options options
+                :registry registry))
