@@ -131,7 +131,8 @@
                 #:describe-spec
                 #:describe-property
                 #:spec-data
-                #:property-data)
+                #:property-data
+                #:semantic-data)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
                 #:defspec-function
@@ -263,6 +264,7 @@
            #:describe-property
            #:spec-data
            #:property-data
+           #:semantic-data
            ;; DSL
            #:defspec
            #:defspec-function

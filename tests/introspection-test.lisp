@@ -10,7 +10,11 @@
                 #:unknown-spec)
   (:import-from #:cl-spec/src/registry
                 #:make-hash-table-registry
-                #:registry-register-spec)
+                #:registry-register-spec
+                #:registry-register-function-spec
+                #:registry-register-property
+                #:register-spec
+                #:properties-for)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   ;; No symbols imported: the body reaches CL-SPEC/SRC/DSL:DEFSPEC and
@@ -19,11 +23,18 @@
   ;; DEFPACKAGE's :USE/:IMPORT-FROM clauses, so the edge still has to be
   ;; declared here.
   (:import-from #:cl-spec/src/dsl)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec
+                #:register-function-spec)
+  (:import-from #:cl-spec/src/property
+                #:property
+                #:register-property)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
                 #:spec-data
-                #:property-data))
+                #:property-data
+                #:semantic-data))
 
 (in-package #:cl-spec/tests/introspection-test)
 
@@ -106,3 +117,103 @@ signals, or NIL if it signals no such condition."
           (ok (eq 'positive-integer (getf (getf (first arguments) :spec) :target)))))
       (testing "the body is readable rather than compiled away"
         (ok (equal '((> (+ x y) x)) (getf data :body)))))))
+
+(deftest semantic-data-reports-everything-registered-about-a-symbol
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'foo
+                            (normalize-spec-form '(and integer (range 1 *))
+                                                 :name 'foo
+                                                 :source-location '(:file "x.lisp")))
+    (register-function-spec (make-instance 'function-spec :name 'foo) registry)
+    (register-property (make-instance 'property
+                                      :name 'foo-preserves-total
+                                      :targets '(foo))
+                       registry)
+    (register-property (make-instance 'property
+                                      :name 'failed-foo-is-noop
+                                      :targets '(foo))
+                       registry)
+    (let ((data (semantic-data 'foo :registry registry)))
+      (testing "every key is correct for a symbol with a spec, function spec and properties"
+        (ok (eq 'foo (getf data :symbol)))
+        (ok (equal (package-name (symbol-package 'foo)) (getf data :package)))
+        (ok (eq 'foo (getf data :spec)))
+        (ok (eq 'foo (getf data :function-spec)))
+        (ok (null (getf data :property)))
+        (ok (equal (properties-for 'foo registry) (getf data :properties-about)))))))
+
+(deftest semantic-data-on-an-unregistered-symbol-is-all-nil-and-does-not-signal
+  (let* ((registry (make-hash-table-registry))
+         (data (semantic-data 'nothing-known-about-this :registry registry)))
+    (testing "SEMANTIC-DATA returns the full shape rather than signalling"
+      (ok (eq 'nothing-known-about-this (getf data :symbol)))
+      (ok (equal (package-name (symbol-package 'nothing-known-about-this))
+                (getf data :package)))
+      (ok (null (getf data :spec)))
+      (ok (null (getf data :function-spec)))
+      (ok (null (getf data :property)))
+      (ok (null (getf data :properties-about))))
+    (testing "every key is present even though every value is empty"
+      (ok (member :symbol data))
+      (ok (member :package data))
+      (ok (member :spec data))
+      (ok (member :function-spec data))
+      (ok (member :property data))
+      (ok (member :properties-about data)))))
+
+(deftest semantic-data-distinguishes-property-name-from-property-target
+  (let ((registry (make-hash-table-registry)))
+    (register-property (make-instance 'property :name 'bar :targets '(baz)) registry)
+    (register-property (make-instance 'property :name 'qux :targets '(bar)) registry)
+    (let ((data (semantic-data 'bar :registry registry)))
+      (testing ":PROPERTY is BAR's own registration; :PROPERTIES-ABOUT is what targets BAR"
+        (ok (eq 'bar (getf data :property)))
+        (ok (equal '(qux) (getf data :properties-about)))))))
+
+(deftest semantic-data-on-an-uninterned-symbol-has-no-package-and-does-not-signal
+  (let* ((registry (make-hash-table-registry))
+         (symbol (make-symbol "TRANSIENT"))
+         (data (semantic-data symbol :registry registry)))
+    (testing "an uninterned symbol reports no package and nothing signals"
+      (ok (eq symbol (getf data :symbol)))
+      (ok (null (symbol-package symbol)))
+      (ok (null (getf data :package)))
+      (ok (null (getf data :spec)))
+      (ok (null (getf data :function-spec)))
+      (ok (null (getf data :property)))
+      (ok (null (getf data :properties-about))))))
+
+(deftest semantic-data-does-not-mistake-a-registered-nil-value-for-absent
+  (let ((registry (make-hash-table-registry)))
+    (register-spec 'nil-spec nil registry)
+    (registry-register-function-spec registry 'nil-function-spec nil)
+    (registry-register-property registry 'nil-property nil)
+    (testing "a NIL spec value still reads as registered, via found-p"
+      (ok (eq 'nil-spec (getf (semantic-data 'nil-spec :registry registry) :spec))))
+    (testing "a NIL function spec value still reads as registered, via found-p"
+      (ok (eq 'nil-function-spec
+              (getf (semantic-data 'nil-function-spec :registry registry) :function-spec))))
+    (testing "a NIL property value still reads as registered, via found-p"
+      (ok (eq 'nil-property
+              (getf (semantic-data 'nil-property :registry registry) :property))))))
+
+(deftest semantic-data-designators-resolve-through-spec-data-and-property-data
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'foo
+                            (normalize-spec-form '(and integer (range 1 *))
+                                                 :name 'foo
+                                                 :source-location '(:file "x.lisp")))
+    (register-property (make-instance 'property
+                                      :name 'foo-preserves-total
+                                      :targets '(foo))
+                       registry)
+    (register-property (make-instance 'property
+                                      :name 'failed-foo-is-noop
+                                      :targets '(foo))
+                       registry)
+    (let ((data (semantic-data 'foo :registry registry)))
+      (testing "the :SPEC designator resolves through SPEC-DATA"
+        (ok (eq 'foo (getf (spec-data (getf data :spec) :registry registry) :name))))
+      (testing "each :PROPERTIES-ABOUT designator resolves through PROPERTY-DATA"
+        (dolist (name (getf data :properties-about))
+          (ok (eq name (getf (property-data name :registry registry) :name))))))))

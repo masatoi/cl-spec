@@ -10,7 +10,11 @@
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry*
+                #:find-spec
+                #:find-function-spec
+                #:find-property
+                #:properties-for)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-name
@@ -53,7 +57,8 @@
   (:export #:describe-spec
            #:describe-property
            #:spec-data
-           #:property-data))
+           #:property-data
+           #:semantic-data))
 
 (in-package #:cl-spec/src/introspection)
 
@@ -141,6 +146,50 @@ compiled function cannot be read (specification §39)."
           :source-form (property-source-form property)
           :source-location (source-location->data (property-source-location property))
           :metadata (property-metadata property))))
+
+(defun semantic-data (symbol &key (registry *registry*))
+  "Return a routing table of what REGISTRY knows about SYMBOL.
+
+  (:symbol <symbol> :package <string-or-nil>
+   :spec <symbol-or-nil> :function-spec <symbol-or-nil>
+   :property <symbol-or-nil> :properties-about (<symbol> ...))
+
+Every value is a name, or a list of names, never expanded content: pass
+:SPEC to SPEC-DATA, and each of :PROPERTIES-ABOUT to PROPERTY-DATA, to fetch
+the content itself. cl-mcp runs in the same Lisp image as cl-spec, so a
+follow-up lookup is a function call rather than a round trip -- there is no
+argument for inlining here that a round trip would otherwise supply. And
+PROPERTY-DATA carries a property's body and source form while SPEC-DATA is
+small, so inlining either here would make this response's size vary by an
+order of magnitude depending on which symbol was asked about.
+
+:SPEC and :FUNCTION-SPEC hold SYMBOL itself when something is registered under
+it, NIL otherwise. This is redundant today, since lookup is by identity, but
+it keeps the shape stable if lookup ever stops being identity, and lets the
+caller pass the value straight into a follow-up call. :PROPERTY holds SYMBOL
+when SYMBOL is itself the name of a registered property, which is a different
+relationship from :PROPERTIES-ABOUT: the sorted names of properties registered
+*about* SYMBOL (see PROPERTIES-FOR). A symbol can be both at once.
+
+:PACKAGE is the name of SYMBOL's home package, or NIL when SYMBOL is
+uninterned (specification §8).
+
+SEMANTIC-DATA never signals, even when REGISTRY knows nothing about SYMBOL: it
+returns the full shape with every value NIL or empty. This is a deliberate
+asymmetry with SPEC-DATA, which signals UNKNOWN-SPEC for an unregistered name.
+Callers such as cl-mcp's describe_symbol call this on arbitrary symbols, most
+of which have nothing registered, so signalling would force every caller to
+handle a condition for what is the common case. Every key listed above is
+always present, whatever its value: a key that appears and disappears with its
+value would break JSON consumers, matching the rule SPEC-DATA already
+follows."
+  (list :symbol symbol
+        :package (let ((package (symbol-package symbol)))
+                   (when package (package-name package)))
+        :spec (when (nth-value 1 (find-spec symbol registry)) symbol)
+        :function-spec (when (nth-value 1 (find-function-spec symbol registry)) symbol)
+        :property (when (nth-value 1 (find-property symbol registry)) symbol)
+        :properties-about (properties-for symbol registry)))
 
 (defun describe-spec (spec-designator &optional (stream *standard-output*))
   "Print a human readable rendering of (SPEC-DATA SPEC-DESIGNATOR) to STREAM.
