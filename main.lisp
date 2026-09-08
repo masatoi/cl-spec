@@ -22,6 +22,9 @@
                 #:invalid-spec-form
                 #:invalid-spec-form-form
                 #:invalid-spec-form-reason
+                #:invalid-property-form
+                #:invalid-property-form-form
+                #:invalid-property-form-reason
                 #:generator-unavailable
                 #:generator-unavailable-spec
                 #:generator-unavailable-reason
@@ -151,6 +154,9 @@
            #:invalid-spec-form
            #:invalid-spec-form-form
            #:invalid-spec-form-reason
+           #:invalid-property-form
+           #:invalid-property-form-form
+           #:invalid-property-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason

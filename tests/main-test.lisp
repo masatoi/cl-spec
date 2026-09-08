@@ -47,12 +47,15 @@ example when a :IMPORT-FROM clause is dropped from MAIN.LISP but the matching
         (ok (symbol-reachable-p symbol))))))
 
 (deftest new-public-symbols-are-reachable
-  (testing "the conditions the MVP added are external in CL-SPEC"
-    (dolist (name '("INVALID-SPEC-FORM" "INVALID-SPEC-FORM-FORM" "INVALID-SPEC-FORM-REASON"
-                    "GENERATOR-UNAVAILABLE" "GENERATOR-UNAVAILABLE-SPEC"
-                    "GENERATOR-UNAVAILABLE-REASON" "UNSUPPORTED-SEED"))
-      (multiple-value-bind (symbol status) (find-symbol name "CL-SPEC")
-        (ok symbol)
+  (testing "every symbol exported from cl-spec/src/conditions is external in CL-SPEC"
+    ;; A hard-coded name list here has already once failed to catch a condition
+    ;; that was exported from CL-SPEC/SRC/CONDITIONS but never re-exported from
+    ;; CL-SPEC/MAIN, because the list was not extended alongside it.  Driving
+    ;; the check off the conditions package itself cannot drift the same way.
+    (do-external-symbols (symbol (find-package "CL-SPEC/SRC/CONDITIONS"))
+      (multiple-value-bind (cl-spec-symbol status)
+          (find-symbol (symbol-name symbol) "CL-SPEC")
+        (ok cl-spec-symbol)
         (ok (eq :external status)))))
   (testing "source locations can be read without reaching into an internal package"
     (dolist (name '("SOURCE-LOCATION-FILE" "SOURCE-LOCATION-PACKAGE"))
