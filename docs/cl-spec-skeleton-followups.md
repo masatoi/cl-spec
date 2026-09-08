@@ -115,6 +115,75 @@ src/*/*.lisp tests/*.lisp tests/*/*.lisp` 実行結果は13件、すべて既存
 - `src/registry.lisp` の `symbol-sort-key` にある `symbol-package` が NIL の場合のガードは、どのテストも通らない。到達するには uninterned symbol を登録する必要があり、設計上そうする箇所はない。
 - `tests/backends/check-it-test.lisp` の `default-trials-comes-from-check-it` は `integerp` と `plusp` しか見ていない。`default-trials` が `check-it:*num-trials*` の load-time スナップショットに変わっても通る。テスト内で `check-it:*num-trials*` を別の値に束縛して戻り値を突き合わせれば、live read の契約を実際に固定できる。
 
+## 8. MVP 実装中に deferred とした指摘
+
+MVP vertical slice（`docs/superpowers/plans/2026-09-08-cl-spec-mvp.md`）の各タスクレビューで
+挙がり、機能に影響しないため先送りしたもの。最終のブランチ全体レビューが「carry してよい」と
+判定した分だけを残す（「carry すべきでない」と判定された3件は最終修正ウェーブで解消済み）。
+
+### 意味論・堅牢性
+
+- `src/explain.lisp` の `proper-list-p` は `cdr` を辿るだけで循環検出を持たない。循環リストを
+  検証すると停止しない。現状これを構築するテストは無く、normalizer も循環リストを作らない。
+- `reference-spec` の explainer は呼び出しごとに解決先の部分木を丸ごと再コンパイルする。
+  再定義への追随と再帰 spec の両立のために意図的だが、深い再帰 spec を多数回検証する用途では
+  コストが効く。
+- `src/normalize.lisp` は spec オブジェクトを渡されたとき `:name` と `:source-location` を
+  落とす。この分岐はプログラム的・LLM ツールからの合成のために存在するので、まさにその
+  利用者が踏む。`spec` の `name` スロットに writer が無く、共有・登録済みのオブジェクトを
+  破壊的に変更すると他の参照を壊すため、安全な修正には14個の具象 IR サブクラス全部に
+  clone protocol が要る。docstring と pinning テストで現状を固定してある。
+- `src/backends/check-it.lisp` の `copy-generated-value` の cons 再帰は非末尾でリスト長に
+  比例した深さを使う。既定の `*list-size*`（20、減衰あり）では問題にならないが、check-it の
+  size 特殊変数を大きく動かすと効く。
+- 非 well-founded な自己参照 spec（`(defspec loopy (or integer loopy))`）を `validp` に
+  かけるとスタックが溢れる。generator 側は `*reference-trail*` で守られているが、
+  explainer 側には値の構造を消費しない参照に対する深さガードが無い。
+
+### 一貫性
+
+- `*spec-primitives*` は説明用のリストで、`normalize-compound` は各ヘッドを個別の `string=`
+  で判定するため両者が乖離しうる。`*spec-primitives*` は export されており、エージェントが
+  受理ヘッドを知るために読む。列挙された各ヘッドが「unknown spec head」を出さずに正規化
+  できることを確かめるループがあれば恒久的に塞がる。
+- `option-clause` は同じ option キーワードが2回現れたとき最初のものだけを採り、重複を
+  診断なく捨てる。
+- `src/introspection.lisp` の `node-attributes` に `custom-spec` のメソッドが無いため、
+  その `handler` スロットは `spec-data` から静かに消える。`custom-spec` は現状 normalize /
+  dsl のどちらからも構築できない。
+- `describe-spec` / `describe-property` は `&optional stream` のまま。`explain` は `&key` へ
+  移した（設計 §2.6 が `&optional` と `&key` の混在を避けると決めた）。両者ともスタブなので、
+  実装時が最後の安価な変更機会。`check-function` も `:registry` と `:profile` のどちらも
+  持たない。
+- 設計 §2.5 が約束した「層ごとに1つの内部コンパイル入口」は作られていない。
+  `compile-explainer` は4箇所から context plist を手で組んで呼ばれており、memo 化のための
+  掛け金が存在しない。
+- `function-spec-argument-specs` は `(PARAMETER SPEC-DESIGNATOR)` の生の designator を持つが、
+  `property-arguments` は正規化済み IR を持つ。`defspec-function` を実装する人が決めるべき
+  不揃い。
+
+### 生成の分布
+
+- property 実行時、`*size*` は全引数の最大値まで引き上げられる。`(x (range integer 1 1000))`
+  と `(y integer)` を持つ property では `y` が ±10 ではなく ±1000 から引かれる。値は妥当な
+  ままだが分布は spec が含意するものではなく、文書化もされていない。
+- 区間幅を `*required-size*` に折り込む処理は整数範囲にも適用されるが、そこでは無害。
+  0 をまたぐ整数範囲の `*size*` が最小でなくなる。
+
+### テストの弱さ
+
+- `and-folds-through-references-and-nested-ands` の入れ子 AND のアサーションは
+  `10 <= value <= 20` しか見ておらず、修正前のコードでも（全 draw が 10 に潰れるため）
+  真になる。修正前後を判別しない。
+- `semantic-data` の新規テストは全て `:registry` を明示指定しており、既定 `*registry*` の
+  経路を通らない。`property-data` の既存テストは通っている。
+- `self-registry-lookup-is-stable` は生成引数を取るが実質使っていない。常に真なので
+  `(and x ...)` が短絡せず、引数ゼロでも同じ強さである。
+
+### 文言
+
+- `conjunct-mark` の docstring は "Return the character" だが返すのは文字列。
+
 ## 完成時点で検証済みの不変条件
 
 以下はスケルトン完成時に実測で確認してある。実装フェーズで壊していないかの基準になる。
