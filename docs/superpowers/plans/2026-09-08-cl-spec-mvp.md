@@ -2854,7 +2854,11 @@ git commit -m "feat: run properties into a structured, seeded, shrunk result"
         (let ((arguments (getf data :arguments)))
           (ok (= 2 (length arguments)))
           (ok (eq 'x (getf (first arguments) :variable)))
-          (ok (eq :and (getf (getf (first arguments) :spec) :kind)))))
+          ;; A bare symbol argument spec normalizes to a REFERENCE-SPEC, not to
+          ;; the target's own node — that late resolution is what makes forward
+          ;; references work.
+          (ok (eq :reference (getf (getf (first arguments) :spec) :kind)))
+          (ok (eq 'positive-integer (getf (getf (first arguments) :spec) :target)))))
       (testing "the body is readable rather than compiled away"
         (ok (equal '((> (+ x y) x)) (getf data :body)))))))
 ```
