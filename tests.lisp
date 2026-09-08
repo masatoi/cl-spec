@@ -13,7 +13,10 @@
   (:import-from #:cl-spec/tests/registry-test)
   (:import-from #:cl-spec/tests/normalize-test)
   (:import-from #:cl-spec/tests/validator-test)
-  (:import-from #:cl-spec/tests/explain-test))
+  (:import-from #:cl-spec/tests/explain-test)
+  (:import-from #:cl-spec/tests/generator-test)
+  (:import-from #:cl-spec/tests/property-test)
+  (:import-from #:cl-spec/tests/property-runner-test))
 
 (in-package #:cl-spec/tests)
 

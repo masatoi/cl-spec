@@ -65,6 +65,41 @@
                 #:compile-explainer
                 #:explain-data
                 #:explain)
+  (:import-from #:cl-spec/src/generator
+                #:*generator-backend*
+                #:current-generator-backend
+                #:compile-generator
+                #:generate-value
+                #:run-generated-test
+                #:generator-for
+                #:sample)
+  (:import-from #:cl-spec/src/property
+                #:property
+                #:property-name
+                #:property-arguments
+                #:property-targets
+                #:property-kind
+                #:property-tags
+                #:property-documentation
+                #:property-body
+                #:property-source-form
+                #:property-source-location
+                #:property-trials
+                #:property-metadata
+                #:register-property)
+  (:import-from #:cl-spec/src/property-runner
+                #:property-result
+                #:property-result-status
+                #:property-result-property
+                #:property-result-trials
+                #:property-result-seed
+                #:property-result-counterexample
+                #:property-result-shrunk-counterexample
+                #:property-result-condition
+                #:property-result-elapsed
+                #:run-property
+                #:run-properties
+                #:replay-property)
   (:export ;; Conditions
            #:cl-spec-error
            #:not-implemented
@@ -124,6 +159,41 @@
            ;; Structured explain
            #:compile-explainer
            #:explain-data
-           #:explain))
+           #:explain
+           ;; Generators
+           #:*generator-backend*
+           #:current-generator-backend
+           #:compile-generator
+           #:generate-value
+           #:run-generated-test
+           #:generator-for
+           #:sample
+           ;; Properties
+           #:property
+           #:property-name
+           #:property-arguments
+           #:property-targets
+           #:property-kind
+           #:property-tags
+           #:property-documentation
+           #:property-body
+           #:property-source-form
+           #:property-source-location
+           #:property-trials
+           #:property-metadata
+           #:register-property
+           ;; Property results
+           #:property-result
+           #:property-result-status
+           #:property-result-property
+           #:property-result-trials
+           #:property-result-seed
+           #:property-result-counterexample
+           #:property-result-shrunk-counterexample
+           #:property-result-condition
+           #:property-result-elapsed
+           #:run-property
+           #:run-properties
+           #:replay-property))
 
 (in-package #:cl-spec/main)
