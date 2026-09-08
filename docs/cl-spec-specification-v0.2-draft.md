@@ -699,6 +699,7 @@ Property実行結果は単なるbooleanではなく構造化する。
    (property ...)
    (trials ...)
    (seed ...)
+   (profile ...)
    (counterexample ...)
    (shrunk-counterexample ...)
    (condition ...)
@@ -706,6 +707,12 @@ Property実行結果は単なるbooleanではなく構造化する。
    (backend ...)))
 
 ```
+
+`profile`はrunが実際に使ったtrial数の予算（§33）を記録する。`trials`はrunが止まった
+試行回数であって、runに許されていた予算そのものではないため、`profile`から`trials`を
+導出することはできても、その逆はできない。§15がreproducibilityを必須要件とする以上、
+`replay-property`が`property-result`だけからprofileを掘り出せる必要があり、それが
+このslotが独立して存在する理由である。
 
 概念的JSON：
 
