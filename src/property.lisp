@@ -18,6 +18,7 @@
            #:property-tags
            #:property-documentation
            #:property-body
+           #:property-function
            #:property-source-form
            #:property-source-location
            #:property-trials
@@ -34,8 +35,9 @@
    (arguments :initarg :arguments
               :initform nil
               :reader property-arguments
-              :documentation "List of (VARIABLE SPEC-DESIGNATOR) bindings the
-generator fills in.")
+              :documentation "List of (VARIABLE SPEC) bindings the generator
+fills in.  SPEC is a normalized Semantic IR object; a spec written as a bare
+symbol becomes a REFERENCE-SPEC, so a property may name a spec defined later.")
    (targets :initarg :targets
             :initform nil
             :reader property-targets
@@ -54,6 +56,12 @@ Indexed for reverse lookup.")
                          :initform nil
                          :reader property-documentation
                          :documentation "Human readable description, or NIL.")
+   (property-function :initarg :function
+                      :initform nil
+                      :reader property-function
+                      :documentation "The predicate compiled from BODY.
+Kept alongside BODY rather than instead of it: a compiled function cannot be
+read, and reading the property is half of what it is for (specification §39).")
    (body :initarg :body
          :initform nil
          :reader property-body

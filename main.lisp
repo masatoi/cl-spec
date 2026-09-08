@@ -93,6 +93,7 @@
                 #:property-tags
                 #:property-documentation
                 #:property-body
+                #:property-function
                 #:property-source-form
                 #:property-source-location
                 #:property-trials
@@ -220,6 +221,7 @@
            #:property-tags
            #:property-documentation
            #:property-body
+           #:property-function
            #:property-source-form
            #:property-source-location
            #:property-trials

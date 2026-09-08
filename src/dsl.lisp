@@ -18,6 +18,7 @@
   (:import-from #:cl-spec/src/registry
                 #:register-spec)
   (:import-from #:cl-spec/src/property
+                #:property
                 #:register-property)
   (:import-from #:cl-spec/src/function-spec
                 #:register-function-spec)
@@ -63,31 +64,70 @@ Not implemented yet."
     `(register-function-spec
       (expand-function-spec-definition ',name ',clauses ',location))))
 
-(defun expand-property-definition (name arguments body source-location)
-  "Build a PROPERTY from the parts of a DEFPROPERTY form.
+(defparameter *property-option-keywords* '(:about :kind :tags :trials :shrink)
+  "Keywords that may head an option clause in a DEFPROPERTY body.")
 
-ARGUMENTS is the list of (VARIABLE SPEC-DESIGNATOR) bindings; BODY is the
-option clauses such as (:ABOUT ...) followed by the predicate forms.
+(defun parse-property-body (body)
+  "Split a DEFPROPERTY BODY into (values DOCUMENTATION OPTIONS PREDICATE-FORMS).
 
-Not implemented yet."
-  (declare (ignore name arguments body source-location))
-  (error 'not-implemented :operator 'defproperty))
+A leading string is documentation unless it is the entire body.  Option clauses
+are conses headed by one of *PROPERTY-OPTION-KEYWORDS*, and the first form that
+is not one ends them: an unrecognised keyword clause becomes part of the
+predicate rather than being silently dropped, so adding a keyword later cannot
+quietly swallow an existing property's first body form."
+  (let ((documentation nil)
+        (options '())
+        (forms body))
+    (when (and (stringp (first forms)) (rest forms))
+      (setf documentation (first forms)
+            forms (rest forms)))
+    (loop while (and (consp (first forms))
+                     (member (first (first forms)) *property-option-keywords*))
+          do (push (pop forms) options))
+    (values documentation (nreverse options) forms)))
 
-(defmacro defproperty (name arguments &body body)
+(defun option-clause (options keyword)
+  "Return the clause in OPTIONS headed by KEYWORD, or NIL."
+  (find keyword options :key #'first))
+
+(defun expand-property-definition (whole name arguments body source-location)
+  "Return the form DEFPROPERTY expands into.
+
+Unlike the other expanders this runs at macroexpansion time, because the
+predicate has to be compiled into a real function rather than kept as a list."
+  (multiple-value-bind (documentation options forms) (parse-property-body body)
+    (let ((shrink-clause (option-clause options :shrink)))
+      `(register-property
+        (make-instance 'property
+                       :name ',name
+                       :arguments (list ,@(loop for (variable form) in arguments
+                                                collect `(list ',variable
+                                                               (normalize-spec-form ',form))))
+                       :targets ',(rest (option-clause options :about))
+                       :kind ',(second (option-clause options :kind))
+                       :tags ',(rest (option-clause options :tags))
+                       :trials ',(second (option-clause options :trials))
+                       :documentation ,documentation
+                       :body ',forms
+                       :source-form ',whole
+                       :source-location ',source-location
+                       :metadata (list :shrink ,(if shrink-clause (second shrink-clause) t))
+                       :function (lambda ,(mapcar #'first arguments) ,@forms))))))
+
+(defmacro defproperty (&whole whole name arguments &body body)
   "Define a property named NAME over generated ARGUMENTS.
 
-BODY starts with option clauses such as (:ABOUT ...), (:KIND ...) and
-(:TAGS ...), followed by the forms of the property predicate.  A NIL result or
-a signalled condition counts as a failure.
+ARGUMENTS is a list of (VARIABLE SPEC-FORM) bindings.  BODY may start with a
+docstring, then option clauses (:ABOUT ...), (:KIND ...), (:TAGS ...),
+(:TRIALS ...) and (:SHRINK ...), followed by the forms of the predicate.  A NIL
+result or a signalled condition counts as a failure.
 
   (defproperty addition-preserves-order
       ((x positive-integer) (y positive-integer))
     (:about +)
     (:kind :monotonicity)
     (> (+ x y) x))"
-  (let ((location (current-source-location)))
-    `(register-property
-      (expand-property-definition ',name ',arguments ',body ',location))))
+  (expand-property-definition whole name arguments body (current-source-location)))
 
 (defun expand-generator-definition (name lambda-list body source-location)
   "Register a user-defined generator built from a DEFGENERATOR form.
