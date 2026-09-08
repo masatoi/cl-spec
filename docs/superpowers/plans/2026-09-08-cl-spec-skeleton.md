@@ -3644,14 +3644,14 @@ jobs:
 
       - name: Assert the core system does not pull in check-it
         env:
-          CL_SOURCE_REGISTRY: ${{ github.workspace }}//:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
           ros run --eval '(ql:quickload :cl-spec :silent t)' \
                   --eval '(uiop:quit (if (find-package "CHECK-IT") 1 0))'
 
       - name: Compile with warnings visible
         env:
-          CL_SOURCE_REGISTRY: ${{ github.workspace }}//:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
           ros run --eval '(ql:quickload :cl-spec :silent t)' \
                   --eval '(asdf:compile-system :cl-spec :force :all)' \
@@ -3659,7 +3659,7 @@ jobs:
 
       - name: Run tests
         env:
-          CL_SOURCE_REGISTRY: ${{ github.workspace }}//:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: rove cl-spec.asd
 ```
 
