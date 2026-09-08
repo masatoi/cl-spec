@@ -2168,15 +2168,34 @@ Expected: FAIL — `and` が `generator-unavailable`、`sample` が `not-impleme
         (minimum :unbounded)
         (maximum :unbounded)
         (leftovers '()))
-    (dolist (child (and-spec-children spec))
-      (typecase child
-        (type-spec
-         (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
-        (range-spec
-         (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
-               minimum (tighter-minimum minimum (range-spec-minimum child))
-               maximum (tighter-maximum maximum (range-spec-maximum child))))
-        (t (push child leftovers))))
+    ;; Classification recurses: a REFERENCE-SPEC is resolved through the registry
+    ;; and a nested AND-SPEC is flattened, so that (and integer my-range) folds
+    ;; my-range's own bounds into the base rather than leaving them to the guard.
+    ;; A flat TYPECASE over the two leaf classes would compile that spec to an
+    ;; unbounded base under a guard that rejects every draw, which is the
+    ;; unbounded GUARD-GENERATOR recursion this whole design exists to avoid.
+    ;; *REFERENCE-TRAIL* guards the recursion, as in the REFERENCE-SPEC method.
+    (labels ((classify (child)
+               (typecase child
+                 (type-spec
+                  (setf base-type
+                        (merge-base-type base-type (type-spec-type-specifier child) spec)))
+                 (range-spec
+                  (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
+                        minimum (tighter-minimum minimum (range-spec-minimum child))
+                        maximum (tighter-maximum maximum (range-spec-maximum child))))
+                 (and-spec (mapc #'classify (and-spec-children child)))
+                 (reference-spec
+                  (let ((target (reference-spec-target child)))
+                    (if (member target *reference-trail*)
+                        (push child leftovers)
+                        (let ((resolved (registry-find-spec (context-registry context) target))
+                              (*reference-trail* (cons target *reference-trail*)))
+                          (if resolved
+                              (classify resolved)
+                              (push child leftovers))))))
+                 (t (push child leftovers)))))
+      (mapc #'classify (and-spec-children spec)))
     (when (and (null base-type)
                (not (and (eq minimum :unbounded) (eq maximum :unbounded))))
       (setf base-type 'real))

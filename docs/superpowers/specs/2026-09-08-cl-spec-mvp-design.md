@@ -364,6 +364,13 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
 1. `and` の子から type 制約と range 制約を集め、**1つの基底 generator に畳み込む**。
    `(and integer (range 1 100))` → `int-generator :lower-limit 1 :upper-limit 100`。棄却ゼロ。
    複数の range があれば区間の交わりを取る。交わりが空なら `generator-unavailable`。
+
+   **子の分類は再帰的に行う。** `reference-spec` は registry で解決してから分類し、
+   入れ子の `and-spec` は平坦に展開する。ここを IR の葉2クラスへの `typecase` で済ませると、
+   `(defspec my-range (and integer (range 1000000 1000010)))` を参照する `(and integer my-range)` が
+   「基底は無制約 int-generator、guard は my-range を要求」という形にコンパイルされ、
+   全draw が棄却されて `guard-generator` の無制限再帰でスタックが溢れる — 畳み込みが防ぐために
+   存在している、まさにその失敗モードを再現してしまう。再帰は `*reference-trail*` で保護する。
 2. 畳み込めなかった子（`satisfies`、`not` など）が残った時**だけ** `guard-generator` で包む。
    guard は and-spec 全体の validator。
 3. 基底 generator が決まらない `and`（`(and (satisfies foo) (satisfies bar))` など）は
@@ -640,5 +647,8 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 - `not` / 単体の `satisfies` / `instance-of` は generator を持てない
 - `and` の generator は制約畳み込みのヒューリスティックに依存する。畳み込めない組み合わせは
   `generator-unavailable`
+- 畳み込めなかった述語を包む guard は、依然として check-it の無制限再帰の上に載っている。
+  満たす値が存在しない、あるいは極端に稀な述語（`(and integer (satisfies never-true))` など）は
+  スタックを溢れさせる。retry 上限を持つ guard は post-MVP
 - 整数 seed による replay は SBCL のみ。他実装では `unsupported-seed`
 - コンパイル結果はキャッシュしない。`validp` を巨大なループで回す用途は想定しない（§59）
