@@ -59,6 +59,28 @@ The vertical slice from specification §67, working end to end:
 rove cl-spec.asd
 ```
 
+## Known limitations
+
+`cl-spec/check-it` cannot generate values for every spec it can validate and
+explain:
+
+- `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
+  refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
+  have no generator; `sample`/`generator-for` signal `generator-unavailable`.
+  Validation and `explain` still work on these.
+- `(and ...)` needs at least one `(type ...)` or `(range ...)` conjunct to
+  generate from; an `and` of predicates alone (e.g. `(and (satisfies oddp)
+  (satisfies plusp))`) signals `generator-unavailable`.
+- A predicate that an `and` cannot fold into its base generator falls back to
+  a guard that retries by recursing with no depth limit. A guard over a
+  predicate that is rarely or never true (an unsatisfiable `satisfies`, for
+  example) can exhaust the stack instead of signalling.
+- A counterexample over `(range real ...)`, or any other real valued
+  argument, does not shrink: check-it's shrinker treats reals as a
+  non-discrete search space and returns them unchanged.
+- Replaying a property run from an integer seed requires SBCL; other
+  implementations signal `unsupported-seed`.
+
 ## Documentation
 
 - `docs/cl-spec-specification-v0.2-draft.md` — the specification

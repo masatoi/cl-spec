@@ -402,9 +402,17 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    `copy-list` でスパインだけ複製しても反例は壊れる。cons と（文字列以外の）ベクタを
    再帰的に複製する。文字列は `join-list` が毎回新しく作るので複製不要。
 
-3. **`shrink mapped-generator` は縮小しない。** 内側で計算した `shrunk-elem` を `setf` せずに捨てており、
-   実質 no-op である。したがって `vector-of` の反例は縮小されない。MVP の既知の限界として記録し、
-   独自 shrink の実装は post-MVP に回す。
+3. **`shrink mapped-generator` は一見 no-op に見えるが、実際には縮小される。** ループ内で
+   `(shrink sub-generator ...)` の戻り値をローカル変数 `shrunk-elem` に束縛するが、その変数自体は
+   どこにも `setf` されず捨てられる。しかし `shrink` の呼び出しそのものが副作用として
+   sub-generator 自身の `cached-value` スロットを破壊的に書き換える
+   （例えば `shrink-list-generator` の `elem-wise-shrink` は `(setf (nth i cached-value) ...)` を
+   *その sub-generator の* `cached-value` に対して行う）。メソッドの最終形
+   `(apply mapping (mapcar #'cached-value sub-generators))` は、その書き換え後の値を
+   sub-generators から読み直してから `mapping` を再適用しており、捨てられた `shrunk-elem` を
+   経由していない。したがって `vector-of` の反例は正しく縮小される。実測でも確認済み：
+   `(vector-of (range integer 1 100))` を引数に取る property が `#(100 61 34)` で失敗したとき、
+   `shrunk-counterexample` は `#(51)` になった。
 
 4. **`check-it:*size*` が数値の上下限を握り潰す。** `int-generator-function` /
    `real-generator-function` は与えられた limit を `(min (abs limit) *size*)` で丸める。
@@ -657,7 +665,6 @@ NIL をそのまま通すと `run-property` が新しい seed を引いてしま
 
 ## 10. MVP の既知の限界（doc に明記する）
 
-- `vector-of` の反例は縮小されない（check-it の `shrink mapped-generator` が no-op、3.4-3）
 - 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-6）
 - 有限×有限の実数範囲は check-it のバグ（3.4-5）を避けるため平行移動して生成する
 - 再帰 spec は generator を持てない（`generator-unavailable`）。validation と explain は動く
