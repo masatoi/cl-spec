@@ -91,6 +91,17 @@
       (multiple-value-bind (function-spec foundp)
           (registry-find-function-spec registry 'never-registered-function-spec)
         (ok (null function-spec))
+        (ok (null foundp)))))
+  (testing "REGISTRY-FIND-PROPERTY reports found-p T for a name registered with value NIL"
+    (let ((registry (make-hash-table-registry)))
+      (registry-register-property registry 'nil-valued-property nil)
+      (multiple-value-bind (property foundp)
+          (registry-find-property registry 'nil-valued-property)
+        (ok (null property))
+        (ok (eq t foundp)))
+      (multiple-value-bind (property foundp)
+          (registry-find-property registry 'never-registered-property)
+        (ok (null property))
         (ok (null foundp))))))
 
 (deftest properties-are-indexed-by-target-and-tag

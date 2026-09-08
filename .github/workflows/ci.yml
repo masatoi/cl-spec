@@ -33,12 +33,19 @@ jobs:
           ros run --eval '(ql:quickload :cl-spec :silent t)' \
                   --eval '(uiop:quit (if (find-package "CHECK-IT") 1 0))'
 
-      - name: Compile with warnings visible
+      - name: Compile from a cold cache with warnings visible
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
-          ros run --eval '(ql:quickload :cl-spec :silent t)' \
-                  --eval '(asdf:compile-system :cl-spec :force :all)' \
+          # No quickload here: this must be the first thing that touches
+          # cl-spec in this process. Quickloading cl-spec and then
+          # force-compiling it in that same already-loaded image would
+          # redefine every generic function and method the load just
+          # defined, burying a real warning under ~100
+          # REDEFINITION-WITH-DEFGENERIC/DEFMETHOD ones. ASDF resolves
+          # cl-spec through CL_SOURCE_REGISTRY on its own, so compile-system
+          # here compiles straight into a fresh, cold fasl cache.
+          ros run --eval '(asdf:compile-system :cl-spec :force :all)' \
                   --eval '(uiop:quit 0)'
 
       - name: Run tests

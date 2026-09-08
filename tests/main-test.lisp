@@ -18,6 +18,18 @@
     "DESCRIBE-SPEC" "DESCRIBE-PROPERTY" "SPEC-DATA" "PROPERTY-DATA")
   "The MVP API of specification §51.  Every name must be external in CL-SPEC.")
 
+(defun symbol-reachable-p (symbol)
+  "Return true when SYMBOL names something: a function, a special variable, a
+class or a macro.
+
+A symbol can be external in a package and still name nothing at all, for
+example when a :IMPORT-FROM clause is dropped from MAIN.LISP but the matching
+:EXPORT entry is left behind.  Status alone does not catch that; this does."
+  (or (fboundp symbol)
+      (boundp symbol)
+      (find-class symbol nil)
+      (macro-function symbol)))
+
 (deftest cl-spec-nickname-resolves
   (testing "the public package is reachable under the CL-SPEC nickname"
     (ok (eq (find-package "CL-SPEC") (find-package "CL-SPEC/MAIN")))))
@@ -27,3 +39,9 @@
     (dolist (name *mvp-api*)
       (multiple-value-bind (symbol status) (find-symbol name "CL-SPEC")
         (ok (and symbol (eq :external status)))))))
+
+(deftest mvp-api-is-reachable
+  (testing "every §51 symbol names something, not just a bare interned symbol"
+    (dolist (name *mvp-api*)
+      (let ((symbol (find-symbol name "CL-SPEC")))
+        (ok (symbol-reachable-p symbol))))))

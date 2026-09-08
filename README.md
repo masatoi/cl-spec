@@ -5,13 +5,14 @@ designed for both humans and LLM coding agents.
 
 **Status: skeleton.** The module structure, the Semantic IR class hierarchy and
 the registry are in place; the DSL normalization, validator, explainer,
-generator and property runner are stubs that signal `not-implemented`.
+generator, property runner, function checking, introspection and
+instrumentation are stubs that signal `not-implemented`.
 
 ## Systems
 
 | System | Contents | Extra dependency |
 |---|---|---|
-| `cl-spec` | Semantic IR, registry, validation, structured explain, introspection | none |
+| `cl-spec` | Semantic IR, registry, validation, structured explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
 | `cl-spec/tests` | test suite | `rove` |

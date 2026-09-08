@@ -73,12 +73,16 @@ Single suite from the REPL:
 (rove:run :cl-spec/tests/registry-test)
 ```
 
-Before opening a PR: `(asdf:compile-system :cl-spec :force :all)` to surface
-warnings (`:force t` recompiles nothing here — this is a package-inferred
-system, so the work lives in the per-file subsystems that only `:force :all`
-reaches), then the full suite, then mallet. Lint is currently advisory:
-findings are tracked for a single batch cleanup, so a mallet warning does not
-block a PR today.
+Before opening a PR, in a **fresh** Lisp process — not the REPL you have been
+developing in, which already has cl-spec loaded — run
+`(asdf:compile-system :cl-spec :force :all)` to surface warnings against a
+cold fasl cache (`:force t` recompiles nothing here — this is a
+package-inferred system, so the work lives in the per-file subsystems that
+only `:force :all` reaches). Compiling in an image that already has cl-spec
+loaded redefines every generic function and method, and the resulting
+REDEFINITION-WITH-DEFGENERIC/DEFMETHOD warnings bury a real one. Then run the
+full suite, then mallet. Lint is currently advisory: findings are tracked for
+a single batch cleanup, so a mallet warning does not block a PR today.
 
 ## Code Style
 
