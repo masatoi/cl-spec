@@ -166,6 +166,42 @@
           (ok (equal (property-result-counterexample first-run)
                      (property-result-counterexample again))))))))
 
+(deftest replay-requires-matching-profile
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 1000)))
+    ;; Define a property where :smoke runs only 5 trials but :normal runs 200.
+    ;; This ensures a failure at the higher trial count.
+    (eval '(cl-spec/src/dsl:defproperty profile-sensitive ((x small))
+             (:trials (:smoke 5) (:normal 200))
+             (< x 500)))
+    ;; Run under :normal profile to guarantee finding a failure.
+    (let ((normal-run (run-property 'profile-sensitive :profile :normal)))
+      (testing "the property fails under :normal profile"
+        (ok (eq :failed (property-result-status normal-run))))
+      ;; Replay under the same :normal profile reproduces the exact failure.
+      (let ((replayed (replay-property 'profile-sensitive
+                                       (property-result-seed normal-run)
+                                       :profile :normal)))
+        (testing "replay under matching :normal profile reproduces the failure"
+          (ok (eq :failed (property-result-status replayed)))
+          (ok (equal (property-result-counterexample normal-run)
+                     (property-result-counterexample replayed)))
+          (ok (= (property-result-trials normal-run)
+                 (property-result-trials replayed))))))))
+
+(deftest replay-rejects-invalid-seeds
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty always-holds ((x small))
+             (:trials (:normal 5))
+             (integerp x)))
+    (testing "nil is rejected as a seed"
+      (ok (signals (replay-property 'always-holds nil) 'type-error)))
+    (testing "negative integers are rejected as seeds"
+      (ok (signals (replay-property 'always-holds -1) 'type-error)))
+    (testing "arbitrary objects are rejected as seeds"
+      (ok (signals (replay-property 'always-holds "not a seed") 'type-error)))))
+
 (deftest run-properties-runs-each-one
   (with-fresh-registry
     (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))

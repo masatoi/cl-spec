@@ -143,15 +143,29 @@ the others."
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
 
-(defun replay-property (property-designator seed &key options (registry *registry*))
+(defun replay-property (property-designator seed &key profile options (registry *registry*))
   "Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
 SEED is either the integer seed of an earlier run or the PROPERTY-RESULT that
 run produced, since section 15 shows both spellings and an agent holding a
-result should not have to dig the seed out of it."
+result should not have to dig the seed out of it.
+
+PROFILE selects a trial count from the property's :TRIALS table (§33), exactly
+as run-property does. The PROFILE must match the original run's PROFILE for the
+replay to reproduce it faithfully — the seed alone is not sufficient, because a
+different profile changes the trial count.
+
+SEED must be a property-result or a non-negative integer, or an error is
+signalled."
+  (unless (or (typep seed 'property-result)
+              (and (integerp seed) (>= seed 0)))
+    (error 'type-error
+           :datum seed
+           :expected-type '(or property-result (integer 0 *))))
   (run-property property-designator
                 :seed (if (typep seed 'property-result)
                           (property-result-seed seed)
                           seed)
+                :profile profile
                 :options options
                 :registry registry))

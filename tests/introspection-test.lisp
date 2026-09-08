@@ -94,6 +94,9 @@ signals, or NIL if it signals no such condition."
         (let ((arguments (getf data :arguments)))
           (ok (= 2 (length arguments)))
           (ok (eq 'x (getf (first arguments) :variable)))
-          (ok (eq :reference (getf (getf (first arguments) :spec) :kind)))))
+          ;; A bare symbol argument spec stays a reference-spec because the
+          ;; property stores a reference to the named spec, not an inlined copy.
+          (ok (eq :reference (getf (getf (first arguments) :spec) :kind)))
+          (ok (eq 'positive-integer (getf (getf (first arguments) :spec) :target)))))
       (testing "the body is readable rather than compiled away"
         (ok (equal '((> (+ x y) x)) (getf data :body)))))))
