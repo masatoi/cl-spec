@@ -112,8 +112,11 @@
     (let* ((first-child (make-instance 'type-spec :type-specifier 'integer))
            (second-child (make-instance 'predicate-spec :predicate 'plusp))
            (conjunction (make-instance 'and-spec
+                                       :children (list first-child second-child)))
+           (disjunction (make-instance 'or-spec
                                        :children (list first-child second-child))))
-      (ok (equal (list first-child second-child) (spec-children conjunction)))))
+      (ok (equal (list first-child second-child) (spec-children conjunction)))
+      (ok (equal (list first-child second-child) (spec-children disjunction)))))
   (testing "NOT and NULLABLE expose their single inner spec as a one-element list"
     (let* ((inner (make-instance 'type-spec :type-specifier 'string))
            (negation (make-instance 'not-spec :inner-spec inner))
