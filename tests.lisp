@@ -20,7 +20,8 @@
   (:import-from #:cl-spec/tests/function-spec-test)
   (:import-from #:cl-spec/tests/introspection-test)
   (:import-from #:cl-spec/tests/dsl-test)
-  (:import-from #:cl-spec/tests/main-test))
+  (:import-from #:cl-spec/tests/main-test)
+  (:import-from #:cl-spec/tests/backends/check-it-test))
 
 (in-package #:cl-spec/tests)
 
