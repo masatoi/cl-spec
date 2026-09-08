@@ -18,7 +18,11 @@
 - スタイル: Google Common Lisp Style Guide、2 スペースインデント、100 桁以内、トップレベルフォーム間に空行1つ、`(:use #:cl)` のみで他は `:import-from`。
 - 公開関数・マクロ・クラスには docstring 必須。
 - 各ファイルは `;;;; <path>` で始まり、`defpackage`、`(in-package ...)` と続く。
-- ランタイム `eval` と動的 `intern` は禁止。
+- ランタイム `eval` と動的 `intern` は **`src/` と `main.lisp` で**禁止。テストは、マクロ展開を
+  「実行して」契約を確かめる唯一の手段として `eval` / `intern` を使ってよい（`macroexpand-1`
+  だけでは契約の後半を証明できない）。既存の `tests/dsl-test.lisp` と `.mallet.lisp` の除外が
+  その前例。新たに `eval` を使うテストファイルは `.mallet.lisp` の `:for-paths` に追加すること
+  （Task 15 で一括して行う）。
 - テスト実行: `rove cl-spec.asd`。単一スイート: `(rove:run :cl-spec/tests/normalize-test)`。
 - Rove の `signals` は `restart-case` 内で発生した condition を確実には捕捉しない。本プロジェクトのコードは `restart-case` を使っていないので `signals` を使ってよいが、疑わしい場合は `handler-case` で包む。
 - lint（mallet）は advisory。指摘は PR をブロックしない。
@@ -3005,6 +3009,19 @@ adapter are still stubs that signal `not-implemented`.
 `CLAUDE.md` の "Implementation Order" 節を、次が §70 の step 16（Function Spec IR）である旨へ更新し、
 `README.md` に §67 の動く例を載せる。
 
+`.mallet.lisp` の `:for-paths` を、`eval` でマクロ展開を実行検証するテストファイル全部へ広げる:
+
+```lisp
+ (:for-paths ("tests/dsl-test.lisp"
+              "tests/property-runner-test.lisp"
+              "tests/introspection-test.lisp"
+              "tests/self-properties-test.lisp")
+   (:disable :no-eval))
+```
+
+ヘッダコメントも、これが DSL マクロの展開結果を実行して検証するための例外であることを
+1ファイルではなく1カテゴリの話として書き直す。
+
 - [ ] **Step 4: 全体を検証**
 
 新しい Lisp プロセスで（開発中の REPL ではなく）:
@@ -3034,6 +3051,6 @@ Expected: 実行できること。指摘は advisory なのでブロッカーで
 - [ ] **Step 5: コミット**
 
 ```bash
-git add tests/self-properties-test.lisp tests.lisp docs CLAUDE.md AGENTS.md README.md
+git add tests/self-properties-test.lisp tests.lisp docs CLAUDE.md AGENTS.md README.md .mallet.lisp
 git commit -m "test: check the framework with its own properties, and sync the docs"
 ```
