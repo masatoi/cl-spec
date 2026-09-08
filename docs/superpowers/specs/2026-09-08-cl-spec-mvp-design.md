@@ -401,11 +401,27 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    `run-generated-test` が `generate` の周りで `check-it:*size*` をその値まで引き上げる。
    引き上げは束縛なので他の生成に漏れない。
 
-5. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
+5. **`real-generator-function` の finite/finite 分岐にバグがある。** 下限の計算が
+   `(abs low)` ではなく `(abs high)` を読む。
+
+   ```lisp
+   (let ((new-high (* (min (abs high) *size*) (signum high)))
+         (new-low  (* (min (abs high) *size*) (signum low))))   ; ← (abs low) であるべき
+     (+ (random (float (- new-high new-low))) new-low))
+   ```
+
+   下限と上限が 0 をまたがない限り区間が幅0に潰れ、`(random 0.0)` が TYPE-ERROR を出す。
+   `(range 1 100)` は 3.4-4 の対策で `*size*` を 100 に上げるため、まさにこれを踏む。
+   対策: 有限×有限の実数範囲は下限を 0 へ平行移動してから生成し、`mapped-generator` で
+   戻す。下限が 0 なら `(signum 0)` が 0 になり正しい式と一致するので、バグの影響がない。
+   片側が `*` の分岐にはこのバグは無いのでそのまま通す。`shrink` は実数を縮小しない
+   （下記6）ので、`mapped-generator` を挟んでも失うものは無い。
+
+6. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
    「can't shrink over non-discrete search space」として値をそのまま返す。
    実数を引数に取る property の反例は縮小されない。
 
-6. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
+7. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
    ただし既定値の出所としては `default-trials`（`check-it:*num-trials*` を live read する）を使い続ける。
 
 ### 3.5 `sample` / `generator-for`
@@ -608,7 +624,9 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 ## 10. MVP の既知の限界（doc に明記する）
 
 - `vector-of` の反例は縮小されない（check-it の `shrink mapped-generator` が no-op、3.4-3）
-- 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-5）
+- 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-6）
+- 有限×有限の実数範囲は check-it のバグ（3.4-5）を避けるため平行移動して生成する。
+  下限と上限が等しい退化した範囲（`(range 5 5)` など）は依然として `(random 0.0)` を踏む
 - 再帰 spec は generator を持てない（`generator-unavailable`）。validation と explain は動く
 - `not` / 単体の `satisfies` / `instance-of` は generator を持てない
 - `and` の generator は制約畳み込みのヒューリスティックに依存する。畳み込めない組み合わせは
