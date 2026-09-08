@@ -2376,7 +2376,10 @@ git commit -m "feat: fold AND constraints into one generator and wire up sample"
       (testing "shrinking defaults to on"
         (ok (getf (cl-spec/src/property:property-metadata property) :shrink)))
       (testing "the reverse index finds it from its target"
-        (ok (equal (list property) (cl-spec/src/registry:properties-for '+)))))))
+        ;; PROPERTIES-FOR returns names, not objects — see the docstrings on
+        ;; REGISTRY-PROPERTIES-FOR and PROPERTIES-FOR in src/registry.lisp.
+        (ok (equal '(addition-preserves-order)
+                   (cl-spec/src/registry:properties-for '+)))))))
 
 (deftest defproperty-stops-consuming-options-at-the-first-non-option
   (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
