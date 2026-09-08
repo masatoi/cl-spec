@@ -8,6 +8,9 @@
 
 ## 1. `cons-of` に対応する IR ノードがない（実装前に決める）
 
+**決着**（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md` §2.2）: 選択肢1を採用。
+`*spec-primitives*` から `"CONS-OF"` を外し、仕様書 §9 に post-MVP の注記を足した。
+
 `src/normalize.lisp` の `*spec-primitives*` は `"CONS-OF"` を受理ヘッドとして宣言しているが、`src/ir.lisp` に `cons-of-spec` は存在しない。
 
 仕様書の3箇所が食い違っている。
@@ -36,17 +39,27 @@
 
 ## 3. source-location のアクセサが public API に出ていない
 
+**決着**（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md` §2.8）: `spec-data` /
+`property-data` は `:source-location` を展開済み plist で返し、`source-location-file` /
+`source-location-package` も `main.lisp` から re-export した。
+
 `spec-source-location` / `property-source-location` / `function-spec-source-location` は `main.lisp` から re-export されているが、その戻り値を読むための `source-location-file` / `source-location-package` は re-export されていない。`src/utils/source-location.lisp` の docstring は「戻り値は opaque として扱い、このパッケージのアクセサで読むこと」と書いているので、現状 public API の利用者は内部パッケージに手を伸ばすか、opacity 契約を破って `getf` するしかない。
 
 introspection を実装するときに、アクセサを公開するか、`spec-data` が展開済みの形で返すかを決める。
 
 ## 4. `defgenerator` の登録先がない
 
+**未決着**: `defgenerator` がMVPスコープ外のため（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md`
+§1.2）、この判断は先送りされたままである。
+
 `src/dsl.lisp` の `expand-generator-definition` の docstring は「ユーザー定義 generator を登録する」と書いているが、`hash-table-registry` は spec / function-spec / property の3索引しか持たない。generator は4つ目のエンティティ種別で、置き場所がない。
 
 後から追加すると、スケルトンで唯一**完全に実装済み**の `src/registry.lisp` — クラス、protocol、`registry-clear` — を変更することになる。`defgenerator` を実装する前に、registry に generator 索引を足すのか、別の仕組みにするのかを決める。
 
 ## 5. registry への到達手段が API 全体で不揃い
+
+**決着**（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md` §2.6）: 全エントリポイントを
+`:registry` キーワード引数へ統一した。
 
 - 位置引数 `&optional (registry *registry*)`: registry front-end、`register-property`、`register-function-spec`、`instrument-function`、`spec-data`、`property-data`
 - `:context` キーワード: `compile-validator`、`compile-explainer`、`compile-generator`
@@ -65,6 +78,20 @@ introspection を実装するときに、アクセサを公開するか、`spec-
 - `src/instrument.lisp` — `cl-spec/src/validator` から `validate` を import しているが呼んでいない（`unused-imported-symbols`）。**削除しないこと。** ASDF に `src/instrument` → `src/validator` の依存辺を認識させるための前方宣言で、ラッパーが `validate` を呼ぶ時点で実体を持つ。良かれと思った cleanup で消すと依存辺が失われ、次のタスクで戻すことになる。理由を書いたコメントを添えるのが望ましい。
 - `tests/dsl-test.lisp` — `no-eval` 4件。リポジトリルートの `.mallet.lisp` でパス限定で無効化済み。DSL マクロの展開結果を**実行して** `not-implemented` を検証する唯一の手段であり、`macroexpand-1` だけでは契約の後半を証明できない。この例外を残すかどうかは cleanup 時に再検討する。
 - `.github/workflows/lint.yml` は `continue-on-error: true` で advisory。この cleanup が終わったら外す。
+
+タスク15（自己property・ドキュメント同期）時点の `mallet main.lisp tests.lisp src/*.lisp
+src/*/*.lisp tests/*.lisp tests/*/*.lisp` 実行結果は13件、すべて既存カテゴリ内。
+
+- `unused-imported-symbols` 11件。上記の `src/instrument.lisp` の1件に加え、`src/explain.lisp`
+  ・`src/backends/check-it-generators.lisp` の `collection-spec`、`src/utils/random.lisp` の
+  `unsupported-seed`、複数のテストファイルの補助 import。`tests/self-properties-test.lisp` の
+  `check-it-backend` と `list-specs` の2件もここに含まれる。`check-it-backend` は本文で参照しない
+  ままASDFにgenerator backendをロードさせるための意図的な import（task-15-brief参照）、
+  `list-specs` はbriefのdefpackageをそのまま転記したもの。どちらも削除しないこと。
+- `needless-let*` 2件（`tests/resolve-test.lisp`、`tests/utils/random-test.lisp`）。
+- `no-eval` は `.mallet.lisp` の `:for-paths` で `tests/dsl-test.lisp`・
+  `tests/property-runner-test.lisp`・`tests/introspection-test.lisp`・
+  `tests/self-properties-test.lisp` に対して無効化済みのため、この実行では報告されない。
 
 ## 7. テストの薄い箇所（機能には影響しない）
 

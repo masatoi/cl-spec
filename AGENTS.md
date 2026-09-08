@@ -3,6 +3,13 @@
 @prompts/repl-driven-development.md
 @prompts/common-lisp-expert.md
 
+**Current status: MVP vertical slice.** Normalization, validation, structured
+explain, spec introspection, the check-it generator backend, `defproperty` and
+the property runner with seed, replay and shrinking are implemented. Function
+specs (`defspec-function`, `check-function`), custom generators
+(`defgenerator`), the `describe-*` printers, instrumentation and the cl-mcp
+adapter are still stubs that signal `not-implemented`.
+
 ## Project Structure & Module Organization
 
 `src/` holds the implementation, one responsibility per file, under ASDF
@@ -35,10 +42,10 @@ docstrings — stubs included. Avoid runtime `eval` and dynamic interning.
 ## Testing Guidelines
 
 Write Rove tests before implementations. Name suites after the unit under test.
-Skeleton stubs are tested by asserting they signal `not-implemented` with the
+Remaining stubs are tested by asserting they signal `not-implemented` with the
 right operator; replace those assertions with behavioural tests as each module
-is implemented. The framework's own property tests (specification §68) arrive
-once `run-property` works.
+is implemented. The framework's own property tests (specification §68) live in
+`tests/self-properties-test.lisp` and run through `run-property` itself.
 
 ## Commit & Pull Request Guidelines
 

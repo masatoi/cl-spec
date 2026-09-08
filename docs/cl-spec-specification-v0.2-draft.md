@@ -464,6 +464,9 @@ instance-of
 
 ```
 
+`cons-of` はMVPでは実装しない。§52のMVP対応リストにも含まれておらず、§7のIRクラス階層にも
+対応ノードが無い。post-MVPとして扱い、`(tuple ...)` または `(list-of ...)` で代替する。
+
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
 ただしCommon Lisp type languageと完全互換にすることは目標としない。
@@ -1443,11 +1446,7 @@ DECODE
 Propertyごとに、
 
 ```lisp
-(:trials
- (:smoke 10)
- (:normal 100)
- (:extended 1000)
- (:stress 100000))
+(:trials (:smoke 10 :normal 100 :extended 1000 :stress 100000))
 
 ```
 
@@ -2657,6 +2656,11 @@ semantic oracle
  ((:kind :type :type INTEGER)
   (:kind :range :min 1 :max :unbounded)))
 ```
+
+上の例は説明のため省略している。実際の`spec-data`は全ノードで同じキー集合
+（`:name` `:kind` ノード固有キー `:source-form` `:source-location`）を返し、
+`:children` は子を持つノードにのみ付く。値によってキーが出没しないほうが、
+JSON/MCP投影の消費側を壊しにくい。
 
 次に、
 

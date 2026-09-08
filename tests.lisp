@@ -24,7 +24,8 @@
   (:import-from #:cl-spec/tests/dsl-test)
   (:import-from #:cl-spec/tests/main-test)
   (:import-from #:cl-spec/tests/backends/check-it-test)
-  (:import-from #:cl-spec/tests/instrument-test))
+  (:import-from #:cl-spec/tests/instrument-test)
+  (:import-from #:cl-spec/tests/self-properties-test))
 
 (in-package #:cl-spec/tests)
 

@@ -3,10 +3,11 @@
 An executable semantic IR and property framework for Common Lisp programs,
 designed for both humans and LLM coding agents.
 
-**Status: skeleton.** The module structure, the Semantic IR class hierarchy and
-the registry are in place; the DSL normalization, validator, explainer,
-generator, property runner, function checking, introspection and
-instrumentation are stubs that signal `not-implemented`.
+**Status: MVP vertical slice.** Normalization, validation, structured explain,
+spec introspection, the check-it generator backend, `defproperty` and the
+property runner with seed, replay and shrinking are implemented. Function
+specs, custom generators, the `describe-*` printers, instrumentation and the
+cl-mcp adapter are still stubs that signal `not-implemented`.
 
 ## Systems
 
@@ -25,6 +26,31 @@ backend into `cl-spec:*generator-backend*`.
 ```lisp
 (asdf:load-system :cl-spec)
 (asdf:load-system :cl-spec/check-it)
+```
+
+## Example
+
+The vertical slice from specification §67, working end to end:
+
+```lisp
+(cl-spec:defspec positive-integer
+  (and integer (range 1 *)))
+
+(cl-spec:find-spec 'positive-integer)
+(cl-spec:spec-data 'positive-integer)
+(cl-spec:validp 'positive-integer 10)          ; => T
+(cl-spec:explain-data 'positive-integer -1)    ; => (:VALID NIL :ERRORS (...))
+(cl-spec:sample 'positive-integer)             ; => (3 17 1 42 ...)
+
+(cl-spec:defproperty addition-preserves-order
+    ((x positive-integer)
+     (y positive-integer))
+  (:about +)
+  (:kind :monotonicity)
+  (> (+ x y) x))
+
+(cl-spec:properties-for '+)
+(cl-spec:run-property 'addition-preserves-order)
 ```
 
 ## Testing
