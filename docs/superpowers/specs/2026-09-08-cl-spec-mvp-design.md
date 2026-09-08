@@ -120,6 +120,8 @@ normalization の意味が CLOS 環境に依存してしまうためである。
   `member` を `:test #'eq` で使う実装はテストで通っても実利用で壊れる。
 - `range` は 2 引数形 `(range 1 *)` と 3 引数形 `(range integer 1 100)` の両方を受ける。
   3 引数でかつ第1引数がシンボルなら基底型、2 引数なら基底型 NIL（意味論上は `real`）。
+  §52 が「numeric range」と定めているとおり **range は数値のみ**を扱う。基底型が `integer` /
+  `real` 以外の range は `invalid-spec-form`。文字の範囲は MVP では扱わず、`(type character)` を使う。
 - `*` は `symbol-name` が `"*"` のシンボルとして照合し、`:unbounded` に写す。
 - `(member v...)` の値は正規化しない。リテラル値である。
 - `(and)` は常に真、`(or)` は常に偽。CL の `and` / `or` に合わせる。
@@ -223,7 +225,7 @@ MVP の制約にならない。
 | `:no-branch-matched` | `or-spec` |
 | `:negation-failed` | `not-spec` |
 | `:not-a-list` / `:not-a-vector` | `list-of-spec` / `vector-of-spec` |
-| `:wrong-length` | `tuple-spec` |
+| `:not-a-sequence` / `:wrong-length` | `tuple-spec`（tuple はリストとベクタの両方を受ける） |
 | `:not-an-instance` | `instance-of-spec` |
 
 要素単位の失敗は子の explainer の結果をそのまま伝播し、`:path` に位置（リストなら添字）を積む。
@@ -288,6 +290,11 @@ registry front-end（`find-spec` 等）の位置引数 `&optional (registry *reg
 docstring が既に約束している）。キー名は IR のスロット reader 名とは独立に決める。`spec-data` が
 安定した投影であり、内部スロット名の変更から利用者を守る層だからである。
 
+**スキーマは一様にする。** 全ノードが `:name` `:kind` `:source-form` `:source-location` と
+ノード固有キーを持ち、子がある時だけ `:children` が付く。§67 の例は子から `:name` と
+`:source-form` を省いているが、これは概念例の省略とみなす。キーが値によって出没する schema は
+消費側（特に JSON 投影）を壊しやすい。仕様書 §67 の例に注記を足す。
+
 ### 2.8 source-location（持ち越し #3 の決着）
 
 - `spec-data` / `property-data` は `:source-location` を**展開済み plist**で返す。opaque なオブジェクトが
@@ -323,7 +330,7 @@ runtime `eval` 禁止に触れない）。
 | IR ノード | check-it での構成 |
 |---|---|
 | `type-spec` | curated table を引く。`integer`→`int-generator`、`real`/`float`→`real-generator`、`character`→`char-generator`、`string`→`string-generator`、`null`→定数 NIL、`boolean`→`or-generator` of `t`/`nil`。表に無い型は `generator-unavailable` |
-| `range-spec` | 基底型に応じ int/real/char-generator の `:lower-limit` `:upper-limit`。`:unbounded` は check-it の `'*` へ |
+| `range-spec` | 基底型に応じ int-generator / real-generator の `:lower-limit` `:upper-limit`。`:unbounded` は check-it の `'*` へ |
 | `member-spec` | `or-generator`、`:sub-generators` に値を直接。check-it に `(defmethod generate (generator) generator)` があり非 generator は定数として扱われる |
 | `or-spec` | `or-generator` |
 | `and-spec` | 制約畳み込み（3.3） |
@@ -384,7 +391,21 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    実質 no-op である。したがって `vector-of` の反例は縮小されない。MVP の既知の限界として記録し、
    独自 shrink の実装は post-MVP に回す。
 
-4. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
+4. **`check-it:*size*` が数値の上下限を握り潰す。** `int-generator-function` /
+   `real-generator-function` は与えられた limit を `(min (abs limit) *size*)` で丸める。
+   `*size*` の既定は 10 なので、`(range integer 20 100)` は **10** を、
+   `(range integer -100 -50)` は **-10** を生成する。どちらも要求した範囲の外側であり、
+   §68 の「生成値は常に元の spec を満たす」が壊れる。
+   対策: generator のコンパイル時に有限境界の絶対値の最大を集め、
+   `compile-generator` が (generator, required-size) の組を返す。`sample` と
+   `run-generated-test` が `generate` の周りで `check-it:*size*` をその値まで引き上げる。
+   引き上げは束縛なので他の生成に漏れない。
+
+5. **`shrink` は実数を縮小しない。** `(defmethod shrink ((value real) test))` が
+   「can't shrink over non-discrete search space」として値をそのまま返す。
+   実数を引数に取る property の反例は縮小されない。
+
+6. `check-it:*num-trials*` は `check-it%` 専用であり、自前ループでは自分で回数を持つ。
    ただし既定値の出所としては `default-trials`（`check-it:*num-trials*` を live read する）を使い続ける。
 
 ### 3.5 `sample` / `generator-for`
@@ -415,6 +436,9 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
 cons を option 節として消費する。該当しない form が現れたらそこから body。
 
 既知キーワード: `:about`（targets）、`:kind`、`:tags`、`:trials`、`:shrink`（§16）。
+`property` クラスに `shrink` スロットは無いので、`:shrink` は `metadata` に
+`(:shrink <boolean>)` として格納する（既定 T）。専用スロットの追加は、他の実行オプションが
+増えた時にまとめて行う。
 **未知のキーワードで始まる cons は body の先頭として扱う。** option 節の集合を閉じておかないと、
 将来キーワードを追加した時に既存 property の body が黙って option として食われる。この規則は
 `defproperty` の docstring に明記する。
@@ -458,8 +482,9 @@ core が `*random-state*` を束縛し、backend は seed を知らない。
 
 1. property を解決する（無ければ `unknown-property`）
 2. seed を決める（未指定なら `make-seed`）
-3. trials を決める（§33。`(property-trials p)` の plist を profile で引き、無ければ backend の
-   `default-trials`。既定 profile は `:normal`）
+3. trials を決める（§33。`(property-trials p)` の plist を profile で引き、無ければ backend の既定値。
+   既定 profile は `:normal`）。core は check-it を参照できないので、`src/generator.lisp` に
+   `backend-default-trials (backend)` という generic を1つ足し、backend 側が答える
 4. 各引数 spec を generator にコンパイルし、`tuple-generator` に束ねる
 5. `*random-state*` を seed から束縛して `run-generated-test` を**1回**呼ぶ
    （trial ループも shrink も内側なので、束縛1つで実行全体を覆える）
@@ -468,8 +493,10 @@ core が `*random-state*` を束縛し、backend は seed を知らない。
 **backend `run-generated-test`**:
 
 - trials 回: `generate` → `cached-value` → `(apply fn values)` を `handler-case` で包んで実行
-- 本体が NIL を返した → `:failed`、condition を signal した → `:errored`
-  （§13 はどちらも failure とするが、LLM が原因を知る必要があるので **`property-result` では区別する**）
+- 本体が NIL を返した → `:failed`、condition を signal した → `:error`
+  （§13 はどちらも failure とするが、LLM が原因を知る必要があるので **`property-result` では区別する**）。
+  状態名は `src/property-runner.lisp` の `status` スロットの docstring が既に列挙している
+  `:PASSED` / `:FAILED` / `:ERROR` / `:SKIPPED` / `:PENDING` に従う
 - 失敗時: 反例を**コピーしてから** `check-it:shrink` を tuple-generator に対して呼ぶ（3.4-2）。
   shrink のテスト関数は `(lambda (args) (apply fn args))` を「error は失敗」として包んだもの
 - 戻り値 plist: `(:status … :trials n :counterexample <値のリスト> :shrunk-counterexample <同> :condition c)`
@@ -503,7 +530,14 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 
 **新規**
 
+- `src/resolve.lisp` — designator（シンボル or オブジェクト）→ spec / property の解決と、
+  compile context からの registry 取り出し。explain / validator / generator / introspection /
+  property-runner がすべて必要とする共通の責務なので、`src/registry.lisp` を触らずにここへ置く
+- `src/backends/check-it-generators.lisp` — IR → check-it generator の写像。backend プロトコルの
+  結線と trial ループ（`src/backends/check-it.lisp`）とは別の責務なので分ける。
+  `package-inferred-system` なので `.asd` の変更は不要
 - `src/utils/random.lisp` — seed shim
+- `tests/resolve-test.lisp`
 - `tests/utils/random-test.lisp`
 - `tests/self-properties-test.lisp` — §68 の自己 property
 
@@ -571,6 +605,7 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 ## 10. MVP の既知の限界（doc に明記する）
 
 - `vector-of` の反例は縮小されない（check-it の `shrink mapped-generator` が no-op、3.4-3）
+- 実数を引数に取る property の反例は縮小されない（check-it の `shrink real` が恒等、3.4-5）
 - 再帰 spec は generator を持てない（`generator-unavailable`）。validation と explain は動く
 - `not` / 単体の `satisfies` / `instance-of` は generator を持てない
 - `and` の generator は制約畳み込みのヒューリスティックに依存する。畳み込めない組み合わせは
