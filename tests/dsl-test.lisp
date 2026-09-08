@@ -136,3 +136,17 @@ stub and signals NOT-IMPLEMENTED"
       (ok (equal '(:smoke 5 :normal 200)
                  (cl-spec/src/property:property-trials
                   (cl-spec/src/registry:find-property 'good-trials)))))))
+
+(deftest defproperty-rejects-extra-values-on-single-value-clauses
+  (testing "(:trials (:smoke 5) (:normal 200)), a plausible mis-write for a two
+profile plist, is a clause with three elements; unvalidated, (second clause)
+is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
+    (ok (signals (eval '(cl-spec/src/dsl:defproperty bad-trials-profiles ((x integer))
+                          (:trials (:smoke 5) (:normal 200))
+                          (integerp x)))
+                 'cl-spec/src/conditions:invalid-property-form)))
+  (testing ":KIND takes exactly one value; an extra element is rejected the same way"
+    (ok (signals (eval '(cl-spec/src/dsl:defproperty bad-kind ((x integer))
+                          (:kind :invariant :extra)
+                          (integerp x)))
+                 'cl-spec/src/conditions:invalid-property-form))))

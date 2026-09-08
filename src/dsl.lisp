@@ -91,6 +91,21 @@ quietly swallow an existing property's first body form."
   "Return the clause in OPTIONS headed by KEYWORD, or NIL."
   (find keyword options :key #'first))
 
+(defun check-single-value-clause (clause)
+  "Signal INVALID-PROPERTY-FORM when CLAUSE carries more than the one value its
+keyword accepts.
+
+(:kind :invariant), (:trials ...) and (:shrink ...) each take exactly one
+value; a clause with an extra element, e.g.
+(:trials (:smoke 5) (:normal 200)) -- a plausible mis-write for a two profile
+:TRIALS plist -- would otherwise pass CLAUSE's well formed first value through
+while silently dropping the rest."
+  (when (and clause (cddr clause))
+    (error 'invalid-property-form
+           :form clause
+           :reason (format nil "~S takes exactly one value, but ~S was given"
+                            (first clause) clause))))
+
 (defun trials-plist-p (value)
   "Return true when VALUE is a well formed :TRIALS plist.
 
@@ -111,7 +126,11 @@ Unlike the other expanders this runs at macroexpansion time, because the
 predicate has to be compiled into a real function rather than kept as a list."
   (multiple-value-bind (documentation options forms) (parse-property-body body)
     (let ((shrink-clause (option-clause options :shrink))
+          (kind-clause (option-clause options :kind))
           (trials-clause (option-clause options :trials)))
+      (check-single-value-clause shrink-clause)
+      (check-single-value-clause kind-clause)
+      (check-single-value-clause trials-clause)
       (when (and trials-clause (not (trials-plist-p (second trials-clause))))
         (error 'invalid-property-form
                :form trials-clause
@@ -123,7 +142,7 @@ predicate has to be compiled into a real function rather than kept as a list."
                                                 collect `(list ',variable
                                                                (normalize-spec-form ',form))))
                        :targets ',(rest (option-clause options :about))
-                       :kind ',(second (option-clause options :kind))
+                       :kind ',(second kind-clause)
                        :tags ',(rest (option-clause options :tags))
                        :trials ',(second trials-clause)
                        :documentation ,documentation
