@@ -6,7 +6,7 @@
 
 **Architecture:** ASDF `package-inferred-system` により「パッケージ名 = ファイルパス」で 1 ファイル 1 責務に分割する。core system `cl-spec` は `check-it` に依存せず、generator backend は `cl-spec/src/generator` の動的変数 `*generator-backend*` を通じて別 system `cl-spec/check-it` から注入する。condition 階層・Semantic IR の CLOS 階層・registry protocol と hash-table backend・公開 API の export 一覧は実装し、DSL 正規化から property 実行までの変換ロジックは `not-implemented` を signal するスタブとする。
 
-**Tech Stack:** SBCL / Roswell、ASDF `package-inferred-system`、rove（ユニットテスト）、check-it（PBT backend、別 system）、alexandria、mallet（lint）
+**Tech Stack:** SBCL / Roswell、ASDF `package-inferred-system`、rove（ユニットテスト）、check-it（PBT backend、別 system）、mallet（lint）
 
 **設計文書:** `docs/superpowers/specs/2026-09-08-cl-spec-skeleton-design.md`
 **上位仕様書:** `docs/cl-spec-specification-v0.2-draft.md`（以下「仕様書」。§ は仕様書の節番号）
@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - ASDF system は `:class :package-inferred-system`。パッケージ名はファイルパスと完全一致させる（`src/ir.lisp` → `cl-spec/src/ir`、`tests/ir-test.lisp` → `cl-spec/tests/ir-test`）。
-- core system `cl-spec` の依存は `("alexandria" "cl-spec/main")` のみ。`check-it` と `cl-mcp` を core の依存グラフに入れてはならない。
+- core system `cl-spec` の依存は `("cl-spec/main")` のみ。`check-it` と `cl-mcp` を core の依存グラフに入れてはならない。package-inferred-system は `:import-from` から依存を推論するので、後で alexandria 等を使い始めても `.asd` を触る必要はない。
 - `:author "Satoshi Imai"`、`:license "MIT"`、`:version "0.1.0"`。
 - コードスタイル: Google Common Lisp Style Guide。インデント 2 スペース、100 桁以内、トップレベルフォーム間に空行、小文字 lisp-case（`*special*` / `+constant+` / `something-p`）。
 - 各ソースファイルは `;;;; <リポジトリ相対パス>` コメント → `defpackage` → `(in-package ...)` の順で始める。
@@ -119,8 +119,7 @@ git rm -q src/main.lisp tests/main.lisp README.org README.markdown
   :author "Satoshi Imai"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("alexandria"
-               "cl-spec/main")
+  :depends-on ("cl-spec/main")
   :in-order-to ((test-op (test-op "cl-spec/tests"))))
 ```
 
