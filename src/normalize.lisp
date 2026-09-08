@@ -81,6 +81,18 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
     (unless (member base-type '(nil integer real))
       (error 'invalid-spec-form :form form
                                 :reason "RANGE is numeric; its base type must be INTEGER or REAL"))
+    ;; A mis-write such as (range integer *) is meant to say "any integer",
+    ;; but with only two arguments it instead matches the two-argument
+    ;; grammar -- (range lo hi) with no base type -- and MINIMUM becomes the
+    ;; symbol INTEGER.  Left unchecked, that symbol survives normalization
+    ;; and only breaks later, inside VALIDP, as an unrelated TYPE-ERROR.
+    ;; Reject it here, at the same point the three-argument branch already
+    ;; rejects a bad base type.
+    (dolist (bound-value (list minimum maximum))
+      (unless (or (unbounded-marker-p bound-value) (realp bound-value))
+        (error 'invalid-spec-form :form form
+                                  :reason (format nil "RANGE bounds must be a number or *, got ~S"
+                                                  bound-value))))
     (flet ((bound (value) (if (unbounded-marker-p value) :unbounded value)))
       (apply #'make-instance 'range-spec
              :base-type base-type

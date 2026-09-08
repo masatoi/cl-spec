@@ -67,7 +67,15 @@
       (ok (eql 1 (range-spec-minimum spec)))
       (ok (eq :unbounded (range-spec-maximum spec)))))
   (testing "a non numeric base type is rejected"
-    (ok (signals (normalize-spec-form '(range character 1 2)) 'invalid-spec-form))))
+    (ok (signals (normalize-spec-form '(range character 1 2)) 'invalid-spec-form)))
+  (testing "(range integer *) is rejected rather than treating INTEGER as a bound"
+    ;; The natural mis-write for "any integer": with only two arguments this
+    ;; matches the (range lo hi) grammar and MINIMUM would otherwise become
+    ;; the symbol INTEGER, which used to survive normalization and only fail
+    ;; later, inside VALIDP, with an unrelated TYPE-ERROR.
+    (ok (signals (normalize-spec-form '(range integer *)) 'invalid-spec-form)))
+  (testing "a non numeric, non * bound is rejected in the three argument form too"
+    (ok (signals (normalize-spec-form '(range integer 1 something)) 'invalid-spec-form))))
 
 (deftest heads-are-matched-by-name-not-identity
   (testing "a head interned in another package still normalizes"
