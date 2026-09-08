@@ -251,24 +251,54 @@ rather than binding it here lets one binding cover a whole trial loop."
         ((eq current :unbounded) new)
         (t (min current new))))
 
+(defun fold-and-children (children context spec base-type minimum maximum leftovers)
+  "Return (VALUES BASE-TYPE MINIMUM MAXIMUM LEFTOVERS), folding CHILDREN into the
+accumulators of the same names.
+
+A TYPE-SPEC or RANGE-SPEC child narrows BASE-TYPE/MINIMUM/MAXIMUM directly.  A
+REFERENCE-SPEC child is resolved through CONTEXT's registry and folded as if
+its target had been written inline -- otherwise a named spec such as (AND
+MY-RANGE (SATISFIES ODDP)) would fold nothing from MY-RANGE and either lose
+its constraints or, worse, leave them to a GUARD-GENERATOR that rejects every
+draw forever.  The resolution is guarded by *REFERENCE-TRAIL* against
+recursion, exactly as the REFERENCE-SPEC method guards its own.  A nested
+AND-SPEC child is flattened the same way, so (AND A (AND B C)) folds
+identically to (AND A B C).  Anything else is collected into LEFTOVERS."
+  (dolist (child children)
+    (typecase child
+      (type-spec
+       (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
+      (range-spec
+       (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
+             minimum (tighter-minimum minimum (range-spec-minimum child))
+             maximum (tighter-maximum maximum (range-spec-maximum child))))
+      (and-spec
+       (multiple-value-setq (base-type minimum maximum leftovers)
+         (fold-and-children (and-spec-children child) context spec
+                            base-type minimum maximum leftovers)))
+      (reference-spec
+       (let ((target (reference-spec-target child))
+             (registry (context-registry context)))
+         (when (member target *reference-trail*)
+           (error 'generator-unavailable
+                  :spec spec
+                  :reason "recursive specs have no generator in this version"))
+         (let ((resolved (or (registry-find-spec registry target)
+                             (error 'unknown-spec :name target)))
+               (*reference-trail* (cons target *reference-trail*)))
+           (multiple-value-setq (base-type minimum maximum leftovers)
+             (fold-and-children (list resolved) context spec
+                                base-type minimum maximum leftovers)))))
+      (t (push child leftovers))))
+  (values base-type minimum maximum leftovers))
+
 (defmethod spec-generator ((spec and-spec) context)
   ;; Folding rather than guarding is a correctness requirement, not an
   ;; optimisation: check-it's GUARD-GENERATOR retries by recursing into GENERATE
   ;; with no depth limit, so a guard that rejects often enough overflows the
   ;; stack.  Narrowing the base generator removes the rejection entirely.
-  (let ((base-type nil)
-        (minimum :unbounded)
-        (maximum :unbounded)
-        (leftovers '()))
-    (dolist (child (and-spec-children spec))
-      (typecase child
-        (type-spec
-         (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
-        (range-spec
-         (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
-               minimum (tighter-minimum minimum (range-spec-minimum child))
-               maximum (tighter-maximum maximum (range-spec-maximum child))))
-        (t (push child leftovers))))
+  (multiple-value-bind (base-type minimum maximum leftovers)
+      (fold-and-children (and-spec-children spec) context spec nil :unbounded :unbounded '())
     (when (and (null base-type)
                (not (and (eq minimum :unbounded) (eq maximum :unbounded))))
       (setf base-type 'real))

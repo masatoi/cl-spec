@@ -3,12 +3,18 @@
 (defpackage #:cl-spec/tests/generator-test
   (:use #:cl)
   (:import-from #:rove
-                #:deftest #:testing #:ok)
+                #:deftest #:testing #:ok #:signals)
+  (:import-from #:cl-spec/src/conditions
+                #:no-generator-backend)
   (:import-from #:cl-spec/src/generator
+                #:*generator-backend*
+                #:current-generator-backend
+                #:compile-generator
+                #:generate-value
+                #:run-generated-test
                 #:generator-for
                 #:sample
-                #:backend-default-trials
-                #:current-generator-backend)
+                #:backend-default-trials)
   (:import-from #:cl-spec/src/backends/check-it
                 #:check-it-backend)
   (:import-from #:cl-spec/src/registry
@@ -20,6 +26,22 @@
                 #:validp))
 
 (in-package #:cl-spec/tests/generator-test)
+
+(deftest backend-protocol-is-generic
+  (testing "the three backend operations are generic functions"
+    (ok (typep #'compile-generator 'generic-function))
+    (ok (typep #'generate-value 'generic-function))
+    (ok (typep #'run-generated-test 'generic-function))))
+
+(deftest missing-backend-is-reported
+  (testing "CURRENT-GENERATOR-BACKEND signals when no backend is installed"
+    (let ((*generator-backend* nil))
+      (ok (signals (current-generator-backend) 'no-generator-backend)))))
+
+(deftest installed-backend-is-returned
+  (testing "CURRENT-GENERATOR-BACKEND returns whatever is bound"
+    (let ((*generator-backend* :fake-backend))
+      (ok (eq :fake-backend (current-generator-backend))))))
 
 (deftest sample-produces-values-the-spec-admits
   (let ((registry (make-hash-table-registry)))
@@ -36,7 +58,10 @@
       (ok (equal (sample 'positive-integer :count 20 :seed 4242 :registry registry)
                  (sample 'positive-integer :count 20 :seed 4242 :registry registry))))
     (testing "GENERATOR-FOR returns something GENERATE-VALUE accepts"
-      (ok (generator-for 'positive-integer :registry registry))))
+      (let ((generator (generator-for 'positive-integer :registry registry)))
+        (ok (validp 'positive-integer
+                    (generate-value (current-generator-backend) generator)
+                    :registry registry)))))
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'wide
                             (normalize-spec-form '(range integer 20 100) :name 'wide))

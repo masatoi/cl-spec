@@ -153,3 +153,22 @@
   (testing "an empty interval is refused rather than looping"
     (ok (handler-case (progn (draws-for '(and integer (range 10 20) (range 30 40)) :count 1) nil)
           (generator-unavailable () t)))))
+
+(deftest and-folds-through-references-and-nested-ands
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'my-range
+                            (normalize-spec-form '(and integer (range 1 10))
+                                                 :name 'my-range))
+    (testing "a reference conjunct folds its target's own type and range"
+      (let ((values (draws-for '(and my-range (satisfies oddp)) :registry registry)))
+        (ok (every (lambda (value) (and (oddp value) (<= 1 value 10))) values)))))
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'my-range
+                            (normalize-spec-form '(and integer (range 1000000 1000010))
+                                                 :name 'my-range))
+    (testing "a reference conjunct is folded rather than left for the guard to reject forever"
+      (ok (every (lambda (value) (<= 1000000 value 1000010))
+                 (draws-for '(and integer my-range) :registry registry)))))
+  (testing "a nested AND folds the same as its flattened equivalent"
+    (ok (every (lambda (value) (<= 10 value 20))
+               (draws-for '(and integer (and (range 1 20) (range 10 100))))))))
