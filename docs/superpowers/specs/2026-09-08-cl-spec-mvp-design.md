@@ -532,7 +532,10 @@ skeleton のシグネチャは `(property-designator seed &key options)`、§15 
 
 - `src/resolve.lisp` — designator（シンボル or オブジェクト）→ spec / property の解決と、
   compile context からの registry 取り出し。explain / validator / generator / introspection /
-  property-runner がすべて必要とする共通の責務なので、`src/registry.lisp` を触らずにここへ置く
+  property-runner がすべて必要とする共通の責務なので、`src/registry.lisp` を触らずにここへ置く。
+  未登録の判定は `registry-find-spec` / `registry-find-property` の**第2返り値**で行う。
+  registry は docstring で `(values entry found-p)` を約束しており、第1値だけを見ると
+  「NIL として登録された名前」と「未登録」が区別できない
 - `src/backends/check-it-generators.lisp` — IR → check-it generator の写像。backend プロトコルの
   結線と trial ループ（`src/backends/check-it.lisp`）とは別の責務なので分ける。
   `package-inferred-system` なので `.asd` の変更は不要

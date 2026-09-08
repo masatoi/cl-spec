@@ -255,21 +255,28 @@ Expected: FAIL — `cl-spec/src/resolve` パッケージが存在しない
   "Return the spec DESIGNATOR names, signalling UNKNOWN-SPEC when there is none.
 
 DESIGNATOR is either a spec object, which is returned unchanged, or a symbol
-looked up in REGISTRY."
+looked up in REGISTRY.  The lookup branches on the registry protocol's second
+value rather than on the spec itself, so a name registered with a NIL value
+stays distinguishable from a name that was never registered."
   (if (typep designator 'spec)
       designator
-      (or (registry-find-spec registry designator)
-          (error 'unknown-spec :name designator))))
+      (multiple-value-bind (spec foundp) (registry-find-spec registry designator)
+        (if foundp
+            spec
+            (error 'unknown-spec :name designator)))))
 
 (defun resolve-property (designator registry)
   "Return the property DESIGNATOR names, signalling UNKNOWN-PROPERTY otherwise.
 
 DESIGNATOR is either a property object, which is returned unchanged, or a
-symbol looked up in REGISTRY."
+symbol looked up in REGISTRY.  As with RESOLVE-SPEC, absence is read from the
+protocol's found-p value, not from the value found."
   (if (typep designator 'property)
       designator
-      (or (registry-find-property registry designator)
-          (error 'unknown-property :name designator))))
+      (multiple-value-bind (property foundp) (registry-find-property registry designator)
+        (if foundp
+            property
+            (error 'unknown-property :name designator)))))
 
 (defun context-registry (context)
   "Return the registry named by compilation CONTEXT, defaulting to *REGISTRY*.
