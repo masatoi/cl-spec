@@ -131,7 +131,14 @@ predicate has to be compiled into a real function rather than kept as a list."
                        :source-form ',whole
                        :source-location ',source-location
                        :metadata (list :shrink ,(if shrink-clause (second shrink-clause) t))
-                       :function (lambda ,(mapcar #'first arguments) ,@forms))))))
+                       :function (lambda ,(mapcar #'first arguments)
+                                   ;; Not every argument is necessarily read by
+                                   ;; the predicate body (e.g. a property about
+                                   ;; a function's return value alone), and the
+                                   ;; project's CI gate is a zero warning
+                                   ;; compile.
+                                   (declare (ignorable ,@(mapcar #'first arguments)))
+                                   ,@forms))))))
 
 (defmacro defproperty (&whole whole name arguments &body body)
   "Define a property named NAME over generated ARGUMENTS.
