@@ -305,7 +305,7 @@ git commit -m "feat: add designator resolution shared by every entry point"
 
 **Files:**
 - Modify: `src/normalize.lisp`
-- Test: `tests/normalize-test.lisp`
+- Test: `tests/normalize-test.lisp`, `tests/dsl-test.lisp`
 
 **Interfaces:**
 - Consumes: Task 1 の `invalid-spec-form`、`cl-spec/src/ir` の全 IR クラス
@@ -539,15 +539,42 @@ The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot."
 
 `:export` に `#:cl-type-name-p` は加えない（内部関数）。
 
-- [ ] **Step 4: テストが通ることを確認**
+- [ ] **Step 4: `tests/dsl-test.lisp` を現状に合わせる**
+
+`dsl-macros-signal-at-runtime` は `(defspec positive-integer (and integer (range 1 *)))` が
+`not-implemented` を signal すると assert している。これは normalizer 全体がスタブだった間だけ
+真であり、このタスクの後は偽になる。`defspec` の節を削り（残る3マクロはまだスタブなのでそのまま）、
+代わりに葉ノードだけを使う登録テストと、複合ヘッドがまだ拒否されることを示すテストを足す:
+
+```lisp
+(deftest defspec-registers-a-normalized-spec
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (testing "DEFSPEC normalizes its form and registers the result"
+      (eval '(cl-spec/src/dsl:defspec positive (satisfies plusp)))
+      (let ((spec (cl-spec/src/registry:find-spec 'positive)))
+        (ok spec)
+        (ok (eq :predicate (cl-spec/src/ir:spec-kind spec)))
+        (ok (eq 'positive (cl-spec/src/ir:spec-name spec)))
+        (ok (equal '(satisfies plusp) (cl-spec/src/ir:spec-source-form spec)))))))
+
+(deftest defspec-rejects-a-composite-head-for-now
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (testing "composite heads are not normalized yet"
+      (ok (signals (eval '(cl-spec/src/dsl:defspec positive-integer (and integer (range 1 *))))
+                   'cl-spec/src/conditions:invalid-spec-form)))))
+```
+
+`defspec-rejects-a-composite-head-for-now` は Task 4 で削除する。
+
+- [ ] **Step 5: テストが通ることを確認**
 
 Run: `rove cl-spec.asd`
-Expected: PASS
+Expected: PASS（全ファイル green）
 
-- [ ] **Step 5: コミット**
+- [ ] **Step 6: コミット**
 
 ```bash
-git add src/normalize.lisp tests/normalize-test.lisp
+git add src/normalize.lisp tests/normalize-test.lisp tests/dsl-test.lisp
 git commit -m "feat: normalize the leaf spec forms into Semantic IR"
 ```
 
@@ -602,8 +629,9 @@ git commit -m "feat: normalize the leaf spec forms into Semantic IR"
       (ok (equal '(range 1 *) (spec-source-form (first (spec-children spec))))))))
 ```
 
-`tests/dsl-test.lisp` の `defspec` に関する `not-implemented` 前提のテストを、実際に登録される
-ことを確かめるテストへ書き換える（既存の `no-eval` 抑止コメントはそのまま残す）:
+`tests/dsl-test.lisp` から Task 3 が置いた `defspec-rejects-a-composite-head-for-now` を削除し、
+`defspec-registers-a-normalized-spec` を複合ヘッドを使う形へ広げる（既存の `no-eval` 抑止コメントは
+そのまま残す）:
 
 ```lisp
 (deftest defspec-registers-a-normalized-spec
