@@ -28,7 +28,7 @@
 - 全テストは rove。`tests/<module>-test.lisp` にミラー配置する。
 - `rove:signals` は単体ではアサーションにならず真偽値を返すだけなので、必ず
   `(ok (signals (form) 'condition-type))` の形で `ok` に包む。
-- lint は `mallet src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp` が "No problems found" であること。
+- lint は `mallet main.lisp tests.lisp src/*.lisp src/*/*.lisp tests/*.lisp tests/*/*.lisp` が "No problems found" であること（そのタスクまでに存在するファイルのみを対象にする）。
 - 内部モジュールから nickname `cl-spec` を参照しない（ASDF が root system `cl-spec` への依存と解釈して循環するため）。
 
 ## コマンド早見表
