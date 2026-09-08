@@ -80,16 +80,10 @@
 
 (deftest defspec-registers-a-normalized-spec
   (let ((*registry* (make-hash-table-registry)))
-    (testing "DEFSPEC normalizes its form and registers the result"
-      (eval '(defspec positive (satisfies plusp)))
-      (let ((spec (find-spec 'positive)))
+    (testing "DEFSPEC normalizes and registers"
+      (eval '(defspec positive-integer (and integer (range 1 *))))
+      (let ((spec (find-spec 'positive-integer)))
         (ok spec)
-        (ok (eq :predicate (spec-kind spec)))
-        (ok (eq 'positive (spec-name spec)))
-        (ok (equal '(satisfies plusp) (spec-source-form spec)))))))
-
-(deftest defspec-rejects-a-composite-head-for-now
-  (let ((*registry* (make-hash-table-registry)))
-    (testing "composite heads are not normalized yet"
-      (ok (signals (eval '(defspec positive-integer (and integer (range 1 *))))
-                   'invalid-spec-form)))))
+        (ok (eq :and (spec-kind spec)))
+        (ok (eq 'positive-integer (spec-name spec)))
+        (ok (equal '(and integer (range 1 *)) (spec-source-form spec)))))))

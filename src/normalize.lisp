@@ -120,6 +120,34 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
                                        :reason "INSTANCE-OF takes a symbol naming a class"))
            (apply #'make-instance 'instance-of-spec :class-name class-name
                   (spec-initargs form name source-location))))
+        ((string= head-name "AND")
+         (apply #'make-instance 'and-spec
+                :children (mapcar #'normalize-spec-form args)
+                (spec-initargs form name source-location)))
+        ((string= head-name "OR")
+         (apply #'make-instance 'or-spec
+                :children (mapcar #'normalize-spec-form args)
+                (spec-initargs form name source-location)))
+        ((string= head-name "NOT")
+         (apply #'make-instance 'not-spec
+                :inner-spec (normalize-spec-form (first (require-arity args 1 form)))
+                (spec-initargs form name source-location)))
+        ((string= head-name "LIST-OF")
+         (apply #'make-instance 'list-of-spec
+                :element-spec (normalize-spec-form (first (require-arity args 1 form)))
+                (spec-initargs form name source-location)))
+        ((string= head-name "VECTOR-OF")
+         (apply #'make-instance 'vector-of-spec
+                :element-spec (normalize-spec-form (first (require-arity args 1 form)))
+                (spec-initargs form name source-location)))
+        ((string= head-name "TUPLE")
+         (apply #'make-instance 'tuple-spec
+                :element-specs (mapcar #'normalize-spec-form args)
+                (spec-initargs form name source-location)))
+        ((string= head-name "NULLABLE")
+         (apply #'make-instance 'nullable-spec
+                :inner-spec (normalize-spec-form (first (require-arity args 1 form)))
+                (spec-initargs form name source-location)))
         ((string= head-name "CONS-OF")
          (error 'invalid-spec-form :form form
                                    :reason "CONS-OF is post-MVP; use TUPLE or LIST-OF"))

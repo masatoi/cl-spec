@@ -8,6 +8,7 @@
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
                 #:spec-name #:spec-source-form #:spec-source-location #:spec-kind
+                #:spec-children
                 #:type-spec-type-specifier #:reference-spec-target
                 #:predicate-spec-predicate #:member-spec-values
                 #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum
@@ -101,3 +102,36 @@
   (testing "an already normalized spec is returned unchanged"
     (let ((spec (normalize-spec-form 'integer)))
       (ok (eq spec (normalize-spec-form spec))))))
+
+(deftest composite-heads
+  (testing "AND collects normalized children in order"
+    (let ((spec (normalize-spec-form '(and integer (range 1 *)))))
+      (ok (eq :and (spec-kind spec)))
+      (ok (equal '(:type :range) (mapcar #'spec-kind (spec-children spec))))))
+  (testing "OR collects normalized children"
+    (ok (equal '(:type :reference)
+               (mapcar #'spec-kind (spec-children (normalize-spec-form '(or null user)))))))
+  (testing "NOT takes exactly one child"
+    (ok (equal '(:type) (mapcar #'spec-kind (spec-children (normalize-spec-form '(not integer))))))
+    (ok (signals (normalize-spec-form '(not integer string)) 'invalid-spec-form)))
+  (testing "LIST-OF and VECTOR-OF take one element spec"
+    (ok (eq :list-of (spec-kind (normalize-spec-form '(list-of integer)))))
+    (ok (eq :vector-of (spec-kind (normalize-spec-form '(vector-of integer))))))
+  (testing "TUPLE keeps one spec per position"
+    (let ((spec (normalize-spec-form '(tuple integer string))))
+      (ok (eq :tuple (spec-kind spec)))
+      (ok (equal '(:type :type) (mapcar #'spec-kind (spec-children spec))))))
+  (testing "NULLABLE takes exactly one child"
+    (ok (eq :nullable (spec-kind (normalize-spec-form '(nullable integer))))))
+  (testing "the empty AND and OR are accepted"
+    (ok (null (spec-children (normalize-spec-form '(and)))))
+    (ok (null (spec-children (normalize-spec-form '(or)))))))
+
+(deftest children-do-not-inherit-the-name
+  (testing "only the top level node carries NAME"
+    (let ((spec (normalize-spec-form '(and integer) :name 'positive)))
+      (ok (eq 'positive (spec-name spec)))
+      (ok (null (spec-name (first (spec-children spec)))))))
+  (testing "children keep their own source form"
+    (let ((spec (normalize-spec-form '(and (range 1 *)))))
+      (ok (equal '(range 1 *) (spec-source-form (first (spec-children spec))))))))
