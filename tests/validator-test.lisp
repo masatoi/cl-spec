@@ -3,12 +3,18 @@
 (defpackage #:cl-spec/tests/validator-test
   (:use #:cl)
   (:import-from #:rove
-                #:deftest #:testing #:ok #:signals)
+                #:deftest #:testing #:ok)
+  (:import-from #:cl-spec/src/normalize
+                #:normalize-spec-form)
+  (:import-from #:cl-spec/src/explain
+                #:explain-data)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented
-                #:not-implemented-operator)
-  (:import-from #:cl-spec/src/ir
-                #:type-spec)
+                #:spec-violation
+                #:spec-violation-value
+                #:spec-violation-errors)
+  (:import-from #:cl-spec/src/registry
+                #:make-hash-table-registry
+                #:registry-register-spec)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator
                 #:validp
@@ -16,34 +22,32 @@
 
 (in-package #:cl-spec/tests/validator-test)
 
-(defun signalled-operator (thunk)
-  "Call THUNK and return the operator named by the NOT-IMPLEMENTED condition it
-signals, or NIL if it signals no such condition."
-  (handler-case (progn (funcall thunk) nil)
-    (not-implemented (condition) (not-implemented-operator condition))))
+(deftest validp-agrees-with-explain-data
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'positive-integer
+                            (normalize-spec-form '(and integer (range 1 *))
+                                                 :name 'positive-integer))
+    (testing "VALIDP is true exactly when EXPLAIN-DATA reports no errors"
+      (dolist (value (list 10 -1 0 1 "foo" nil))
+        (ok (eq (and (validp 'positive-integer value :registry registry) t)
+                (and (getf (explain-data 'positive-integer value :registry registry) :valid) t)))))))
 
-(deftest validator-entry-points-exist
-  (testing "the public validation entry points are defined"
-    (ok (fboundp 'compile-validator))
-    (ok (fboundp 'validp))
-    (ok (fboundp 'validate))))
+(deftest validate-returns-or-signals
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'positive-integer
+                            (normalize-spec-form '(and integer (range 1 *))
+                                                 :name 'positive-integer))
+    (testing "a valid value is returned unchanged"
+      (ok (eql 10 (validate 'positive-integer 10 :registry registry))))
+    (testing "an invalid value signals SPEC-VIOLATION carrying the structured errors"
+      (let ((condition (handler-case (progn (validate 'positive-integer -1 :registry registry) nil)
+                         (spec-violation (c) c))))
+        (ok condition)
+        (ok (eql -1 (spec-violation-value condition)))
+        (ok (spec-violation-errors condition))))))
 
-(deftest validator-entry-points-are-stubs
-  (testing "each signals NOT-IMPLEMENTED naming itself"
-    (ok (signals (compile-validator
-                  (make-instance 'type-spec :type-specifier 'integer))
-                 'not-implemented))
-    (ok (signals (validp 'positive-integer 10) 'not-implemented))
-    (ok (signals (validate 'positive-integer 10) 'not-implemented))))
-
-(deftest validator-entry-points-name-themselves
-  (testing "the signalled condition's operator names the entry point that signalled it"
-    (ok (eq 'compile-validator
-            (signalled-operator
-             (lambda ()
-               (compile-validator
-                (make-instance 'type-spec :type-specifier 'integer))))))
-    (ok (eq 'validp
-            (signalled-operator (lambda () (validp 'positive-integer 10)))))
-    (ok (eq 'validate
-            (signalled-operator (lambda () (validate 'positive-integer 10)))))))
+(deftest compile-validator-produces-a-predicate
+  (testing "the compiled function takes one argument and returns a boolean"
+    (let ((validator (compile-validator (normalize-spec-form '(and integer (range 1 *))))))
+      (ok (funcall validator 5))
+      (ok (not (funcall validator -5))))))

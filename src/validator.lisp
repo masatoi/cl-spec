@@ -8,9 +8,16 @@
 (defpackage #:cl-spec/src/validator
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented)
+                #:spec-violation)
   (:import-from #:cl-spec/src/ir
-                #:spec)
+                #:spec
+                #:spec-name)
+  (:import-from #:cl-spec/src/explain
+                #:compile-explainer)
+  (:import-from #:cl-spec/src/registry
+                #:*registry*)
+  (:import-from #:cl-spec/src/resolve
+                #:resolve-spec)
   (:export #:compile-validator
            #:validp
            #:validate))
@@ -22,30 +29,34 @@
 (defun compile-validator (spec &key context)
   "Compile SPEC into a function of one argument returning a generalized boolean.
 
-CONTEXT carries compilation options such as the registry to resolve references
-against.  The returned function performs no explanation; use COMPILE-EXPLAINER
-when structured failure data is needed.
+CONTEXT is a plist; :REGISTRY names the registry references resolve against.
+The validator is a thin wrapper over the explainer so that the two can never
+disagree about whether a value is admissible."
+  (let ((explainer (compile-explainer spec :context context)))
+    (lambda (value)
+      (null (funcall explainer value nil)))))
 
-Not implemented yet."
-  (declare (ignore spec context))
-  (error 'not-implemented :operator 'compile-validator))
-
-(defun validp (spec-designator value)
+(defun validp (spec-designator value &key (registry *registry*))
   "Return true when VALUE satisfies the spec named by SPEC-DESIGNATOR.
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
-Signals UNKNOWN-SPEC when a symbol resolves to nothing.
+Signals UNKNOWN-SPEC when a symbol resolves to nothing."
+  (let ((spec (resolve-spec spec-designator registry)))
+    (null (funcall (compile-explainer spec :context (list :registry registry))
+                   value nil))))
 
-Not implemented yet."
-  (declare (ignore spec-designator value))
-  (error 'not-implemented :operator 'validp))
-
-(defun validate (spec-designator value)
+(defun validate (spec-designator value &key (registry *registry*))
   "Return VALUE when it satisfies SPEC-DESIGNATOR, otherwise signal SPEC-VIOLATION.
 
 The signalled condition carries the structured error list produced by
-EXPLAIN-DATA so that callers do not have to re-run the check.
-
-Not implemented yet."
-  (declare (ignore spec-designator value))
-  (error 'not-implemented :operator 'validate))
+EXPLAIN-DATA so that callers do not have to re-run the check."
+  (let* ((spec (resolve-spec spec-designator registry))
+         (errors (funcall (compile-explainer spec :context (list :registry registry))
+                          value nil)))
+    (when errors
+      (error 'spec-violation
+             :spec (if (symbolp spec-designator) spec-designator (spec-name spec))
+             :value value
+             :path nil
+             :errors errors))
+    value))
