@@ -11,6 +11,7 @@
   (:import-from #:cl-spec/tests/utils/source-location-test)
   (:import-from #:cl-spec/tests/ir-test)
   (:import-from #:cl-spec/tests/registry-test)
+  (:import-from #:cl-spec/tests/resolve-test)
   (:import-from #:cl-spec/tests/normalize-test)
   (:import-from #:cl-spec/tests/validator-test)
   (:import-from #:cl-spec/tests/explain-test)
