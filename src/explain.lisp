@@ -8,7 +8,6 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form
-                #:not-implemented   ; EXPLAIN stays a stub until Task 7
                 #:unknown-spec)
   (:import-from #:cl-spec/src/ir
                 #:spec
@@ -308,12 +307,53 @@ MCP projection are derived from it."
           :path nil
           :errors errors)))
 
-(defun explain (spec-designator value &optional (stream *standard-output*))
+(defun format-expected (descriptor)
+  "Return the compact rendering of DESCRIPTOR that EXPLAIN prints.
+
+A type, a predicate or a spec name reads better bare than wrapped in its
+descriptor, which is why the common cases are unwrapped here."
+  (case (first descriptor)
+    ((:type :satisfies :spec :instance-of) (format nil "~S" (second descriptor)))
+    (t (format nil "~S" descriptor))))
+
+(defun conjunct-mark (status)
+  "Return the character EXPLAIN prints for a conjunct STATUS."
+  (ecase status
+    (:satisfied "✓")
+    (:failed "✗")
+    (:unchecked "·")))
+
+(defun print-explain-error (datum stream indent)
+  "Print one structured error DATUM to STREAM, indented to column INDENT."
+  (case (getf datum :kind)
+    (:conjunct-failed
+     (dolist (conjunct (getf datum :conjuncts))
+       (format stream "~vT~A ~A~%"
+               indent
+               (conjunct-mark (getf conjunct :status))
+               (format-expected (getf conjunct :expected))))
+     (dolist (child (getf datum :errors))
+       (print-explain-error child stream (+ indent 2))))
+    (:no-branch-matched
+     (format stream "~vTno branch matched~%" indent)
+     (dolist (branch (getf datum :branches))
+       (format stream "~vT✗ ~A~%" (+ indent 2) (format-expected (getf branch :expected)))))
+    (t
+     (format stream "~vT✗ ~A~@[ at ~S~]~%"
+             indent
+             (format-expected (getf datum :expected))
+             (getf datum :path)))))
+
+(defun explain (spec-designator value &key (stream *standard-output*) (registry *registry*))
   "Print a human readable rendering of (EXPLAIN-DATA SPEC-DESIGNATOR VALUE).
 
 Writes to STREAM and returns NIL.  This is a projection of EXPLAIN-DATA and
-must not compute anything EXPLAIN-DATA does not already report.
-
-Not implemented yet."
-  (declare (ignore spec-designator value stream))
-  (error 'not-implemented :operator 'explain))
+must not compute anything EXPLAIN-DATA does not already report."
+  (let ((data (explain-data spec-designator value :registry registry)))
+    (if (getf data :valid)
+        (format stream "~&~S satisfies ~S~%" value (getf data :spec))
+        (progn
+          (format stream "~&~S does not satisfy ~S~%" value (getf data :spec))
+          (dolist (datum (getf data :errors))
+            (print-explain-error datum stream 2)))))
+  nil)

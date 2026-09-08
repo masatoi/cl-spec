@@ -171,3 +171,26 @@
         (ok (null (funcall explainer 1 nil)))
         (ok (null (funcall explainer '(1 (2 3)) nil)))
         (ok (funcall explainer '(1 "x") nil))))))
+
+
+(deftest explain-renders-the-checklist
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'positive-money
+                            (normalize-spec-form '(and integer (satisfies plusp))
+                                                 :name 'positive-money))
+    (testing "a failing conjunction prints one line per conjunct"
+      (let ((text (with-output-to-string (stream)
+                    (explain 'positive-money -100 :stream stream :registry registry))))
+        (ok (search "does not satisfy" text))
+        (ok (search "POSITIVE-MONEY" text))
+        (ok (search "✓ INTEGER" text))
+        (ok (search "✗ PLUSP" text))))
+    (testing "an unchecked conjunct is marked as such rather than as passing"
+      (let ((text (with-output-to-string (stream)
+                    (explain 'positive-money "foo" :stream stream :registry registry))))
+        (ok (search "✗ INTEGER" text))
+        (ok (search "· PLUSP" text))))
+    (testing "a passing value says so and returns NIL"
+      (let ((text (with-output-to-string (stream)
+                    (ok (null (explain 'positive-money 1 :stream stream :registry registry))))))
+        (ok (search "satisfies" text))))))
