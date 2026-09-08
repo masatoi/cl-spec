@@ -67,8 +67,8 @@ introspection を実装するときに、アクセサを公開するか、`spec-
 残りは§2.6が明示的に据え置くと決めた、意図的な不揃いである。
 
 - registry front-end（`find-spec` `list-specs` `find-function-spec` `list-function-specs`
-  `find-property` `list-properties` `properties-for` `properties-with-tag`、いずれも
-  `src/registry.lisp`）と `register-spec` `register-property`（`src/property.lisp`）
+  `find-property` `list-properties` `properties-for` `properties-with-tag` `register-spec`、
+  いずれも `src/registry.lisp`）と `register-property`（`src/property.lisp`）
   `register-function-spec`（`src/function-spec.lisp`）`instrument-function`（`src/instrument.lisp`）
   は `&optional (registry *registry*)` の位置引数のまま。§2.6は「互換のため残す」と明言している。
   `register-property` / `register-function-spec` は `main.lisp` から re-export される public API
