@@ -19,6 +19,15 @@
                 #:unknown-property
                 #:unknown-property-name
                 #:no-generator-backend)
+  (:import-from #:cl-spec/src/ir
+                #:spec
+                #:spec-name
+                #:spec-description
+                #:spec-source-form
+                #:spec-source-location
+                #:spec-metadata
+                #:spec-kind
+                #:spec-children)
   (:export ;; Conditions
            #:cl-spec-error
            #:not-implemented
@@ -32,6 +41,15 @@
            #:unknown-spec-name
            #:unknown-property
            #:unknown-property-name
-           #:no-generator-backend))
+           #:no-generator-backend
+           ;; Semantic IR
+           #:spec
+           #:spec-name
+           #:spec-description
+           #:spec-source-form
+           #:spec-source-location
+           #:spec-metadata
+           #:spec-kind
+           #:spec-children))
 
 (in-package #:cl-spec/main)
