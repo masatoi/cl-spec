@@ -68,7 +68,7 @@ and the shrunk counterexample are what make a failure actionable."))
 
 (declaim (ftype (function ((or symbol property)
                            &key (:profile t) (:seed t) (:options t))
-                          property-result)
+                          (values property-result &optional))
                 run-property))
 
 (defun run-property (property-designator &key profile seed options)

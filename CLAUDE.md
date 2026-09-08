@@ -17,8 +17,8 @@ documents live in `docs/superpowers/specs/`.
 
 **Current status: skeleton.** The condition hierarchy, the Semantic IR class
 hierarchy and the registry are implemented. Normalization, validation,
-explanation, generation, property execution, function checking and
-instrumentation are stubs that signal `not-implemented`.
+explanation, generation, property execution, function checking, introspection
+and instrumentation are stubs that signal `not-implemented`.
 
 ## Development With cl-mcp
 
