@@ -92,6 +92,32 @@ the smaller value still fails."
     (handler-case (apply function arguments)
       (error () nil))))
 
+(defun copy-generated-value (value)
+  "Return a copy of VALUE that shares no mutable storage with it.
+
+CHECK-IT's shrinker mutates a compound generator's cached value in place
+(SETF NTH on a list-generator's cached list, SETF NTH on a tuple-generator's
+cached tuple) rather than always allocating a fresh spine, and a nested
+LIST-OF, VECTOR-OF or TUPLE argument's elements are EQ to the sub-generator
+that produced them.  A shallow COPY-LIST at the top level only protects the
+top-level spine, so a captured compound counterexample can still be corrupted
+by a shrink that runs later.
+
+Recursion follows CONS cells and non-string vectors, because those are the
+only two compound shapes this backend's generators ever build in place.  A
+string is left alone because CHECK-IT:JOIN-LIST always allocates a fresh one
+when a string is shrunk; every other value (numbers, characters, symbols) is
+immutable as far as generation and shrinking are concerned, so sharing it is
+safe."
+  (cond
+    ((consp value)
+     (cons (copy-generated-value (car value)) (copy-generated-value (cdr value))))
+    ((stringp value)
+     value)
+    ((vectorp value)
+     (map 'vector #'copy-generated-value value))
+    (t value)))
+
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
   "Run PROPERTY through check-it, shrinking any counterexample.
 
@@ -121,8 +147,10 @@ is what keeps this method from having to know the property's variables."
     (loop for trial from 1 to trials
           do (generate generator)
              ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
-             ;; place, so the counterexample must be copied out before it runs.
-             (let ((arguments (copy-list (cached-value generator))))
+             ;; place, so the counterexample must be copied out before it runs
+             ;; -- deeply, since a compound argument's elements are EQ to a
+             ;; sub-generator's own cached value and get mutated the same way.
+             (let ((arguments (copy-generated-value (cached-value generator))))
                (multiple-value-bind (result condition) (call-property function arguments)
                  (when (or condition (null result))
                    (return (list :status (if condition :error :failed)
@@ -130,7 +158,8 @@ is what keeps this method from having to know the property's variables."
                                  :counterexample arguments
                                  :shrunk-counterexample
                                  (when shrink-p
-                                   (copy-list (shrink generator (shrinking-test function))))
+                                   (copy-generated-value
+                                    (shrink generator (shrinking-test function))))
                                  :condition condition)))))
           finally (return (list :status :passed :trials trials)))))
 

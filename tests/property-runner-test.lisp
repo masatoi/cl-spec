@@ -90,7 +90,14 @@
       (testing "the shrunk value still fails the property"
         (ok (>= shrunk 10)))
       (testing "the original counterexample survives shrinking"
-        (ok (>= original 10))))))
+        (ok (>= original 10)))
+      (testing "shrinking actually ran: it converges on the exact minimal failing value"
+        ;; CHECK-IT:SHRINK-INT is a bisection search; for (RANGE INTEGER 1 100)
+        ;; against (< X 10) it always lands on exactly 10, the smallest integer
+        ;; that still fails.  Pinning this catches a regression that turns
+        ;; shrinking into a no-op -- the three assertions above would all still
+        ;; pass even if SHRUNK-COUNTEREXAMPLE were just a copy of the original.
+        (ok (eql 10 shrunk))))))
 
 (deftest shrinking-can-be-turned-off
   (with-fresh-registry
@@ -106,3 +113,33 @@
   (with-fresh-registry
     (testing "RUN-PROPERTY signals UNKNOWN-PROPERTY"
       (ok (signals (run-property 'absent) 'cl-spec/src/conditions:unknown-property)))))
+
+(deftest a-compound-counterexample-survives-shrinking
+  ;; The property body claims every list has an even number of elements --
+  ;; deliberately false, but chosen for its LENGTH's parity rather than its
+  ;; elements' values.  That shape is what makes the failure (and the
+  ;; corruption CHECK-IT:SHRINK's in-place mutation can cause without a deep
+  ;; copy) reliable rather than a matter of luck: removing any one element
+  ;; from an odd-length list always makes it even, i.e. always makes the
+  ;; property pass, so CHECK-IT's remove-an-element shrink step is rejected
+  ;; for every candidate at every length, and it falls straight to shrinking
+  ;; XS's elements in place on the very list this test captured -- on every
+  ;; failing trial, not just some of them.
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty list-argument-has-even-length ((xs (list-of small)))
+             (:trials (:normal 25))
+             (evenp (length xs))))
+    (let* ((result (run-property 'list-argument-has-even-length))
+           (original (getf (property-result-counterexample result) 'xs))
+           (shrunk (getf (property-result-shrunk-counterexample result) 'xs)))
+      (testing "the property does fail"
+        (ok (eq :failed (property-result-status result))))
+      (testing "the shrunk counterexample is a distinct object from the original"
+        (ok (not (eq shrunk original))))
+      (testing "the original counterexample is still a well-formed list of in-range integers"
+        (ok (and (listp original)
+                 (every (lambda (value) (and (integerp value) (<= 1 value 100))) original))))
+      (testing "the shrunk counterexample is still a well-formed list of in-range integers"
+        (ok (and (listp shrunk)
+                 (every (lambda (value) (and (integerp value) (<= 1 value 100))) shrunk)))))))
