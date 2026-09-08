@@ -2629,6 +2629,20 @@ it as a failure, and the result has to say which kind of failure it was."
   (handler-case (values (apply function arguments) nil)
     (error (condition) (values nil condition))))
 
+(defun copy-counterexample (value)
+  "Return a copy of VALUE deep enough to survive check-it's in-place shrinking.
+
+CHECK-IT:SHRINK mutates a list generator's cached value with SETF NTH, and a
+tuple's element is the very object its sub-generator cached, so a shallow copy
+still loses the original counterexample.  Conses and non-string vectors are the
+only shapes this backend's generators produce that check-it mutates; strings
+come back fresh from JOIN-LIST and scalars are immutable, so the recursion stops
+at both."
+  (typecase value
+    (cons (mapcar #'copy-counterexample value))
+    ((and vector (not string)) (map 'vector #'copy-counterexample value))
+    (t value)))
+
 (defun shrinking-test (function)
   "Return the one-argument test CHECK-IT:SHRINK drives.
 
@@ -2667,8 +2681,11 @@ is what keeps this method from having to know the property's variables."
     (loop for trial from 1 to trials
           do (generate generator)
              ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
-             ;; place, so the counterexample must be copied out before it runs.
-             (let ((arguments (copy-list (cached-value generator))))
+             ;; place, so the counterexample must be copied out before it runs —
+             ;; and deeply: for a compound argument the tuple's element is EQ to
+             ;; the sub-generator's own cached value, which SHRINK-LIST-GENERATOR
+             ;; mutates, so copying only the spine still loses the original.
+             (let ((arguments (copy-counterexample (cached-value generator))))
                (multiple-value-bind (result condition) (call-property function arguments)
                  (when (or condition (null result))
                    (return (list :status (if condition :error :failed)
@@ -2676,7 +2693,8 @@ is what keeps this method from having to know the property's variables."
                                  :counterexample arguments
                                  :shrunk-counterexample
                                  (when shrink-p
-                                   (copy-list (shrink generator (shrinking-test function))))
+                                   (copy-counterexample
+                                    (shrink generator (shrinking-test function))))
                                  :condition condition)))))
           finally (return (list :status :passed :trials trials)))))
 ```

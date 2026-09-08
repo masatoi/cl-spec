@@ -394,6 +394,14 @@ check-it の `guard-generator` は棄却時に `(generate generator)` を**上�
    `(setf (nth i cached-value) shrunk-elem)` を行うため、縮小前の反例は失われる。
    **shrink を呼ぶ前に反例をコピーしておくこと。** check-it 自身も印字用に事前 stringify して回避している。
 
+   **コピーは深くなければならない。** `(defmethod generate ((generator tuple-generator))
+   (mapcar #'generate (sub-generators generator)))` が返す各要素は、`generate` の `:around`
+   によって各 sub-generator の `cached-value` と同一オブジェクトになる。`list-of` /
+   `vector-of` / 入れ子 `tuple` の引数では、`shrink-list-generator` の `elem-wise-shrink` が
+   `(setf (nth i cached-value) ...)` でその共有オブジェクトを書き換えるため、
+   `copy-list` でスパインだけ複製しても反例は壊れる。cons と（文字列以外の）ベクタを
+   再帰的に複製する。文字列は `join-list` が毎回新しく作るので複製不要。
+
 3. **`shrink mapped-generator` は縮小しない。** 内側で計算した `shrunk-elem` を `setf` せずに捨てており、
    実質 no-op である。したがって `vector-of` の反例は縮小されない。MVP の既知の限界として記録し、
    独自 shrink の実装は post-MVP に回す。
