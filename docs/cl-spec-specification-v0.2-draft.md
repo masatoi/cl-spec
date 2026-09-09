@@ -3,12 +3,22 @@
 **Common Lisp LLM-Oriented Specification & Property Testing Framework**
 
 - 文書バージョン: 0.2-draft
-- ステータス: 設計・プロトタイプ前
+- ステータス: MVP vertical slice実装済み・仕様詳細化中
+- LLM向け整理日: 2026-09-09
+- 実装状況の根拠: `AGENTS.md`および対応ソースの静的確認。実行環境の対応は別途確認する。
 - 本文書はプロジェクトの継続的な設計成果物としてメンテナンスする。
 
 ## 改訂履歴
 
 ### 0.2-draft
+
+2026-09-09の文書整理：
+
+- §0に読み方、実装状況、実装済みAPIの入口、LLMの判断規則を追加。
+- 既存の§1〜§71は参照番号を維持し、機能ごとの位置付けを明示。
+- 概念例と現在利用可能なAPIを区別し、開発ループとreplayの説明を補正。
+- §72にLLM利用の受け入れ要件、§73に未決定事項と検証方法を集約。
+- 本改訂は文書の更新であり、新しいAPIや実行上の保証を実装するものではない。
 
 - Schemata / Malliの内部architecture調査を反映。
 - DSL中心からSemantic IR中心のarchitectureへ明確化。
@@ -18,6 +28,121 @@
 - Schemataはdependency/forkせず独立実装する方針を明記。
 - check-itはbackendとして隔離し、internal APIへの依存を避ける。
 - vertical sliceおよび実装順序を更新。
+
+---
+
+# 0. LLM向けの読み方と現在の利用範囲
+
+## 0.1 文書の規約
+
+本書は設計仕様と実装状況を併記する。次のラベルを独立に読む。
+
+| ラベル | 意味 |
+|---|---|
+| **設計方針** | 採用する責務分離・設計原則。APIの実装済みを意味しない |
+| **実装済み** | 整理日時点のソースに実装がある。全環境・全入力での動作保証ではない |
+| **一部実装** | 基盤または一部APIのみ存在する。利用範囲は§0.2と当該節で確認する |
+| **未実装** | MVPの予定機能。公開symbolがあってもstubの場合がある |
+| **将来構想** | MVPの利用可能機能に含めない |
+| **要件（現状は未保証）** | 実装・運用が満たすべき条件。現在のrunnerが保証するとは解釈しない |
+| **未決定** | 構文・挙動・責務等の設計判断が残る。LLMが推測してAPIを作らない |
+
+本文の「概念」「想定」「候補」「例えば」で示すコード・JSON・クラス定義は、
+そのまま実行可能なAPI仕様ではない。節全体が実装済みでも、概念例の全フィールドを
+現在の返却値に期待してはならない。正確な呼び出しは対象revisionの公開APIと照合する。
+
+本文の要件と実装が異なる場合、実装の現状と仕様上の要求を別々に報告する。
+一方を根拠にもう一方を無断で変更しない。新しい要件の受け入れ条件は§72、
+未決定の詳細は§73に記録する。
+
+既存の§番号は、ソース・テスト・他文書からの参照を維持するため変更しない。
+
+## 0.2 実装状況表
+
+この表は2026-09-09時点のスナップショットであり、実行時のcapability APIではない。
+
+| 機能 | 状況 | 現在の利用範囲・制限 |
+|---|---|---|
+| Semantic IR・normalization・hash-table registry | 実装済み | §7〜9、§37。追加registry backendは将来構想 |
+| validation・structured explain | 実装済み | `validp`、`validate`、`explain-data`、`explain` |
+| Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data` |
+| symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
+| check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
+| Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
+| seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
+| Function Spec | 一部実装 | IR・registryは存在。`defspec-function`、`check-function`はstub |
+| Custom generator DSL | 未実装 | `defgenerator`はstub。`defgenerator-for`は構想上の名前 |
+| 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
+| Instrumentation・cl-mcp adapter | 未実装 | 公開名や想定tool名の存在を利用可能の根拠にしない |
+| timeout・状態隔離・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
+| state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
+
+現在のstubは `not-implemented` を通知する。LLMはこれを対象関数の契約違反や、
+Propertyの反例として扱ってはならない。
+
+## 0.3 目的別の参照先
+
+| 作業 | 読む節 |
+|---|---|
+| 既存関数を変更する | §0.4、§27〜31、§72 |
+| SpecやPropertyを書く | §5〜6、§9〜19、§33、§45〜46、§51〜52 |
+| 失敗を調べる | §14〜16、§21〜22、§47〜48、§57 |
+| frameworkを実装する | §7〜12、§37〜39、§50、§67〜70、§73 |
+| MCPで公開する | §26〜28、§38、§49、§60、§72.6 |
+| 将来の機能を検討する | §23〜24、§36、§41〜44、§53〜55、§58 |
+
+## 0.4 LLMによる変更手順
+
+1. 対象revision、Lisp実装、ロード済みsystem、対象packageとsymbolを確認する。
+2. Spec・Propertyを定義するsystemをロードする。未ロードと未登録を混同しない。
+3. `semantic-data`で登録名を取得し、`spec-data`・`property-data`で必要な本文を読む。
+   ソース・signature・呼び出し関係はcl-mcp側から取得する。
+4. 関連Propertyと通常テストを選び、変更前の結果を記録する。
+   `:about`による直接関連だけでは変更影響を網羅しない。
+5. 実装を変更し、ファイルへ保存し、再ロード・コンパイルする。
+   REPLだけの定義で完了としない。
+6. 通常テスト、関連Property、保存済み反例の再検査を行う。
+   完了前にはプロジェクトが要求する範囲のテストを実行する。
+7. 失敗、実行エラー、未実行、検証不足を区別し、修正または不足の報告へ進む。
+8. 変更内容、検査した契約、実行件数、結果、未検証範囲を報告する。
+   Propertyの成功は、生成・検査した範囲についての証拠である。
+
+元の要求が契約変更を含まない限り、失敗を解消するためにSpecを弱めたり、
+Propertyを削除したり、入力domainや試行予算を縮小したりしない。
+契約変更が必要な場合は、その理由と差分を実装変更と区別して示す。
+
+## 0.5 実装済みAPIの最小利用例
+
+次は既に対象プロジェクトとそのSpec/Property定義をロード済みのREPLで使う呼び出し例。
+`target`には既存の対象symbolを渡す。登録内容の作成例は§67を参照する。
+
+```lisp
+(asdf:load-system "cl-spec/check-it")
+
+(defun inspect-and-check-target (target)
+  "Return registered metadata, property definitions and check results for TARGET."
+  (let* ((routing (cl-spec:semantic-data target))
+         (names (getf routing :properties-about)))
+    (values routing
+            (mapcar #'cl-spec:property-data names)
+            (cl-spec:run-properties names :profile :normal))))
+```
+
+`names`が空なら結果も空であり、「検査成功」ではなく「選択されたPropertyがない」。
+この例はAPIの接続を示すだけで、§0.4の変更手順全体を自動化しない。
+
+既存Propertyの個別実行と再生成：
+
+```lisp
+;; PROPERTY-NAMEは登録済みPropertyのsymbol。
+(let ((result (cl-spec:run-property property-name :profile :normal :seed 18372918)))
+  (values (cl-spec:property-result-status result)
+          (cl-spec:property-result-trials result)
+          (cl-spec:replay-property property-name result)))
+```
+
+`run-property`の現在のキーワードは `:profile`、`:seed`、`:options`、`:registry`。
+`:timeout`を直接渡すAPIは未実装。replayの制限は§15を参照する。
 
 ---
 
@@ -268,6 +393,8 @@ LLMがpropertyの意味を認識しやすいよう、propertyを分類する。
 
 # 7. Semantic IR / Specデータモデル
 
+> **位置付け:** 一部実装。Semantic IRは存在する。クラス階層は概念図であり、全候補の実装を意味しない。
+
 `cl-spec` の中核はDSLではなく、正規化された **Semantic IR (Intermediate Representation)** である。
 
 `defspec`、`defspec-function`、`defproperty` 等のmacroはsyntax sugarであり、最終的にはSemantic IR objectを生成・登録する。
@@ -346,6 +473,8 @@ Semantic IR
 これはMalliに見られる「schemaを共通IRとしてvalidator・explainer・generator等へ変換する」設計を参考にする。一方、Common LispではCLOS、package-qualified symbol、condition system、MOP等を活かした独自のSemantic IRを定義する。
 
 # 8. Registry architecture
+
+> **位置付け:** 一部実装。protocolとhash-table backendは実装済み。他backendは将来構想。
 
 registryを単一のglobal hash-tableとして固定しない。
 
@@ -477,6 +606,8 @@ instance-of
 
 # 9.1 Validator / Explainer compiler
 
+> **位置付け:** 一部実装。compiler APIは存在する。最適化・cacheの全要件を保証するものではない。
+
 Semantic IRを実行時に毎回再帰interpretすることだけに依存せず、必要に応じて実行用functionへcompileする。
 
 概念API：
@@ -520,6 +651,8 @@ MVPでは単純なrecursive interpretationから開始してもよいが、publi
 
 # 10. Generator生成
 
+> **位置付け:** 一部実装。自動導出はbackendが対応するSpecに限る。
+
 Specから可能な場合はgeneratorを自動導出する。
 
 例：
@@ -560,6 +693,8 @@ simple structures
 ---
 
 # 11. Custom generator
+
+> **位置付け:** 未実装。以下の定義構文・関連付けは概念例。
 
 Domain objectについては自動生成できないケースが多い。
 
@@ -616,6 +751,8 @@ Specへの関連付け：
 ---
 
 # 12. Generator architecture
+
+> **位置付け:** 一部実装。check-it backendとprotocolは存在する。他backendは将来構想。
 
 Generator backendをSemantic IRから分離する。
 
@@ -685,11 +822,15 @@ NIL
 
 を返す場合をfailureとする。
 
-conditionが発生した場合もfailureとして扱う。
+想定外のエラーは成功に含めず、真偽値NILによる失敗と区別して記録する。
+warning・通常のsignal・期待するconditionまで一律に失敗とする意味ではない。
+Function Specの`:signals`、condition分類、restartを含む詳細規則は§73のD1・D4で確定する。
 
 ---
 
 # 14. Property Result
+
+> **位置付け:** 一部実装。構造化resultは存在する。概念クラス・JSONは現行schemaではない。
 
 Property実行結果は単なるbooleanではなく構造化する。
 
@@ -708,11 +849,15 @@ Property実行結果は単なるbooleanではなく構造化する。
 
 ```
 
-`profile`はrunが実際に使ったtrial数の予算（§33）を記録する。`trials`はrunが止まった
-試行回数であって、runに許されていた予算そのものではないため、`profile`から`trials`を
-導出することはできても、その逆はできない。§15がreproducibilityを必須要件とする以上、
-`replay-property`が`property-result`だけからprofileを掘り出せる必要があり、それが
-このslotが独立して存在する理由である。
+`profile`は実際に選択したprofile名（例：`:normal`）を記録し、`trials`は実行済み試行数を記録する。
+profile名だけでは数値の予算は固定されない。Propertyの`:trials`定義とbackend defaultも必要になる。
+現在のresultからreplayするとseedとprofileは引き継がれるが、元の予算・options・定義・環境を
+完全には復元しない。これらの保存要件は§72.3に定める。
+
+現在の`property-result`はstatus、property、trials、seed、profile、counterexample、
+shrunk-counterexample、condition、elapsedを公開readerで提供する。
+statusの定義上の候補は`:passed`、`:failed`、`:error`、`:skipped`、`:pending`。
+すべての候補を現在のbackendが返すとは限らない。§47のfailure categoryとは別の軸である。
 
 概念的JSON：
 
@@ -763,7 +908,16 @@ API：
 
 を提供する。
 
-LLMが失敗を再現可能であることを必須条件とする。
+LLMが失敗を再現可能であることを必須条件とする。ただしseedだけで任意の環境・状態を再現する
+とは保証しない。現在の整数seed対応はSBCLに限定され、未対応実装では`unsupported-seed`となる。
+
+現在の`replay-property`は生成から再実行するAPIである。resultを渡すとseedとprofileを再利用し、
+明示したprofileがあればそちらを優先する。optionsは自動保存されないため呼び出し側が再指定する。
+同じコード、Spec/Property、generator、profile定義、backend、Lisp実装、初期状態を前提とする。
+
+保存した反例を修正後の実装へ直接入力する「反例の再検査」は、生成列のreplayとは別の操作である。
+永続化形式と専用APIは未決定。現時点では具体例テストとして保存して再検査できる。
+詳細な再現情報と不一致時の扱いは§72.3を参照する。
 
 ---
 
@@ -798,9 +952,15 @@ warning: generated value may have been destructively modified
 
 の診断を将来的に検討する。
 
+本書の「最小反例」は、backendが探索して得た縮小済み反例を指す。
+大域的な最小性を保証しない。縮小の完了・予算切れ・中断を区別し、元の失敗理由を保持する
+要件は§72.4に定める。概念JSONの`minimal_counterexample`もこの意味で読む。
+
 ---
 
 # 17. Function Spec
+
+> **位置付け:** 一部実装。IR・registryは存在する。以下のDSLと自動検査は未実装。
 
 関数仕様は少なくとも、
 
@@ -813,6 +973,10 @@ signals
 ```
 
 を記述できるものとする。
+
+Function Specの実装前に、通常引数と`&optional`・`&key`・`&rest`、多値の個数と型、
+pre/postの評価順、`result`の束縛、実行前の可変値の参照、期待するconditionを定義する。
+MVPで対応しない形式は明示的に拒否し、契約の一部を黙って無視しない。詳細判断は§73のD1。
 
 例：
 
@@ -838,6 +1002,8 @@ Clojure specの `fdef` がargs、return、args/return間の関係を仕様とし
 ---
 
 # 18. 自動generative function test
+
+> **位置付け:** 未実装。以下はFunction checkerの設計。
 
 Function specだけで最低限のproperty testを生成できるようにする。
 
@@ -875,6 +1041,8 @@ API：
 
 # 19. Preconditionの扱い
 
+> **位置付け:** 設計方針。Function checkerの棄却規則とdependent generatorの詳細は未決定。
+
 以下のような入力生成は避けるべきである。
 
 ```text
@@ -910,6 +1078,8 @@ API：
 ---
 
 # 20. Runtime validation
+
+> **位置付け:** 一部実装。値のvalidationは実装済み。関数instrumentationは未実装。
 
 Specを実行時contractにも利用できる。
 
@@ -1073,6 +1243,8 @@ Malliのstructured explain / humanize分離を参考にするが、cl-specでは
 
 # 23. CLOS integration
 
+> **位置付け:** 一部実装。instance-of以外の専用generic仕様・統合inspectionは将来構想。
+
 CLOSはCommon Lispのsemantic structureとして積極的に利用する。
 
 Spec primitive：
@@ -1109,6 +1281,8 @@ related properties
 ---
 
 # 24. Existing type declarationsとの統合
+
+> **位置付け:** 将来構想。既存型宣言との照合規則は未決定。
 
 既存の、
 
@@ -1160,6 +1334,8 @@ SPEC:
 ---
 
 # 25. Documentation生成
+
+> **位置付け:** 未実装。以下は人間向け出力の概念例。
 
 Spec/property registryからdocumentationを生成する。
 
@@ -1232,6 +1408,8 @@ machine-readable
 
 # 27. cl-mcpとの統合
 
+> **位置付け:** 一部実装。semantic-dataは実装済み。MCP tool群は想定API。
+
 本フレームワーク自体はMCP implementationへ依存させない。
 
 代わりにpublic introspection APIを提供する。
@@ -1243,7 +1421,17 @@ CLOS methods、source locationはcl-mcp側だけが持つ情報であり、cl-sp
 したがって `describe_symbol` はcl-mcp側に実装する。
 
 cl-spec側はそのjoinの半分——registryが持っている情報——を1回の呼び出しで返す `semantic-data` を
-提供する。これにより、cl-mcp側は `find-spec` ・`find-function-spec` ・`find-property` ・
+提供する。現在の返却値は、次の固定キーを持つ登録名のrouting tableである。
+
+```lisp
+(:symbol <symbol> :package <string-or-nil>
+ :spec <symbol-or-nil> :function-spec <symbol-or-nil>
+ :property <symbol-or-nil> :properties-about (<symbol> ...))
+```
+
+本文は埋め込まず、登録名から`spec-data`・`property-data`で取得する。
+未登録symbolにも同じキー集合を返す。空の結果は未ロード・未登録の可能性があり、契約不要を意味しない。
+これにより、cl-mcp側は `find-spec` ・`find-function-spec` ・`find-property` ・
 `properties-for` のように個別のindexを列挙しなくてよい。registryのindex構成はcl-specの内部実装
 であり、それを別リポジトリに漏らさないための境界がこの関数である。
 
@@ -1280,6 +1468,8 @@ uninstrument_function
 ---
 
 # 28. LLMが関数編集前に取得すべき情報
+
+> **位置付け:** 設計方針。情報の一括取得を行うcl-mcp adapterは未実装。
 
 例えば `TRANSFER` を変更しようとするLLMには、
 
@@ -1331,33 +1521,22 @@ source:
 
 # 29. LLM coding loop
 
-理想的な利用フロー：
+利用フロー（具体的な判断規則は§0.4と§72）：
 
 ```text
-LLM receives task
-        ↓
-inspect symbol
-        ↓
-read specs/properties
-        ↓
-edit code
-        ↓
-compile
-        ↓
-run ordinary tests
-        ↓
-run related properties
-        ↓
-failure?
-   ┌────┴─────┐
-  yes         no
-   ↓           ↓
-minimal     complete
-counterexample
-   ↓
-LLM repair
-
+task → inspect symbol / load specs
+     → read contracts / select tests / record baseline
+     → edit / persist / reload / compile
+     → ordinary tests + related properties + saved counterexamples
+     → assess result AND verification scope
+          failure       → counterexample / diagnosis → repair
+          error         → identify execution cause → retry or report
+          insufficient  → expand checks or report missing evidence
+          checks met     → report changes, evidence and remaining limits
 ```
+
+成功したPropertyだけを根拠に完了としない。ゼロ件、skip、timeout、generator failure、
+前提条件の枯渇を成功扱いしない。契約の弱体化による成功も元の要求を満たした証拠にしない。
 
 ---
 
@@ -1389,15 +1568,15 @@ LLMが、
 を読めば、
 
 ```text
-ENCODEとDECODEはinverse relationshipを持つ
+MESSAGE-SPECの入力について、DECODE(ENCODE(message))がmessageに戻ることを要求する
 
 ```
 
 と理解できる。
 
-これはdocstringより強い。
-
-なぜならpropertyは実行可能である。
+これはdocstringに実行による検査手段を加える。
+ただしこのPropertyは`encode(decode(x)) = x`や全入力での逆関数関係まで示さない。
+Propertyが表現する関係、入力domain、実際の検査範囲を区別する。
 
 ---
 
@@ -1421,7 +1600,9 @@ DECODE
 
 ```
 
-コード変更後に関連propertyだけを高速実行可能になる。
+コード変更後に直接関連するpropertyを高速実行可能になる。
+ただし補助関数の変更、間接呼び出し、generic method、共有状態を介した影響は、
+`:about`の逆indexだけでは網羅しない。実行対象の選択根拠と網羅範囲を報告する（§72.5）。
 
 ---
 
@@ -1442,8 +1623,8 @@ DECODE
 利用：
 
 ```lisp
-(run-properties
- :tag :critical)
+(cl-spec:run-properties
+ (cl-spec:properties-with-tag :critical))
 
 ```
 
@@ -1544,6 +1725,8 @@ Clojure specも、spec自体はruntimeで利用可能にしつつ、generative t
 
 # 36. Registry persistence
 
+> **位置付け:** 一部実装。image内registryのみ。永続exportは将来構想。
+
 初期バージョンではLisp image内registryのみとする。
 
 将来的には、
@@ -1602,6 +1785,8 @@ register-spec
 
 # 38. Introspection first
 
+> **位置付け:** 一部実装。spec-data・property-data・semantic-dataは実装済み。
+
 全metadataはregistryとSemantic IRから取得可能でなければならない。
 
 避けるべき設計：
@@ -1612,7 +1797,7 @@ compiled functionしか残らず意味が読めない
 pretty printed stringしか取得できない
 ```
 
-望ましい設計：
+望ましい設計（`function-spec-data`は現在の公開APIにはなく、以下はその部分を含む概念例）：
 
 ```lisp
 (spec-data (find-spec ...))
@@ -1662,6 +1847,8 @@ compiled functionだけではpropertyの意味を読むことができないた�
 
 # 40. Side-effect property
 
+> **位置付け:** 要件（現状は未保証）。以下のsetup/cleanup構文と実行規則は未実装。
+
 副作用を伴うpropertyも許可する。
 
 ただし状態セットアップ/cleanupを明示できるようにする。
@@ -1684,11 +1871,16 @@ compiled functionだけではpropertyの意味を読むことができないた�
 
 ```
 
-初期MVPではsetup/cleanupを省略してもよい。
+現在のMVPではsetup/cleanup DSLを提供しない。
+副作用のあるPropertyを実行する場合は、呼び出し側が各実行の状態初期化と後始末を担う。
+状態の独立性を確保できないPropertyに対して、replayやshrinkingの再現性を保証しない。
+正式なtrial・縮小候補ごとのlifecycleは§72.4・§73のD5で定める。
 
 ---
 
 # 41. Stateful property testing
+
+> **位置付け:** 将来構想。MVP対象外。
 
 将来的にはstate-machine testingを追加する。
 
@@ -1725,6 +1917,8 @@ compare states
 
 # 42. Metamorphic testing
 
+> **位置付け:** 設計方針。Property本体で記述可能。専用kindの追加は将来構想。
+
 正解出力が簡単に分からない処理に対し、
 
 ```text
@@ -1747,6 +1941,8 @@ LLM生成コードやML/数値処理にも適用しやすいため、将来 `:me
 ---
 
 # 43. Mutation testingとの連携
+
+> **位置付け:** 将来構想。外部mutation engineとの連携。
 
 本フレームワーク自体ではmutation engineを実装しない。
 
@@ -1773,6 +1969,8 @@ mutation testingはこの検出に有効。
 ---
 
 # 44. LLMによるProperty生成
+
+> **位置付け:** 将来構想。候補生成の運用要件は§45・§72.2を参照。
 
 将来的な重要機能。
 
@@ -1801,7 +1999,7 @@ candidate properties
 状態：
 
 ```text
-:proposed
+:experimental
 :reviewed
 :trusted
 :deprecated
@@ -1813,6 +2011,8 @@ candidate properties
 ---
 
 # 45. Trust model
+
+> **位置付け:** 要件（現状は未保証）。trust metadataの自動付与・昇格制御は未実装。
 
 Property自体も間違う。
 
@@ -1851,7 +2051,11 @@ LLM生成propertyはデフォルト：
 
 ```
 
-とする。
+とする。これは目標運用であり、現在の`defproperty` DSLによる自動設定ではない。
+`:status` clauseの構文や強制機構は未実装である。
+
+trustはPropertyの由来・レビュー状態であり、正しさの証明でも実行権限でもない。
+実装との同時変更、契約の削除・弱体化、承認後の内容変更を追跡する要件は§72.2に定める。
 
 ---
 
@@ -1878,11 +2082,16 @@ state invariant
 
 ```
 
+ただし分類名だけでPropertyの強さは決まらない。冪等性だけなら定数関数でも満たせる。
+roundtripだけでは双方の実装が同じ誤りを共有する場合を排除できない。
+独立した具体例・境界値・参照実装・失敗時の性質を組み合わせる。
 Framework documentationではproperty設計guideを提供する。
 
 ---
 
 # 47. Error taxonomy
+
+> **位置付け:** 設計方針。以下は目標taxonomyであり、現行resultのstatus一覧ではない。
 
 構造化されたfailure categoryを定義する。
 
@@ -1904,6 +2113,8 @@ LLMが原因を判別しやすくする。
 
 # 48. Timeout
 
+> **位置付け:** 要件（現状は未保証）。以下のtimeoutキーワードは現在利用不可。
+
 LLMによる自律実行を考慮するとtimeoutは必須。
 
 ```lisp
@@ -1913,7 +2124,10 @@ LLMによる自律実行を考慮するとtimeoutは必須。
 
 ```
 
-Property全体、またはtrial単位timeoutを将来的に実装する。
+timeoutをLLMの自律実行に対する受け入れ要件とするが、coreの当該APIは未実装である。
+現在は実行ホスト側で時間上限と必要なワーカー破棄を管理する。
+将来のAPIでは生成・trial・shrinking・cleanupを含む全体予算と、trial単位予算を区別する。
+中断後に同じimageを再利用してよいかも含め、§73のD5で責務を確定する。
 
 ---
 
@@ -1967,7 +2181,7 @@ cl-spec/check-it
 cl-spec/instrument
   runtime function instrumentation
 
-cl-spec/test
+cl-spec/tests
   framework自身のtests
 ```
 
@@ -1996,6 +2210,8 @@ CL-SPEC
 `cl-spec` coreは可能な限り軽量に保ち、`check-it`をproduction dependencyとして強制しない。
 
 # 51. MVP API
+
+> **位置付け:** 目標API一覧。現在利用できる機能は§0.2を参照する。
 
 最初の実用版では以下に絞る。
 
@@ -2058,11 +2274,18 @@ semantic-data
 
 # 52. MVPでサポートするSpec
 
+> **位置付け:** normalization・validationの対応範囲。generatorの自動導出範囲とは異なる。
+
+裸の名前はCL型名または登録Spec参照となる。複合CL型は`(type (integer 0 *))`のように
+明示する。rangeは`(range lo hi)`または`(range integer lo hi)`・`(range real lo hi)`を用いる。
+現在の`defspec`は名前とSpec formの2引数であり、§11の追加option例は未実装。
+
 ```text
 Common Lisp type
 predicate
 AND
 OR
+NOT
 MEMBER
 numeric range
 list-of
@@ -2099,6 +2322,8 @@ automatic source-code rewriting
 ---
 
 # 54. Implementation phases
+
+> **位置付け:** 実装計画。phase一覧は完了状況を示さない。現状は§0.2を参照する。
 
 ## Phase 0: prototype
 
@@ -2144,6 +2369,9 @@ ASDF test integration
 ---
 
 ## Phase 2: LLM integration
+
+現在はこのphaseに挙げる`explain-data`や一部introspectionを先行実装している。
+一覧の順番は、全機能がそのphaseで初めて提供されることを意味しない。
 
 追加：
 
@@ -2212,6 +2440,8 @@ Coaltonは型情報やcode generationに対するinspection APIを持つため�
 ---
 
 # 55. Coalton integration構想
+
+> **位置付け:** 将来構想。MVP対象外。
 
 将来、
 
@@ -2284,6 +2514,8 @@ nightly:
 
 # 57. Failure artifact
 
+> **位置付け:** 要件（現状は未保証）。artifactの自動保存・永続replay形式は未実装。
+
 CI failure時には以下を必ず保存する。
 
 ```text
@@ -2304,6 +2536,8 @@ LLM coding agentがCI failureから直接再現可能にする。
 ---
 
 # 58. Versioning
+
+> **位置付け:** 将来構想。contractの自動互換性判定は未実装。
 
 Specは実質的にAPI contractである。
 
@@ -2755,6 +2989,8 @@ spec composition obeys boolean semantics
 
 # 69. 最初に検討すべき技術的論点
 
+> **位置付け:** 未決定事項の入口。実装済みの判断も含む歴史的リスト。残課題は§73で管理する。
+
 実装開始時には以下を優先的に決定する。
 
 1. Semantic IRのcanonical representation
@@ -2779,6 +3015,8 @@ spec composition obeys boolean semantics
 ---
 
 # 70. 推奨する実装開始順
+
+> **位置付け:** 実装計画。初期の依存順を示す。次の実証順は§73.2を参照する。
 
 今回の先行実装調査を踏まえ、実装順を以下へ更新する。
 
@@ -2872,3 +3110,169 @@ Common Lispの動的性、CLOS、REPL、condition system、runtime introspection
 
 > **cl-spec is an executable semantic IR and property framework for Common Lisp programs, designed for both humans and LLM coding agents.**
 
+---
+
+# 72. LLM利用の受け入れ要件
+
+> **位置付け:** 要件（現状は未保証）。以下は自律開発に利用するための受け入れ条件であり、
+> 現在のresultに同名のslotやJSON keyが存在するという意味ではない。
+> 具体的なAPI/schemaとcore・backend・adapter間の責務は§73で確定する。
+
+## 72.1 検証結果と検証範囲（LLM-01）
+
+結果は「性質が反証されたか」と「要求した検査を実施できたか」を区別する。
+
+報告に必要な情報：
+
+- 選択したProperty名、選択根拠、対象revision、契約の識別情報。
+- 要求した試行予算、実際に評価した件数、生成・前提条件による棄却件数。
+- 成功・失敗・実行エラー・skip・中断と、その理由。
+- 未ロード・未登録・未選択・未対応による未検証範囲。
+- 生成domainや重要な境界値の検査状況。計測していないcoverageは不明とする。
+
+**受け入れ条件:** Propertyがゼロ件、実行件数がゼロ、前提条件の枯渇、
+timeout、generator/backend errorのケースが、成功した検証として報告されない。
+成功した試行数から、未計測の入力網羅率や正しさの確率を導出しない。
+
+現在のrunnerに情報がない場合は、呼び出し側の実行記録を併記するか不明と報告する。
+不足した値をLLMが推測で埋めない。
+
+## 72.2 契約の由来と変更（LLM-02）
+
+Spec/Propertyについて、由来となる要求・文書・具体例、作成者または生成元、
+レビュー状態、内容のversionまたはdigestを追跡可能にする。
+
+`:experimental`、`:reviewed`、`:trusted`、`:deprecated`を共通の状態語彙とし、
+レビューは特定の内容に対して記録する。内容変更後に以前のレビューを自動継承しない。
+状態遷移の権限と記録形式は未決定であり、現在のregistryが強制するものではない。
+
+**受け入れ条件:** 実装修正と同時にPropertyを削除、前提条件を追加、入力domainを縮小、
+期待値を変更、または試行予算を削減した場合、契約・検査条件の変更として差分に現れる。
+候補Propertyの成功だけで既存のtrusted契約を置き換えない。
+
+契約変更自体がユーザー要求である場合は、その要求に基づく変更として扱う。
+この要件は正当な仕様変更を禁止するものではない。
+
+## 72.3 再生成と反例の再検査（LLM-03）
+
+再現には二つの目的がある。
+
+| 操作 | 固定するもの | 確認すること |
+|---|---|---|
+| 生成列のreplay | seed、定義、環境、生成設定、初期状態 | 同じ条件で失敗を再生成できるか |
+| 保存反例の再検査 | 入力と必要なfixture | 修正後の実装でその失敗が解消したか |
+
+再現artifactには、Property名、元の入力と縮小済み入力、失敗段階・理由、
+seed、profile名と解決済み数値予算、生成・縮小options、framework/backend/Lispのversion、
+ソースrevision、Spec/Property/generatorの識別情報、fixtureの復元条件を保存する。
+未コミット・REPLのみの変更がある場合は、revisionだけで定義を特定できないことを示す。
+
+**受け入れ条件:** 定義・環境・予算の不一致を検出または呼び出し側の責任範囲として明示し、
+条件を変更した再実行を「元の実行を厳密に再現した」と報告しない。
+読めるプレビューしか保存できない値は、直接replay可能な入力として扱わない。
+
+外部I/Oや時刻などseedで制御しない要素はfixtureで固定するか、再現保証の対象外として記録する。
+
+## 72.4 状態・縮小・時間上限（LLM-04）
+
+各trialと各縮小候補の評価は、独立に復元できる初期状態から開始する。
+破壊的に変更される生成値は実行前の入力を保持し、適切なcopyまたは再構築手段を用いる。
+任意のCLOSオブジェクトに汎用の安全なdeep copyがあるとは仮定しない。
+
+縮小中も入力Specとpreconditionを満たすこと、および元の失敗との対応を確認する。
+別の例外が出ただけの候補を、元の論理的失敗の縮小結果として置き換えない。
+失敗の同一性を判定する詳細規則は§73のD4で決定する。
+
+**受け入れ条件:** 通常終了・失敗・エラーでcleanupが実行され、縮小の完了・予算切れ・
+中断が区別される。強制終了でcleanupを保証できない場合はその事実を記録し、
+状態が不明なワーカーを後続検証に再利用しない。
+
+時間予算は生成・評価・縮小・cleanupを含む全体とtrial単位を区別する。
+具体的な強制終了機構は実行ホストの責務を含めて定める。
+framework内のmetadataはsandboxや外部アクセス制御の代わりにはならない。
+
+## 72.5 変更影響とimageの整合性（LLM-05）
+
+`properties-for`が返すのは`:about`に直接登録された関連である。
+依存関係を辿って選択する場合は、その取得元と限界を併記する。
+呼び出し関係、generic method、共有状態を含む完全な変更影響解析はMVPで保証しない。
+
+実行した定義が保存済みソースと一致するよう、再ロード・コンパイルを行う。
+registryの重複登録、削除された定義、参照先の変更、compiled artifactのcacheについて、
+更新・無効化規則を明示する。現在の個別実装を越える一括保証は§73のD6で確定する。
+
+**受け入れ条件:** 直接関連の部分実行を「全回帰テスト」と報告しない。
+REPLの一時定義で成功しても、保存・再ロード後の検証を完了するまで修正完了としない。
+imageの状態が不明な場合は、クリーンなプロセスで必要な検証を行う。
+
+## 72.6 機械可読境界（LLM-06）
+
+Lisp内部のIR/plistと外部JSON schemaを区別し、外部表現にschema versionを持たせる。
+MCP公開時には利用可能な操作・未対応機能・実行制限を取得できるようにする。
+capabilityの具体的なAPI名と返却形式は未決定。
+
+外部表現では、少なくとも次の区別を保持する。
+
+- symbolのpackageと名前、未登録と情報未取得。
+- false、null、空list、値なし、および多値の個数。
+  Lispの`NIL`の用途はフィールドの型で定め、任意値だけから意味を推測しない。
+- 整数・有理数等の値の正確さと、表示用文字列。
+- 再構築可能な値、CLOS等の不透明オブジェクト、循環・共有参照。
+- 完全な本文と、長さ・深さの制限による省略。
+
+symbolの表示文字列を任意のreader入力として評価しない。既存symbolの解決と
+未解決の診断を用い、tool入力の解釈のために任意code実行や動的internを要求しない。
+表示用previewを保存反例の復元形式と混同しない。
+
+**受け入れ条件:** packageの異なる同名symbolを区別できる。省略を完全なデータと誤認しない。
+非対応schemaや復元不能な入力に明示的な診断を返す。
+無制限のProperty本体や巨大な値を毎回返さず、概要から必要な詳細を取得できる。
+
+# 73. 未決定事項と次の検証
+
+## 73.1 設計判断の一覧
+
+以下の項目はAPIを推測で補うための候補一覧ではなく、実装前に決める判断事項である。
+解決時には当該節・実装状況表・対応する受け入れテストを併せて更新する。
+
+| ID | 決めること | 関連節 | 決定・検証が必要な時点 |
+|---|---|---|---|
+| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | Function checker実装前 |
+| D2 | status/categoryの対応、棄却・試行数の定義、予算、検証不足の集計 | §14、§19、§47、LLM-01 | 自律実行結果の公開前 |
+| D3 | replay artifact schema、定義識別、復元不能値、options保存、直接反例再検査API | §15、§57、LLM-03 | CI artifact連携前 |
+| D4 | 縮小時の失敗同一性、入力妥当性、完了状態 | §16、LLM-04 | 縮小結果を修正根拠にする機能の拡張前 |
+| D5 | fixture lifecycle、timeout、強制終了、cleanup、ワーカー再利用の責務 | §40、§48、§60、LLM-04 | 副作用を伴う自律実行前 |
+| D6 | reload時の定義削除、参照更新、registry世代とcache invalidation | §8、§9.1、§69、LLM-05 | 継続的REPL連携の保証前 |
+| D7 | JSONの型表現、schema version、capability、情報省略の規則 | §26〜28、LLM-06 | cl-mcp adapter公開前 |
+| D8 | trustの保存形式、由来、内容変更時の扱い、状態遷移の権限 | §44〜45、LLM-02 | LLM生成Propertyの採用自動化前 |
+
+## 73.2 次の実証順
+
+既存のvertical sliceを基礎に、次の順でLLMの開発作業に接続する。
+
+1. 純粋な小関数を対象にFunction Specの最小対応範囲を確定し、checkerを実装する。
+2. 既存の`semantic-data`・`property-data`・runnerを最小限のcl-mcp adapterへ接続する。
+   初回は副作用のない対象を選び、実行ホストで時間上限を設ける。
+3. 既知の不具合について、契約取得・反例取得・修正・保存反例の再検査を一周させる。
+4. 実行結果の不足、再現条件、取得情報量を測り、LLM-01〜06の未達項目を明示する。
+5. その結果に基づき、副作用のある対象や高度なPBTへの拡張を判断する。
+
+§70は初期architectureの依存順であり、この実証順は現在の実装から利用価値を確認する順である。
+
+## 73.3 LLM向け有用性の評価
+
+同じ修正課題について、通常のソース・テスト・REPLを使う条件と、
+それらにcl-specを追加する条件を比較する。モデル、ツール、時間・試行予算、
+初期コードを揃え、複数課題・複数実行でばらつきを記録する。
+
+測定対象：
+
+- 独立した受け入れテストで確認した修正成功率と回帰の発生。
+- 修正時間、tool呼び出し数、LLMへ渡す情報量。
+- 失敗の再現率、保存反例による修正確認の可否。
+- 契約の不当な弱体化、ゼロ件成功、検証不足の見落とし。
+- 人間がSpec・generator・Propertyを用意し、保守する負担。
+
+評価用の受け入れ条件は、修正を行うLLMが都合よく変更できない形で管理する。
+単一の成功例や生成したPropertyの成功率だけで、開発全体の改善を主張しない。
+数値目標は初期実証のbaseline取得後に決める。
