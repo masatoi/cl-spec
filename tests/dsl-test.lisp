@@ -23,7 +23,7 @@
                 #:register-spec
                 #:normalize-spec-form
                 #:register-function-spec
-                #:expand-function-spec-definition
+                #:function-spec
                 #:expand-generator-definition))
 
 (in-package #:cl-spec/tests/dsl-test)
@@ -47,20 +47,17 @@
                          (:args (amount positive-money))
                          (:returns transaction)))))
       (ok (eq 'register-function-spec (first expansion)))
-      (ok (eq 'expand-function-spec-definition (first (second expansion))))
-      (ok (eq 'transfer (second (second (second expansion))))))
+      (ok (eq 'make-instance (first (second expansion))))
+      (ok (eq 'function-spec (second (second (second expansion)))))
+      (ok (eq 'transfer (second (getf (cddr (second expansion)) :name)))))
     (let ((expansion (macroexpand-1
                        '(defgenerator small-integer () (random 100)))))
       (ok (eq 'expand-generator-definition (first expansion)))
       (ok (eq 'small-integer (second (second expansion)))))))
 
 (deftest dsl-macros-signal-at-runtime
-  (testing "evaluating an expansion of DEFSPEC-FUNCTION or DEFGENERATOR reaches a
-stub and signals NOT-IMPLEMENTED"
-    (ok (signals (eval '(defspec-function transfer
-                         (:args (amount positive-money))
-                         (:returns transaction)))
-                 'not-implemented))
+  (testing "evaluating an expansion of DEFGENERATOR reaches a stub and signals
+NOT-IMPLEMENTED"
     (ok (signals (eval '(defgenerator small-integer () (random 100)))
                  'not-implemented))))
 

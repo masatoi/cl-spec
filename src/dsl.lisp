@@ -13,7 +13,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented
-                #:invalid-property-form)
+                #:invalid-property-form
+                #:invalid-function-spec-form)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -22,6 +23,7 @@
                 #:property
                 #:register-property)
   (:import-from #:cl-spec/src/function-spec
+                #:function-spec
                 #:register-function-spec)
   (:import-from #:cl-spec/src/utils/source-location
                 #:current-source-location)
@@ -46,24 +48,177 @@ The original form and the definition site are kept on the resulting spec.
                                          :name ',name
                                          :source-location ',location))))
 
-(defun expand-function-spec-definition (name clauses source-location)
-  "Build a FUNCTION-SPEC from the CLAUSES of a DEFSPEC-FUNCTION form.
+(defparameter *function-spec-clause-keywords* '(:args :pre :returns :post)
+  "Clause heads DEFSPEC-FUNCTION accepts in the MVP (specification §17, §73.1 D1).
 
-CLAUSES are the :ARGS, :RETURNS, :PRE and :POST clauses as written.
+:SIGNALS is deliberately absent.  §17 lists it as something a function spec
+should eventually describe, and the checker cannot honour it yet, so a form
+using it is refused rather than accepted with that half of the contract
+silently dropped.")
 
-Not implemented yet."
-  (declare (ignore name clauses source-location))
-  (error 'not-implemented :operator 'defspec-function))
+(defun function-spec-error (form reason)
+  "Signal INVALID-FUNCTION-SPEC-FORM for FORM with REASON."
+  (error 'invalid-function-spec-form :form form :reason reason))
 
-(defmacro defspec-function (name &body clauses)
+(defun collect-result-symbols (tree)
+  "Return the distinct symbols named \"RESULT\" appearing anywhere in TREE.
+
+:POST names the return value with an unqualified RESULT (§17), which the reader
+has already interned into the definition's own package by the time this macro
+runs.  Binding the symbol found here, rather than one this code interns, keeps
+the DSL working in any package without INTERN, which §60 forbids."
+  (let ((found '()))
+    (labels ((walk (node)
+               (cond ((consp node)
+                      (walk (car node))
+                      (walk (cdr node)))
+                     ((and node (symbolp node) (string= (symbol-name node) "RESULT"))
+                      (pushnew node found)))))
+      (walk tree))
+    found))
+
+(defun function-spec-result-symbol (post-forms whole)
+  "Return the symbol :POST uses for the return value, or NIL when it uses none.
+
+Signals INVALID-FUNCTION-SPEC-FORM when POST-FORMS name two different RESULT
+symbols, because only one of them could be bound and the other would read as an
+unrelated free variable."
+  (let ((candidates (collect-result-symbols post-forms)))
+    (when (rest candidates)
+      (function-spec-error
+       whole
+       (format nil "~S names the return value with more than one RESULT symbol; ~
+only one of them can be bound"
+               candidates)))
+    (first candidates)))
+
+(defun parse-function-spec-clauses (name clauses whole)
+  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST RETURNS-P).
+
+Every clause is checked here rather than at check time, so a contract the
+checker could not honour never reaches the registry.  RETURNS-P distinguishes
+(:returns nil) -- a contract admitting only NIL -- from a contract that names no
+return spec at all."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (function-spec-error whole "the specified function must be named by a symbol"))
+  (let ((documentation nil)
+        (seen '())
+        (args nil)
+        (pre nil)
+        (returns nil)
+        (post nil)
+        (returns-p nil))
+    (when (and (stringp (first clauses)) (rest clauses))
+      (setf documentation (pop clauses)))
+    (dolist (clause clauses)
+      (unless (and (consp clause) (keywordp (first clause)))
+        (function-spec-error clause "expected a clause headed by a keyword"))
+      (let ((head (first clause)))
+        (unless (member head *function-spec-clause-keywords*)
+          (function-spec-error
+           clause
+           (format nil "~S is not supported; DEFSPEC-FUNCTION accepts ~{~S~^, ~}"
+                   head *function-spec-clause-keywords*)))
+        (when (member head seen)
+          (function-spec-error clause (format nil "~S appears more than once" head)))
+        (push head seen)
+        (ecase head
+          (:args (setf args (rest clause)))
+          (:pre (setf pre (rest clause)))
+          (:post (setf post (rest clause)))
+          (:returns
+           (unless (= 2 (length clause))
+             (function-spec-error clause ":returns takes exactly one spec form"))
+           (let ((form (second clause)))
+             (when (and (consp form) (eq 'values (first form)))
+               (function-spec-error
+                clause
+                "multiple values are not supported; :returns describes one value"))
+             (setf returns form
+                   returns-p t))))))
+    (values documentation args pre returns post returns-p)))
+
+(defun parse-function-spec-arguments (args whole)
+  "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
+
+The MVP checks required positional parameters only.  A lambda list keyword is
+named in the refusal rather than dropped, because a contract that quietly
+ignored &KEY would report a verified result for arguments nothing generated."
+  (let ((variables '()))
+    (dolist (entry args)
+      (when (and entry (symbolp entry) (char= #\& (char (symbol-name entry) 0)))
+        (function-spec-error
+         whole
+         (format nil "~S is not supported; :args takes required parameters only"
+                 entry)))
+      (unless (and (consp entry)
+                   (= 2 (length entry))
+                   (first entry)
+                   (symbolp (first entry))
+                   (not (keywordp (first entry))))
+        (function-spec-error entry "expected (parameter spec-form)"))
+      (when (member (first entry) variables)
+        (function-spec-error entry "the same parameter is specified twice"))
+      (push (first entry) variables))
+    args))
+
+(defun expand-function-spec-definition (whole name clauses source-location)
+  "Return the form DEFSPEC-FUNCTION expands into.
+
+Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
+and :POST forms have to be compiled into real functions: §60 forbids runtime
+EVAL, so a contract kept only as a list could be read but never checked."
+  (multiple-value-bind (documentation args pre returns post returns-p)
+      (parse-function-spec-clauses name clauses whole)
+    (parse-function-spec-arguments args whole)
+    (when (collect-result-symbols pre)
+      (function-spec-error
+       whole ":pre runs before the call, so it cannot refer to RESULT"))
+    (let ((variables (mapcar #'first args))
+          (result (or (function-spec-result-symbol post whole) (gensym "RESULT"))))
+      `(register-function-spec
+        (make-instance 'function-spec
+                       :name ',name
+                       :argument-specs
+                       (list ,@(loop for (variable form) in args
+                                     collect `(list ',variable
+                                                    (normalize-spec-form ',form))))
+                       :return-spec ,(when returns-p `(normalize-spec-form ',returns))
+                       :preconditions ',pre
+                       :postconditions ',post
+                       :precondition-function
+                       ,(when pre
+                          `(lambda ,variables
+                             (declare (ignorable ,@variables))
+                             (and ,@pre)))
+                       :postcondition-function
+                       ,(when post
+                          `(lambda (,result ,@variables)
+                             (declare (ignorable ,result ,@variables))
+                             (and ,@post)))
+                       :documentation ,documentation
+                       :source-form ',whole
+                       :source-location ',source-location)))))
+
+(defmacro defspec-function (&whole whole name &body clauses)
   "Attach a contract to the existing function NAME without redefining it.
 
-  (defspec-function transfer
-    (:args (from account) (to account) (amount positive-money))
-    (:returns transaction))"
-  (let ((location (current-source-location)))
-    `(register-function-spec
-      (expand-function-spec-definition ',name ',clauses ',location))))
+CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
+(:PRE FORM ...), (:RETURNS SPEC) and (:POST FORM ...), each at most once.  :PRE
+sees the parameters, :POST sees them and RESULT, the value the call returned.
+
+The MVP checks required positional parameters and one return value.  Anything
+else -- a lambda list keyword, (:returns (values ...)), an unknown clause such
+as (:signals ...) -- signals INVALID-FUNCTION-SPEC-FORM rather than registering
+a contract whose unchecked half would still be reported as verified
+(specification §17, §73.1 D1).
+
+  (defspec-function ranged-random
+    (:args (start integer) (end integer))
+    (:pre (< start end))
+    (:returns integer)
+    (:post (and (>= result start) (< result end))))"
+  (expand-function-spec-definition whole name clauses (current-source-location)))
 
 (defparameter *property-option-keywords* '(:about :kind :tags :trials :shrink)
   "Keywords that may head an option clause in a DEFPROPERTY body.")

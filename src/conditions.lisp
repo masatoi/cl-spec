@@ -18,6 +18,8 @@
            #:unknown-spec-name
            #:unknown-property
            #:unknown-property-name
+           #:unknown-function-spec
+           #:unknown-function-spec-name
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -25,6 +27,9 @@
            #:invalid-property-form
            #:invalid-property-form-form
            #:invalid-property-form-reason
+           #:invalid-function-spec-form
+           #:invalid-function-spec-form-form
+           #:invalid-function-spec-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -86,6 +91,19 @@
                      (unknown-property-name condition))))
   (:documentation "Signalled when a property designator resolves to nothing."))
 
+(define-condition unknown-function-spec (cl-spec-error)
+  ((name :initarg :name
+         :reader unknown-function-spec-name
+         :documentation "Symbol that has no registered function spec."))
+  (:report (lambda (condition stream)
+             (format stream "No function spec is registered for ~S."
+                     (unknown-function-spec-name condition))))
+  (:documentation "Signalled when CHECK-FUNCTION is given a name with no contract.
+
+Distinct from a contract that holds: an agent that reads \"nothing is
+registered\" as \"nothing is wrong\" would treat an unspecified function as a
+verified one."))
+
 (define-condition no-generator-backend (cl-spec-error)
   ()
   (:report (lambda (condition stream)
@@ -126,6 +144,26 @@
                      (invalid-property-form-reason condition))))
   (:documentation
    "Signalled when DEFPROPERTY cannot make sense of one of its option clauses."))
+
+(define-condition invalid-function-spec-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-function-spec-form-form
+         :documentation "The DEFSPEC-FUNCTION clause that could not be accepted.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-function-spec-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid DEFSPEC-FUNCTION clause~@[: ~A~]."
+                     (invalid-function-spec-form-form condition)
+                     (invalid-function-spec-form-reason condition))))
+  (:documentation
+   "Signalled when a DEFSPEC-FUNCTION form uses syntax the MVP cannot check.
+
+Specification §17 requires that a form the checker cannot honour is refused
+rather than partially accepted: a contract whose unsupported half is silently
+dropped would report a verified result for a claim nothing checked."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec

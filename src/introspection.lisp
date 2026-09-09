@@ -39,6 +39,17 @@
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:resolve-property)
+  (:import-from #:cl-spec/src/function-spec
+                #:resolve-function-spec
+                #:function-spec-name
+                #:function-spec-argument-specs
+                #:function-spec-return-spec
+                #:function-spec-preconditions
+                #:function-spec-postconditions
+                #:function-spec-documentation
+                #:function-spec-source-form
+                #:function-spec-source-location
+                #:function-spec-metadata)
   (:import-from #:cl-spec/src/property
                 #:property-name
                 #:property-arguments
@@ -58,6 +69,7 @@
            #:describe-property
            #:spec-data
            #:property-data
+           #:function-spec-data
            #:semantic-data))
 
 (in-package #:cl-spec/src/introspection)
@@ -146,6 +158,40 @@ compiled function cannot be read (specification §39)."
           :source-form (property-source-form property)
           :source-location (source-location->data (property-source-location property))
           :metadata (property-metadata property))))
+
+(defun function-spec-data (function-spec-designator &key (registry *registry*))
+  "Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
+
+  (:name <symbol> :documentation <string-or-nil>
+   :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
+   :preconditions (<form> ...) :returns <spec-data plist or NIL>
+   :postconditions (<form> ...) :source-form <form>
+   :source-location (:file <string> :package <string>) :metadata <plist>)
+
+This is the projection that answers the two questions a caller asks before
+editing a function: which inputs it accepts, and which output it must return
+(§28).  :ARGUMENTS and :RETURNS carry normalized IR rather than the designators
+as written, so a consumer reads one shape whether the contract named a spec or
+inlined it.
+
+:PRE and :POST are the forms as written.  Their compiled counterparts are not
+projected: a function cannot be read, and a caller who wants to know whether
+they hold runs CHECK-FUNCTION rather than inspecting them.
+
+Every key is always present, whatever its value, exactly as SPEC-DATA and
+PROPERTY-DATA promise."
+  (let ((contract (resolve-function-spec function-spec-designator registry)))
+    (list :name (function-spec-name contract)
+          :documentation (function-spec-documentation contract)
+          :arguments (loop for (variable spec) in (function-spec-argument-specs contract)
+                           collect (list :variable variable :spec (spec->data spec)))
+          :preconditions (function-spec-preconditions contract)
+          :returns (let ((spec (function-spec-return-spec contract)))
+                     (when spec (spec->data spec)))
+          :postconditions (function-spec-postconditions contract)
+          :source-form (function-spec-source-form contract)
+          :source-location (source-location->data (function-spec-source-location contract))
+          :metadata (function-spec-metadata contract))))
 
 (defun semantic-data (symbol &key (registry *registry*))
   "Return a routing table of what REGISTRY knows about SYMBOL.

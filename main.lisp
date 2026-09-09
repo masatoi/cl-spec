@@ -18,6 +18,8 @@
                 #:unknown-spec-name
                 #:unknown-property
                 #:unknown-property-name
+                #:unknown-function-spec
+                #:unknown-function-spec-name
                 #:no-generator-backend
                 #:invalid-spec-form
                 #:invalid-spec-form-form
@@ -25,6 +27,9 @@
                 #:invalid-property-form
                 #:invalid-property-form-form
                 #:invalid-property-form-reason
+                #:invalid-function-spec-form
+                #:invalid-function-spec-form-form
+                #:invalid-function-spec-form-reason
                 #:generator-unavailable
                 #:generator-unavailable-spec
                 #:generator-unavailable-reason
@@ -123,16 +128,26 @@
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
+                #:function-spec-precondition-function
+                #:function-spec-postcondition-function
+                #:function-spec-documentation
                 #:function-spec-source-form
                 #:function-spec-source-location
                 #:function-spec-metadata
                 #:register-function-spec
+                #:resolve-function-spec
+                #:function-check-result
+                #:function-check-result-function
+                #:function-check-result-rejected
+                #:function-check-result-failure-reason
+                #:function-check-result-explanation
                 #:check-function)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
                 #:spec-data
                 #:property-data
+                #:function-spec-data
                 #:semantic-data)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
@@ -152,6 +167,8 @@
            #:unknown-spec-name
            #:unknown-property
            #:unknown-property-name
+           #:unknown-function-spec
+           #:unknown-function-spec-name
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -159,6 +176,9 @@
            #:invalid-property-form
            #:invalid-property-form-form
            #:invalid-property-form-reason
+           #:invalid-function-spec-form
+           #:invalid-function-spec-form-form
+           #:invalid-function-spec-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -256,16 +276,26 @@
            #:function-spec-return-spec
            #:function-spec-preconditions
            #:function-spec-postconditions
+           #:function-spec-precondition-function
+           #:function-spec-postcondition-function
+           #:function-spec-documentation
            #:function-spec-source-form
            #:function-spec-source-location
            #:function-spec-metadata
            #:register-function-spec
+           #:resolve-function-spec
+           #:function-check-result
+           #:function-check-result-function
+           #:function-check-result-rejected
+           #:function-check-result-failure-reason
+           #:function-check-result-explanation
            #:check-function
            ;; Introspection
            #:describe-spec
            #:describe-property
            #:spec-data
            #:property-data
+           #:function-spec-data
            #:semantic-data
            ;; DSL
            #:defspec

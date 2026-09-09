@@ -17,10 +17,12 @@ documents live in `docs/superpowers/specs/`.
 
 **Current status: MVP vertical slice.** Normalization, validation, structured
 explain, spec introspection, the check-it generator backend, `defproperty` and
-the property runner with seed, replay and shrinking are implemented. Function
-specs (`defspec-function`, `check-function`), custom generators
-(`defgenerator`), the `describe-*` printers, instrumentation and the cl-mcp
-adapter are still stubs that signal `not-implemented`.
+the property runner with seed, replay and shrinking are implemented, as are
+function specs (`defspec-function`, `check-function`, `function-spec-data`) in
+their §73.1 D1 range: required positional arguments and one return value.
+Custom generators (`defgenerator`), the `describe-*` printers and
+instrumentation are still stubs that signal `not-implemented`. The cl-mcp
+adapter lives in cl-mcp, not here.
 
 ## Development With cl-mcp
 
@@ -100,9 +102,11 @@ a single batch cleanup, so a mallet warning does not block a PR today.
 
 ## Implementation Order
 
-Follow §70 of the specification. Steps 1-15 (Semantic IR through seed / replay
-/ shrink integration) are done, including the vertical slice of §67; the next
-step is 16, Function Spec IR.
+Follow §70 of the specification. Steps 1-17 (Semantic IR through the function
+checker) are done, including the vertical slice of §67, and step 18
+(introspection) is done except for the `describe-*` printers; the next steps
+are 19, runtime instrumentation, and the generator side of §19's dependent
+generators.
 
 ## Repository Structure
 

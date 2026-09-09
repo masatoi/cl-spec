@@ -59,18 +59,18 @@
 
 ## 0.2 実装状況表
 
-この表は2026-09-09時点のスナップショットであり、実行時のcapability APIではない。
+この表は2026-09-10時点のスナップショットであり、実行時のcapability APIではない。
 
 | 機能 | 状況 | 現在の利用範囲・制限 |
 |---|---|---|
 | Semantic IR・normalization・hash-table registry | 実装済み | §7〜9、§37。追加registry backendは将来構想 |
 | validation・structured explain | 実装済み | `validp`、`validate`、`explain-data`、`explain` |
-| Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data` |
+| Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data`、`function-spec-data` |
 | symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 一部実装 | IR・registryは存在。`defspec-function`、`check-function`はstub |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
 | Custom generator DSL | 未実装 | `defgenerator`はstub。`defgenerator-for`は構想上の名前 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation・cl-mcp adapter | 未実装 | 公開名や想定tool名の存在を利用可能の根拠にしない |
@@ -143,6 +143,23 @@ Propertyを削除したり、入力domainや試行予算を縮小したりしな
 
 `run-property`の現在のキーワードは `:profile`、`:seed`、`:options`、`:registry`。
 `:timeout`を直接渡すAPIは未実装。replayの制限は§15を参照する。
+
+関数の契約の取得と検査：
+
+```lisp
+;; TARGETは(defspec-function target ...)が登録済みのsymbol。
+(cl-spec:function-spec-data target)   ; どの入力を受け、どの出力を返すべきか
+
+(let ((result (cl-spec:check-function target :trials 200)))
+  (values (cl-spec:property-result-status result)          ; :passed/:failed/:skipped/:error
+          (cl-spec:function-check-result-rejected result)   ; :preが棄却した生成入力の件数
+          (cl-spec:function-check-result-failure-reason result)
+          (cl-spec:property-result-shrunk-counterexample result)))
+```
+
+`:skipped`は「`:pre`が全入力を棄却し、関数を一度も呼んでいない」であって
+成功ではない。実際に検査された件数は「試行数 − 棄却数」で、`:passed`でも
+これが0なら何も検査していない。詳細は§17〜19。
 
 ---
 
@@ -960,7 +977,8 @@ warning: generated value may have been destructively modified
 
 # 17. Function Spec
 
-> **位置付け:** 一部実装。IR・registryは存在する。以下のDSLと自動検査は未実装。
+> **位置付け:** 実装済み（最小範囲）。必須引数と単一の戻り値を検査する。
+> 対応範囲は§73.1のD1として確定した。
 
 関数仕様は少なくとも、
 
@@ -974,9 +992,21 @@ signals
 
 を記述できるものとする。
 
-Function Specの実装前に、通常引数と`&optional`・`&key`・`&rest`、多値の個数と型、
-pre/postの評価順、`result`の束縛、実行前の可変値の参照、期待するconditionを定義する。
-MVPで対応しない形式は明示的に拒否し、契約の一部を黙って無視しない。詳細判断は§73のD1。
+D1（対応範囲）の決定：
+
+| 項目 | MVPの扱い |
+|---|---|
+| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する |
+| 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
+| pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
+| `result`の束縛 | `:post`に現れる名前`RESULT`のsymbolを束縛する。異なるpackageの`RESULT`が複数現れる形式、および`:pre`が`RESULT`に触れる形式は拒否する |
+| 実行前の可変値の参照 | 対応しない。副作用のない関数を対象とする |
+| signals | 対応しない。`(:signals ...)`を含む未知のclauseは拒否する |
+| 節の重複 | 拒否する |
+
+対応しない形式は黙って無視せず、`invalid-function-spec-form`を送出して拒否する。
+契約の一部だけを受理すると、検査していない主張について検証済みの結果を
+報告することになる。この拒否はマクロ展開時に行われ、登録には到達しない。
 
 例：
 
@@ -1003,7 +1033,7 @@ Clojure specの `fdef` がargs、return、args/return間の関係を仕様とし
 
 # 18. 自動generative function test
 
-> **位置付け:** 未実装。以下はFunction checkerの設計。
+> **位置付け:** 実装済み。`check-function`が以下を行う。
 
 Function specだけで最低限のproperty testを生成できるようにする。
 
@@ -1027,6 +1057,22 @@ API：
 
 これは明示的 `defproperty` とは別物である。
 
+`check-function`は`function-check-result`を返す。これは`property-result`の
+subclassであり、status・seed・試行数・反例・縮小反例に加えて次を持つ。
+
+- `function-check-result-rejected`：`:pre`が棄却した生成入力の件数。
+  実際に関数を呼んだ回数は「試行数 − 棄却数」である。
+- `function-check-result-failure-reason`：契約のどちら側が壊れたか。
+  `:return-spec`、`:postcondition`、`:precondition`、`:condition`、または`nil`。
+- `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
+
+`:pre`が生成入力をすべて棄却した実行のstatusは`:skipped`であり、`:passed`では
+ない。関数を一度も呼んでいない実行を成功として報告しない（§73.3のゼロ件成功）。
+
+`failure-reason`は報告された反例に対して検査を一度やり直して求める。試行loopの
+最後の失敗は、縮小が同じ述語をさらに何度も呼んだあとでは、報告された反例とは
+限らないためである。再現しなかった場合は`nil`を報告し、壊れた側を推測しない。
+
 ## Function spec
 
 局所contractから自動生成するテスト。
@@ -1041,7 +1087,7 @@ API：
 
 # 19. Preconditionの扱い
 
-> **位置付け:** 設計方針。Function checkerの棄却規則とdependent generatorの詳細は未決定。
+> **位置付け:** 一部実装。棄却と件数の報告は実装済み。dependent generatorは未実装。
 
 以下のような入力生成は避けるべきである。
 
@@ -1074,6 +1120,11 @@ API：
 のようなdependent generatorを将来的に扱う。
 
 `check-it` はchained generatorを提供しているため、この用途で利用できる。
+
+現在の実装は`:pre`を満たさない生成入力を棄却し、その件数を結果に載せる。
+生成側へ制約を反映するdependent generatorは未実装であり、棄却率の高い契約では
+実際に検査された件数が試行数より大幅に少なくなる。棄却数は結果から読めるので、
+この不足は隠れずに現れる。
 
 ---
 
@@ -3237,7 +3288,7 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 | ID | 決めること | 関連節 | 決定・検証が必要な時点 |
 |---|---|---|---|
-| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | Function checker実装前 |
+| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | 決定済み（§17の表）。対応範囲を広げるときに再検討 |
 | D2 | status/categoryの対応、棄却・試行数の定義、予算、検証不足の集計 | §14、§19、§47、LLM-01 | 自律実行結果の公開前 |
 | D3 | replay artifact schema、定義識別、復元不能値、options保存、直接反例再検査API | §15、§57、LLM-03 | CI artifact連携前 |
 | D4 | 縮小時の失敗同一性、入力妥当性、完了状態 | §16、LLM-04 | 縮小結果を修正根拠にする機能の拡張前 |

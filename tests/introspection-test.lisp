@@ -34,6 +34,7 @@
                 #:describe-property
                 #:spec-data
                 #:property-data
+                #:function-spec-data
                 #:semantic-data))
 
 (in-package #:cl-spec/tests/introspection-test)
@@ -117,6 +118,37 @@ signals, or NIL if it signals no such condition."
           (ok (eq 'positive-integer (getf (getf (first arguments) :spec) :target)))))
       (testing "the body is readable rather than compiled away"
         (ok (equal '((> (+ x y) x)) (getf data :body)))))))
+
+(deftest function-spec-data-projects-the-contract
+  (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defspec small-integer (range integer -100 100)))
+    (eval '(cl-spec/src/dsl:defspec-function widen
+            "Widen a value away from zero."
+            (:args (value small-integer) (by small-integer))
+            (:pre (plusp by))
+            (:returns small-integer)
+            (:post (>= (abs result) (abs value)))))
+    (let ((data (function-spec-data 'widen)))
+      (testing "the contract's own identity is reported"
+        (ok (eq 'widen (getf data :name)))
+        (ok (equal "Widen a value away from zero." (getf data :documentation))))
+      (testing "which inputs are accepted, as IR rather than as designators"
+        (let ((arguments (getf data :arguments)))
+          (ok (equal '(value by) (mapcar (lambda (a) (getf a :variable)) arguments)))
+          (ok (eq :reference (getf (getf (first arguments) :spec) :kind)))
+          (ok (eq 'small-integer (getf (getf (first arguments) :spec) :target))))
+        (ok (equal '((plusp by)) (getf data :preconditions))))
+      (testing "which output is required"
+        (ok (eq :reference (getf (getf data :returns) :kind)))
+        (ok (equal '((>= (abs result) (abs value))) (getf data :postconditions))))
+      (testing "every key is present whatever its value, as SPEC-DATA promises"
+        ;; A key that appears and disappears with its value breaks a JSON
+        ;; consumer, which is the whole audience for this projection.
+        (dolist (key '(:name :documentation :arguments :returns :preconditions
+                       :postconditions :source-form :source-location :metadata))
+          ;; The tail, not the value: :METADATA's value is legitimately NIL,
+          ;; and a presence check that reads the value would call it absent.
+          (ok (nth-value 2 (get-properties data (list key)))))))))
 
 (deftest semantic-data-reports-everything-registered-about-a-symbol
   (let ((registry (make-hash-table-registry)))
