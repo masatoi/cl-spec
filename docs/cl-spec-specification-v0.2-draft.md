@@ -3310,6 +3310,34 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 §70は初期architectureの依存順であり、この実証順は現在の実装から利用価値を確認する順である。
 
+### 1〜3の実測（2026-09-10）
+
+Function checkerとcl-mcp adapterを接続し、既知の欠陥で一周させた。対象は
+`(floor (* count (- value low)) (- high low))`、閉区間の右端で`count`を返す
+off-by-one。
+
+- `:about`で選ばれる2つのPropertyは両方passした。単調性も左端も、この欠陥では
+  壊れない。契約の`(:post (< result count))`だけが壊れる。
+  Property中心の運用では見つからない欠陥が存在する、という具体例である。
+- 契約の初回実行（100 trials、backend default）はpassした。棄却83件、実際の
+  呼び出しは17回。棄却数を報告しなければ「100試行が通った」と読める実行が、
+  実際には17回しか関数を呼んでいない。§19の懸念は理論上のものではない。
+- 試行数を2000に上げて18試行目で反例。縮小結果は
+  `VALUE=-1 LOW=-2 HIGH=-1 COUNT=1`、壊れた側は`:postcondition`。
+- 修正後、同じseedとdigestで再実行してpass、`reproduction: faithful`。
+  Propertyも引き続きpass。
+
+判明した不足：
+
+1. 契約には`:trials` tableがないため、profileでは試行数を上げられない。
+   adapter側に明示的な試行数の引数が要る。cl-spec本体では`check-function`の
+   `:trials`で足りる。
+2. 棄却率が80%を超えるのは、独立に生成した3つの整数に`(< low high)`と
+   `(<= low value high)`を課したためである。§19のdependent generatorが
+   未実装である限り、この形の契約は試行数で殴るしかない。
+3. 反例が「境界1点」である場合、一様生成では到達確率が試行数に線形にしか
+   効かない。§46のProperty品質と同じ問題が契約側にもある。
+
 ## 73.3 LLM向け有用性の評価
 
 同じ修正課題について、通常のソース・テスト・REPLを使う条件と、
