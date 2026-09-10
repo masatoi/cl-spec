@@ -258,22 +258,38 @@ A run in which :PRE refused every generated input reports :SKIPPED, never
                           :metadata (list :shrink t)
                           :function
                           (lambda (&rest arguments)
-                            (if (and precondition (not (apply precondition arguments)))
-                                (progn
-                                  (when countingp (incf rejected))
-                                  t)
-                                (let ((result (apply target arguments)))
-                                  (cond
-                                    ((and return-spec
-                                          (not (validp return-spec result
-                                                       :registry registry)))
-                                     (setf countingp nil)
-                                     nil)
-                                    ((and postcondition
-                                          (not (apply postcondition result arguments)))
-                                     (setf countingp nil)
-                                     nil)
-                                    (t t)))))))
+                            ;; A signalled condition ends the trial loop
+                            ;; exactly as a false result does, so counting has
+                            ;; to stop there too: everything the backend runs
+                            ;; afterwards is shrinking, and a shrink candidate
+                            ;; :PRE refuses is not a rejected trial.  Left
+                            ;; counting, REJECTED overtakes TRIALS and the
+                            ;; call count they imply goes negative.
+                            ;;
+                            ;; HANDLER-BIND rather than HANDLER-CASE: the
+                            ;; handler declines, so the condition still
+                            ;; reaches the backend unchanged and the run is
+                            ;; still reported as :ERROR.
+                            (handler-bind ((error (lambda (condition)
+                                                    (declare (ignore condition))
+                                                    (setf countingp nil))))
+                              (if (and precondition
+                                       (not (apply precondition arguments)))
+                                  (progn
+                                    (when countingp (incf rejected))
+                                    t)
+                                  (let ((result (apply target arguments)))
+                                    (cond
+                                      ((and return-spec
+                                            (not (validp return-spec result
+                                                         :registry registry)))
+                                       (setf countingp nil)
+                                       nil)
+                                      ((and postcondition
+                                            (not (apply postcondition result arguments)))
+                                       (setf countingp nil)
+                                       nil)
+                                      (t t))))))))
          (result (run-property property :seed seed :options options :registry registry))
          (executed (- (or (property-result-trials result) 0) rejected))
          (status (if (and (eq :passed (property-result-status result)) (zerop executed))

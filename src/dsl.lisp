@@ -108,7 +108,14 @@ return spec at all."
         (returns nil)
         (post nil)
         (returns-p nil))
-    (when (and (stringp (first clauses)) (rest clauses))
+    ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
+    ;; lone string there is the predicate, so consuming it would leave the
+    ;; property with no body.  DEFSPEC-FUNCTION has no body forms and a string
+    ;; can never be a clause, so a leading one is documentation whether or not
+    ;; anything follows -- and refusing (defspec-function ping "Ping.") while
+    ;; accepting both (defspec-function ping) and the same form with a clause
+    ;; after the string is an inconsistency, not a check.
+    (when (stringp (first clauses))
       (setf documentation (pop clauses)))
     (dolist (clause clauses)
       (unless (and (consp clause) (keywordp (first clause)))

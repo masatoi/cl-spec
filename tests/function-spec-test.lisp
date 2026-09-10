@@ -113,7 +113,21 @@
         (ok (equal "Limit a value to an interval."
                    (function-spec-documentation contract)))
         (ok (eq 'defspec-function (first (function-spec-source-form contract))))
-        (ok (function-spec-source-location contract))))))
+        (ok (function-spec-source-location contract)))))
+  (testing "a docstring is documentation even when it is the only clause"
+    ;; DEFPROPERTY guards this case because a lone string there is the
+    ;; predicate body.  DEFSPEC-FUNCTION has no body forms, so a leading
+    ;; string can only ever be documentation -- and refusing it while
+    ;; accepting both no clauses at all and a docstring plus a clause is an
+    ;; inconsistency, not a check.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-undocumented-contract)
+      (defspec-function demo-documented-contract "All it has is prose.")
+      (ok (null (function-spec-documentation
+                 (find-function-spec 'demo-undocumented-contract))))
+      (ok (equal "All it has is prose."
+                 (function-spec-documentation
+                  (find-function-spec 'demo-documented-contract)))))))
 
 (deftest defspec-function-refuses-what-the-checker-cannot-honour
   (testing "a lambda list keyword in :ARGS is named in the refusal, not dropped"
@@ -171,6 +185,11 @@ inside the bounds\" and breaks \"a value already inside is left alone\"."
 (defun demo-negate (value)
   "Return the negation of VALUE printed, in violation of an integer :RETURNS."
   (format nil "~D" (- value)))
+
+(defun demo-always-signals (value bound)
+  "Signal whenever called, so a contract check over it ends in :ERROR."
+  (declare (ignore bound))
+  (error "DEMO-ALWAYS-SIGNALS was called with ~S" value))
 
 (defmacro with-clamp-contract ((function-name &key (pre '(<= low high))) &body body)
   "Register the CLAMP contract about FUNCTION-NAME in a private registry.
@@ -250,6 +269,28 @@ DEMO-CLAMP-SWAPPED has."
         (ok (eq :skipped (property-result-status result)))
         (ok (not (eq :passed (property-result-status result))))
         (ok (= 20 (function-check-result-rejected result)))))))
+
+(deftest check-function-stops-counting-rejections-when-the-trial-loop-ends
+  (testing "an erroring contract never reports more rejections than trials"
+    ;; A signalled condition ends the trial loop, but it leaves the counter
+    ;; running: everything the backend does afterwards is shrinking, and every
+    ;; shrink candidate :PRE refuses was being counted as a rejected trial.
+    ;; REJECTED then exceeds TRIALS and the call count it implies -- TRIALS
+    ;; minus REJECTED -- comes out negative.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec wide-integer (range integer -500 500))
+      (defspec-function demo-always-signals
+        (:args (value wide-integer) (bound wide-integer))
+        (:pre (and (< value bound) (> value 400)))
+        (:returns wide-integer))
+      (let* ((result (check-function 'demo-always-signals :trials 3000))
+             (trials (property-result-trials result))
+             (rejected (function-check-result-rejected result)))
+        (testing "the run reached the function, so this is not a vacuous check"
+          (ok (eq :error (property-result-status result))))
+        (ok (<= rejected trials))
+        (testing "so the call count it implies is a count of calls that happened"
+          (ok (plusp (- trials rejected))))))))
 
 (deftest check-function-refuses-a-name-it-cannot-check
   (testing "a symbol with no registered contract signals UNKNOWN-FUNCTION-SPEC"
