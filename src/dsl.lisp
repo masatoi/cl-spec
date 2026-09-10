@@ -60,19 +60,43 @@ silently dropped.")
   "Signal INVALID-FUNCTION-SPEC-FORM for FORM with REASON."
   (error 'invalid-function-spec-form :form form :reason reason))
 
+(defun proper-list-p (object)
+  "Return true when OBJECT is a proper list.
+
+A dotted clause is not one, and nothing downstream survives it: (:args . a)
+reached DOLIST as a non-list and gave a bare TYPE-ERROR instead of the
+condition this parser promises, and (:pre . b) expanded into (AND . B), which
+is not a form at all."
+  (and (listp object)
+       (null (cdr (last object)))))
+
+(defun lambda-list-keyword-name-p (object)
+  "Return true when OBJECT is a symbol whose name begins with an ampersand."
+  (let ((name (and object (symbolp object) (symbol-name object))))
+    (and name (plusp (length name)) (char= #\& (char name 0)))))
+
 (defun collect-result-symbols (tree)
-  "Return the distinct symbols named \"RESULT\" appearing anywhere in TREE.
+  "Return the distinct bindable symbols named \"RESULT\" appearing in TREE.
 
 :POST names the return value with an unqualified RESULT (§17), which the reader
 has already interned into the definition's own package by the time this macro
 runs.  Binding the symbol found here, rather than one this code interns, keeps
-the DSL working in any package without INTERN, which §60 forbids."
+the DSL working in any package without INTERN, which §60 forbids.
+
+Bindable is the operative word.  Matching on the name alone also caught the
+keyword :RESULT, which is an ordinary plist key: a :POST reading
+(getf entries :result) had it lifted into the lambda list, where SBCL refused
+it, and one using both spellings was rejected with a message claiming the
+contract named the return value twice."
   (let ((found '()))
     (labels ((walk (node)
                (cond ((consp node)
                       (walk (car node))
                       (walk (cdr node)))
-                     ((and node (symbolp node) (string= (symbol-name node) "RESULT"))
+                     ((and node
+                           (symbolp node)
+                           (not (constantp node))
+                           (string= (symbol-name node) "RESULT"))
                       (pushnew node found)))))
       (walk tree))
     found))
@@ -119,6 +143,8 @@ cannot be confused."
     (dolist (clause clauses)
       (unless (and (consp clause) (keywordp (first clause)))
         (function-spec-error clause "expected a clause headed by a keyword"))
+      (unless (proper-list-p clause)
+        (function-spec-error clause "a clause must be a proper list"))
       (let ((head (first clause)))
         (unless (member head *function-spec-clause-keywords*)
           (function-spec-error
@@ -158,23 +184,40 @@ cannot be confused."
 
 The MVP checks required positional parameters only.  A lambda list keyword is
 named in the refusal rather than dropped, because a contract that quietly
-ignored &KEY would report a verified result for arguments nothing generated."
+ignored &KEY would report a verified result for arguments nothing generated --
+and it is checked in the parameter position as well as on its own, because
+(&optional integer) reads as a well formed pair whose parameter is named
+&OPTIONAL.  That registered, and reported :PASSED over 25 trials, for a
+signature nothing had checked.
+
+A parameter name also has to be bindable: the :PRE and :POST predicates are
+compiled into lambdas over these names, and a constant such as T emitted into a
+lambda list is a compiler error about a form the author never wrote."
   (let ((variables '()))
     (dolist (entry args)
-      (when (and entry (symbolp entry) (char= #\& (char (symbol-name entry) 0)))
+      (when (lambda-list-keyword-name-p entry)
         (function-spec-error
          whole
          (format nil "~S is not supported; :args takes required parameters only"
                  entry)))
-      (unless (and (consp entry)
-                   (= 2 (length entry))
-                   (first entry)
-                   (symbolp (first entry))
-                   (not (keywordp (first entry))))
+      (unless (and (consp entry) (proper-list-p entry) (= 2 (length entry)))
         (function-spec-error entry "expected (parameter spec-form)"))
-      (when (member (first entry) variables)
-        (function-spec-error entry "the same parameter is specified twice"))
-      (push (first entry) variables))
+      (let ((name (first entry)))
+        (when (lambda-list-keyword-name-p name)
+          (function-spec-error
+           whole
+           (format nil "~S is not supported; :args takes required parameters only"
+                   name)))
+        (unless (and name (symbolp name) (not (keywordp name)))
+          (function-spec-error entry "expected (parameter spec-form)"))
+        (when (constantp name)
+          (function-spec-error
+           entry
+           (format nil "~S names a constant and cannot be bound as a parameter"
+                   name)))
+        (when (member name variables)
+          (function-spec-error entry "the same parameter is specified twice"))
+        (push name variables)))
     args))
 
 (defun expand-function-spec-definition (whole name clauses source-location)
@@ -191,6 +234,15 @@ EVAL, so a contract kept only as a list could be read but never checked."
        whole ":pre runs before the call, so it cannot refer to RESULT"))
     (let ((variables (mapcar #'first args))
           (result (or (function-spec-result-symbol post whole) (gensym "RESULT"))))
+      (when (member result variables)
+        ;; The :POST predicate binds RESULT ahead of the parameters, so a
+        ;; parameter of the same name produced (LAMBDA (RESULT RESULT) ...)
+        ;; and a compiler error about a lambda list the author never wrote.
+        (function-spec-error
+         whole
+         (format nil "~S is both a parameter and the name :post uses for the ~
+return value"
+                 result)))
       `(register-function-spec
         (make-instance 'function-spec
                        :name ',name

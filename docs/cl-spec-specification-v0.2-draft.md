@@ -996,7 +996,9 @@ D1（対応範囲）の決定：
 
 | 項目 | MVPの扱い |
 |---|---|
-| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する |
+| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
+| clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
 | 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
 | `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
 | pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |

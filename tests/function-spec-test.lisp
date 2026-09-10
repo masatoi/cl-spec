@@ -295,11 +295,58 @@
                                   (:args (a integer))
                                   (:pre (integerp result))))
                  'invalid-function-spec-form)))
+  (testing "a lambda list keyword in the parameter position is refused too"
+    ;; The bare-symbol spelling above was refused; this one was not, and the
+    ;; keyword became the parameter's NAME.  The contract registered with
+    ;; parameters (X &OPTIONAL) and CHECK-FUNCTION reported :PASSED over 25
+    ;; trials for a signature nothing had checked.
+    (ok (signals (macroexpand-1 '(defspec-function f
+                                  (:args (a integer) (&optional integer))))
+                 'invalid-function-spec-form))
+    (ok (signals (macroexpand-1 '(defspec-function f
+                                  (:args (a integer) (&rest integer))))
+                 'invalid-function-spec-form)))
+  (testing "a parameter that cannot be bound is refused"
+    ;; Both of these were emitted into a lambda list the expander knew was
+    ;; illegal, and the author was handed an SBCL error about a form they
+    ;; never wrote: (LAMBDA (RESULT RESULT) ...) for the first, and "T names a
+    ;; defined constant" for the second.
+    (ok (signals (macroexpand-1 '(defspec-function f
+                                  (:args (result integer))
+                                  (:post (> result 0))))
+                 'invalid-function-spec-form))
+    (ok (signals (macroexpand-1 '(defspec-function f (:args (t integer))))
+                 'invalid-function-spec-form)))
+  (testing "a dotted clause is refused rather than escaping the parser"
+    ;; (:args . x) gave a bare TYPE-ERROR out of DOLIST, and (:pre . y)
+    ;; expanded into (AND . Y), which is not a form at all.
+    (ok (signals (macroexpand-1 '(defspec-function f (:args . a)))
+                 'invalid-function-spec-form))
+    (ok (signals (macroexpand-1 '(defspec-function f (:args (a integer)) (:pre . b)))
+                 'invalid-function-spec-form)))
   (testing "a malformed :ARGS entry is refused"
     (ok (signals (macroexpand-1 '(defspec-function f (:args a)))
                  'invalid-function-spec-form))
     (ok (signals (macroexpand-1 '(defspec-function f (:args (a integer) (a string))))
                  'invalid-function-spec-form))))
+
+(deftest defspec-function-does-not-mistake-a-keyword-for-the-return-value
+  (testing ":RESULT as data and RESULT as the binding coexist in one :POST"
+    ;; The return-value binding is found by looking for a symbol named RESULT
+    ;; in the :POST forms.  Matching on the name alone caught the keyword
+    ;; :RESULT, an ordinary plist key: the expander emitted
+    ;; (LAMBDA (:RESULT PLIST) ...), which SBCL refuses, and a form using both
+    ;; spellings was rejected with a message claiming the contract named the
+    ;; return value twice.  DEFPROPERTY accepts the same expression.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-plist-contract
+        (:args (entries list))
+        (:post (eql result (getf entries :result))))
+      (let ((predicate (function-spec-postcondition-function
+                        (find-function-spec 'demo-plist-contract))))
+        (ok (functionp predicate))
+        (ok (funcall predicate 5 '(:result 5)))
+        (ok (not (funcall predicate 5 '(:result 6))))))))
 
 (defun demo-clamp (value low high)
   "Return VALUE limited to the closed interval [LOW, HIGH]."
