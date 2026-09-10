@@ -499,6 +499,22 @@ first, shrinking towards zero crosses into the other."
       (error "DEMO-EVEN-SIGNALS was called with ~S" value)
       (format nil "~D" value)))
 
+(defun demo-identity (value)
+  "Return VALUE. Correct for every input, so any failure reported against it
+comes from the contract rather than from here."
+  value)
+
+(defun demo-coin (value)
+  "Break the contract one way or the other, depending on a coin.
+
+Reading mutable state is what makes the verdict depend on where the random
+state stands when the reproduction re-run happens, rather than only on the
+seed the run was given."
+  (declare (ignore value))
+  (if (zerop (random 2))
+      (error "DEMO-COIN signalled")
+      "not an integer"))
+
 (defun result-is-self-consistent-p (result violates-p)
   "Return true when RESULT's status, reason, condition and counterexample agree.
 
@@ -699,6 +715,55 @@ DEMO-CLAMP-SWAPPED has."
           (ok (member (property-result-status result) '(:failed :error)))
           (ok (result-is-self-consistent-p
                result (bounded-violation-p #'demo-even-signals))))))))
+
+(deftest check-function-does-not-blame-the-function-for-a-broken-contract
+  (testing "a contract that cannot be evaluated signals, rather than reporting a failure"
+    ;; The re-verification wrapped the target call, the :PRE and :POST
+    ;; predicates and the :RETURNS check in one handler, and turned any
+    ;; condition into "the function signalled".  A contract naming a predicate
+    ;; that does not exist came back as :ERROR / :CONDITION with a shrunk
+    ;; counterexample of (VALUE 0) -- for a function correct on 0, in a run
+    ;; where every input produced the identical error, so the minimal
+    ;; counterexample was noise.  SRC/EXPLAIN.LISP already re-signals authoring
+    ;; bugs on purpose, so the reader is pointed at the broken spec rather than
+    ;; told the value is bad; this now agrees with it.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-identity
+        (:args (value small-integer))
+        (:returns (satisfies demo-no-such-predicate-p)))
+      (ok (handler-case (progn (check-function 'demo-identity :trials 20) nil)
+            (undefined-function () t)))))
+  (testing "and neither does a postcondition that signals on its own"
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-identity
+        (:args (value small-integer))
+        (:returns small-integer)
+        (:post (< (/ 100 result) 1000)))
+      (ok (handler-case (progn (check-function 'demo-identity :trials 40) nil)
+            (division-by-zero () t))))))
+
+(deftest check-function-gives-the-same-verdict-for-the-same-seed
+  (testing "the verdict is decided under the seed, not after it"
+    ;; The re-run that decides the status happens after RUN-PROPERTY has
+    ;; returned, outside the *RANDOM-STATE* binding the seed installs.  For a
+    ;; target that reads mutable state, ten identical calls at one seed gave
+    ;; :ERROR seven times and :FAILED three -- the same counterexample and the
+    ;; same shrunk value each time, and a different verdict.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-coin
+        (:args (value small-integer))
+        (:returns small-integer))
+      (let ((verdicts (loop repeat 8
+                            collect (let ((result (check-function 'demo-coin
+                                                                  :trials 20
+                                                                  :seed 42)))
+                                      (list (property-result-status result)
+                                            (function-check-result-failure-reason
+                                             result))))))
+        (ok (= 1 (length (remove-duplicates verdicts :test #'equal))))))))
 
 (deftest check-function-refuses-a-name-it-cannot-check
   (testing "a symbol with no registered contract signals UNKNOWN-FUNCTION-SPEC"

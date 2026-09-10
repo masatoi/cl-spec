@@ -33,6 +33,8 @@
                 #:validp)
   (:import-from #:cl-spec/src/explain
                 #:explain-data)
+  (:import-from #:cl-spec/src/utils/random
+                #:seed->random-state)
   (:export #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
@@ -326,27 +328,35 @@ refuses, so one can never be the reason a run failed; reporting :PRECONDITION
 read as \"your caller broke the contract, the function is fine\" for runs where
 the function was the broken thing.
 
-CONDITION is the condition ARGUMENTS actually signal, captured here rather than
-taken from the trial loop, whose condition belongs to whichever input failed
-first and need not be this one."
+Only the call to TARGET is caught.  A condition from the contract's own parts
+-- its :PRE or :POST predicate, or the :RETURNS spec -- is an authoring bug in
+the contract, not a finding about the function, and is left to propagate.
+Catching those said \"the function signalled\" for a contract naming a predicate
+that does not exist, and put forward a minimal counterexample in a run where
+every input produced the identical error.  SRC/EXPLAIN.LISP re-signals the same
+class of condition for the same reason: the reader is pointed at the broken
+spec rather than told the value is bad.
+
+CONDITION is the one ARGUMENTS actually signal, captured here rather than taken
+from the trial loop, whose condition belongs to whichever input failed first
+and need not be this one."
   (let ((return-spec (function-spec-return-spec contract))
         (precondition (function-spec-precondition-function contract))
         (postcondition (function-spec-postcondition-function contract)))
-    (handler-case
-        (cond
-          ((and precondition (not (apply precondition arguments)))
-           (values nil nil nil))
-          (t
-           (let ((result (apply target arguments)))
-             (cond
-               ((and return-spec (not (validp return-spec result :registry registry)))
-                (values :return-spec
-                        (explain-data return-spec result :registry registry)
-                        nil))
-               ((and postcondition (not (apply postcondition result arguments)))
-                (values :postcondition nil nil))
-               (t (values nil nil nil))))))
-      (error (condition) (values :condition nil condition)))))
+    (if (and precondition (not (apply precondition arguments)))
+        (values nil nil nil)
+        (multiple-value-bind (result signalled)
+            (handler-case (values (apply target arguments) nil)
+              (error (condition) (values nil condition)))
+          (cond
+            (signalled (values :condition nil signalled))
+            ((and return-spec (not (validp return-spec result :registry registry)))
+             (values :return-spec
+                     (explain-data return-spec result :registry registry)
+                     nil))
+            ((and postcondition (not (apply postcondition result arguments)))
+             (values :postcondition nil nil))
+            (t (values nil nil nil)))))))
 
 (defun reproduce-function-failure (contract target result registry)
   "Return (values REASON EXPLANATION CONDITION SHRUNK-USABLE-P) for RESULT.
@@ -482,7 +492,15 @@ Nothing called the function, so nothing about it was checked."
          (vacuous (and (eq :passed backend-status) (not (plusp executed)))))
     (multiple-value-bind (reason explanation condition shrunk-usable)
         (if (member backend-status '(:failed :error))
-            (reproduce-function-failure contract target result registry)
+            ;; Under the run's own seed.  RUN-PROPERTY binds *RANDOM-STATE*
+            ;; around the trial and shrink loop so a run can be replayed; this
+            ;; re-run happens after it returns, and it decides the reported
+            ;; status.  Left on the ambient state, a target that reads mutable
+            ;; state gave two different verdicts for one seed -- the same
+            ;; counterexample and the same shrunk value, reported once as
+            ;; :ERROR and once as :FAILED.
+            (let ((*random-state* (seed->random-state (property-result-seed result))))
+              (reproduce-function-failure contract target result registry))
             (values nil nil nil nil))
       (make-instance 'function-check-result
                      ;; The status describes the counterexample the result puts
