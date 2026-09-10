@@ -93,12 +93,12 @@ only one of them can be bound"
     (first candidates)))
 
 (defun parse-function-spec-clauses (name clauses whole)
-  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST RETURNS-P).
+  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST).
 
 Every clause is checked here rather than at check time, so a contract the
-checker could not honour never reaches the registry.  RETURNS-P distinguishes
-(:returns nil) -- a contract admitting only NIL -- from a contract that names no
-return spec at all."
+checker could not honour never reaches the registry.  A NIL RETURNS therefore
+means the contract named no return spec: (:returns nil) is refused, so the two
+cannot be confused."
   (unless (and name (symbolp name) (not (keywordp name)))
     (function-spec-error whole "the specified function must be named by a symbol"))
   (let ((documentation nil)
@@ -106,8 +106,7 @@ return spec at all."
         (args nil)
         (pre nil)
         (returns nil)
-        (post nil)
-        (returns-p nil))
+        (post nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
     ;; property with no body.  DEFSPEC-FUNCTION has no body forms and a string
@@ -141,9 +140,18 @@ return spec at all."
                (function-spec-error
                 clause
                 "multiple values are not supported; :returns describes one value"))
-             (setf returns form
-                   returns-p t))))))
-    (values documentation args pre returns post returns-p)))
+             (when (null form)
+               ;; NIL as a type specifier is the type with no members, so this
+               ;; contract reports every return value as a violation --
+               ;; including the NIL its author meant.
+               ;; A plain string, not a format control: FUNCTION-SPEC-ERROR
+               ;; stores it and the report prints it with ~A, so a ~ here
+               ;; would reach the reader literally.
+               (function-spec-error
+                clause
+                "nothing satisfies the empty type NIL; write NULL instead"))
+             (setf returns form))))))
+    (values documentation args pre returns post)))
 
 (defun parse-function-spec-arguments (args whole)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -175,7 +183,7 @@ ignored &KEY would report a verified result for arguments nothing generated."
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
 and :POST forms have to be compiled into real functions: §60 forbids runtime
 EVAL, so a contract kept only as a list could be read but never checked."
-  (multiple-value-bind (documentation args pre returns post returns-p)
+  (multiple-value-bind (documentation args pre returns post)
       (parse-function-spec-clauses name clauses whole)
     (parse-function-spec-arguments args whole)
     (when (collect-result-symbols pre)
@@ -190,7 +198,7 @@ EVAL, so a contract kept only as a list could be read but never checked."
                        (list ,@(loop for (variable form) in args
                                      collect `(list ',variable
                                                     (normalize-spec-form ',form))))
-                       :return-spec ,(when returns-p `(normalize-spec-form ',returns))
+                       :return-spec ,(when returns `(normalize-spec-form ',returns))
                        :preconditions ',pre
                        :postconditions ',post
                        :precondition-function

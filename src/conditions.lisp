@@ -149,21 +149,26 @@ verified one."))
   ((form :initarg :form
          :initform nil
          :reader invalid-function-spec-form-form
-         :documentation "The DEFSPEC-FUNCTION clause that could not be accepted.")
+         :documentation "The clause, or the slot value, that could not be accepted.")
    (reason :initarg :reason
            :initform nil
            :reader invalid-function-spec-form-reason
            :documentation "Human readable explanation, or NIL."))
   (:report (lambda (condition stream)
-             (format stream "~S is not a valid DEFSPEC-FUNCTION clause~@[: ~A~]."
+             (format stream "~S is not a valid function spec clause~@[: ~A~]."
                      (invalid-function-spec-form-form condition)
                      (invalid-function-spec-form-reason condition))))
   (:documentation
-   "Signalled when a DEFSPEC-FUNCTION form uses syntax the MVP cannot check.
+   "Signalled when a function spec claims something the checker cannot honour.
 
-Specification §17 requires that a form the checker cannot honour is refused
-rather than partially accepted: a contract whose unsupported half is silently
-dropped would report a verified result for a claim nothing checked."))
+Specification §17 requires that a contract the checker cannot honour is refused
+rather than partially accepted: one whose unsupported half is silently dropped
+would report a verified result for a claim nothing checked.
+
+Raised from two places, which is why the report does not name a macro: from
+DEFSPEC-FUNCTION at macroexpansion time for syntax the MVP does not support,
+and from the FUNCTION-SPEC class for a contract built directly through the
+public CLOS API in a state its own consumers could not read."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec

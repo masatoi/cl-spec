@@ -46,7 +46,6 @@
            #:function-spec-source-location
            #:function-spec-metadata
            #:register-function-spec
-           #:resolve-function-spec
            #:function-check-result
            #:function-check-result-function
            #:function-check-result-rejected
@@ -65,9 +64,9 @@
                    :initform nil
                    :reader function-spec-argument-specs
                    :documentation "List of (PARAMETER SPEC) pairs in lambda list
-order, from :ARGS.  SPEC is a Semantic IR object once DEFSPEC-FUNCTION has
-normalized it; the class itself stores whatever it is given, exactly as
-PROPERTY does with its arguments.")
+order, from :ARGS.  SPEC is always a Semantic IR object: a designator handed to
+the constructor is normalized in place, so every reader sees one shape.  Each
+PARAMETER is named once.")
    (return-spec :initarg :return-spec
                 :initform nil
                 :reader function-spec-return-spec
@@ -121,7 +120,7 @@ claims, which is what an agent asking \"what may I pass here\" needs.")
 The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
-(defmethod initialize-instance :after ((contract function-spec) &key)
+(defmethod shared-initialize :after ((contract function-spec) slot-names &key)
   "Refuse a contract that could not be honoured, and normalize what can be.
 
 Enforced here rather than in CHECK-FUNCTION because the class and
@@ -130,44 +129,71 @@ DSL, and every consumer -- the checker, FUNCTION-SPEC-DATA, a future printer --
 would otherwise have to re-derive the same invariants or be handed an object
 the others rejected.
 
-Clause forms with no compiled predicate are refused.  Section 60 forbids
-runtime EVAL, so the predicate cannot be recovered from the forms, and a
-contract in that state is one the checker runs while ignoring the claim --
-reporting :PASSED for something nothing checked.  DEFSPEC-FUNCTION always
-supplies both halves.
+On SHARED-INITIALIZE rather than INITIALIZE-INSTANCE, because MAKE-INSTANCE is
+not the only standard way to fill these slots: REINITIALIZE-INSTANCE and
+CHANGE-CLASS reach them too, and a check that covers only the first lets the
+second put back exactly the states it exists to refuse.
+
+Three invariants:
+
+A clause's forms and its compiled predicate are present together or not at all.
+Forms alone cannot be run -- §60 forbids runtime EVAL, so the predicate cannot
+be recovered from them -- and the checker would report :PASSED for a claim it
+ignored.  A predicate alone is the same failure seen from the other side: it
+runs, so inputs are refused and results judged, while FUNCTION-SPEC-DATA
+reports the contract as having no such clause.
+
+A parameter is named once.  §14's counterexample is a {name value} plist, and
+one built over a name bound twice is not one: GETF answers with the first
+value and the second cannot be recovered, so the counterexample reported for a
+failure cannot reproduce it.
 
 Spec designators are normalized rather than refused, because unlike a
 predicate they can be recovered: NORMALIZE-SPEC-FORM is pure, and returns an
 already-normalized spec unchanged, so the DSL's output passes through
 untouched.  Without this a contract built through the class reached the
 generator as a bare symbol and signalled NO-APPLICABLE-METHOD."
+  (declare (ignore slot-names))
   (flet ((refuse (form reason)
-           (error 'invalid-function-spec-form :form form :reason reason)))
-    (when (and (function-spec-preconditions contract)
-               (null (function-spec-precondition-function contract)))
-      (refuse (function-spec-preconditions contract)
-              (concatenate 'string
-                           ":preconditions were given without "
-                           ":precondition-function, and a compiled predicate "
-                           "cannot be recovered from the forms")))
-    (when (and (function-spec-postconditions contract)
-               (null (function-spec-postcondition-function contract)))
-      (refuse (function-spec-postconditions contract)
-              (concatenate 'string
-                           ":postconditions were given without "
-                           ":postcondition-function, and a compiled predicate "
-                           "cannot be recovered from the forms")))
-    (setf (slot-value contract 'argument-specs)
-          (loop for entry in (function-spec-argument-specs contract)
-                do (unless (and (consp entry)
-                                (= 2 (length entry))
-                                (first entry)
-                                (symbolp (first entry))
-                                (not (keywordp (first entry))))
-                     ;; Not merely malformed: (amount integer extra) would
-                     ;; otherwise pass through with EXTRA silently dropped.
-                     (refuse entry "expected (parameter spec)"))
-                collect (list (first entry) (normalize-spec-form (second entry)))))
+           (error 'invalid-function-spec-form :form form :reason reason))
+         (half (forms-initarg function-initarg forms predicate)
+           (cond ((and forms (null predicate))
+                  (format nil "~A was given without ~A, and a compiled ~
+predicate cannot be recovered from the forms"
+                          forms-initarg function-initarg))
+                 ((and predicate (null forms))
+                  (format nil "~A was given without ~A, so the predicate ~
+would run while introspection reported no such clause"
+                          function-initarg forms-initarg)))))
+    (let ((pre (half ":preconditions" ":precondition-function"
+                     (function-spec-preconditions contract)
+                     (function-spec-precondition-function contract)))
+          (post (half ":postconditions" ":postcondition-function"
+                      (function-spec-postconditions contract)
+                      (function-spec-postcondition-function contract))))
+      (when pre
+        (refuse (or (function-spec-preconditions contract)
+                    (function-spec-precondition-function contract))
+                pre))
+      (when post
+        (refuse (or (function-spec-postconditions contract)
+                    (function-spec-postcondition-function contract))
+                post)))
+    (let ((seen '()))
+      (setf (slot-value contract 'argument-specs)
+            (loop for entry in (function-spec-argument-specs contract)
+                  do (unless (and (consp entry)
+                                  (= 2 (length entry))
+                                  (first entry)
+                                  (symbolp (first entry))
+                                  (not (keywordp (first entry))))
+                       ;; Not merely malformed: (amount integer extra) would
+                       ;; otherwise pass through with EXTRA silently dropped.
+                       (refuse entry "expected (parameter spec)"))
+                     (when (member (first entry) seen)
+                       (refuse entry "the same parameter is named twice"))
+                     (push (first entry) seen)
+                  collect (list (first entry) (normalize-spec-form (second entry))))))
     (let ((returns (function-spec-return-spec contract)))
       (when returns
         (setf (slot-value contract 'return-spec) (normalize-spec-form returns))))))

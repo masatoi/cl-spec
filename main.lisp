@@ -135,7 +135,6 @@
                 #:function-spec-source-location
                 #:function-spec-metadata
                 #:register-function-spec
-                #:resolve-function-spec
                 #:function-check-result
                 #:function-check-result-function
                 #:function-check-result-rejected
@@ -283,7 +282,6 @@
            #:function-spec-source-location
            #:function-spec-metadata
            #:register-function-spec
-           #:resolve-function-spec
            #:function-check-result
            #:function-check-result-function
            #:function-check-result-rejected

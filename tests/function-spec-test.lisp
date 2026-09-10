@@ -89,8 +89,7 @@
     ;; be built without the DSL.  A compiled predicate cannot be recovered from
     ;; the stored forms -- §60 forbids runtime EVAL -- so an object carrying
     ;; :PRE forms and no function is one CHECK-FUNCTION would run while
-    ;; silently ignoring the claim, and report :PASSED for it.  There is no
-    ;; repair, only refusal.
+    ;; silently ignoring the claim, and report :PASSED for it.
     (ok (handler-case
             (progn (make-instance 'function-spec
                                   :name 'transfer
@@ -103,8 +102,78 @@
                                   :postconditions '((balance-preserved-p)))
                    nil)
           (invalid-function-spec-form () t))))
+  (testing "and a compiled predicate with no forms is refused too"
+    ;; The other direction, which matters just as much: the predicate runs, so
+    ;; inputs are refused and results are judged by a claim FUNCTION-SPEC-DATA
+    ;; then reports as absent.  An agent is told the contract has no :PRE while
+    ;; half its generated inputs never reach the function.
+    (ok (handler-case
+            (progn (make-instance 'function-spec
+                                  :name 'transfer
+                                  :precondition-function (lambda (n) (plusp n)))
+                   nil)
+          (invalid-function-spec-form () t)))
+    (ok (handler-case
+            (progn (make-instance 'function-spec
+                                  :name 'transfer
+                                  :postcondition-function (lambda (result n)
+                                                            (> result n)))
+                   nil)
+          (invalid-function-spec-form () t))))
+  (testing "the refusal does not blame a macro that was never involved"
+    (ok (not (search "DEFSPEC-FUNCTION"
+                     (handler-case
+                         (progn (make-instance 'function-spec
+                                               :name 'transfer
+                                               :preconditions '((plusp n)))
+                                "")
+                       (invalid-function-spec-form (condition)
+                         (princ-to-string condition)))))))
   (testing "and a contract with neither forms nor functions is fine"
     (ok (typep (make-instance 'function-spec :name 'transfer) 'function-spec))))
+
+(deftest function-spec-invariants-survive-every-construction-path
+  ;; MAKE-INSTANCE is not the only standard way to fill these slots.  With the
+  ;; checks in INITIALIZE-INSTANCE only, these two paths put back exactly the
+  ;; states the checks exist to refuse: an un-normalized argument spec, which
+  ;; reaches the generator as a bare symbol, and :PRECONDITIONS with no
+  ;; predicate to run.
+  ;;
+  ;; Each case gets its own contract.  A refused REINITIALIZE-INSTANCE has
+  ;; already written the slots by the time the :AFTER method runs, so the
+  ;; object is left holding what was refused -- standard CLOS, and the reason
+  ;; the caller must discard it rather than reuse it.
+  (testing "REINITIALIZE-INSTANCE is checked like MAKE-INSTANCE"
+    (let ((contract (make-instance 'function-spec
+                                   :name 'half
+                                   :argument-specs '((n integer)))))
+      (ok (handler-case
+              (progn (reinitialize-instance contract :preconditions '((plusp n)))
+                     nil)
+            (invalid-function-spec-form () t)))))
+  (testing "and normalizes like it"
+    (let ((contract (make-instance 'function-spec :name 'half)))
+      (reinitialize-instance contract :argument-specs '((n integer)))
+      (ok (typep (second (first (function-spec-argument-specs contract))) 'spec))))
+  (testing "CHANGE-CLASS is too"
+    (let ((contract (make-instance 'function-spec
+                                   :name 'half
+                                   :argument-specs '((n integer)))))
+      (change-class contract 'function-spec)
+      (ok (typep (second (first (function-spec-argument-specs contract))) 'spec)))))
+
+(deftest function-spec-refuses-a-parameter-named-twice
+  (testing "the class refuses what the DSL already refuses"
+    ;; A counterexample is a {name value} plist (§14).  With A bound twice it
+    ;; comes out as (A -3 A -4), which is not one: GETF returns the first value
+    ;; and the second is unrecoverable, so the reported counterexample cannot
+    ;; reproduce the failure it was reported for.
+    (ok (handler-case
+            (progn (make-instance 'function-spec
+                                  :name 'pair
+                                  :argument-specs '((a integer) (a integer)))
+                   nil)
+          (invalid-function-spec-form () t)))))
 
 (deftest function-spec-normalizes-argument-specs-it-is-handed
   (testing "a spec designator becomes IR, so every consumer reads one shape"
@@ -202,6 +271,13 @@
     (ok (signals (macroexpand-1 '(defspec-function f
                                   (:args (a integer))
                                   (:signals division-by-zero)))
+                 'invalid-function-spec-form)))
+  (testing "(:returns nil) is refused, because nothing satisfies the empty type"
+    ;; NIL as a type specifier is the type with no members, so a contract
+    ;; written this way reports every return value as a violation -- including
+    ;; the NIL its author meant.  NULL is the type they wanted, and the
+    ;; refusal names it.
+    (ok (signals (macroexpand-1 '(defspec-function f (:returns nil)))
                  'invalid-function-spec-form)))
   (testing "multiple values are refused, because :RETURNS checks one value"
     (ok (signals (macroexpand-1 '(defspec-function f
