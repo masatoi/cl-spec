@@ -73,7 +73,8 @@
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
 | Custom generator DSL | 未実装 | `defgenerator`はstub。`defgenerator-for`は構想上の名前 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
-| Instrumentation・cl-mcp adapter | 未実装 | 公開名や想定tool名の存在を利用可能の根拠にしない |
+| Instrumentation | 未実装 | `instrument-function`はstub |
+| cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
 | timeout・状態隔離・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
 | state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
 
@@ -157,9 +158,10 @@ Propertyを削除したり、入力domainや試行予算を縮小したりしな
           (cl-spec:property-result-shrunk-counterexample result)))
 ```
 
-`:skipped`は「`:pre`が全入力を棄却し、関数を一度も呼んでいない」であって
-成功ではない。実際に検査された件数は「試行数 − 棄却数」で、`:passed`でも
-これが0なら何も検査していない。詳細は§17〜19。
+`:skipped`は「関数を一度も呼んでいない」であって成功ではない。`:pre`が全入力を
+棄却した場合と、`:trials`が0の場合の両方でこれになる。実際に検査された件数は
+「試行数 − 棄却数」であり、これが0の実行は`:passed`ではなく`:skipped`として
+報告されるので、`:passed`かつ0という状態は存在しない。詳細は§17〜19。
 
 ---
 
@@ -1095,8 +1097,9 @@ subclassであり、status・seed・試行数・反例・縮小反例に加え�
   返すので、棄却された入力が失敗の理由になることはない。
 - `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
 
-`:pre`が生成入力をすべて棄却した実行のstatusは`:skipped`であり、`:passed`では
-ない。関数を一度も呼んでいない実行を成功として報告しない（§73.3のゼロ件成功）。
+関数を一度も呼ばなかった実行のstatusは`:skipped`であり、`:passed`ではない。
+`:pre`が生成入力をすべて棄却した場合と、`:trials`が0の場合の両方が該当する。
+関数を一度も呼んでいない実行を成功として報告しない（§73.3のゼロ件成功）。
 
 `failure-reason`は報告された反例に対して検査を一度やり直して求める。試行loopの
 最後の失敗は、縮小が同じ述語をさらに何度も呼んだあとでは、報告された反例とは

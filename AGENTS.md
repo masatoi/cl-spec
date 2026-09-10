@@ -5,10 +5,12 @@
 
 **Current status: MVP vertical slice.** Normalization, validation, structured
 explain, spec introspection, the check-it generator backend, `defproperty` and
-the property runner with seed, replay and shrinking are implemented. Function
-specs (`defspec-function`, `check-function`), custom generators
-(`defgenerator`), the `describe-*` printers, instrumentation and the cl-mcp
-adapter are still stubs that signal `not-implemented`.
+the property runner with seed, replay and shrinking are implemented, as are
+function specs (`defspec-function`, `check-function`, `function-spec-data`) in
+their §73.1 D1 range: required positional arguments and one return value.
+Custom generators (`defgenerator`), the `describe-*` printers and
+instrumentation are still stubs that signal `not-implemented`. The cl-mcp
+adapter lives in cl-mcp, not here.
 
 ## Project Structure & Module Organization
 

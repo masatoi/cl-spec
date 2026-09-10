@@ -75,46 +75,28 @@ is not a form at all."
   (let ((name (and object (symbolp object) (symbol-name object))))
     (and name (plusp (length name)) (char= #\& (char name 0)))))
 
-(defun collect-result-symbols (tree)
-  "Return the distinct bindable symbols named \"RESULT\" appearing in TREE.
+(defun symbol-occurs-p (symbol tree)
+  "Return true when SYMBOL itself appears anywhere in TREE."
+  (cond ((eq symbol tree) t)
+        ((consp tree)
+         (or (symbol-occurs-p symbol (car tree))
+             (symbol-occurs-p symbol (cdr tree))))
+        (t nil)))
 
-:POST names the return value with an unqualified RESULT (§17), which the reader
-has already interned into the definition's own package by the time this macro
-runs.  Binding the symbol found here, rather than one this code interns, keeps
-the DSL working in any package without INTERN, which §60 forbids.
+(defun return-value-symbol ()
+  "Return the symbol RESULT denotes in the package being read, or NIL.
 
-Bindable is the operative word.  Matching on the name alone also caught the
-keyword :RESULT, which is an ordinary plist key: a :POST reading
-(getf entries :result) had it lifted into the lambda list, where SBCL refused
-it, and one using both spellings was rejected with a message claiming the
-contract named the return value twice."
-  (let ((found '()))
-    (labels ((walk (node)
-               (cond ((consp node)
-                      (walk (car node))
-                      (walk (cdr node)))
-                     ((and node
-                           (symbolp node)
-                           (not (constantp node))
-                           (string= (symbol-name node) "RESULT"))
-                      (pushnew node found)))))
-      (walk tree))
-    found))
+§17 writes the return value as an unqualified RESULT, so the symbol meant is
+whichever one that name resolves to where the form is written -- FIND-SYMBOL,
+never INTERN, which §60 forbids.
 
-(defun function-spec-result-symbol (post-forms whole)
-  "Return the symbol :POST uses for the return value, or NIL when it uses none.
-
-Signals INVALID-FUNCTION-SPEC-FORM when POST-FORMS name two different RESULT
-symbols, because only one of them could be bound and the other would read as an
-unrelated free variable."
-  (let ((candidates (collect-result-symbols post-forms)))
-    (when (rest candidates)
-      (function-spec-error
-       whole
-       (format nil "~S names the return value with more than one RESULT symbol; ~
-only one of them can be bound"
-               candidates)))
-    (first candidates)))
+Comparing SYMBOL-NAME across the whole form instead took any symbol so named,
+wherever it came from.  A postcondition reading another package's variable had
+that variable bound as the return value: the contract as written was false for
+every input, the contract as compiled was a tautology, introspection showed the
+first and the checker ran the second.  A quoted type name that happened to be
+called RESULT was refused as a second binding it could never be."
+  (find-symbol "RESULT" *package*))
 
 (defun parse-function-spec-clauses (name clauses whole)
   "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST).
@@ -229,20 +211,32 @@ EVAL, so a contract kept only as a list could be read but never checked."
   (multiple-value-bind (documentation args pre returns post)
       (parse-function-spec-clauses name clauses whole)
     (parse-function-spec-arguments args whole)
-    (when (collect-result-symbols pre)
-      (function-spec-error
-       whole ":pre runs before the call, so it cannot refer to RESULT"))
-    (let ((variables (mapcar #'first args))
-          (result (or (function-spec-result-symbol post whole) (gensym "RESULT"))))
-      (when (member result variables)
-        ;; The :POST predicate binds RESULT ahead of the parameters, so a
-        ;; parameter of the same name produced (LAMBDA (RESULT RESULT) ...)
+    (let* ((variables (mapcar #'first args))
+           (candidate (return-value-symbol))
+           (parameterp (and candidate (member candidate variables) t))
+           (in-post (and candidate (symbol-occurs-p candidate post)))
+           (in-pre (and candidate (symbol-occurs-p candidate pre)))
+           (result (if (and in-post (not parameterp)) candidate (gensym "RESULT"))))
+      (when (and in-post parameterp)
+        ;; The :POST predicate binds the return value ahead of the parameters,
+        ;; so a parameter of the same name produced (LAMBDA (RESULT RESULT) ...)
         ;; and a compiler error about a lambda list the author never wrote.
+        ;; It is also genuinely ambiguous: the reader cannot tell which of the
+        ;; two the postcondition means.
         (function-spec-error
-         whole
+         post
          (format nil "~S is both a parameter and the name :post uses for the ~
 return value"
-                 result)))
+                 candidate)))
+      (when (and in-pre (not parameterp))
+        ;; Only when it is not a parameter: a precondition about a parameter
+        ;; the contract itself named RESULT is an ordinary precondition, and
+        ;; refusing it said something about the return value that the form
+        ;; does not do.
+        (function-spec-error
+         pre
+         (format nil ":pre runs before the call, so it cannot refer to ~S"
+                 candidate)))
       `(register-function-spec
         (make-instance 'function-spec
                        :name ',name

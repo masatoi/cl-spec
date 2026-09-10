@@ -120,6 +120,39 @@ claims, which is what an agent asking \"what may I pass here\" needs.")
 The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
+(defparameter *function-spec-slot-names*
+  '(name argument-specs return-spec preconditions postconditions
+    precondition-function postcondition-function documentation-string
+    source-form source-location metadata)
+  "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
+
+(defmethod shared-initialize :around ((contract function-spec) slot-names &rest initargs)
+  "Leave CONTRACT as it was when initialization is refused.
+
+The :AFTER method below validates, but by the time it runs the standard method
+has already written the initargs into the slots.  So catching its refusal left
+the object holding exactly the state the check exists to refuse -- and
+discarding it is not open to the caller, because REGISTER-FUNCTION-SPEC stores
+the object by identity: the registry, FIND-FUNCTION-SPEC, FUNCTION-SPEC-DATA
+and CHECK-FUNCTION are all aliased to that one instance.  A refused
+REINITIALIZE-INSTANCE could leave a registered contract whose :PRECONDITIONS
+the checker then ignored while reporting :PASSED, or whose argument specs no
+longer normalized, and a refused :RETURN-SPEC typo destroyed a return spec that
+had been fine.
+
+Restoring an unbound slot writes NIL rather than making it unbound again, which
+matters only during MAKE-INSTANCE -- where the object is discarded anyway."
+  (let ((snapshot (loop for slot in *function-spec-slot-names*
+                        collect (cons slot (when (slot-boundp contract slot)
+                                             (slot-value contract slot)))))
+        (committed nil))
+    (unwind-protect
+         (multiple-value-prog1 (apply #'call-next-method contract slot-names initargs)
+           (setf committed t))
+      (unless committed
+        (loop for (slot . value) in snapshot
+              do (setf (slot-value contract slot) value))))))
+
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)
   "Refuse a contract that could not be honoured, and normalize what can be.
 
@@ -363,8 +396,9 @@ Returns a FUNCTION-CHECK-RESULT, which is a PROPERTY-RESULT carrying the seed,
 the trial count, the counterexample and its shrunk form, plus the count of
 inputs :PRE refused and which half of the contract broke.
 
-A run in which :PRE refused every generated input reports :SKIPPED, never
-:PASSED: nothing called the function, so nothing about it was checked."
+A run that never called the function reports :SKIPPED, never :PASSED --
+whether because :PRE refused every generated input or because TRIALS was zero.
+Nothing called the function, so nothing about it was checked."
   ;; Checked before anything is resolved.  A negative count makes the backend's
   ;; trial loop run zero times and report :PASSED with that count, and the
   ;; vacuous-run guard below reads a negative EXECUTED as "some trials ran" --

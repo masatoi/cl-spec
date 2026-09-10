@@ -20,6 +20,8 @@
                 #:reference-spec-target)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
+  (:import-from #:cl-spec/src/introspection
+                #:function-spec-data)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:make-hash-table-registry
@@ -49,6 +51,22 @@
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
                 #:check-function))
+
+(defpackage #:cl-spec/tests/function-spec-test/stash
+  (:use #:cl)
+  (:export #:result #:record)
+  (:documentation "A package that happens to export a variable named RESULT.
+
+Exists so a contract can refer to another package's RESULT and have it stay
+that package's: the return-value binding is whatever RESULT denotes in the
+package the form is read in, and a symbol of the same name from anywhere else
+is data the author meant literally."))
+
+(defvar cl-spec/tests/function-spec-test/stash:result nil
+  "A global in another package that happens to be named RESULT.
+
+A postcondition reading it means this variable.  Binding it as the return value
+instead turned a claim that is false for every input into a tautology.")
 
 (in-package #:cl-spec/tests/function-spec-test)
 
@@ -162,6 +180,35 @@
                                    :argument-specs '((n integer)))))
       (change-class contract 'function-spec)
       (ok (typep (second (first (function-spec-argument-specs contract))) 'spec)))))
+
+(deftest function-spec-refused-edit-leaves-the-contract-as-it-was
+  (testing "a refused REINITIALIZE-INSTANCE does not write what it refused"
+    ;; The :AFTER method validated after the standard method had already
+    ;; written the slots, so catching the refusal left the object holding
+    ;; exactly the state the check exists to refuse.  Discarding it is not
+    ;; open to the caller: REGISTER-FUNCTION-SPEC stores the object by
+    ;; identity, so the registry, FIND-FUNCTION-SPEC, FUNCTION-SPEC-DATA and
+    ;; CHECK-FUNCTION are all aliased to the poisoned instance.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-halve
+        (:args (value small-integer))
+        (:returns small-integer))
+      (let ((contract (find-function-spec 'demo-halve)))
+        (ok (handler-case
+                (progn (reinitialize-instance contract :preconditions '((evenp value)))
+                       nil)
+              (invalid-function-spec-form () t)))
+        (testing "the registry still holds the contract that was there before"
+          (ok (null (function-spec-preconditions contract)))
+          (ok (null (getf (function-spec-data 'demo-halve) :preconditions))))
+        (testing "and a refused spec form does not destroy the one that worked"
+          (ok (handler-case
+                  (progn (reinitialize-instance contract :return-spec '(cons-of integer))
+                         nil)
+                (error () t)))
+          (ok (typep (function-spec-return-spec contract) 'spec))
+          (ok (getf (function-spec-data 'demo-halve) :returns)))))))
 
 (deftest function-spec-refuses-a-parameter-named-twice
   (testing "the class refuses what the DSL already refuses"
@@ -349,6 +396,43 @@
         (ok (funcall predicate 5 '(:result 5)))
         (ok (not (funcall predicate 5 '(:result 6))))))))
 
+(deftest defspec-function-binds-only-the-result-of-the-reading-package
+  (testing "another package's RESULT stays that package's variable"
+    ;; Matching by name across the whole tree captured it: the emitted
+    ;; predicate bound STASH:RESULT as the return value, so a postcondition
+    ;; that was false for every input compiled into a tautology and the
+    ;; contract certified a function that never satisfied it.  Introspection
+    ;; still showed the form the author wrote.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-record-broken
+        (:args (value small-integer))
+        (:post (eql cl-spec/tests/function-spec-test/stash:result value)))
+      (let ((result (check-function 'demo-record-broken :trials 20)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :postcondition (function-check-result-failure-reason result))))))
+  (testing "a quoted type name of the same name is data, not a second binding"
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-halve
+        (:args (value small-integer))
+        (:post (typep result 'cl-spec/tests/function-spec-test/stash:result)))
+      (ok (find-function-spec 'demo-halve))))
+  (testing "a parameter the contract itself named RESULT is usable in :PRE"
+    ;; :PRE was checked for the name without consulting the parameter list, so
+    ;; a precondition about a parameter called RESULT was refused with a
+    ;; sentence about the return value that the form does not do.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-format-result
+        (:args (result small-integer))
+        (:pre (>= result 0))
+        (:returns small-integer))
+      (let ((predicate (function-spec-precondition-function
+                        (find-function-spec 'demo-format-result))))
+        (ok (funcall predicate 1))
+        (ok (not (funcall predicate -1)))))))
+
 (defun demo-clamp (value low high)
   "Return VALUE limited to the closed interval [LOW, HIGH]."
   (cond ((< value low) low)
@@ -370,6 +454,22 @@ inside the bounds\" and breaks \"a value already inside is left alone\"."
   "Signal whenever called, so a contract check over it ends in :ERROR."
   (declare (ignore bound))
   (error "DEMO-ALWAYS-SIGNALS was called with ~S" value))
+
+(defun demo-halve (value)
+  "Return half of VALUE."
+  (/ value 2))
+
+(defun demo-record-broken (value)
+  "Return VALUE without recording it anywhere.
+
+Its contract claims the stash holds VALUE afterwards, which is false for every
+input -- unless the stash's RESULT is captured as the return-value binding, in
+which case the postcondition compiles into a tautology."
+  value)
+
+(defun demo-format-result (result)
+  "Render RESULT, whose parameter name is deliberately the awkward one."
+  (format nil "~D" result))
 
 (defun demo-upcase-unless-a (text)
   "Return TEXT upcased, or NIL when it contains an #\\a.
