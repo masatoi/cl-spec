@@ -17,6 +17,8 @@
                 #:spec
                 #:spec-kind
                 #:reference-spec-target)
+  (:import-from #:cl-spec/src/normalize
+                #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:make-hash-table-registry
@@ -34,6 +36,8 @@
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
+                #:function-spec-precondition-function
+                #:function-spec-postcondition-function
                 #:function-spec-documentation
                 #:function-spec-source-form
                 #:function-spec-source-location
@@ -56,20 +60,72 @@
                                                      (amount positive-money))
                                    :return-spec 'transaction
                                    :preconditions '((distinct-accounts-p from to))
+                                   :precondition-function (lambda (from to amount)
+                                                            (declare (ignore amount))
+                                                            (not (eq from to)))
                                    :postconditions '((balance-preserved-p))
+                                   :postcondition-function (lambda (result from to amount)
+                                                             (declare (ignore result from
+                                                                               to amount))
+                                                             t)
+                                   :documentation "Move money between accounts."
                                    :source-form '(defspec-function transfer)
                                    :source-location '(:file "/tmp/bank.lisp")
                                    :metadata '(:owner "bank-team"))))
       (ok (eq 'transfer (function-spec-name instance)))
-      (ok (equal '((from account) (to account) (amount positive-money))
-                 (function-spec-argument-specs instance)))
-      (ok (eq 'transaction (function-spec-return-spec instance)))
       (ok (equal '((distinct-accounts-p from to))
                  (function-spec-preconditions instance)))
       (ok (equal '((balance-preserved-p)) (function-spec-postconditions instance)))
+      (ok (functionp (function-spec-precondition-function instance)))
+      (ok (functionp (function-spec-postcondition-function instance)))
+      (ok (equal "Move money between accounts." (function-spec-documentation instance)))
       (ok (equal '(defspec-function transfer) (function-spec-source-form instance)))
       (ok (equal '(:file "/tmp/bank.lisp") (function-spec-source-location instance)))
       (ok (equal '(:owner "bank-team") (function-spec-metadata instance))))))
+
+(deftest function-spec-refuses-a-claim-it-could-not-check
+  (testing "clause forms without their compiled predicate are refused"
+    ;; The class and REGISTER-FUNCTION-SPEC are both public, so a contract can
+    ;; be built without the DSL.  A compiled predicate cannot be recovered from
+    ;; the stored forms -- §60 forbids runtime EVAL -- so an object carrying
+    ;; :PRE forms and no function is one CHECK-FUNCTION would run while
+    ;; silently ignoring the claim, and report :PASSED for it.  There is no
+    ;; repair, only refusal.
+    (ok (handler-case
+            (progn (make-instance 'function-spec
+                                  :name 'transfer
+                                  :preconditions '((distinct-accounts-p from to)))
+                   nil)
+          (invalid-function-spec-form () t)))
+    (ok (handler-case
+            (progn (make-instance 'function-spec
+                                  :name 'transfer
+                                  :postconditions '((balance-preserved-p)))
+                   nil)
+          (invalid-function-spec-form () t))))
+  (testing "and a contract with neither forms nor functions is fine"
+    (ok (typep (make-instance 'function-spec :name 'transfer) 'function-spec))))
+
+(deftest function-spec-normalizes-argument-specs-it-is-handed
+  (testing "a spec designator becomes IR, so every consumer reads one shape"
+    ;; Unlike a missing predicate, this one can be repaired: NORMALIZE-SPEC-FORM
+    ;; is pure and returns an already-normalized spec unchanged.  Left alone,
+    ;; the backend dispatched SPEC-GENERATOR on the bare symbol and signalled
+    ;; NO-APPLICABLE-METHOD out of both CHECK-FUNCTION and FUNCTION-SPEC-DATA.
+    (let ((instance (make-instance 'function-spec
+                                   :name 'transfer
+                                   :argument-specs '((amount integer))
+                                   :return-spec 'integer)))
+      (ok (typep (second (first (function-spec-argument-specs instance))) 'spec))
+      (ok (typep (function-spec-return-spec instance) 'spec))
+      (testing "and the parameter name is left alone"
+        (ok (eq 'amount (first (first (function-spec-argument-specs instance))))))))
+  (testing "an already normalized spec is not rebuilt"
+    (let* ((normalized (normalize-spec-form 'integer))
+           (instance (make-instance 'function-spec
+                                    :name 'transfer
+                                    :argument-specs (list (list 'amount normalized)))))
+      (ok (eq normalized (second (first (function-spec-argument-specs instance))))))))
 
 (deftest function-spec-registration
   (testing "REGISTER-FUNCTION-SPEC uses the function spec's own name"
@@ -291,6 +347,23 @@ DEMO-CLAMP-SWAPPED has."
         (ok (<= rejected trials))
         (testing "so the call count it implies is a count of calls that happened"
           (ok (plusp (- trials rejected))))))))
+
+(deftest check-function-refuses-a-trial-count-that-runs-nothing
+  (testing "a negative TRIALS is refused rather than reported as verified"
+    ;; The backend's trial loop simply does not run for a negative count and
+    ;; reports :PASSED with that count.  EXECUTED then came out negative rather
+    ;; than zero, so the vacuous-run guard did not fire and the contract was
+    ;; reported verified without the function ever being called.
+    (with-clamp-contract (demo-clamp)
+      (ok (handler-case (progn (check-function 'demo-clamp :trials -5) nil)
+            (type-error () t)))
+      (ok (handler-case (progn (check-function 'demo-clamp :trials 1.5) nil)
+            (type-error () t)))))
+  (testing "zero is a legal budget, and reports that nothing was checked"
+    (with-clamp-contract (demo-clamp)
+      (let ((result (check-function 'demo-clamp :trials 0)))
+        (ok (eq :skipped (property-result-status result)))
+        (ok (not (eq :passed (property-result-status result))))))))
 
 (deftest check-function-refuses-a-name-it-cannot-check
   (testing "a symbol with no registered contract signals UNKNOWN-FUNCTION-SPEC"

@@ -7,7 +7,10 @@
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:unknown-function-spec)
+                #:unknown-function-spec
+                #:invalid-function-spec-form)
+  (:import-from #:cl-spec/src/normalize
+                #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:registry-find-function-spec
@@ -117,6 +120,57 @@ claims, which is what an agent asking \"what may I pass here\" needs.")
 
 The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
+
+(defmethod initialize-instance :after ((contract function-spec) &key)
+  "Refuse a contract that could not be honoured, and normalize what can be.
+
+Enforced here rather than in CHECK-FUNCTION because the class and
+REGISTER-FUNCTION-SPEC are both public: a contract can be built without the
+DSL, and every consumer -- the checker, FUNCTION-SPEC-DATA, a future printer --
+would otherwise have to re-derive the same invariants or be handed an object
+the others rejected.
+
+Clause forms with no compiled predicate are refused.  Section 60 forbids
+runtime EVAL, so the predicate cannot be recovered from the forms, and a
+contract in that state is one the checker runs while ignoring the claim --
+reporting :PASSED for something nothing checked.  DEFSPEC-FUNCTION always
+supplies both halves.
+
+Spec designators are normalized rather than refused, because unlike a
+predicate they can be recovered: NORMALIZE-SPEC-FORM is pure, and returns an
+already-normalized spec unchanged, so the DSL's output passes through
+untouched.  Without this a contract built through the class reached the
+generator as a bare symbol and signalled NO-APPLICABLE-METHOD."
+  (flet ((refuse (form reason)
+           (error 'invalid-function-spec-form :form form :reason reason)))
+    (when (and (function-spec-preconditions contract)
+               (null (function-spec-precondition-function contract)))
+      (refuse (function-spec-preconditions contract)
+              (concatenate 'string
+                           ":preconditions were given without "
+                           ":precondition-function, and a compiled predicate "
+                           "cannot be recovered from the forms")))
+    (when (and (function-spec-postconditions contract)
+               (null (function-spec-postcondition-function contract)))
+      (refuse (function-spec-postconditions contract)
+              (concatenate 'string
+                           ":postconditions were given without "
+                           ":postcondition-function, and a compiled predicate "
+                           "cannot be recovered from the forms")))
+    (setf (slot-value contract 'argument-specs)
+          (loop for entry in (function-spec-argument-specs contract)
+                do (unless (and (consp entry)
+                                (= 2 (length entry))
+                                (first entry)
+                                (symbolp (first entry))
+                                (not (keywordp (first entry))))
+                     ;; Not merely malformed: (amount integer extra) would
+                     ;; otherwise pass through with EXTRA silently dropped.
+                     (refuse entry "expected (parameter spec)"))
+                collect (list (first entry) (normalize-spec-form (second entry)))))
+    (let ((returns (function-spec-return-spec contract)))
+      (when returns
+        (setf (slot-value contract 'return-spec) (normalize-spec-form returns))))))
 
 (defun register-function-spec (function-spec &optional (registry *registry*))
   "Register FUNCTION-SPEC in REGISTRY under its own name and return it."
@@ -234,6 +288,12 @@ inputs :PRE refused and which half of the contract broke.
 
 A run in which :PRE refused every generated input reports :SKIPPED, never
 :PASSED: nothing called the function, so nothing about it was checked."
+  ;; Checked before anything is resolved.  A negative count makes the backend's
+  ;; trial loop run zero times and report :PASSED with that count, and the
+  ;; vacuous-run guard below reads a negative EXECUTED as "some trials ran" --
+  ;; a verified contract whose function was never called.
+  (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
+    (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (let* ((contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          (target (function-spec-target contract))
@@ -292,7 +352,11 @@ A run in which :PRE refused every generated input reports :SKIPPED, never
                                       (t t))))))))
          (result (run-property property :seed seed :options options :registry registry))
          (executed (- (or (property-result-trials result) 0) rejected))
-         (status (if (and (eq :passed (property-result-status result)) (zerop executed))
+         ;; NOT PLUSP rather than ZEROP: the question is whether any trial
+         ;; reached the function, and a count that is not positive answers no
+         ;; however it got that way.
+         (status (if (and (eq :passed (property-result-status result))
+                          (not (plusp executed)))
                      :skipped
                      (property-result-status result))))
     (multiple-value-bind (reason explanation)

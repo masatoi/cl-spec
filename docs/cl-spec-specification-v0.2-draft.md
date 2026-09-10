@@ -1008,6 +1008,17 @@ D1（対応範囲）の決定：
 契約の一部だけを受理すると、検査していない主張について検証済みの結果を
 報告することになる。この拒否はマクロ展開時に行われ、登録には到達しない。
 
+同じ理由から、`function-spec`オブジェクト自体にも不変条件を課す。クラスと
+`register-function-spec`は公開されているため、DSLを経由せずに契約を組み立てられる。
+
+- `:pre`・`:post`のformを持ちながら対応するコンパイル済み述語を持たない
+  オブジェクトは、生成時に拒否する。§60が実行時`eval`を禁じている以上、
+  formから述語を復元する手段はない。放置すると、checkerが主張を無視したまま
+  `:passed`を報告する。
+- 引数と戻り値のspec designatorは拒否せず正規化する。述語と違い
+  `normalize-spec-form`で復元でき、正規化済みのspecはそのまま返るので、
+  DSLの出力は素通りする。
+
 例：
 
 ```lisp
@@ -1056,6 +1067,9 @@ API：
 ```
 
 これは明示的 `defproperty` とは別物である。
+
+`check-function`の`:trials`は非負整数である。負の値はbackendの試行loopを
+一度も回さずに`:passed`を返すため、型として拒否する。
 
 `check-function`は`function-check-result`を返す。これは`property-result`の
 subclassであり、status・seed・試行数・反例・縮小反例に加えて次を持つ。
