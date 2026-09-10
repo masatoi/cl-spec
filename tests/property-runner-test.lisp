@@ -295,3 +295,38 @@ exactly as before this fix"
         (ok (= 2 (length results)))
         (ok (equal '(holds fails) (mapcar #'property-result-property results)))
         (ok (equal '(:passed :failed) (mapcar #'property-result-status results)))))))
+
+(deftest run-property-does-not-call-an-empty-run-a-pass
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty budgeted-to-nothing ((x small))
+             (:trials (:normal 0))
+             (integerp x)))
+    (testing "a budget of zero executes nothing, so there is nothing to have passed"
+      ;; §73.3's zero-count success, in the older family.  CHECK-FUNCTION
+      ;; already reports :SKIPPED here and its docstring teaches the rule; an
+      ;; agent that learned it there reads this :PASSED as a verification.
+      (let ((result (run-property 'budgeted-to-nothing)))
+        (ok (eq :skipped (property-result-status result)))
+        (ok (not (eq :passed (property-result-status result))))
+        (ok (eql 0 (property-result-trials result)))))))
+
+(deftest run-property-refuses-a-seed-it-cannot-honour
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defspec small (range integer 1 100)))
+    (eval '(cl-spec/src/dsl:defproperty always-holds-here ((x small))
+             (:trials (:normal 5))
+             (integerp x)))
+    (testing "a bad seed is a TYPE-ERROR here as it is everywhere else"
+      ;; REPLAY-PROPERTY and CHECK-FUNCTION both validate and both accept a
+      ;; result in place of the integer.  RUN-PROPERTY accepted neither and
+      ;; leaked a condition naming CL-SPEC/SRC/UTILS/RANDOM::SEED.
+      (ok (handler-case (progn (run-property 'always-holds-here :seed -1) nil)
+            (type-error () t)))
+      (ok (handler-case (progn (run-property 'always-holds-here :seed "1") nil)
+            (type-error () t))))
+    (testing "and a result stands in for its own seed"
+      (let* ((first-run (run-property 'always-holds-here))
+             (replay (run-property 'always-holds-here :seed first-run)))
+        (ok (eql (property-result-seed first-run)
+                 (property-result-seed replay)))))))

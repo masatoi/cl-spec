@@ -118,7 +118,16 @@ PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, w
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
 backend."
-  (let* ((property (resolve-property property-designator registry))
+  ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
+  ;; unusable seed with a condition naming an internal symbol.  A result stands
+  ;; in for its seed, as REPLAY-PROPERTY and CHECK-FUNCTION both allow.
+  (unless (or (null seed)
+              (typep seed 'property-result)
+              (and (integerp seed) (not (minusp seed))))
+    (error 'type-error :datum seed
+                       :expected-type '(or null property-result (integer 0 *))))
+  (let* ((seed (if (typep seed 'property-result) (property-result-seed seed) seed))
+         (property (resolve-property property-designator registry))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))
          ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
@@ -138,7 +147,14 @@ backend."
          (elapsed (/ (float (- (get-internal-real-time) start))
                      internal-time-units-per-second)))
     (make-instance 'property-result
-                   :status (getf outcome :status)
+                   ;; A budget of zero runs the loop no times, and the backend
+                   ;; reports :PASSED for it.  Nothing was executed, so there
+                   ;; is nothing to have passed -- §73.3's zero-count success,
+                   ;; which CHECK-FUNCTION already refuses to call a pass.
+                   :status (if (and (eq :passed (getf outcome :status))
+                                    (not (plusp (or (getf outcome :trials) 0))))
+                               :skipped
+                               (getf outcome :status))
                    :property (property-name property)
                    :trials (getf outcome :trials)
                    :seed effective-seed

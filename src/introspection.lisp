@@ -162,7 +162,7 @@ compiled function cannot be read (specification §39)."
 (defun function-spec-data (function-spec-designator &key (registry *registry*))
   "Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
 
-  (:name <symbol> :documentation <string-or-nil>
+  (:name <symbol> :kind :function-spec :documentation <string-or-nil>
    :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
    :preconditions (<form> ...) :returns <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
@@ -182,6 +182,10 @@ Every key is always present, whatever its value, exactly as SPEC-DATA and
 PROPERTY-DATA promise."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (list :name (function-spec-name contract)
+          ;; Constant, but present: SPEC-DATA and PROPERTY-DATA both carry a
+          ;; :KIND, and a consumer routing on it should not have to special
+          ;; case the one projection that lacks it.
+          :kind :function-spec
           :documentation (function-spec-documentation contract)
           :arguments (loop for (variable spec) in (function-spec-argument-specs contract)
                            collect (list :variable variable :spec (spec->data spec)))

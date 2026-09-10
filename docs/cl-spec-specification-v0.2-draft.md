@@ -1092,10 +1092,27 @@ subclassであり、status・seed・試行数・反例・縮小反例に加え�
   関数に届いた試行の数は「試行数 − 棄却数」である。呼び出し回数ではない
   ことに注意する。縮小と、壊れた側を特定する再実行も関数を呼ぶ。
 - `function-check-result-failure-reason`：契約のどちら側が壊れたか。
-  `:return-spec`、`:postcondition`、`:condition`、または`nil`。
+  `:return-spec`、`:postcondition`、`:condition`、`:contract-error`、または`nil`。
+  `:contract-error`はどちらも壊れていない場合で、契約自身の述語やspecが、関数が
+  返した値の上で送出したことを意味する。責任はどちら側にもあり得る。
+  `undefined-function`と`program-error`だけは伝播させる。存在しない述語、
+  未登録のspec名、arityの合わない述語は構造的で、あらゆる入力で送出するため、
+  失う反例が無く、報告すべきは壊れたspecそのものである。
   `:precondition`は存在しない。`:pre`が棄却した入力に対して試行の述語は真を
   返すので、棄却された入力が失敗の理由になることはない。
 - `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
+- `function-check-result-budget`：その実行に許された試行数。`trials`は実行が
+  止まった位置であって許された数ではないため、両方を記録する。
+  `:seed`にresultを渡した再実行は、seedとともにこの予算も引き継ぐ。
+- `function-check-result-source-form`：実行時点の契約のsource form。実行は契約を
+  同一性で保持するが、resultは名前でしか指していなかった。名前の再登録（reload、
+  編集）があると、resultは「Fはpassした」と言い続けるのに、いまFの下にある契約は
+  Fが破るものになり得る。
+
+readerの前置は2種類ある。propertyの実行にもあるもの（status、trials、seed、
+profile、両方の反例、condition、elapsed）は`property-result-`で読み、契約の実行が
+追加するものだけが`function-check-result-`である。`function-check-result-status`は
+存在せず、しかもreader errorになるので、それを含むform全体が読めなくなる。
 
 関数を一度も呼ばなかった実行のstatusは`:skipped`であり、`:passed`ではない。
 `:pre`が生成入力をすべて棄却した場合と、`:trials`が0の場合の両方が該当する。
@@ -1115,7 +1132,9 @@ authoring bugなので、そのまま伝播させる。これを捕捉すると�
 出す実行に対して最小反例が提示される。§22の説明器も同じ理由で同種の条件を
 再送出する。
 
-縮小結果は、それ自体が契約を破ることを確認できた場合にのみ報告する。backendは
+縮小結果は、**元の反例と同じ壊れ方**を再現した場合にのみ報告する。§72.4が
+「別の例外が出ただけの候補を、元の論理的失敗の縮小結果として置き換えない」と
+定めている通りである。backendは
 縮小中に送出された条件を「まだ失敗している」と数えるが（§13がそう定めている）、
 これはpropertyには正しくても、targetに適用すらできない候補をより小さい反例として
 通してしまう。実例として`string`引数では、`check-it`がcacheした文字listを述語へ
@@ -3364,6 +3383,24 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 5. その結果に基づき、副作用のある対象や高度なPBTへの拡張を判断する。
 
 §70は初期architectureの依存順であり、この実証順は現在の実装から利用価値を確認する順である。
+
+### スレッドについて
+
+§48に従い時間上限を実行ホストが持つ以上、検査は呼び出し元とは別のスレッドで走る。
+新しいスレッドは動的束縛を継承しないので、`*registry*`と`*generator-backend*`の
+rebindはスレッド境界を越えない。ホストはこれを自分で持ち越す必要がある（`progv`、
+または各entry pointが取る`:registry`引数）。持ち越さない場合、実行はglobalな
+registryで名前を解決する。同じ名前が両方に登録されていれば、別の定義を検査して
+その結果を報告し、resultにはそれと分かる情報が無い。
+
+registryのhash tableは`:synchronized t`である。並行registrationがtableを壊すと、
+書き手は送出するが`list-specs`・`list-function-specs`は何も言わずに登録内容の
+一部だけを返していた。ロックはそれを防ぐが、registrationの並行実行自体は
+ホストモデルの想定外である。
+
+`make-seed`はprocess共有の`*random-state*`から引く。並行実行では同じseedが
+2つの実行に渡ることがある（実測で約2000回に1回）。判定が誤るわけではないが、
+`run-properties`が謳う「各実行が自分のseedを引く」独立性はその分弱い。
 
 ### 1〜3の実測（2026-09-10）
 

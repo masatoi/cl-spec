@@ -34,6 +34,17 @@
 
 (in-package #:cl-spec/src/backends/check-it)
 
+(defparameter *base-size* *size*
+  "CHECK-IT:*SIZE* as it stands when this file is loaded.
+
+Generation starts from this rather than from the ambient value.  RUN-GENERATED-TEST
+raises *SIZE* to whatever the widest argument bound needs, and reading the
+ambient value made that raise cumulative: a run started inside another -- a
+property body that calls CHECK-FUNCTION, a :POST that calls RUN-PROPERTY, both
+of which this design invites -- inherited the outer run's size and generated
+different inputs.  The same call then reported :FAILED nested and :PASSED alone,
+and replaying the nested result contradicted it, which §72.3 forbids.")
+
 (defclass check-it-backend ()
   ()
   (:documentation "Generator backend delegating to the check-it library."))
@@ -140,7 +151,7 @@ is what keeps this method from having to know the property's variables."
          ;; One binding covers generation and shrinking alike, and has to be
          ;; wide enough for the widest bound any argument asks for.
          (*size* (reduce #'max compiled
-                         :key #'compiled-generator-size :initial-value *size*))
+                         :key #'compiled-generator-size :initial-value *base-size*))
          (generator (make-instance 'tuple-generator
                                    :sub-generators
                                    (mapcar #'compiled-generator-generator compiled))))

@@ -5,6 +5,7 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
+                #:cl-spec-error
                 #:invalid-function-spec-form
                 #:unknown-function-spec)
   (:import-from #:cl-spec/src/property-runner
@@ -13,7 +14,8 @@
                 #:property-result-seed
                 #:property-result-counterexample
                 #:property-result-shrunk-counterexample
-                #:property-result-condition)
+                #:property-result-condition
+                #:run-property)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-kind
@@ -29,7 +31,8 @@
                 #:list-function-specs)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
-                #:defspec-function)
+                #:defspec-function
+                #:defproperty)
   ;; CHECK-FUNCTION generates arguments, so this suite needs a backend installed.
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/src/function-spec
@@ -47,6 +50,7 @@
                 #:function-spec-metadata
                 #:register-function-spec
                 #:function-check-result
+                #:function-check-result-budget
                 #:function-check-result-rejected
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
@@ -734,15 +738,25 @@ DEMO-CLAMP-SWAPPED has."
         (:returns (satisfies demo-no-such-predicate-p)))
       (ok (handler-case (progn (check-function 'demo-identity :trials 20) nil)
             (undefined-function () t)))))
-  (testing "and neither does a postcondition that signals on its own"
+  (testing "but a postcondition that signals on a value keeps the finding"
+    ;; The other half of the same rule.  A condition from :POST is not
+    ;; structural -- it is about the value the function returned -- so the
+    ;; fault may be either side's, and destroying the result to point at the
+    ;; contract loses a real counterexample.  Reported as :CONTRACT-ERROR,
+    ;; which says exactly that much and no more.
     (let ((*registry* (make-hash-table-registry)))
       (defspec small-integer (range integer -100 100))
       (defspec-function demo-identity
         (:args (value small-integer))
         (:returns small-integer)
-        (:post (< (/ 100 result) 1000)))
-      (ok (handler-case (progn (check-function 'demo-identity :trials 40) nil)
-            (division-by-zero () t))))))
+        ;; Divides by a literal zero, so it signals on every generated input:
+        ;; dividing by RESULT needed the generator to draw exactly 0, which it
+        ;; does about one run in five.
+        (:post (< (/ result 0) 1000)))
+      (let ((result (check-function 'demo-identity :trials 5)))
+        (ok (eq :contract-error (function-check-result-failure-reason result)))
+        (ok (eq :error (property-result-status result)))
+        (ok (property-result-condition result))))))
 
 (deftest check-function-gives-the-same-verdict-for-the-same-seed
   (testing "the verdict is decided under the seed, not after it"
@@ -777,7 +791,16 @@ DEMO-CLAMP-SWAPPED has."
         (:args (value small-integer))
         (:returns small-integer))
       (ok (handler-case (progn (check-function 'demo-function-that-does-not-exist) nil)
-            (undefined-function () t))))))
+            (undefined-function () t)))
+      (testing "and it is trappable as a cl-spec condition like everything else"
+        ;; §21 promises a caller can trap the framework as a whole, and
+        ;; CL-SPEC-ERROR's docstring calls itself the root of every condition
+        ;; cl-spec signals.  A plain UNDEFINED-FUNCTION escaped that handler,
+        ;; so one unadopted function lost a whole batch of checks -- and a
+        ;; property run never signals for a broken target, so the habit the
+        ;; older family teaches is exactly the one that breaks here.
+        (ok (handler-case (progn (check-function 'demo-function-that-does-not-exist) nil)
+              (cl-spec-error () t)))))))
 
 (deftest check-function-reproduces-a-failure-from-its-seed
   (testing "the same seed regenerates the same counterexample"
@@ -801,6 +824,22 @@ DEMO-CLAMP-SWAPPED has."
                                                              :seed first-run)))
         (ok (equal (property-result-counterexample first-run)
                    (property-result-counterexample second-run))))))
+  (testing "the result carries its budget, so replaying it replays the run"
+    ;; REPLAY-PROPERTY reuses the seed and the profile, because the profile is
+    ;; what fixes the trial count and TRIALS records only where the run
+    ;; stopped.  Digging out the seed alone reset the budget to the backend
+    ;; default, so a run of 2 trials replayed as a run of 100 -- same seed,
+    ;; opposite verdict, and nothing on either result saying why.
+    (with-clamp-contract (demo-clamp-swapped)
+      (let* ((first-run (check-function 'demo-clamp-swapped :trials 7))
+             (replay (check-function 'demo-clamp-swapped :seed first-run)))
+        (ok (= 7 (function-check-result-budget first-run)))
+        (ok (= (function-check-result-budget first-run)
+               (function-check-result-budget replay)))
+        (ok (eq (property-result-status first-run)
+                (property-result-status replay)))
+        (ok (equal (property-result-counterexample first-run)
+                   (property-result-counterexample replay))))))
   (testing "a seed that cannot be honoured is refused, not passed on"
     ;; An unusable seed reached SEED->RANDOM-STATE and leaked a condition
     ;; naming an internal symbol; TRIALS was already guarded here and SEED was
@@ -810,3 +849,65 @@ DEMO-CLAMP-SWAPPED has."
             (type-error () t)))
       (ok (handler-case (progn (check-function 'demo-clamp :trials 5 :seed "1") nil)
             (type-error () t))))))
+
+(defun demo-wide-clamp (value)
+  "Return VALUE, or a string once it is far from zero.
+
+The failing region starts well outside the size CHECK-IT generates at by
+default, so whether a run finds it depends on the generation size in effect --
+which is what makes it a probe for size leaking between nested runs."
+  (if (> (abs value) 200) "not an integer" value))
+
+(deftest check-function-generates-the-same-inputs-inside-another-run
+  (testing "a check nested in a property run generates what it would alone"
+    ;; The backend seeds CHECK-IT:*SIZE* from its own ambient value, raising
+    ;; rather than setting it, so a run inside another inherited the outer
+    ;; run's size.  Generation stopped being a function of the contract, the
+    ;; seed and the backend: the same call reported :FAILED nested and :PASSED
+    ;; standalone, and replaying the nested result reported :PASSED -- the
+    ;; documented replay contradicting the result it was handed (§72.3).
+    (let ((*registry* (make-hash-table-registry))
+          (nested nil))
+      (defspec small-integer (range integer -100 100))
+      (defspec-function demo-wide-clamp
+        (:args (value integer))
+        (:returns integer))
+      (defproperty demo-wide-property ((k (range integer 5000 6000)))
+        (:trials (:normal 1))
+        (setf nested (check-function 'demo-wide-clamp :seed 7 :trials 50))
+        (integerp k))
+      (run-property 'demo-wide-property :seed 1)
+      (let ((alone (check-function 'demo-wide-clamp :seed 7 :trials 50)))
+        (ok (eq (property-result-status nested) (property-result-status alone)))
+        (ok (equal (property-result-counterexample nested)
+                   (property-result-counterexample alone)))))))
+
+(defun demo-explodes-near-zero (value)
+  "Signal just below zero, return a string further down, and behave otherwise.
+
+Two different failures of one contract, adjacent, so shrinking from the second
+towards zero walks into the first."
+  (cond ((<= -5 value -1) (error "DEMO-EXPLODES-NEAR-ZERO at ~S" value))
+        ((<= value -6) "not an integer")
+        (t value)))
+
+(deftest check-function-does-not-swap-one-failure-for-another-while-shrinking
+  (testing "the shrunk counterexample fails the way the run's own failure did"
+    ;; The backend counts a signalled condition as \"still fails\" while
+    ;; shrinking, so the shrinker walks from a :RETURNS violation into an
+    ;; unrelated exception.  The run's finding was a return-spec violation at
+    ;; -10; it was reported as :ERROR / :CONDITION with a condition that -10
+    ;; does not produce.  §72.4 forbids exactly that substitution.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-explodes-near-zero
+        (:args (value integer))
+        (:returns integer))
+      (let ((result (check-function 'demo-explodes-near-zero :trials 50 :seed 0)))
+        (ok (member (property-result-status result) '(:failed :error)))
+        (testing "so the counterexample and the reason describe one failure mode"
+          (let ((values (loop for (nil value) on
+                              (property-result-counterexample result) by #'cddr
+                              collect value)))
+            (ok (eq (eq :condition (function-check-result-failure-reason result))
+                    (handler-case (progn (apply #'demo-explodes-near-zero values) nil)
+                      (error () t))))))))))

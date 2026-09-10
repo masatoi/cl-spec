@@ -20,6 +20,7 @@
            #:unknown-property-name
            #:unknown-function-spec
            #:unknown-function-spec-name
+           #:unbound-target
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -103,6 +104,17 @@
 Distinct from a contract that holds: an agent that reads \"nothing is
 registered\" as \"nothing is wrong\" would treat an unspecified function as a
 verified one."))
+
+(define-condition unbound-target (cl-spec-error undefined-function)
+  ()
+  (:documentation "Signalled when a contract's function is not defined.
+
+Inherits from both roots on purpose.  §21 promises a caller can trap the
+framework as a whole, and CL-SPEC-ERROR calls itself the root of every
+condition cl-spec signals -- a plain UNDEFINED-FUNCTION escaped that handler,
+so one unadopted function lost a whole batch of checks.  It is still an
+UNDEFINED-FUNCTION, because that is what it is, and a caller who wrote the
+standard handler keeps it."))
 
 (define-condition no-generator-backend (cl-spec-error)
   ()

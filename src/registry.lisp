@@ -97,19 +97,19 @@ re-registration can retract the previous keys."
   (tags nil :type list))
 
 (defclass hash-table-registry ()
-  ((specs :initform (make-hash-table :test #'eq)
+  ((specs :initform (make-hash-table :test #'eq :synchronized t)
           :reader registry-specs
           :documentation "Symbol -> spec.")
-   (function-specs :initform (make-hash-table :test #'eq)
+   (function-specs :initform (make-hash-table :test #'eq :synchronized t)
                    :reader registry-function-specs
                    :documentation "Symbol -> function spec.")
-   (properties :initform (make-hash-table :test #'eq)
+   (properties :initform (make-hash-table :test #'eq :synchronized t)
                :reader registry-properties
                :documentation "Symbol -> PROPERTY-ENTRY.")
-   (properties-by-target :initform (make-hash-table :test #'eq)
+   (properties-by-target :initform (make-hash-table :test #'eq :synchronized t)
                          :reader registry-properties-by-target
                          :documentation "Target symbol -> list of property names.")
-   (properties-by-tag :initform (make-hash-table :test #'eq)
+   (properties-by-tag :initform (make-hash-table :test #'eq :synchronized t)
                       :reader registry-properties-by-tag
                       :documentation "Tag -> list of property names."))
   (:documentation "In-image registry backed by hash tables.  The default backend."))
@@ -120,7 +120,14 @@ re-registration can retract the previous keys."
 
 (defvar *registry* (make-hash-table-registry)
   "Registry the front-end functions in this package operate on by default.
-Rebind it to isolate specs and properties, for example in tests.")
+Rebind it to isolate specs and properties, for example in tests.
+
+A rebinding does not cross a thread boundary.  §48 puts the time limit on the
+execution host, so a host that runs checks off the calling thread has to carry
+this value over itself -- PROGV, or the :REGISTRY argument every entry point
+takes.  Without that, a run started on another thread resolves names in the
+global registry: if the same name is registered in both, it checks a different
+definition and reports a verdict for it, with nothing on the result to say so.")
 
 (defun symbol-sort-key (symbol)
   "Return a string that orders SYMBOL deterministically across packages."

@@ -20,6 +20,7 @@
                 #:unknown-property-name
                 #:unknown-function-spec
                 #:unknown-function-spec-name
+                #:unbound-target
                 #:no-generator-backend
                 #:invalid-spec-form
                 #:invalid-spec-form-form
@@ -137,6 +138,8 @@
                 #:register-function-spec
                 #:function-check-result
                 #:function-check-result-function
+                #:function-check-result-budget
+                #:function-check-result-source-form
                 #:function-check-result-rejected
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
@@ -168,6 +171,7 @@
            #:unknown-property-name
            #:unknown-function-spec
            #:unknown-function-spec-name
+           #:unbound-target
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -284,6 +288,8 @@
            #:register-function-spec
            #:function-check-result
            #:function-check-result-function
+           #:function-check-result-budget
+           #:function-check-result-source-form
            #:function-check-result-rejected
            #:function-check-result-failure-reason
            #:function-check-result-explanation
