@@ -1087,9 +1087,12 @@ API：
 subclassであり、status・seed・試行数・反例・縮小反例に加えて次を持つ。
 
 - `function-check-result-rejected`：`:pre`が棄却した生成入力の件数。
-  実際に関数を呼んだ回数は「試行数 − 棄却数」である。
+  関数に届いた試行の数は「試行数 − 棄却数」である。呼び出し回数ではない
+  ことに注意する。縮小と、壊れた側を特定する再実行も関数を呼ぶ。
 - `function-check-result-failure-reason`：契約のどちら側が壊れたか。
-  `:return-spec`、`:postcondition`、`:precondition`、`:condition`、または`nil`。
+  `:return-spec`、`:postcondition`、`:condition`、または`nil`。
+  `:precondition`は存在しない。`:pre`が棄却した入力に対して試行の述語は真を
+  返すので、棄却された入力が失敗の理由になることはない。
 - `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
 
 `:pre`が生成入力をすべて棄却した実行のstatusは`:skipped`であり、`:passed`では
@@ -1097,7 +1100,20 @@ subclassであり、status・seed・試行数・反例・縮小反例に加え�
 
 `failure-reason`は報告された反例に対して検査を一度やり直して求める。試行loopの
 最後の失敗は、縮小が同じ述語をさらに何度も呼んだあとでは、報告された反例とは
-限らないためである。再現しなかった場合は`nil`を報告し、壊れた側を推測しない。
+限らないためである。
+
+縮小結果は、それ自体が契約を破ることを確認できた場合にのみ報告する。backendは
+縮小中に送出された条件を「まだ失敗している」と数えるが（§13がそう定めている）、
+これはpropertyには正しくても、targetに適用すらできない候補をより小さい反例として
+通してしまう。実例として`string`引数では、`check-it`がcacheした文字listを述語へ
+渡すためtargetが送出し、縮小が失敗領域の外へ出る。報告された最小反例が契約を
+満たす値になる。確認できない場合は元の反例へ戻し、どちらも再現しなければ
+`failure-reason`は`nil`である。
+
+status・failure-reason・condition・縮小反例は、同じ入力について述べる。
+backendのstatusは最初に失敗した試行のものであり、縮小は契約の一方から他方へ
+渡ることがある。そのままでは、何も送出しない最小入力の隣に`:error`が並び、
+見るべきconditionが無いまま`:failed`と`:condition`が並んだ。
 
 ## Function spec
 

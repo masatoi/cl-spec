@@ -12,7 +12,8 @@
                 #:property-result-trials
                 #:property-result-seed
                 #:property-result-counterexample
-                #:property-result-shrunk-counterexample)
+                #:property-result-shrunk-counterexample
+                #:property-result-condition)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-kind
@@ -370,6 +371,66 @@ inside the bounds\" and breaks \"a value already inside is left alone\"."
   (declare (ignore bound))
   (error "DEMO-ALWAYS-SIGNALS was called with ~S" value))
 
+(defun demo-upcase-unless-a (text)
+  "Return TEXT upcased, or NIL when it contains an #\\a.
+
+Written for the shrinker: CHECK-IT hands a string generator's shrink candidates
+to the test as the cached character LIST, which STRING-UPCASE signals on, and
+the backend counts a signalled condition as \"still fails\".  So shrinking walks
+out of the failing region and lands on a value the contract satisfies."
+  (if (find #\a text) nil (string-upcase text)))
+
+(defun demo-odd-signals (value)
+  "Signal on an odd VALUE, and return a string on an even one.
+
+Both halves break the same contract, in the two different ways CHECK-FUNCTION
+distinguishes, so the first failing trial and the shrunk counterexample can
+land on opposite sides of it."
+  (if (oddp value)
+      (error "DEMO-ODD-SIGNALS was called with ~S" value)
+      (format nil "~D" value)))
+
+(defun demo-even-signals (value)
+  "Signal on an even VALUE, and return a string on an odd one.
+
+The mirror of DEMO-ODD-SIGNALS: whichever of the two the generator reaches
+first, shrinking towards zero crosses into the other."
+  (if (evenp value)
+      (error "DEMO-EVEN-SIGNALS was called with ~S" value)
+      (format nil "~D" value)))
+
+(defun result-is-self-consistent-p (result violates-p)
+  "Return true when RESULT's status, reason, condition and counterexample agree.
+
+The four are derived from different moments -- the status from the first
+failing trial, the shrunk counterexample and the reason from shrinking
+afterwards -- and nothing reconciled them.  A report whose parts describe
+different inputs is one an agent cannot act on, so they are asserted together
+rather than one at a time.
+
+VIOLATES-P is called on the reported argument list and answers whether the
+contract really is broken there."
+  (let ((status (property-result-status result))
+        (reason (function-check-result-failure-reason result))
+        (condition (property-result-condition result))
+        (shrunk (loop for (nil value) on (property-result-shrunk-counterexample result)
+                      by #'cddr
+                      collect value)))
+    (and
+     ;; A reported minimal counterexample has to be one: its own docstring
+     ;; calls it "the value an agent should be shown first".
+     (or (null shrunk) (funcall violates-p shrunk))
+     ;; The named half and the status tell the same story.
+     (case (or reason :none)
+       (:condition (and (eq :error status) condition t))
+       ((:return-spec :postcondition) (eq :failed status))
+       ;; :PRECONDITION cannot be a real finding: the trial predicate answers
+       ;; true for every input :PRE refuses, so one can never be a
+       ;; counterexample.
+       (:precondition nil)
+       (:none t)
+       (t nil)))))
+
 (defmacro with-clamp-contract ((function-name &key (pre '(<= low high))) &body body)
   "Register the CLAMP contract about FUNCTION-NAME in a private registry.
 
@@ -488,6 +549,57 @@ DEMO-CLAMP-SWAPPED has."
         (ok (eq :skipped (property-result-status result)))
         (ok (not (eq :passed (property-result-status result))))))))
 
+(deftest check-function-reports-a-counterexample-that-really-fails
+  (testing "a shrunk value the contract satisfies is not put forward as one"
+    ;; CHECK-IT hands a string generator's shrink candidates to the test as the
+    ;; cached character list, and the backend counts a signalled condition as
+    ;; "still fails", so shrinking walks out of the failing region.  The result
+    ;; reported (S "1") -- for which the contract holds -- as the value to show
+    ;; first, and named NIL as the broken half, which the slot documents as
+    ;; "the function is not deterministic".  It is.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-upcase-unless-a
+        (:args (text string))
+        (:returns string))
+      (let ((result (check-function 'demo-upcase-unless-a :trials 300 :seed 12345)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (result-is-self-consistent-p
+             result
+             (lambda (arguments)
+               (not (stringp (handler-case (apply #'demo-upcase-unless-a arguments)
+                               (error () nil)))))))
+        (testing "and the half that broke is named, because it is knowable"
+          (ok (eq :return-spec (function-check-result-failure-reason result)))))))
+  (testing "a run that signals and a run that returns badly stay consistent"
+    ;; Both functions break the same contract in the two ways CHECK-FUNCTION
+    ;; distinguishes, and shrinking towards zero crosses from one to the other.
+    ;; Before, one reported :ERROR with a condition from an input the reported
+    ;; counterexample does not signal on, and the other reported :FAILED with
+    ;; :CONDITION as the broken half and no condition to look at.
+    (flet ((bounded-violation-p (target)
+             (lambda (arguments)
+               (handler-case
+                   (not (typep (apply target arguments) '(integer -100 100)))
+                 (error () t)))))
+      (let ((*registry* (make-hash-table-registry)))
+        (defspec bounded-integer (range integer -100 100))
+        (defspec-function demo-odd-signals
+          (:args (value bounded-integer))
+          (:returns bounded-integer))
+        (let ((result (check-function 'demo-odd-signals :trials 20 :seed 1)))
+          (ok (member (property-result-status result) '(:failed :error)))
+          (ok (result-is-self-consistent-p
+               result (bounded-violation-p #'demo-odd-signals)))))
+      (let ((*registry* (make-hash-table-registry)))
+        (defspec bounded-integer (range integer -100 100))
+        (defspec-function demo-even-signals
+          (:args (value bounded-integer))
+          (:returns bounded-integer))
+        (let ((result (check-function 'demo-even-signals :trials 20 :seed 1)))
+          (ok (member (property-result-status result) '(:failed :error)))
+          (ok (result-is-self-consistent-p
+               result (bounded-violation-p #'demo-even-signals))))))))
+
 (deftest check-function-refuses-a-name-it-cannot-check
   (testing "a symbol with no registered contract signals UNKNOWN-FUNCTION-SPEC"
     (let ((*registry* (make-hash-table-registry)))
@@ -512,4 +624,24 @@ DEMO-CLAMP-SWAPPED has."
         (ok (equal (property-result-counterexample first-run)
                    (property-result-counterexample second-run)))
         (ok (equal (property-result-shrunk-counterexample first-run)
-                   (property-result-shrunk-counterexample second-run)))))))
+                   (property-result-shrunk-counterexample second-run))))))
+  (testing "and the result itself is accepted where the seed goes"
+    ;; FUNCTION-CHECK-RESULT is advertised as a PROPERTY-RESULT so one reader
+    ;; set covers both, and REPLAY-PROPERTY takes a result in place of a seed.
+    ;; Digging the integer out of the result was the only spelling that worked
+    ;; here.
+    (with-clamp-contract (demo-clamp-swapped)
+      (let* ((first-run (check-function 'demo-clamp-swapped :trials 200))
+             (second-run (check-function 'demo-clamp-swapped :trials 200
+                                                             :seed first-run)))
+        (ok (equal (property-result-counterexample first-run)
+                   (property-result-counterexample second-run))))))
+  (testing "a seed that cannot be honoured is refused, not passed on"
+    ;; An unusable seed reached SEED->RANDOM-STATE and leaked a condition
+    ;; naming an internal symbol; TRIALS was already guarded here and SEED was
+    ;; not.
+    (with-clamp-contract (demo-clamp)
+      (ok (handler-case (progn (check-function 'demo-clamp :trials 5 :seed -1) nil)
+            (type-error () t)))
+      (ok (handler-case (progn (check-function 'demo-clamp :trials 5 :seed "1") nil)
+            (type-error () t))))))
