@@ -3393,14 +3393,20 @@ rebindはスレッド境界を越えない。ホストはこれを自分で持�
 registryで名前を解決する。同じ名前が両方に登録されていれば、別の定義を検査して
 その結果を報告し、resultにはそれと分かる情報が無い。
 
-registryのhash tableは`:synchronized t`である。並行registrationがtableを壊すと、
-書き手は送出するが`list-specs`・`list-function-specs`は何も言わずに登録内容の
-一部だけを返していた。ロックはそれを防ぐが、registrationの並行実行自体は
-ホストモデルの想定外である。
+registryのhash tableは`:synchronized t`である。これは名前表を守るが、
+逆引きindexは守らない。`index-property`の`pushnew`はread-modify-writeであり、
+`registry-register-property`のfind→unindex→set→indexも不可分ではない。実測では
+8スレッドから3000件を登録したあと`list-properties`は3000件を返す一方、
+`properties-for`は1146件しか返さなかった。`registration`の並行実行自体は
+ホストモデルの想定外だが、部分的な一覧が黙って返る点は残っている。
 
-`make-seed`はprocess共有の`*random-state*`から引く。並行実行では同じseedが
-2つの実行に渡ることがある（実測で約2000回に1回）。判定が誤るわけではないが、
-`run-properties`が謳う「各実行が自分のseedを引く」独立性はその分弱い。
+`make-seed`はprocess共有の`*random-state*`から引く。スレッドは`*random-state*`を
+共有するので、これは同期されないread-modify-writeであり、衝突率は系の性質では
+なく呼び出しの詰まり方で決まる。実測では、8スレッドが密なループで各5000回引くと
+40000件中の相異なる値は14277件（重複64%）、一方で各スレッドが1回だけ引いて
+joinする形では衝突0だった。判定が誤るわけではないが、並行な掃引では別の実行が
+既に試した入力を黙って引き直すことになる。`run-properties`が無条件に謳う
+「各実行が自分のseedを引く」は、その分弱い。
 
 ### 1〜3の実測（2026-09-10）
 
@@ -3429,6 +3435,66 @@ off-by-one。
    未実装である限り、この形の契約は試行数で殴るしかない。
 3. 反例が「境界1点」である場合、一様生成では到達確率が試行数に線形にしか
    効かない。§46のProperty品質と同じ問題が契約側にもある。
+
+## 73.4 繰り越した指摘
+
+独立レビュー4巡で挙がり、Function Spec本体のマージ後に別途扱うと判断したもの。
+いずれも「誤った検証判定」ではなく、報告の精度・一貫性の層である。再現手順は
+各指摘の本文に含まれる。
+
+**報告の正確さ**
+
+1. 契約側で`cl-spec:validate`を使うと、`spec-violation`が`:contract-error`として
+   報告される。`validate`の仕事は「値がspecを満たさない」と断定することであり、
+   「評価できなかった、責任はどちらとも言えない」の正反対である。`:pre`をこれで
+   書くと、30試行passする実行が最初の棄却対象で`:error`になる。
+2. 縮小結果の採否をreason keywordの`eq`で判定している。これは粗すぎる。
+   条件は種類を問わず`:condition`に、範囲違反は種類を問わず`:return-spec`に
+   潰れるので、無関係な縮小がなお採用され、元のconditionやexplanationが
+   上書きされる。分類器が既に持っている情報（conditionの型、`explain-data`の
+   `:kind`）で比べれば両方とも捕まる。
+3. `:returns`を`:post`より先に分類するため、縮小値が同じ契約の別の節にも
+   触れると正当な縮小が捨てられる。
+4. 縮小結果を抑制したことが呼び出し側から見えない。`shrunk-counterexample`が
+   `nil`であることは「縮小は何も小さくできなかった」とも読めるが、引数を持つ
+   契約の失敗では常に「縮小結果を捨てた」の意味になる。
+
+**再実行の副作用**
+
+5. 分類の再実行は、実行が終わったあとにtargetを最大2回追加で呼ぶ。§3.2が
+   既存コードへの後付けを謳う以上、副作用のあるtargetは想定内であり、
+   報告された反例はもはや呼び出し側が置かれている状態を表さない。
+   `*random-state*`を読むtargetでは、再実行はseedの先頭から引くため、
+   失敗した試行が見たのとは別のdrawで分類される。
+
+**生成の再現性**
+
+6. `sample`と`generate-value`は依然として周囲の`check-it:*size*`を読むため、
+   実行が生成する分布と食い違う。`sample`のdocstringは「specが何を認めるかを
+   見るため」と言うが、実行が決して引かない分布を見せうる。
+7. `check-it:*list-size*`・`*list-size-decay*`・`*num-trials*`は固定していない。
+   「生成は(spec, seed, backend)の関数である」はまだ真ではない。
+
+**registry**
+
+8. 上記の逆引きindexの件。
+
+**その他**
+
+9. `run-generated-test`の返すplistがgenericのdocstringに記述されていない。
+   0試行を`:skipped`へ写す規則により、`:trials`は事実上backend protocolの
+   必須keyになったが、protocolはそれを要求していない。
+10. `function-spec-data`の`:kind`は、`spec-data`（IRのkind）や`property-data`
+    （著者の分類）とは別の軸の値である。record typeの判別子としては使えない。
+11. `shared-initialize :around`のrollbackはslot名の手書きリストを使うため、
+    subclassのslotを戻さない。テストがリストとclassの一致を検査していない。
+12. `defproperty`は`defspec-function`より緩く、7つの形式で「受理したうえで
+    意味の一部を落とす」。厳しさ自体は契約側が正しいが、片方だけが厳しい状態は
+    APIとして一貫しない。既存定義を壊す変更になるため、単独で判断する。
+13. `:post`の戻り値束縛は、契約自身のpackageという代理で解決している。マクロは
+    `:post`の文面が読まれたpackageを見られないので、代理が外れうるケースは
+    すべて拒否している（§17）。恒久的な解は明示束縛
+    （`(:post (result) ...)`）だが、§17の公開例とcl-mcpのfixtureに波及する。
 
 ## 73.3 LLM向け有用性の評価
 
