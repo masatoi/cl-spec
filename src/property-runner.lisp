@@ -126,7 +126,15 @@ backend."
               (and (integerp seed) (not (minusp seed))))
     (error 'type-error :datum seed
                        :expected-type '(or null property-result (integer 0 *))))
-  (let* ((seed (if (typep seed 'property-result) (property-result-seed seed) seed))
+  (let* ((profile (or profile
+                      ;; A result stands in for its whole run.  The seed alone
+                      ;; is not it: the profile fixes the trial count, so
+                      ;; digging out only the seed replayed a 400-trial failure
+                      ;; as a 3-trial pass that contradicted the result it was
+                      ;; handed.  REPLAY-PROPERTY has always carried both.
+                      (and (typep seed 'property-result)
+                           (property-result-profile seed))))
+         (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
          (property (resolve-property property-designator registry))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))

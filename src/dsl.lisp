@@ -89,6 +89,18 @@ the return value."
              (symbol-occurs-p symbol (cdr tree))))
         (t nil)))
 
+(defun result-named-symbols (tree)
+  "Return the distinct symbols named \"RESULT\" occurring in TREE as variables."
+  (let ((found '()))
+    (labels ((walk (node)
+               (cond ((and (consp node) (eq 'quote (car node))))
+                     ((consp node) (walk (car node)) (walk (cdr node)))
+                     ((and node (symbolp node) (not (constantp node))
+                           (string= (symbol-name node) "RESULT"))
+                      (pushnew node found)))))
+      (walk tree))
+    found))
+
 (defun return-value-symbol (variables)
   "Return the symbol RESULT denotes for a contract over VARIABLES, or NIL.
 
@@ -231,6 +243,26 @@ EVAL, so a contract kept only as a list could be read but never checked."
            (in-post (and candidate (symbol-occurs-p candidate post)))
            (in-pre (and candidate (symbol-occurs-p candidate pre)))
            (result (if (and in-post (not parameterp)) candidate (gensym "RESULT"))))
+      ;; Every symbol named RESULT that occurs has to be the one being bound.
+      ;; The candidate is found through the parameters, which is a proxy for
+      ;; the package the :POST text was read in and not always a good one: a
+      ;; parameter named by a COMMON-LISP symbol (COUNT, LIST, TYPE) sends the
+      ;; lookup to a package with no RESULT at all, and one written in another
+      ;; package sends it somewhere the author never meant.  Both used to end
+      ;; the same way -- the return value bound to a gensym, the author's
+      ;; RESULT left free or, worse, some other package's variable captured and
+      ;; the claim compiled into a tautology.  Neither is detectable from the
+      ;; result.  Refusing is not the whole answer, but it is never the silent
+      ;; one.
+      (let ((occurring (result-named-symbols post)))
+        (when (and occurring (not (equal occurring (list candidate))))
+          (function-spec-error
+           (cons :post post)
+           (format nil "cannot tell which symbol names the return value: ~
+:post uses ~{~S~^ and ~}, and the contract's own package resolves RESULT to ~
+~:[nothing~;~:*~S~].  Rename the parameter, or write the postcondition in the ~
+package the return value's name belongs to"
+                   occurring candidate))))
       (when (and in-post parameterp)
         ;; The :POST predicate binds the return value ahead of the parameters,
         ;; so a parameter of the same name produced (LAMBDA (RESULT RESULT) ...)

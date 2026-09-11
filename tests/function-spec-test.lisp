@@ -401,20 +401,18 @@ instead turned a claim that is false for every input into a tautology.")
         (ok (not (funcall predicate 5 '(:result 6))))))))
 
 (deftest defspec-function-binds-only-the-result-of-the-reading-package
-  (testing "another package's RESULT stays that package's variable"
-    ;; Matching by name across the whole tree captured it: the emitted
-    ;; predicate bound STASH:RESULT as the return value, so a postcondition
-    ;; that was false for every input compiled into a tautology and the
-    ;; contract certified a function that never satisfied it.  Introspection
-    ;; still showed the form the author wrote.
-    (let ((*registry* (make-hash-table-registry)))
-      (defspec small-integer (range integer -100 100))
-      (defspec-function demo-record-broken
-        (:args (value small-integer))
-        (:post (eql cl-spec/tests/function-spec-test/stash:result value)))
-      (let ((result (check-function 'demo-record-broken :trials 20)))
-        (ok (eq :failed (property-result-status result)))
-        (ok (eq :postcondition (function-check-result-failure-reason result))))))
+  (testing "another package's RESULT is refused, not guessed at"
+    ;; Binding it made a postcondition false for every input compile into a
+    ;; tautology; not binding it left the author's RESULT reading a global they
+    ;; may or may not have meant.  Both readings are defensible from the text,
+    ;; which is the reason to refuse rather than pick one: neither mistake is
+    ;; visible in the result, and introspection shows the written form either
+    ;; way.
+    (ok (signals (macroexpand-1
+                  '(defspec-function demo-record-broken
+                    (:args (value small-integer))
+                    (:post (eql cl-spec/tests/function-spec-test/stash:result value))))
+                 'invalid-function-spec-form)))
   (testing "a quoted type name of the same name is data, not a second binding"
     (let ((*registry* (make-hash-table-registry)))
       (defspec small-integer (range integer -100 100))
@@ -939,3 +937,31 @@ counterexample."
         (ok (eq :condition (function-check-result-failure-reason result)))
         (ok (property-result-counterexample result))
         (ok (typep (property-result-condition result) 'undefined-function))))))
+
+(defun demo-doubles-a-count (count)
+  "Return twice COUNT.
+
+Its parameter is named by a COMMON-LISP symbol, which is where the
+return-value binding used to be lost: COMMON-LISP has no RESULT, so the lookup
+found nothing and the author's RESULT was left free."
+  (* 2 count))
+
+(deftest defspec-function-refuses-a-result-it-cannot-place
+  (testing "a parameter named by a CL symbol is refused, not silently unbound"
+    ;; COUNT, LIST, TYPE, STRING, FIRST, MAP -- ordinary parameter names, all
+    ;; homed in COMMON-LISP.  The postcondition never ran, could not tell a
+    ;; correct function from a broken one, and FUNCTION-SPEC-DATA went on
+    ;; reporting the claim.  Refusing says which symbol it could not place.
+    (ok (signals (macroexpand-1 '(defspec-function demo-doubles-a-count
+                                  (:args (count integer))
+                                  (:post (= result (* 2 count)))))
+                 'invalid-function-spec-form)))
+  (testing "and the same contract is accepted once the parameter is local"
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-doubles-a-count
+        (:args (n integer))
+        (:post (= result (* 2 n))))
+      (let ((predicate (function-spec-postcondition-function
+                        (find-function-spec 'demo-doubles-a-count))))
+        (ok (funcall predicate 4 2))
+        (ok (not (funcall predicate 5 2)))))))

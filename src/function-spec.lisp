@@ -150,7 +150,13 @@ had been fine.
 
 Restoring an unbound slot writes NIL rather than making it unbound again, which
 matters only during MAKE-INSTANCE -- where the object is discarded anyway."
-  (flet ((supplied (key) (member key initargs)))
+  (flet ((supplied (key)
+           ;; Keys only.  MEMBER matched values as well, which both refused a
+           ;; contract whose :METADATA happened to be the keyword :PRECONDITIONS
+           ;; and, worse, let the real case through when the other keyword sat
+           ;; in a value position -- the guard reporting itself satisfied by the
+           ;; very shape it exists to catch.
+           (loop for (k) on initargs by #'cddr thereis (eq k key))))
     ;; Both halves of a clause change together or not at all.  The :AFTER
     ;; method sees only the final state, which is consistent when one half is
     ;; new and the other is left over -- so REINITIALIZE-INSTANCE with
