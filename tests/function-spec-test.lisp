@@ -911,3 +911,31 @@ towards zero walks into the first."
             (ok (eq (eq :condition (function-check-result-failure-reason result))
                     (handler-case (progn (apply #'demo-explodes-near-zero values) nil)
                       (error () t))))))))))
+
+(defun demo-calls-a-missing-helper (value)
+  "Call a function that does not exist, but only for a large VALUE.
+
+Structural conditions are the ones CLASSIFY-FUNCTION-FAILURE lets propagate,
+on the grounds that they would signal for every input.  A target can signal
+them on one branch, where they are an ordinary bug with an ordinary
+counterexample."
+  (if (> value 20)
+      (funcall (symbol-function 'demo-no-such-helper) value)
+      (* 2 value)))
+
+(deftest check-function-keeps-the-finding-when-the-target-signals-structurally
+  (testing "a target that calls a missing function on one branch is reported"
+    ;; The carve-out for UNDEFINED-FUNCTION and PROGRAM-ERROR belongs to the
+    ;; contract's own evaluation.  Applied to the target call as well, it made
+    ;; CHECK-FUNCTION signal rather than return: the counterexample, the seed
+    ;; and the status all went with it, for a bug the backend had already
+    ;; found and shrunk.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-calls-a-missing-helper
+        (:args (value (range integer 0 1000)))
+        (:returns (range integer 0 *)))
+      (let ((result (check-function 'demo-calls-a-missing-helper :trials 50 :seed 7)))
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :condition (function-check-result-failure-reason result)))
+        (ok (property-result-counterexample result))
+        (ok (typep (property-result-condition result) 'undefined-function))))))

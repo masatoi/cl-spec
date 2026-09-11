@@ -411,10 +411,14 @@ and need not be this one."
         (if (and precondition (not (apply precondition arguments)))
             (values nil nil nil)
             (multiple-value-bind (result signalled)
+                ;; Every condition, with no carve-out.  The exclusion below
+                ;; is about the CONTRACT being unevaluable; this form runs only
+                ;; the target, and a target that signals UNDEFINED-FUNCTION or
+                ;; PROGRAM-ERROR on one branch is an ordinary bug with an
+                ;; ordinary counterexample.  Excluding them here destroyed the
+                ;; finding -- the same mistake, on the other side of the call.
                 (handler-case (values (apply target arguments) nil)
-                  ((and error (not undefined-function) (not program-error))
-                      (condition)
-                    (values nil condition)))
+                  (error (condition) (values nil condition)))
               (cond
                 (signalled (values :condition nil signalled))
                 ((and return-spec (not (validp return-spec result :registry registry)))
@@ -444,6 +448,11 @@ list, the target signals on it, and shrinking leaves the failing region
 entirely.  The value then put forward as \"the value an agent should be shown
 first\" was one the contract holds for.
 
+Classifying the shrunk value cannot cost the original.  CLASSIFY-FUNCTION-FAILURE
+lets a structural condition propagate, and on a shrink candidate that unwound
+past a finding already in hand -- destroying a reproduced counterexample over a
+value the shrinker invented, which no trial ever found.
+
 When the original does not reproduce either, REASON is NIL -- the slot's
 documented meaning, a function that does not answer the same way twice, and now
 only that."
@@ -454,23 +463,26 @@ only that."
          ;; nonetheless present, so emptiness alone cannot say whether the
          ;; backend produced a shrunk value.
          (shrunk-present (or shrunk-plist (null (function-spec-argument-specs contract)))))
-    (multiple-value-bind (reason explanation condition)
-        (classify-function-failure contract target original registry)
-      (if (null reason)
-          (if shrunk-present
-              (multiple-value-bind (reason explanation condition)
-                  (classify-function-failure contract target shrunk registry)
-                (if reason
-                    (values reason explanation condition t)
-                    (values nil nil nil nil)))
-              (values nil nil nil nil))
-          (if (and shrunk-present (not (equal shrunk original)))
-              (multiple-value-bind (shrunk-reason shrunk-explanation shrunk-condition)
-                  (classify-function-failure contract target shrunk registry)
-                (if (eq shrunk-reason reason)
-                    (values shrunk-reason shrunk-explanation shrunk-condition t)
-                    (values reason explanation condition nil)))
-              (values reason explanation condition shrunk-present))))))
+    (flet ((classify-shrunk ()
+             (handler-case (classify-function-failure contract target shrunk registry)
+               (error () (values nil nil nil)))))
+      (multiple-value-bind (reason explanation condition)
+          (classify-function-failure contract target original registry)
+        (cond
+          ((null reason)
+           (if shrunk-present
+               (multiple-value-bind (reason explanation condition) (classify-shrunk)
+                 (if reason
+                     (values reason explanation condition t)
+                     (values nil nil nil nil)))
+               (values nil nil nil nil)))
+          ((and shrunk-present (not (equal shrunk original)))
+           (multiple-value-bind (shrunk-reason shrunk-explanation shrunk-condition)
+               (classify-shrunk)
+             (if (eq shrunk-reason reason)
+                 (values shrunk-reason shrunk-explanation shrunk-condition t)
+                 (values reason explanation condition nil))))
+          (t (values reason explanation condition shrunk-present)))))))
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Generatively check FUNCTION-DESIGNATOR against its registered contract.

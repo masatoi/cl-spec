@@ -34,10 +34,13 @@
 
 (in-package #:cl-spec/src/backends/check-it)
 
-(defparameter *base-size* *size*
-  "CHECK-IT:*SIZE* as it stands when this file is loaded.
+(defparameter *base-size* 10
+  "The generation size a run starts from, independent of anything ambient.
 
-Generation starts from this rather than from the ambient value.  RUN-GENERATED-TEST
+A literal, not a snapshot of CHECK-IT:*SIZE*: snapshotting moved the dependency
+from run time to load time without removing it, so an image that tuned check-it
+before loading cl-spec replayed one seed to different inputs than an image that
+did not, with nothing on the result to say so.  RUN-GENERATED-TEST
 raises *SIZE* to whatever the widest argument bound needs, and reading the
 ambient value made that raise cumulative: a run started inside another -- a
 property body that calls CHECK-FUNCTION, a :POST that calls RUN-PROPERTY, both
