@@ -107,7 +107,10 @@ Compiled at macroexpansion time rather than interpreted at check time, because
                            :reader function-spec-postcondition-function
                            :documentation "Compiled predicate over the return
 value followed by the parameters, true when every :POST form holds, or NIL when
-the contract has no :POST.")
+the contract has no :POST. To identify a failed form for shrinking, return
+(values nil index :cl-spec-post-form-failure), where INDEX is its zero-based
+position in POSTCONDITIONS. A one-value predicate remains valid, but its failures
+have unknown form identity and cannot be accepted as shrink reductions.")
    (documentation-string :initarg :documentation
                          :initform nil
                          :reader function-spec-documentation
@@ -510,7 +513,11 @@ as its reduction.  The shapes come from the nested errors instead."
                            (if holds
                                (values :passed nil nil nil nil value)
                                (failure :postcondition
-                                        (when (eq tag :cl-spec-post-form-failure)
+                                        (when (and (eq tag :cl-spec-post-form-failure)
+                                                    (integerp index)
+                                                    (<= 0 index)
+                                                    (< index (length (function-spec-postconditions
+                                                                      contract))))
                                           (list :post-form index))
                                         nil value))))
                         (t (values :passed nil nil nil nil value)))))))

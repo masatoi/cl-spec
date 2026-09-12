@@ -283,6 +283,48 @@
       (ok (eq :failed (property-result-status result)))
       (ok (eq :return-spec (function-check-result-failure-reason result))))))
 
+(defun hand-post-target (n)
+  "Return values violating different post forms at zero and nonzero inputs."
+  (if (zerop n) 20 -1))
+
+(deftest hand-built-postconditions-need-observed-form-identity
+  (dolist (index '(nil -1 2))
+    (let* ((contract
+             (make-instance 'cl-spec/src/function-spec:function-spec
+                            :name 'hand-post-target
+                            :argument-specs '((n (range integer 0 10)))
+                            :postconditions '((>= result 0) (<= result 10))
+                            :postcondition-function
+                            (lambda (result n)
+                              (declare (ignore n))
+                              (values (and (>= result 0) (<= result 10))
+                                      index
+                                      (when index :cl-spec-post-form-failure)))))
+           (result (check-function contract :trials 10 :seed 42)))
+      (ok (eq :failed (property-result-status result)))
+      (ok (equal '(n 6) (property-result-counterexample result)))
+      (ok (null (property-result-shrunk-counterexample result)))
+      (ok (eq :different-failure (property-result-shrunk-outcome result))))))
+
+(deftest hand-built-tagged-postconditions-preserve-the-failed-form
+  (let* ((contract
+           (make-instance 'cl-spec/src/function-spec:function-spec
+                          :name 'hand-post-target
+                          :argument-specs '((n (range integer 0 10)))
+                          :postconditions '((>= result 0) (<= result 10))
+                          :postcondition-function
+                          (lambda (result n)
+                            (declare (ignore n))
+                            (values nil (if (< result 0) 0 1)
+                                    :cl-spec-post-form-failure))))
+         (result (check-function contract :trials 10 :seed 42)))
+    (ok (equal '(n 1) (property-result-shrunk-counterexample result)))
+    (ok (eq :used (property-result-shrunk-outcome result))))
+  (let ((unknown '(:return-value :postcondition nil))
+        (known '(:return-value :return-spec ((:kind :type)))))
+    (ok (not (cl-spec/src/execution:failure-identities-match-p unknown known)))
+    (ok (not (cl-spec/src/execution:failure-identities-match-p known unknown)))))
+
 (deftest review-evidence-boundaries
   (let* ((p (probe-property (lambda (x)
                               (setf (second x) (copy-list (second x)))

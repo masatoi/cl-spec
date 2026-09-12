@@ -1180,6 +1180,12 @@ targetが送出したerrorは`:condition`、契約の述語側のerrorは`:contr
 縮小候補は**元の試行の失敗署名と一致**する場合だけ受理する。property側も同じ仕組みを使う。
 Function Specではcondition型に加え、戻り値specの失敗形状、タプル位置、`:post`の形式位置を
 比較する。`:return-spec`と`:postcondition`間を同じreturn-value失敗クラスとする既存規則は維持する。
+ただし手組みの`function-spec`でpost述語が通常の1値だけを返す場合、失敗した形式は不明である。
+この場合は節間の移動も含めてidentityの一致を認めず、元の反例を保持する。
+形式別の縮小を可能にする述語は、失敗時に
+`(values nil index :cl-spec-post-form-failure)`を返す。`index`は`:postconditions`内の
+0始まりの有効な形式位置でなければならず、欠落・範囲外の番号はidentity不明として扱う。
+既存の1値述語は引き続き契約の成否判定に使える。保存された形式から述語を再評価・導出はしない。
 status・failure-reason・condition・縮小反例は採用した一つの観測から作り、元の観測も残す。
 状態を持つtargetについても当時の所見を保持するが、後の再実行が同じ結果になるとは保証しない。
 

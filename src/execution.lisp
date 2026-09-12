@@ -88,9 +88,16 @@ state. Array dimensions, element types and fill pointers are preserved."
   "Compare observed failure signatures against the ORIGINAL trial.
 False property results and conditions have distinct classes, and conditions
 compare by type. Function return-spec/postcondition crossings retain their shared
-return-value class; within each clause, spec shapes or post-form indices must agree."
+return-value class; within each clause, spec shapes or post-form indices must agree.
+An unknown post-form identity never establishes a match, including clause crossings."
   (and original candidate
        (eq (first original) (first candidate))
+       (not (and (eq (first original) :return-value)
+                 (eq (second original) :postcondition)
+                 (null (third original))))
+       (not (and (eq (first candidate) :return-value)
+                 (eq (second candidate) :postcondition)
+                 (null (third candidate))))
        (if (eq (first original) :return-value)
            (or (not (eq (second original) (second candidate)))
                (equal (cddr original) (cddr candidate)))
