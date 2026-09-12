@@ -123,11 +123,11 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 Every node carries the same keys whether or not they have a value, so that a
 consumer never has to distinguish an absent key from a NIL one.
 
-The generator is emitted here rather than by NODE-ATTRIBUTES.  Those methods are
-per node type and replace the base method instead of extending it, so a
-definition-level attribute added there survived only on node kinds that had no
-method of their own: every TYPE, RANGE, MEMBER, PREDICATE, INSTANCE-OF and
-REFERENCE spec lost it (PR review)."
+The generator is emitted here because it belongs to the definition rather than to
+the node type, next to :NAME and :KIND.  It was in the base NODE-ATTRIBUTES method
+first, where the per-node methods dropped it for every TYPE, RANGE, MEMBER,
+PREDICATE, INSTANCE-OF and REFERENCE spec; those methods combine with
+CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
   (append (list :name (spec-name spec)
                 :kind (spec-kind spec)
                 :generator (spec-generator-name spec))

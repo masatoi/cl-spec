@@ -102,7 +102,9 @@ The original form and the definition site are kept on the resulting spec.
 
 OPTIONS is a list of clauses.  The only one this version accepts is
 (:GENERATOR NAME), naming a DEFGENERATOR generator whose values the backend draws
-instead of deriving them from FORM (specification §11)."
+instead of deriving them from FORM (specification §11).  A spec reached only as a
+conjunct of an AND is the exception: the AND folds its type and range rather than
+consulting the generator, which CUSTOM-SPEC-GENERATOR documents."
   (let ((location (current-source-location))
         (generator (spec-generator-option options)))
     `(register-spec ',name

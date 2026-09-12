@@ -71,7 +71,7 @@
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
-| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない |
+| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの連言として参照されたspecではfoldが型と範囲だけを畳み、generatorを参照しない |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 未実装 | `instrument-function`はstub |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
@@ -744,7 +744,7 @@ verified account requires KYC
 そのため、
 
 ```lisp
-(defgenerator account-generator
+(defgenerator account-generator ()
   ...)
 
 ```
@@ -1104,6 +1104,8 @@ subclassであり、status・seed・試行数・反例・縮小反例に加え�
   `:precondition`は存在しない。`:pre`が棄却した入力に対して試行の述語は真を
   返すので、棄却された入力が失敗の理由になることはない。
 - `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
+- `function-check-result-shrunk-outcome`：縮小候補がどうなったか（`:used` / `:none` /
+  `:different-failure`）。`shrunk-counterexample`がNILである理由を区別するため。
 - `function-check-result-budget`：その実行に許された試行数。`trials`は実行が
   止まった位置であって許された数ではないため、両方を記録する。
   `:seed`にresultを渡した再実行は、seedとともにこの予算も引き継ぐ。
@@ -2364,6 +2366,12 @@ register-generator
 find-generator
 list-generators
 custom-generator
+custom-generator-name
+custom-generator-function
+custom-generator-documentation
+custom-generator-source-form
+custom-generator-source-location
+spec-generator-name
 generator-for
 sample
 
@@ -2410,7 +2418,8 @@ semantic-data
 
 裸の名前はCL型名または登録Spec参照となる。複合CL型は`(type (integer 0 *))`のように
 明示する。rangeは`(range lo hi)`または`(range integer lo hi)`・`(range real lo hi)`を用いる。
-現在の`defspec`は名前とSpec formの2引数であり、§11の追加option例は未実装。
+現在の`defspec`は名前とSpec formに加えてoption節を受け付け、§11の`(:generator NAME)`を
+実装している。他のoption節は拒否される。
 
 ```text
 Common Lisp type

@@ -115,20 +115,17 @@ re-registration can retract the previous keys."
 (defun make-registry-table ()
   "Return a hash table for one registry index, keyed with EQ.
 
-:SYNCHRONIZED is an implementation extension, and on one that does not accept it
-MAKE-HASH-TABLE signals.  From a class :INITFORM that meant the default registry
-could not be built, so CL-SPEC would not load at all -- measured on CLISP, which
-rejects the keyword with SIMPLE-KEYWORD-ERROR.  Asking for the guarantee and
-falling back keeps it where the implementation provides it instead of trading a
-load failure for a silent loss of thread safety.
-
-The handler is deliberately broad: every argument here is a literal, so the only
-error this call can raise is the implementation refusing one of them.  A fallback
-table is a plain EQ table, so on such an implementation the registry has no
-protection of its own; §40's host model registers from one thread, and
-WITH-REGISTRY-LOCK is guarded separately."
-  (handler-case (make-hash-table :test #'eq :synchronized t)
-    (error () (make-hash-table :test #'eq))))
+:SYNCHRONIZED is an implementation extension.  Asking for it unconditionally meant
+a class :INITFORM could not be built where it is refused, so CL-SPEC would not load
+at all -- measured on CLISP, which signals SIMPLE-KEYWORD-ERROR.  The guard is a
+reader conditional rather than a run-time fallback because the extension is visible
+to a compiler that rejects it: CCL warns about the literal keyword even though
+HANDLER-CASE would catch the run-time error, and that warning fails a build with
+warnings-as-errors.  Only SBCL asks for the guarantee, which is the same boundary
+WITH-REGISTRY-LOCK draws -- the lock is what makes it useful for a compound update,
+and a synchronized table without it only covers single operations."
+  #+sbcl (make-hash-table :test #'eq :synchronized t)
+  #-sbcl (make-hash-table :test #'eq))
 
 (defclass hash-table-registry ()
   ((specs :initform (make-registry-table)
@@ -160,10 +157,11 @@ MAKE-REGISTRY-TABLE), which makes a single GETHASH, SETF GETHASH or
 REMHASH atomic -- and nothing more.  The reverse indexes are maintained with
 read-modify-write: INDEX-PROPERTY pushes onto a list it has just read, and
 REGISTRY-REGISTER-PROPERTY's find, unindex, set, index sequence straddles four
-tables.  Under contention a push is simply lost, and the loss is invisible in
-the names table: 8 threads registering 3000 properties left PROPERTIES-FOR
-answering with 1146 of them, with nothing on any listing to say the index had
-holes (§73.4 #8).
+tables.  Under contention a push is simply lost, and the loss is invisible in the
+names table: §73.4 #8 measured 8 threads registering 3000 properties leaving
+PROPERTIES-FOR answering with 1146 of them, with nothing on any listing to say the
+index had holes.  The regression test registers 4000 and lost 2789 of them before
+this lock existed.
 
 Every writer and every reader of the reverse indexes takes this same lock -- the
 one belonging to the table that holds the definitions -- so the acquisition
@@ -176,7 +174,7 @@ when a registry is written from one thread, which is the host model §40
 describes."
   #+sbcl `(sb-ext:with-locked-hash-table ((registry-properties ,registry))
             ,@body)
-  #-sbcl `(progn ,@body))
+  #-sbcl `(locally (declare (ignore ,registry)) ,@body))
 
 (defun make-hash-table-registry ()
   "Return a fresh empty HASH-TABLE-REGISTRY."

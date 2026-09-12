@@ -184,10 +184,11 @@
 #+sbcl
 (deftest concurrent-registration-keeps-the-reverse-index-complete
   (testing "every name registered from every thread is in the reverse index"
-    ;; The measurement §73.4 #8 records: 8 threads registering 3000 properties
-    ;; left PROPERTIES-FOR answering with 1146 of them.  INDEX-PROPERTY pushes
-    ;; onto a list it has just read, so a lost update leaves the names table
-    ;; whole and only the reverse index short -- and nothing said so.
+    ;; §73.4 #8 measured 8 threads registering 3000 properties and got 1146 of
+    ;; them back from PROPERTIES-FOR.  This test registers 4000 and lost 2789 of
+    ;; them before the lock existed.  INDEX-PROPERTY pushes onto a list it has
+    ;; just read, so a lost update leaves the names table whole and only the
+    ;; reverse index short -- and nothing said so.
     (let ((registry (make-hash-table-registry))
           (threads 8)
           (per-thread 500))
@@ -241,3 +242,14 @@
       (testing "and REGISTRY-CLEAR drops it with the other entity kinds"
         (registry-clear registry)
         (ok (null (registry-list-generators registry)))))))
+
+#-sbcl
+(deftest concurrent-registration-is-not-checked-here
+  (testing "the concurrency case needs an implementation this suite cannot drive"
+    ;; The test above is SBCL-only: SB-THREAD drives it and
+    ;; SB-EXT:WITH-LOCKED-HASH-TABLE is the lock it exercises.  A #+SBCL around the
+    ;; deftest removed it silently instead, and the suite then reported everything
+    ;; it did run as a clean pass -- the silence §72.3 forbids for an unrun check.
+    ;; ROVE:SKIP rather than an import: the import would be unused on SBCL, where
+    ;; this form is not read at all.
+    (rove:skip "SBCL-only: SB-THREAD and SB-EXT:WITH-LOCKED-HASH-TABLE")))

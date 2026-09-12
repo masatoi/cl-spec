@@ -192,8 +192,9 @@ composition relies on -- it is returned unchanged, and NAME/SOURCE-LOCATION are
 NOT attached even when supplied.  A GENERATOR alongside one is refused rather
 than dropped: NAME and SOURCE-LOCATION are missing metadata, while a generator is
 a claim about where values come from, and dropping it would leave the backend
-deriving them from the spec the definition said not to use.  SPEC's NAME slot has no writer, and the same
-object may already be registered elsewhere or shared as a child of another
+deriving them from the spec the definition said not to use.  SPEC's NAME slot has
+no writer, and the same object may already be registered elsewhere or shared as
+a child of another
 spec, so setting it in place could rename that other registration or a nested
 node out from under whoever else holds a reference to it. Attaching a
 different name would require returning a copy instead, which would need a
