@@ -178,7 +178,7 @@ results without captured metadata have an explicitly incomplete digest."
                      :definition-digest-complete nil
                      :definition-digest-covers :declaration-and-registered-dependencies
                      :capabilities '(:generation :unknown :shrinking :unknown
-                                     :instrumentation :unavailable))))))
+                                     :instrumentation :unknown))))))
     (setf (getf metadata :record-kind) :result
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value

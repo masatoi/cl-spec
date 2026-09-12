@@ -5,19 +5,26 @@
   (:import-from #:rove #:deftest #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:spec-violation-path #:spec-violation-errors
-                #:unknown-function-spec)
-  (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry)
+                #:unknown-function-spec #:cl-spec-error #:unbound-target
+                #:spec-violation-spec #:spec-violation-value)
+  (:import-from #:cl-spec/src/validator #:validate #:validp)
+  (:import-from #:cl-spec/src/ir #:spec)
+  (:import-from #:cl-spec/src/property-runner #:property-result)
+  (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry #:find-spec)
   (:import-from #:cl-spec/src/dsl #:defspec-function #:defspec)
   (:import-from #:cl-spec/src/introspection #:function-spec-data #:spec-data)
   (:import-from #:cl-spec/src/property-runner #:result-data)
   (:import-from #:cl-spec/src/generator #:*generator-backend*)
   (:import-from #:cl-spec/src/backends/check-it)
-  (:import-from #:cl-spec/src/function-spec #:function-spec #:register-function-spec #:check-function)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec #:register-function-spec #:check-function)
   (:import-from #:cl-spec/src/instrument
                 #:*instrumented-functions* #:instrumented-function-p
                 #:instrument-function #:uninstrument-function
                 #:instrumentation-violation-scope #:instrumentation-violation-reason
-                #:instrumentation-violation-function))
+                #:instrumentation-violation-function
+                #:unsupported-instrumentation-target #:unsupported-instrumentation-target-name
+                #:unsupported-instrumentation-target-reason))
 
 (in-package #:cl-spec/tests/instrument-test)
 
@@ -136,7 +143,7 @@
 
 (deftest unsupported-targets-are-refused
   (let ((*registry* (make-hash-table-registry)))
-    (dolist (name '(if when identity missing))
+    (dolist (name '(if when identity))
       (register-function-spec (make-instance 'function-spec :name name))
       (ok (signals (instrument-function name) 'program-error))))
   (with-target (#'identity)
@@ -160,6 +167,17 @@
     (instrument-function 'target)
     (ok (signals (funcall (fdefinition 'target) "now invalid") 'spec-violation))
     (ok (= 1 (funcall (fdefinition 'target) 1)))))
+
+(deftest named-reference-observes-in-place-spec-edits
+  (with-target (#'identity)
+    (defspec argument integer)
+    (defspec-function target (:args (x argument)))
+    (instrument-function 'target)
+    (let ((definition (find-spec 'argument)))
+      (reinitialize-instance definition :type-specifier 'string)
+      (ok (eq definition (find-spec 'argument)))
+      (ok (equal "changed" (funcall (fdefinition 'target) "changed")))
+      (ok (signals (funcall (fdefinition 'target) 1) 'spec-violation)))))
 
 (deftest no-values-and-mutated-post-arguments
   (with-target ((lambda () (values)))
@@ -270,3 +288,105 @@
     (ok (equal '(1) (funcall (fdefinition 'target) 1)))
     (ok (uninstrument-function 'target))
     (ok (eq #'list (fdefinition 'target)))))
+
+(deftest uncaptured-result-capabilities-are-unknown
+  (let ((data (result-data (make-instance 'property-result :status :passed :trials 1))))
+    (ok (eq :unknown (getf (getf data :capabilities) :instrumentation)))))
+
+(deftest stale-state-query-releases-installation
+  (with-target (#'identity)
+    (instrument-function 'target)
+    (setf (fdefinition 'target) #'list)
+    (ok (not (instrumented-function-p 'target)))
+    (ok (zerop (hash-table-count *instrumented-functions*)))
+    (ok (eq #'list (fdefinition 'target)))))
+
+(deftest explicit-nil-registry-uses-default
+  (with-target (#'identity :argument-specs '((x integer)))
+    (instrument-function 'target nil)
+    (ok (signals (funcall (fdefinition 'target) "bad") 'spec-violation))
+    (uninstrument-function 'target)
+    (instrument-function 'target :registry nil)
+    (ok (signals (funcall (fdefinition 'target) "bad") 'spec-violation))))
+
+(deftest unsupported-target-errors-belong-to-framework
+  (let ((*registry* (make-hash-table-registry)))
+    (dolist (case '((if :special-operator) (when :macro)
+                    (identity :common-lisp-symbol) (missing :unbound)))
+      (destructuring-bind (name reason) case
+        (register-function-spec (make-instance 'function-spec :name name))
+        (let ((failure (handler-case (instrument-function name)
+                         (error (condition) condition))))
+          (ok (typep failure 'cl-spec-error))
+          (if (eq name 'missing)
+              (ok (typep failure 'unbound-target))
+              (progn
+                (ok (typep failure 'unsupported-instrumentation-target))
+                (ok (typep failure 'program-error))
+                (ok (eq name (unsupported-instrumentation-target-name failure)))
+                (ok (eq reason (unsupported-instrumentation-target-reason failure)))))
+          (ok (search (symbol-name name) (string-upcase (princ-to-string failure)))))))))
+
+(deftest runtime-evidence-uses-real-specs-and-explainer-keys
+  (dolist (case '((:input :argument-spec (:input) ("bad") :type-failed)
+                  (:input :arity (:input) (1 2) :wrong-length)
+                  (:input :precondition (:input) (0) :predicate-failed)
+                  (:output :return-spec (:output) (1) :type-failed)
+                  (:post :postcondition (:post) (1) :predicate-failed)))
+    (destructuring-bind (scope reason scopes arguments kind) case
+      (with-target ((lambda (x) (declare (ignore x)) "bad")
+                    :argument-specs '((x integer)) :return-spec 'integer
+                    :preconditions '((plusp x)) :precondition-function #'plusp
+                    :postconditions '(nil)
+                    :postcondition-function (lambda (&rest args) (declare (ignore args)) nil))
+        (instrument-function 'target :scopes scopes)
+        (let* ((failure (handler-case (apply (fdefinition 'target) arguments)
+                          (spec-violation (condition) condition)))
+               (datum (first (spec-violation-errors failure))))
+          (ok (eq scope (instrumentation-violation-scope failure)))
+          (ok (eq reason (instrumentation-violation-reason failure)))
+          (ok (typep (spec-violation-spec failure) 'spec))
+          (ok (not (validp (spec-violation-spec failure) (spec-violation-value failure))))
+          (ok (eq kind (getf datum :kind)))
+          (ok (member :actual datum))
+          (ok (not (member :value datum))))))))
+
+(deftest validate-precondition-is-a-runtime-input-refusal
+  (let ((calls 0))
+    (with-target ((lambda (x) (incf calls) x)
+                  :argument-specs '((x integer)) :preconditions '((validate 'positive x))
+                  :precondition-function (lambda (x) (validate 'positive x)))
+      (defspec positive (range integer 1 *))
+      (instrument-function 'target)
+      (let ((failure (handler-case (funcall (fdefinition 'target) 0)
+                       (spec-violation (condition) condition))))
+        (ok (eq :input (instrumentation-violation-scope failure)))
+        (ok (eq :precondition (instrumentation-violation-reason failure)))
+        (ok (= 0 calls)))
+      (ok (= 1 (funcall (fdefinition 'target) 1)))
+      (ok (= 1 calls)))))
+
+(deftest invalid-scope-lists-do-not-alter-installation
+  (with-target (#'identity)
+    (instrument-function 'target)
+    (let ((wrapper (fdefinition 'target))
+           (cycle (list :input)))
+      (setf (cdr cycle) cycle)
+      (dolist (scopes (list cycle '(:input . :post)))
+        (ok (signals (instrument-function 'target :scopes scopes) 'type-error))
+        (ok (eq wrapper (fdefinition 'target)))))))
+
+(deftest argument-contract-describes-the-entire-call
+  (dolist (case (list (list (lambda (a &optional (b 0)) (+ a b)) '(1 2) 3)
+                     (list (lambda (a &rest tail) (+ a (length tail))) '(1 2 3) 3)
+                     (list (lambda (a &key (b 0)) (+ a b)) '(1 :b 2) 3)))
+    (destructuring-bind (target-function arguments expected) case
+      (with-target (target-function :argument-specs '((a integer)))
+        (ok (= expected (apply (fdefinition 'target) arguments)))
+        (instrument-function 'target)
+        (ok (= 1 (funcall (fdefinition 'target) 1)))
+        (let ((failure (handler-case (apply (fdefinition 'target) arguments)
+                         (spec-violation (condition) condition))))
+          (ok (eq :arity (instrumentation-violation-reason failure))))
+        (instrument-function 'target :scopes nil)
+        (ok (= expected (apply (fdefinition 'target) arguments)))))))

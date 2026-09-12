@@ -47,7 +47,8 @@
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
                 #:explain-data)
-  (:export #:function-spec
+  (:export #:precondition-refuses-p
+           #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema

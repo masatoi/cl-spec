@@ -1315,7 +1315,7 @@ coreのみのloadでは関数定義を書き換えるmoduleもgenerator backend�
 
 公開packageは`cl-spec/src/instrument`、nicknameは`cl-spec/instrument`。
 `instrument-function`はNAMEを返し、同じ名前への再適用はラッパーを重ねず検査を更新する。
-従来の`(instrument-function name registry)`も利用できる。
+`(instrument-function name registry)`も利用できる。位置引数・`:registry`ともNILは既定registryを表す。
 
 | scope | 検査内容 | 実行時点 |
 |---|---|---|
@@ -1323,17 +1323,28 @@ coreのみのloadでは関数定義を書き換えるmoduleもgenerator backend�
 | `:output` | 主返り値のspec | targetが正常に返った後 |
 | `:post` | 主返り値と引数の事後条件 | output検査の後 |
 
+`:args`はtargetのlambda listのprefixではなく、許容する全引数を定義する。
+`(:args (a integer))`なら、targetが`&optional`・`&rest`・`&key`を持っていても
+契約が許すのは1引数の呼び出しだけである。追加引数の契約は未対応であり、未検査で通過させない。
+
 既定は全scope。部分集合・空listを指定できる。不明なscope・proper list以外は
 `type-error`で拒否し、既存の関数定義を変更しない。無効scopeの検査はコンパイルも実行もしない。
 targetは一度だけ実行し、正常時は全multiple valuesをそのまま返す。
 契約が検査するのは主返り値のみ（返り値0個の場合はNIL）。target自身のconditionはそのまま伝播する。
-pre/post predicateがerrorを通知した場合もそのconditionを伝播する。
+pre predicateの`spec-violation`は`check-function`と同じ入力refusalとして扱い、
+`:input / :precondition`の`instrumentation-violation`へ変換する。
+preのその他のerror、およびpostのerrorはそのconditionを伝播する。
 引数・戻り値specのpredicate errorは通常のexplain/validateと同じ規則で扱う。
 
 違反は`instrumentation-violation`（`spec-violation`のsubtype）。
 `instrumentation-violation-function`、`-scope`、`-reason`で対象と分類を読み出す。
 reasonは`:arity`、`:argument-spec`、`:precondition`、`:return-spec`、`:postcondition`。
 既存の`spec-violation-spec/value/path/errors`も利用できる。
+`:spec`は実際の引数・戻り値のIR、arityでは引数tuple、pre/postでは合成したpredicate spec。
+preの`:value`は引数list、postの`:value`は`(primary-value . arguments)`とし、
+それぞれのpredicate specの入力と一致させる。関数名は専用のfunction readerに保持する。
+errorsには`error-datum`を使い、値は`:actual`、kindは`:wrong-length`や`:predicate-failed`など
+既存explainerの語彙で表す。scope・reasonはconditionの専用readerで区別する。
 pathのprefixは`(:args parameter)`、`(:pre)`、`(:returns)`、`(:post)`。
 DSLで識別できるpost形式は`(:post zero-based-index)`となる。
 引数・戻り値のerrorsはexplainerの構造化エラーを保持し、分類のために述語を再実行しない。
@@ -1343,14 +1354,18 @@ DSLで識別できるpost形式は`(:post zero-based-index)`となる。
 選択したregistryから呼び出しごとに解決する。postにはtargetによる変更後の引数を渡す
 （`check-function`と同じ意味論）。generatorと`:args-generator`は使用しない。
 
-`instrumented-function-p`は現在のfdefinitionと自分のwrapperの同一性を検査する。
+`instrumented-function-p`は現在のfdefinitionと自分のwrapperの同一性を検査し、
+staleな内部記録を除去する。外部の再定義を自動検知するportable hookは無いため、
+再定義後は状態queryまたは解除を行い、保持している元closureを解放する。
 解除はwrapperが現在も有効な場合のみ元関数を復元してTを返す。
 未登録・再定義済み・fmakunbound済みならNILを返し、内部記録だけを除去する。
 再定義後の再インストールは新しい関数を対象にする。
 
 対象はCOMMON-LISP package以外のsymbolで命名された通常関数に限る。
-未知の契約は`unknown-function-spec`、未定義関数・macro・special operator・generic function・
-COMMON-LISPの関数は`program-error`で拒否する。
+未知の契約は`unknown-function-spec`、未定義関数は既存の`unbound-target`。
+macro・special operator・generic function・COMMON-LISPの関数は
+`unsupported-instrumentation-target`で拒否する（`cl-spec-error`と`program-error`のsubtype）。
+`unsupported-instrumentation-target-name`と`-reason`で対象と理由を取得できる。
 既に保存されたfunction object、lexical function、inline展開済み呼び出しは捕捉できない。
 並行実行時のインストール・解除・関数再定義は呼び出し側が直列化する。
 productionでのoverheadを避ける場合は有効化しない。
@@ -2124,7 +2139,8 @@ backend無しは`:generation :unavailable :shrinking :unavailable`、query未実
 `cl-spec/instrument`をloadすると、対応する通常関数のfunction-specに対して`:available`となる。
 spec・property・未定義関数・非対応targetには`:unavailable`を返す。
 これは有効化状態ではなく利用可能性であり、現在の有効化状態は`instrumented-function-p`で確認する。
-capabilityは現在のbackendに依存するがdigestには含めない。
+capabilityは現在のbackend・任意module・targetに依存するがdigestには含めない。
+捕捉済みmetadataのない手組みresultでは、instrumentationを含む全capabilityを`:unknown`とする。
 
 `run-property`と`check-function`は生成開始前に定義のメタデータを捕捉する。
 capability probe用の捨てるgeneratorは構築せず、backendが実行用generatorの構築時に捕捉した

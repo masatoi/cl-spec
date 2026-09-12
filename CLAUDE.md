@@ -20,9 +20,9 @@ explain, spec introspection, the check-it generator backend, `defproperty` and
 the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their §73.1 D1 range: required positional arguments and one return value.
-Custom generators (`defgenerator`), the `describe-*` printers and
-instrumentation are still stubs that signal `not-implemented`. The cl-mcp
-adapter lives in cl-mcp, not here.
+Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
+and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
+The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Development With cl-mcp
 
@@ -104,9 +104,9 @@ a single batch cleanup, so a mallet warning does not block a PR today.
 
 Follow §70 of the specification. Steps 1-17 (Semantic IR through the function
 checker) are done, including the vertical slice of §67, and step 18
-(introspection) is done except for the `describe-*` printers; the next steps
-are 19, runtime instrumentation, and the generator side of §19's dependent
-generators.
+(introspection) is done except for the `describe-*` printers. Step 19, runtime
+instrumentation, and function-level custom argument-set generation are also
+implemented. Extended argument contracts remain deferred.
 
 ## Repository Structure
 

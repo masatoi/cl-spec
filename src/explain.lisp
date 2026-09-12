@@ -34,7 +34,6 @@
                 #:not-spec-inner-spec
                 #:nullable-spec
                 #:nullable-spec-inner-spec
-                #:collection-spec
                 #:collection-spec-element-spec
                 #:list-of-spec
                 #:vector-of-spec
@@ -51,7 +50,8 @@
            #:explain
            #:compile-node
            #:expected-descriptor
-           #:error-datum))
+           #:error-datum
+           #:proper-list-p))
 
 (in-package #:cl-spec/src/explain)
 

@@ -128,19 +128,35 @@ Checks use no generator. Violations are `cl-spec/instrument:instrumentation-viol
 conditions, a subtype of `cl-spec:spec-violation`, with function, scope and reason
 readers in the instrumentation package. Existing spec-violation readers expose
 structured paths and errors. The target executes once; all its return values and
-conditions pass through when checks succeed. Pre/post predicate errors propagate;
-argument and return specs retain the ordinary validation/explanation behavior.
+conditions pass through when checks succeed. A `spec-violation` from `:pre` is an input refusal, as in `check-function`;
+other precondition errors and all postcondition errors propagate. Argument and return
+specs retain the ordinary validation/explanation behavior.
 
 Use `:registry` to select a registry; the earlier positional registry argument
-also works. Reinstall to refresh captured contracts or change scopes. Named spec
+also works; NIL selects the current default registry. Reinstall to refresh captured
+contracts or change scopes. Named spec
 references resolve in the selected registry on each call. Postconditions see the
 arguments after any target mutations, as in `check-function`.
 
 Uninstrumenting restores the original only if the current definition is still
-the installed wrapper. A later redefinition or `fmakunbound` is preserved.
+the installed wrapper. A later redefinition or `fmakunbound` is preserved. A state query also drops stale
+installation entries; query or uninstrument a replaced function to release that state.
 Only ordinary symbol-named functions outside `COMMON-LISP` are supported; macros,
 special operators and generic functions are refused. Captured function objects,
-lexical calls and inlined calls bypass the wrapper. Serialize installation/removal
+lexical calls and inlined calls bypass the wrapper. Undefined targets signal
+`unbound-target`; unsupported definitions signal `unsupported-instrumentation-target`
+with name and reason readers. Both belong to `cl-spec-error`.
+
+The argument contract describes the whole call, not just a prefix of the target's
+lambda list. For example, `(:args (a integer))` admits exactly one argument even if
+the target accepts optional extras. Optional/rest/key contract semantics remain deferred.
+
+Violation specs are the actual argument/return IR, an argument tuple for arity, or
+a predicate spec for pre/post. Precondition values are the argument list; postcondition
+values are `(primary-value . arguments)`. Error records use the usual `:actual`,
+`:expected`, and explainer `:kind` vocabulary.
+
+Serialize installation/removal
 with function redefinition in concurrent applications.
 
 ## Verification evidence

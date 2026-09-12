@@ -8,9 +8,9 @@ explain, spec introspection, the check-it generator backend, `defproperty` and
 the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their §73.1 D1 range: required positional arguments and one return value.
-Custom generators (`defgenerator`), the `describe-*` printers and
-instrumentation are still stubs that signal `not-implemented`. The cl-mcp
-adapter lives in cl-mcp, not here.
+Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
+and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
+The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Project Structure & Module Organization
 
