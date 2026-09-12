@@ -85,30 +85,37 @@ introspection API."
           :package (source-location-package location))))
 
 (defgeneric node-attributes (spec)
-  (:documentation "Return the SPEC-DATA keys specific to SPEC's node type."))
+  (:documentation "Return the SPEC-DATA keys specific to SPEC's node type.
+
+Every per-node method combines with CALL-NEXT-METHOD rather than returning a fresh
+list, so a key added to the base method reaches every node type.  A method that
+replaces the base one drops it silently on the kinds that have a method of their
+own -- which is how :GENERATOR went missing from six node kinds before it moved to
+SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec spec))
   nil)
 
 (defmethod node-attributes ((spec type-spec))
-  (list :type (type-spec-type-specifier spec)))
+  (list* :type (type-spec-type-specifier spec) (call-next-method)))
 
 (defmethod node-attributes ((spec reference-spec))
-  (list :target (reference-spec-target spec)))
+  (list* :target (reference-spec-target spec) (call-next-method)))
 
 (defmethod node-attributes ((spec predicate-spec))
-  (list :predicate (predicate-spec-predicate spec)))
+  (list* :predicate (predicate-spec-predicate spec) (call-next-method)))
 
 (defmethod node-attributes ((spec member-spec))
-  (list :values (member-spec-values spec)))
+  (list* :values (member-spec-values spec) (call-next-method)))
 
 (defmethod node-attributes ((spec range-spec))
-  (list :base-type (range-spec-base-type spec)
-        :min (range-spec-minimum spec)
-        :max (range-spec-maximum spec)))
+  (list* :base-type (range-spec-base-type spec)
+         :min (range-spec-minimum spec)
+         :max (range-spec-maximum spec)
+         (call-next-method)))
 
 (defmethod node-attributes ((spec instance-of-spec))
-  (list :class-name (instance-of-spec-class-name spec)))
+  (list* :class-name (instance-of-spec-class-name spec) (call-next-method)))
 
 (defun spec->data (spec)
   "Return the SPEC-DATA plist for one IR node, recursing into its children.
@@ -134,8 +141,9 @@ REFERENCE spec lost it (PR review)."
 (defun spec-data (spec-designator &key (registry *registry*))
   "Return a plist describing the registered spec named by SPEC-DESIGNATOR.
 
-  (:name <symbol> :kind <keyword> <node specific keys>
-   :source-form <form> :source-location (:file <string> :package <string>)
+  (:name <symbol> :kind <keyword> :generator <symbol or NIL>
+   <node specific keys> :source-form <form>
+   :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
 :CHILDREN is present only on nodes that have children.  This is what the JSON

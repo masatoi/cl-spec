@@ -8,6 +8,10 @@
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
   (:import-from #:check-it
+                #:generator
+                #:generate
+                #:shrink
+                #:cached-value
                 #:int-generator
                 #:real-generator
                 #:char-generator
@@ -87,13 +91,36 @@ check-it's GENERATE treats a non-generator as a constant."))
          :spec spec
          :reason (format nil "~S has no generation strategy" (spec-kind spec))))
 
+(defclass custom-value-generator (generator)
+  ((function :initarg :function
+             :reader custom-value-generator-function
+             :documentation "Function of no arguments returning one value."))
+  (:documentation "A generator that calls a user function once per draw.
+
+Its own class rather than the MAPPED-GENERATOR over a constant this first was.
+check-it's MAPPED-GENERATOR shrink method reads its sub-generators' cached values,
+and a constant is not a generator, so every FAILING run with a custom generator
+signalled NO-APPLICABLE-METHOD-ERROR instead of returning a result.  It was on the
+shrink path only, which is why a sample and a passing run hid it (PR review)."))
+
+(defmethod generate ((generator custom-value-generator))
+  "Draw one value from GENERATOR and cache it, as check-it's generators do."
+  (let ((value (funcall (custom-value-generator-function generator))))
+    (setf (cached-value generator) value)
+    value))
+
+(defmethod shrink ((generator custom-value-generator) test)
+  "Return the cached value unchanged: this backend did not build it.
+
+A smaller value would have to come from the user's function, and calling it again
+would put a fresh draw forward as the reduction of a value it has nothing to do
+with.  Returning the value itself keeps the run's own counterexample, and the
+result says through FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME that nothing was reduced."
+  (declare (ignore test))
+  (cached-value generator))
+
 (defun custom-spec-generator (name spec context)
   "Return a generator drawing from the custom generator NAME names.
-
-CHECK-IT:MAPPED-GENERATOR applies its MAPPING to the values of its sub-generators,
-and check-it treats a value that is not a generator as a constant, so a
-one-element list holding NIL makes the mapping the whole generator.  Going
-through an existing class keeps this on check-it's public API.
 
 The value is not checked against SPEC.  A custom generator that draws outside its
 spec should be seen for what it is -- a property reporting a counterexample the
@@ -107,12 +134,8 @@ resolves it and folds its type and range, and a generator cannot be folded."
       (error 'generator-unavailable
              :spec spec
              :reason (format nil "the custom generator ~S is not registered" name)))
-    (let ((function (custom-generator-function entry)))
-      (make-instance 'mapped-generator
-                     :mapping (lambda (ignored)
-                                (declare (ignore ignored))
-                                (funcall function))
-                     :sub-generators (list nil)))))
+    (make-instance 'custom-value-generator
+                   :function (custom-generator-function entry))))
 
 (defmethod spec-generator :around ((spec spec) context)
   "Prefer the custom generator SPEC names over the one its node type would build.

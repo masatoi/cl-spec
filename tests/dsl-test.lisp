@@ -72,6 +72,11 @@
     ;; and §11 defines none.  Accepting one would call the body without the
     ;; bindings its author wrote.
     (ok (signals (eval '(defgenerator parametrised (n) (* 2 n)))
+                 'invalid-generator-form)))
+  (testing "and a name that is not a symbol is refused too"
+    ;; The registry keys with EQ and sorts generator names by SYMBOL-NAME, so a
+    ;; non-symbol key made LIST-GENERATORS signal a TYPE-ERROR once there were two.
+    (ok (signals (eval '(defgenerator "aa" () 1))
                  'invalid-generator-form))))
 
 (deftest defspec-registers-a-normalized-spec

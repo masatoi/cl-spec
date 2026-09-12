@@ -509,7 +509,17 @@ The value is not re-validated against the spec that names it.  A generator that
 draws outside its spec makes a property report a counterexample the contract
 refuses, which is a true statement about the generator rather than a silent pass;
 a guard that retried until a draw conformed would recurse with no depth limit,
-which SRC/BACKENDS/CHECK-IT-GENERATORS.LISP refuses to build elsewhere."
+which SRC/BACKENDS/CHECK-IT-GENERATORS.LISP refuses to build elsewhere.
+
+A leading string in BODY is documentation when anything follows it, and the
+generated value when the string is the whole body -- the rule DEFPROPERTY uses.
+BODY is called for a value, so a body that returns a check-it generator produces
+that object as the value rather than drawing from it."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (error 'invalid-generator-form
+           :form whole
+           :reason (format nil "the generator must be named by a symbol, but ~S was given"
+                           name)))
   (unless (null lambda-list)
     (error 'invalid-generator-form
            :form whole

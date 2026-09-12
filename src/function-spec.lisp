@@ -346,15 +346,18 @@ part of the return spec the value missed.")
    (shrunk-outcome :initarg :shrunk-outcome
                    :initform nil
                    :reader function-check-result-shrunk-outcome
-                   :documentation "What became of the shrink candidate: :USED,
-:NONE or :DIFFERENT-FAILURE, or NIL when no failure was reported.
+                   :documentation "What became of the shrink candidate: :USED, :NONE or
+:DIFFERENT-FAILURE, or NIL when no failure was reported.
 
 A NIL SHRUNK-COUNTEREXAMPLE cannot say this on its own -- it reads the same
 whether the shrinker found nothing smaller or produced a candidate the checker
 refused to put forward -- and on a failing contract run the second reading is the
-common one.  :DIFFERENT-FAILURE names that discard: the candidate broke the
-contract some other way, and the original counterexample is reported in its place
-(§72.4)."))
+common one.  :USED means the value in SHRUNK-COUNTEREXAMPLE is the candidate.
+:DIFFERENT-FAILURE means a candidate existed and was not put forward: it broke the
+contract some other way, or broke it not at all when the checker re-ran it, and
+the original counterexample is reported in its place (§72.4).  :NONE means nothing
+is put forward, whether because the shrinker produced no candidate or because the
+one it produced reproduced no failure."))
   (:documentation "Outcome of checking a function against its registered contract.
 
 A PROPERTY-RESULT, so one set of readers covers a DEFPROPERTY run and a
@@ -468,27 +471,43 @@ and need not be this one."
       ((and error (not undefined-function) (not program-error)) (condition)
         (values :contract-error nil condition)))))
 
+(defparameter *failure-shape-keys*
+  '(:kind :expected :violated-bound :predicate :condition-type :expected-length
+    :status)
+  "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
+
+A whitelist, not a list of keys to strip.  Stripping by name failed three times in
+review: :ACTUAL first, then :ACTUAL-LENGTH (a tuple's actual arity) and :PATH (a
+position inside the value), then :CONDITION-REPORT (a condition's text, which
+embeds the value).  Each varies with the input, so two instances of one failure
+compared unequal and a legitimate reduction was thrown away.  A key derived from
+the spec is safe to compare; a new EXPLAIN-DATA key is treated as value-derived
+until someone classifies it here, and EVERY-EXPLAINED-ERROR-KEY-IS-CLASSIFIED
+fails until they do.")
+
+(defparameter *failure-shape-containers* '(:errors :branches :conjuncts)
+  "EXPLAIN-DATA error keys whose value is a list of error-shaped plists to walk.
+
+:ERRORS is the conjunct and negation case, :BRANCHES an OR's, and :CONJUNCTS the
+per-conjunct descriptors an :AND reports.")
+
 (defun failure-shape (error-datum)
-  "Return one EXPLAIN-DATA error datum with every :ACTUAL removed, recursively.
+  "Return the SPEC-derived part of one EXPLAIN-DATA error datum, recursively.
 
-The shape of a failure is everything EXPLAIN-DATA says about it except the value
-the run happened to produce: :ACTUAL is the original counterexample's number or
-the shrink candidate's, so it differs between the two by construction.  What is
-left -- each error's :KIND and :PATH, the :EXPECTED descriptor, the :CONJUNCTS
-statuses, :VIOLATED-BOUND, :PREDICATE -- says which part of the spec the value
-missed, and that is what decides whether two failures are the same finding.
-
-Two keys hold nested failures and both have to be walked.  :ERRORS is the
-conjunct and negation case; :BRANCHES is an OR's, where each branch carries its
-own :EXPECTED and :ERRORS.  Walking only :ERRORS left the branch values in the
-signature, so a target that failed the same branches at two different inputs
-looked like two findings and its reduction was thrown away (PR review)."
+The shape of a failure is what EXPLAIN-DATA says about the spec, without the value
+it was found on: two failures have the same shape exactly when the same clause of
+the spec was missed in the same way.  A value differs between an input and any
+shrink of it by construction, so every key derived from one -- :ACTUAL,
+:ACTUAL-LENGTH, a :PATH into the value, a condition's :CONDITION-REPORT -- stays
+out of the shape, and every key derived from the spec -- :KIND, the :EXPECTED
+descriptor, :EXPECTED-LENGTH, :VIOLATED-BOUND, :PREDICATE, :CONDITION-TYPE, a
+conjunct's :STATUS -- stays in.  See *FAILURE-SHAPE-KEYS* for why that is a
+whitelist rather than a list of keys to strip."
   (loop for (key value) on error-datum by #'cddr
-        unless (eq key :actual)
-          append (list key
-                       (if (and (member key '(:errors :branches)) (listp value))
-                           (mapcar #'failure-shape value)
-                           value))))
+        when (member key *failure-shape-containers*)
+          append (list key (mapcar #'failure-shape value))
+        when (member key *failure-shape-keys*)
+          append (list key value)))
 
 (defun failure-signature (reason explanation condition)
   "Return a comparable key for a classified failure, or NIL when there is none.
@@ -529,6 +548,13 @@ return-spec failures are compared further on the shape of their EXPLAIN-DATA
 errors: the return spec is a conjunction, and a value that misses a different
 conjunct is a different finding.
 
+:POSTCONDITION has no such detail, and cannot have it here: DEFSPEC-FUNCTION
+compiles a clause's forms into one predicate, so the classifier can say the
+postcondition is false but not which form made it false.  A candidate that breaks
+a different :POST form is therefore accepted.  It is still a counterexample of the
+same contract, so the finding holds; telling the forms apart would need one
+compiled predicate per form, which the contract does not keep.
+
 A signalled condition is compared on its type, for the same reason.  The backend
 counts any condition as \"still fails\" while shrinking, so a candidate that
 raises a different error is not a reduction of the original one.
@@ -551,12 +577,14 @@ is the whole point of the distinction."
   "Return (values REASON EXPLANATION CONDITION SHRUNK-USABLE-P SHRUNK-OUTCOME) for RESULT.
 
 The original counterexample decides what the run found.  The shrunk one is used
-only if it breaks the contract the same way, because the backend counts a
-signalled condition as \"still fails\" while shrinking -- right for a property,
-§13 says a condition is a failure, but it lets the shrinker walk out of the
-failure it was shrinking and into an unrelated one.  §72.4 names the rule: a
-candidate that merely raised a different exception is not the reduction of the
-original logical failure.
+only if it breaks the contract the same way -- except when the original does not
+reproduce at all, where there is no signature to compare and the candidate is
+reported if it breaks the contract at all.  The same-way rule exists because the
+backend counts a signalled condition as \"still fails\" while shrinking -- right
+for a property, §13 says a condition is a failure, but it lets the shrinker walk
+out of the failure it was shrinking and into an unrelated one.  §72.4 names the
+rule: a candidate that merely raised a different exception is not the reduction of
+the original logical failure.
 
 That is also how a shrunk value the contract holds for gets discarded.  Against
 a STRING argument it is routine: CHECK-IT hands the test the cached character
@@ -569,9 +597,11 @@ lets a structural condition propagate, and on a shrink candidate that unwound
 past a finding already in hand -- destroying a reproduced counterexample over a
 value the shrinker invented, which no trial ever found.
 
-When the original does not reproduce either, REASON is NIL -- the slot's
-documented meaning, a function that does not answer the same way twice, and now
-only that.
+When the original does not reproduce, its own classification is not what the
+re-run could confirm -- but what the shrinker kept is then the only counterexample
+there is, so it is reported with its own reason when it classifies at all.  REASON
+is NIL only when neither reproduces: the slot's documented meaning, a function
+that does not answer the same way twice.
 
 SHRUNK-OUTCOME names what became of the shrink candidate, because a NIL
 SHRUNK-COUNTEREXAMPLE cannot say it on its own: :USED when the candidate is the

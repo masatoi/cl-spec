@@ -24,13 +24,22 @@
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/validator
                 #:validate)
+  (:import-from #:cl-spec/src/explain
+                #:explain-data)
   (:import-from #:cl-spec/src/introspection
                 #:function-spec-data)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:make-hash-table-registry
+                #:registry-register-spec
+                #:registry-register-generator
                 #:find-function-spec
                 #:list-function-specs)
+  (:import-from #:cl-spec/src/property
+                #:property
+                #:register-property)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
                 #:defspec-function
@@ -1166,3 +1175,149 @@ legitimate however far the shrinker moves."
           (ok shrunk)
           (ok (< (first shrunk) (first original)))
           (ok (eq :used (function-check-result-shrunk-outcome result))))))))
+
+(defun demo-returns-its-argument (value)
+  "Return VALUE."
+  value)
+
+(defun demo-noisy-predicate (value)
+  "Report VALUE in the message, so the report text follows the value."
+  (error "bad value ~S" value))
+
+(defun demo-list-longer-than-its-tuple (n)
+  "Return a list longer than the one-element tuple the contract asks for.
+
+Every input misses the same arity; only how far it misses it by changes, and that
+is the value's length rather than the spec's."
+  (make-list (1+ n) :initial-element 1))
+
+(defun demo-string-at-the-end (n)
+  "Return N integers followed by a string, so the failing index follows N."
+  (append (make-list n :initial-element 1) (list "x")))
+
+(deftest check-function-keeps-a-reduction-that-misses-the-same-clause
+  (testing "a tuple's ACTUAL length does not make two identical failures differ"
+    ;; The wrong-length datum carries the value's length, so a shape that kept it
+    ;; rejected every candidate for the same arity violation (PR review).
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-list-longer-than-its-tuple
+        (:args (n (range integer 1 4)))
+        (:returns (tuple integer)))
+      (dolist (seed '(1 3 7 42))
+        (let ((result (check-function 'demo-list-longer-than-its-tuple
+                                      :trials 50 :seed seed)))
+          (testing (format nil "seed ~D keeps its reduction" seed)
+            (ok (eq :failed (property-result-status result)))
+            (ok (eq :return-spec (function-check-result-failure-reason result)))
+            (ok (property-result-shrunk-counterexample result))
+            (ok (eq :used (function-check-result-shrunk-outcome result))))))))
+  (testing "nor does the PATH of the failing element"
+    ;; A LIST-OF reports the position inside the value, and that follows the input.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-string-at-the-end
+        (:args (n (range integer 0 5)))
+        (:returns (list-of integer)))
+      (dolist (seed '(1 3 7))
+        (let ((result (check-function 'demo-string-at-the-end :trials 50 :seed seed)))
+          (testing (format nil "seed ~D keeps its reduction" seed)
+            (ok (eq :failed (property-result-status result)))
+            (ok (property-result-shrunk-counterexample result))
+            (ok (eq :used (function-check-result-shrunk-outcome result))))))))
+  (testing "nor does a condition report that embeds the value"
+    ;; :CONDITION-REPORT is the predicate's own text, and a predicate that quotes
+    ;; the value made every candidate look like a different failure.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-returns-its-argument
+        (:args (value (range integer 0 20)))
+        (:returns (satisfies demo-noisy-predicate)))
+      (dolist (seed '(1 7 42))
+        (let ((result (check-function 'demo-returns-its-argument :trials 50 :seed seed)))
+          (testing (format nil "seed ~D keeps its reduction" seed)
+            (ok (eq :failed (property-result-status result)))
+            (ok (property-result-shrunk-counterexample result))
+            (ok (eq :used (function-check-result-shrunk-outcome result)))))))))
+
+(defun install-always-one (registry)
+  "Register a custom generator drawing 1, and a spec that names it, in REGISTRY.
+
+The objects are built directly rather than through the DSL: the DSL's own
+registration is tests/dsl-test.lisp's subject, and a test here that evaluated
+macro expansions would need the lint exemption that file carries."
+  (registry-register-generator
+   registry 'always-one
+   (make-instance 'custom-generator :name 'always-one
+                                    :function (lambda () 1)))
+  (registry-register-spec registry 'always-one-spec
+                          (normalize-spec-form 'integer :name 'always-one-spec
+                                                       :generator 'always-one)))
+
+(deftest a-custom-generator-survives-shrinking
+  (testing "a failing contract over a custom generator returns a result"
+    ;; The draw was built from a MAPPED-GENERATOR over a constant, and check-it's
+    ;; shrink method reads its sub-generators' cached values -- a constant is not a
+    ;; generator, so every FAILING run signalled NO-APPLICABLE-METHOD-ERROR instead
+    ;; of reporting the failure.  A sample and a passing run never shrink, which is
+    ;; why the first test for this feature missed it (PR review).
+    (let ((*registry* (make-hash-table-registry)))
+      (install-always-one *registry*)
+      (register-function-spec
+       (make-instance 'function-spec
+                      :name 'demo-returns-its-argument
+                      :argument-specs '((value always-one-spec))
+                      :return-spec '(range integer 0 0)))
+      (let ((result (check-function 'demo-returns-its-argument :trials 5 :seed 3)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :return-spec (function-check-result-failure-reason result)))
+        (testing "the value the generator drew is the counterexample"
+          (ok (equal '(1) (loop for (nil value) on
+                                (property-result-shrunk-counterexample result)
+                                by #'cddr collect value)))))))
+  (testing "and a failing property over one returns a result too"
+    ;; RUN-PROPERTIES is a bare MAPCAR, so one such property aborted a whole batch.
+    (let ((*registry* (make-hash-table-registry)))
+      (install-always-one *registry*)
+      (register-property
+       (make-instance 'property
+                      :name 'four-is-the-answer
+                      :arguments (list (list 'x (normalize-spec-form 'always-one-spec)))
+                      :trials '(:normal 5)
+                      :function (lambda (x) (= x 4))))
+      (let ((result (run-property 'four-is-the-answer :seed 3)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (property-result-shrunk-counterexample result))))))
+
+(defun explained-error-keys (datum keys)
+  "Return KEYS with every key of the error data under DATUM added."
+  (when (listp datum)
+    (loop for (key value) on datum by #'cddr
+          do (pushnew key keys)
+             (when (and (member key '(:errors :branches :conjuncts)) (listp value))
+               (dolist (nested value)
+                 (setf keys (explained-error-keys nested keys))))))
+  keys)
+
+(deftest every-explained-error-key-is-classified
+  (testing "a new EXPLAIN-DATA key cannot slip past the failure shape unclassified"
+    ;; FAILURE-SHAPE keeps a whitelist, so a key nobody has classified is dropped --
+    ;; and if it came from the spec, two different failures would compare equal.
+    ;; This enumerates the keys the explainer produces and fails when one is neither
+    ;; kept by the shape nor known to be value-derived, so the decision is made here
+    ;; rather than in review.
+    (let ((seen '())
+          (kept (append cl-spec/src/function-spec::*failure-shape-keys*
+                        cl-spec/src/function-spec::*failure-shape-containers*))
+          (value-derived '(:actual :actual-length :path :condition-report)))
+      (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
+                      (satisfies demo-noisy-predicate) (list-of integer)
+                      (vector-of integer) (tuple integer string) (not integer)
+                      (nullable integer) (or integer string)
+                      (and integer (range 0 10)) (instance-of standard-object)))
+        (let ((spec (normalize-spec-form form)))
+          (dolist (value (list 1 -1 3.5 "s" nil #\a '(1 "a") '(1) #(1) '(:a 1)))
+            (dolist (datum (getf (explain-data spec value) :errors))
+              (setf seen (explained-error-keys datum seen))))))
+      (testing "the audit itself saw the keys it is meant to check"
+        (ok (member :kind seen))
+        (ok (member :actual seen)))
+      (testing "and every key it saw is either kept or known to be value-derived"
+        (ok (null (set-difference seen (append kept value-derived))))))))
