@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
   (:import-from #:cl-spec/src/registry
@@ -118,19 +119,20 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 (defmethod node-attributes ((spec instance-of-spec))
   (list* :class-name (instance-of-spec-class-name spec) (call-next-method)))
 
-(defun spec->data (spec)
+(defun spec->data (spec &optional (registry *registry*) envelope-p)
   "Return the SPEC-DATA plist for one IR node, recursing into its children.
 
-Every node carries the same keys whether or not they have a value, so that a
-consumer never has to distinguish an absent key from a NIL one.
+ENVELOPE-P adds the seven schema metadata keys to this node only. Nested nodes
+remain IR projections, so rendering them does not repeat digest or backend probes.
 
 The generator is emitted here because it belongs to the definition rather than to
 the node type, next to :NAME and :KIND.  It was in the base NODE-ATTRIBUTES method
 first, where the per-node methods dropped it for every TYPE, RANGE, MEMBER,
 PREDICATE, INSTANCE-OF and REFERENCE spec; those methods combine with
 CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
-  (append (list :name (spec-name spec)
-                :entity-kind :spec
+  (append (if envelope-p (definition-metadata spec :registry registry)
+              (list :entity-kind :spec))
+          (list :name (spec-name spec)
                 :kind (spec-kind spec)
                 :generator (spec-generator-name spec))
           (node-attributes spec)
@@ -138,7 +140,7 @@ CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
                 :source-location (source-location->data (spec-source-location spec)))
           (let ((children (spec-children spec)))
             (when children
-              (list :children (mapcar #'spec->data children))))))
+              (list :children (mapcar (lambda (child) (spec->data child registry)) children))))))
 
 (defun spec-data (spec-designator &key (registry *registry*))
   "Return a plist describing the registered spec named by SPEC-DESIGNATOR.
@@ -148,9 +150,11 @@ CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
    :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
-:CHILDREN is present only on nodes that have children.  This is what the JSON
-and MCP projections are built from."
-  (spec->data (resolve-spec spec-designator registry)))
+:CHILDREN is present only on nodes that have children. The root additionally has
+:SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
+:DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES (see
+SCHEMA-INFO, specification §38.1). Children are plain IR projections."
+  (spec->data (resolve-spec spec-designator registry) registry t))
 
 (defun property-data (property-designator &key (registry *registry*))
   "Return a plist describing the registered property named by PROPERTY-DESIGNATOR.
@@ -162,22 +166,27 @@ and MCP projections are built from."
    :body (<form> ...) :source-form <form>
    :source-location (:file <string> :package <string>) :metadata <plist>)
 
-The body is the author's source rather than the compiled function, because a
-compiled function cannot be read (specification §39)."
+The root additionally carries the seven schema envelope keys described by
+SCHEMA-INFO: :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
+:DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES.
+Nested specs are plain IR projections. :TRIALS is a profile table in this
+definition record; result records carry executed counts under that key.
+The body is the author's source rather than the compiled function (§39)."
   (let ((property (resolve-property property-designator registry)))
-    (list :name (property-name property)
-          :entity-kind :property
-          :kind (property-kind property)
-          :targets (property-targets property)
-          :tags (property-tags property)
-          :documentation (property-documentation property)
-          :trials (property-trials property)
-          :arguments (loop for (variable spec) in (property-arguments property)
-                           collect (list :variable variable :spec (spec->data spec)))
-          :body (property-body property)
-          :source-form (property-source-form property)
-          :source-location (source-location->data (property-source-location property))
-          :metadata (property-metadata property))))
+    (append (definition-metadata property :registry registry)
+            (list :name (property-name property)
+                  :kind (property-kind property)
+                  :targets (property-targets property)
+                  :tags (property-tags property)
+                  :documentation (property-documentation property)
+                  :trials (property-trials property)
+                  :arguments
+                  (loop for (variable spec) in (property-arguments property)
+                        collect (list :variable variable :spec (spec->data spec registry)))
+                  :body (property-body property)
+                  :source-form (property-source-form property)
+                  :source-location (source-location->data (property-source-location property))
+                  :metadata (property-metadata property)))))
 
 (defun function-spec-data (function-spec-designator &key (registry *registry*))
   "Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
@@ -200,26 +209,28 @@ inlined it.
 projected: a function cannot be read, and a caller who wants to know whether
 they hold runs CHECK-FUNCTION rather than inspecting them.
 
-Every key is always present, whatever its value, exactly as SPEC-DATA and
-PROPERTY-DATA promise."
+The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
+:DEFINITION-DIGEST, :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and
+:CAPABILITIES (SCHEMA-INFO, §38.1). These envelope keys are always present.
+Argument, return and argument-schema nodes are plain IR projections."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
-    (list :name (function-spec-name contract)
-          ;; ENTITY-KIND routes records. KIND remains a legacy field here;
-          ;; spec node kinds and author-supplied property kinds are separate axes.
-          :entity-kind :function-spec
-          :kind :function-spec
-          :documentation (function-spec-documentation contract)
-          :arguments (loop for (variable spec) in (function-spec-argument-specs contract)
-                           collect (list :variable variable :spec (spec->data spec)))
-          :argument-generator (function-spec-argument-generator contract)
-          :argument-schema (spec->data (function-spec-argument-schema contract))
-          :preconditions (function-spec-preconditions contract)
-          :returns (let ((spec (function-spec-return-spec contract)))
-                     (when spec (spec->data spec)))
-          :postconditions (function-spec-postconditions contract)
-          :source-form (function-spec-source-form contract)
-          :source-location (source-location->data (function-spec-source-location contract))
-          :metadata (function-spec-metadata contract))))
+    (append (definition-metadata contract :registry registry)
+            (list :name (function-spec-name contract)
+                  ;; KIND is retained for compatibility; ENTITY-KIND routes records.
+                  :kind :function-spec
+                  :documentation (function-spec-documentation contract)
+                  :arguments
+                  (loop for (variable spec) in (function-spec-argument-specs contract)
+                        collect (list :variable variable :spec (spec->data spec registry)))
+                  :argument-generator (function-spec-argument-generator contract)
+                  :argument-schema (spec->data (function-spec-argument-schema contract) registry)
+                  :preconditions (function-spec-preconditions contract)
+                  :returns (let ((spec (function-spec-return-spec contract)))
+                             (when spec (spec->data spec registry)))
+                  :postconditions (function-spec-postconditions contract)
+                  :source-form (function-spec-source-form contract)
+                  :source-location (source-location->data (function-spec-source-location contract))
+                  :metadata (function-spec-metadata contract)))))
 
 (defun semantic-data (symbol &key (registry *registry*))
   "Return a routing table of what REGISTRY knows about SYMBOL.

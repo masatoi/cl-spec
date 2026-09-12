@@ -17,11 +17,15 @@
                 #:*registry*
                 #:registry-find-function-spec
                 #:registry-register-function-spec)
+  (:import-from #:cl-spec/src/schema
+                #:definition-description #:definition-entity-kind #:definition-generation-schema
+                #:resolve-definition)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
+                #:property-result-schema-metadata #:property-result-budget
                 #:property-result-status
                 #:property-result-property
                 #:property-result-trials
@@ -308,17 +312,7 @@ function spec case there would close the dependency graph into a cycle."
             (error 'unknown-function-spec :name designator)))))
 
 (defclass function-check-result (property-result)
-  ((budget :initarg :budget
-           :initform nil
-           :reader function-check-result-budget
-           :documentation "Trial count the run was allowed.
-
-TRIALS records where the run stopped, not what it was permitted, and the two
-differ on every failing run.  Recorded for the same reason PROPERTY-RESULT
-records its PROFILE: without it, handing this result back as a :SEED replayed
-the seed under a different budget, and a run of seven trials came back as a
-run of a hundred.")
-   (source-form :initarg :source-form
+  ((source-form :initarg :source-form
                 :initform nil
                 :reader function-check-result-source-form
                 :documentation "The contract's own source form, as it was when
@@ -394,6 +388,10 @@ identity is the contract, and the contract is registered under that name.  The
 name alone does not pin the contract down, though -- re-registering it leaves
 this result describing a definition that is no longer there -- so SOURCE-FORM
 records what was actually run."))
+
+(defmethod function-check-result-budget ((result function-check-result))
+  "Return the trial budget stored in the shared property result."
+  (property-result-budget result))
 
 (defun function-check-result-function (result)
   "Return the name of the function RESULT checked.
@@ -552,6 +550,40 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod property-result-entity-kind ((result function-check-result))
   :function-spec)
 
+(defmethod resolve-definition ((designator symbol) (kind (eql :function-spec)) registry)
+  (registry-find-function-spec registry designator))
+
+(defmethod definition-entity-kind ((contract function-spec)) :function-spec)
+
+(defmethod definition-generation-schema ((contract function-spec))
+  (function-spec-argument-schema contract))
+
+(defmethod definition-description ((contract function-spec))
+  "Describe the contract declaration, not the target implementation."
+  (values
+   (list :entity-kind :function-spec :name (function-spec-name contract)
+         :variables (mapcar #'first (function-spec-argument-specs contract))
+         :documentation (function-spec-documentation contract)
+         :source (function-spec-source-form contract)
+         :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
+         :returns (not (null (function-spec-return-spec contract)))
+         :generator (function-spec-argument-generator contract)
+         :metadata (function-spec-metadata contract))
+   (append (mapcar #'second (function-spec-argument-specs contract))
+           (when (function-spec-return-spec contract)
+             (list (function-spec-return-spec contract))))
+   (when (function-spec-argument-generator contract)
+     (list (cons :generator (function-spec-argument-generator contract))))
+   (and (eq (class-name (class-of contract)) 'function-spec)
+        (or (not (or (function-spec-precondition-function contract)
+                     (function-spec-postcondition-function contract)))
+            (not (null (function-spec-source-form contract)))))))
+
+(defmethod definition-description ((property function-check-property))
+  (definition-description (checked-contract property)))
+
+(defmethod definition-entity-kind ((property function-check-property)) :function-spec)
+
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
 No target or predicate is called again to classify the result. Shrinking still
@@ -582,6 +614,7 @@ are accepted. A run with no admitted trials is :SKIPPED."
                                   :metadata (list :shrink t)))
          (result (run-property property :seed seed :options options :registry registry)))
     (make-instance 'function-check-result
+                   :schema-metadata (property-result-schema-metadata result)
                    :status (property-result-status result)
                    :property name :budget budget :source-form source
                    :trials (property-result-trials result)

@@ -32,7 +32,7 @@
            #:run-generated-test
            #:generator-for
            #:sample
-           #:backend-default-trials))
+           #:backend-default-trials #:backend-capabilities))
 
 (in-package #:cl-spec/src/generator)
 
@@ -71,6 +71,8 @@ OPTIONS must contain :TRIALS, a nonnegative integer budget, and may carry :REGIS
 The outcome requires :STATUS (:passed, :failed, :error or :skipped) and :TRIALS,
 the nonnegative count actually generated, never greater than the budget.
 :REJECTED counts precondition refusals in generated trials, excluding shrinking.
+Optional :CAPABILITIES reports :GENERATION and :SHRINKING from the actual compiled
+generator, captured before trials; absent/NIL leaves result capabilities unknown.
 Failures require :FAILURE (a TRIAL-OBSERVATION), :SHRUNK-OUTCOME (:none, :used or
 :different-failure), and optionally :SHRUNK-FAILURE (an observed matching failure).
 Only :used carries a shrink observation. Status describes the selected observation.
@@ -101,6 +103,16 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                     (remhash item active))))))
       (and (consp value) (proper-list-p value) (walk value)))))
 
+(defun capability-report-p (report)
+  "Recognize an optional backend capability plist with explicit supported states."
+  (and (proper-list-p report)
+       (evenp (length report))
+       (let ((keys (loop for key in report by #'cddr collect key)))
+         (and (every #'keywordp keys)
+              (= (length keys) (length (remove-duplicates keys)))))
+       (member (getf report :generation) '(:available :unavailable :unknown))
+       (member (getf report :shrinking) '(:available :unavailable :unknown :none))))
+
 (defun validate-backend-outcome (outcome property budget)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
@@ -115,6 +127,9 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                (setf (gethash tail cells) t)
                (push (car tail) seen)
                (setf tail (cddr tail))))
+    (when (and (getf outcome :capabilities)
+               (not (capability-report-p (getf outcome :capabilities))))
+      (refuse ":capabilities must report valid generation and shrinking states"))
     (let* ((status (getf outcome :status))
            (trials (getf outcome :trials :missing))
            (rejected (getf outcome :rejected 0))
@@ -173,6 +188,15 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
     (unless (and (integerp budget) (not (minusp budget)))
       (error 'type-error :datum budget :expected-type '(integer 0 *)))
     (validate-backend-outcome (call-next-method) property budget)))
+
+(defgeneric backend-capabilities (backend spec &key registry)
+  (:documentation "Describe generation and shrinking without drawing or invoking user predicates."))
+
+(defmethod backend-capabilities ((backend t) spec &key registry)
+  "Unknown backends must opt in to capability reporting."
+  (declare (ignore spec registry))
+  (list :generation (if backend :unknown :unavailable)
+        :shrinking (if backend :unknown :unavailable)))
 
 (defgeneric backend-default-trials (backend)
   (:documentation "Return the trial count BACKEND uses when a property names none.

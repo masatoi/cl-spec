@@ -138,7 +138,31 @@ the original counterexample remains available if no valid reduction was observed
 
 Introspection records have `:entity-kind` (`:spec`, `:property`, or
 `:function-spec`); existing `:kind` fields retain their node or author
-classification. Results expose `property-result-entity-kind`.
+classification. `schema-info` describes the versioned Lisp protocol. All three
+definition readers include `:schema-version 1`, `:record-kind :definition`,
+`:definition-digest`, `:definition-digest-complete`, `:definition-digest-covers`
+and `:capabilities` on the root record. Nested specs remain ordinary IR projections.
+Consumers should ignore unknown keys and explicitly handle
+unsupported versions. `result-data` returns the same metadata with
+`:record-kind :result`, captured before execution, plus trials, budget and the
+original/selected failure evidence. Results also expose `property-result-entity-kind`.
+
+The digest tracks stored declarations and their registered spec/generator
+dependencies, including whole-argument generators. It excludes target/helper
+implementations, captured/external state, source locations and backend settings.
+It is a bounded, non-cryptographic change detector; it does not prove that a run
+is reproducible. Missing dependencies, opaque values or exceeded limits produce
+NIL with `:definition-digest-complete NIL`, never a trusted partial digest.
+
+Capabilities describe the currently installed backend: generator construction
+may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be
+`:none` when disabled, when the root custom generator has no shrinker, or when
+all tuple elements lack a shrink strategy.
+Construction availability does not promise a valid draw or an accepted reduction.
+No trials, targets or custom generator bodies run during built-in introspection.
+Runs reuse capabilities captured from the actual compiled generator; older
+backends that omit this report produce `:unknown` capabilities in results.
+Instrumentation remains `:unavailable`. See specification §38.1 for the full contract.
 
 Backend implementers must supply explicit nonnegative `:trials` counts and
 observations for failures. Missing counts or contradictory evidence signal
