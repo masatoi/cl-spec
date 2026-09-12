@@ -44,6 +44,7 @@
                 #:resolve-function-spec
                 #:function-spec-name
                 #:function-spec-argument-specs
+                #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
@@ -184,6 +185,7 @@ compiled function cannot be read (specification §39)."
   (:name <symbol> :entity-kind :function-spec :kind :function-spec
    :documentation <string-or-nil>
    :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
+   :argument-generator <symbol-or-nil> :argument-schema <tuple spec-data>
    :preconditions (<form> ...) :returns <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
    :source-location (:file <string> :package <string>) :metadata <plist>)
@@ -209,6 +211,8 @@ PROPERTY-DATA promise."
           :documentation (function-spec-documentation contract)
           :arguments (loop for (variable spec) in (function-spec-argument-specs contract)
                            collect (list :variable variable :spec (spec->data spec)))
+          :argument-generator (function-spec-argument-generator contract)
+          :argument-schema (spec->data (function-spec-argument-schema contract))
           :preconditions (function-spec-preconditions contract)
           :returns (let ((spec (function-spec-return-spec contract)))
                      (when spec (spec->data spec)))

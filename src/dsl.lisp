@@ -114,7 +114,7 @@ explicitly; the backend never silently ignores a conjunct's generator."
                                          :generator ',generator
                                          :source-location ',location))))
 
-(defparameter *function-spec-clause-keywords* '(:args :pre :returns :post)
+(defparameter *function-spec-clause-keywords* '(:args :args-generator :pre :returns :post)
   "Clause heads DEFSPEC-FUNCTION accepts in the MVP (specification §17, §73.1 D1).
 
 :SIGNALS is deliberately absent.  §17 lists it as something a function spec
@@ -181,7 +181,7 @@ input compiled into a tautology."
     (and home (find-symbol "RESULT" home))))
 
 (defun parse-function-spec-clauses (name clauses)
-  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST).
+  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST ARGUMENT-GENERATOR).
 
 Every clause is checked here rather than at check time, so a contract the
 checker could not honour never reaches the registry.  A NIL RETURNS therefore
@@ -194,7 +194,8 @@ cannot be confused."
         (args nil)
         (pre nil)
         (returns nil)
-        (post nil))
+        (post nil)
+        (argument-generator nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
     ;; property with no body.  DEFSPEC-FUNCTION has no body forms and a string
@@ -220,6 +221,12 @@ cannot be confused."
         (push head seen)
         (ecase head
           (:args (setf args (rest clause)))
+          (:args-generator
+           (unless (and (= 2 (length clause))
+                        (second clause) (symbolp (second clause))
+                        (not (keywordp (second clause))))
+             (function-spec-error clause ":args-generator takes one generator name"))
+           (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
           (:post (setf post (rest clause)))
           (:returns
@@ -241,7 +248,7 @@ cannot be confused."
                 clause
                 "nothing satisfies the empty type NIL; write NULL instead"))
              (setf returns form))))))
-    (values documentation args pre returns post)))
+    (values documentation args pre returns post argument-generator)))
 
 (defun parse-function-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -302,7 +309,7 @@ tagged secondary values consumed by the function checker; no form runs twice."
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
 and :POST forms have to be compiled into real functions: §60 forbids runtime
 EVAL, so a contract kept only as a list could be read but never checked."
-  (multiple-value-bind (documentation args pre returns post)
+  (multiple-value-bind (documentation args pre returns post argument-generator)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (mapcar #'first args))
@@ -358,6 +365,7 @@ return value"
                        (list ,@(loop for (variable form) in args
                                      collect `(list ',variable
                                                     (normalize-spec-form ',form))))
+                       :argument-generator ',argument-generator
                        :return-spec ,(when returns `(normalize-spec-form ',returns))
                        :preconditions ',pre
                        :postconditions ',post
@@ -379,7 +387,10 @@ return value"
   "Attach a contract to the existing function NAME without redefining it.
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:PRE FORM ...), (:RETURNS SPEC) and (:POST FORM ...), each at most once.  :PRE
+(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC) and (:POST FORM ...),
+each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
+argument list. Its output is validated before :PRE and the target; it has no
+automatic shrink strategy.  :PRE
 sees the parameters, :POST sees them and RESULT, the value the call returned.
 
 The MVP checks required positional parameters and one return value.  Anything
@@ -520,7 +531,9 @@ arguments, so LAMBDA-LIST must be empty.  A generator that took parameters would
 need a syntax for a spec to pass them and §11 defines none, and accepting one
 would call the body without the bindings its author wrote.
 
-The value is not re-validated against the spec that names it.  A generator that
+For DEFSPEC uses, the value is not re-validated against the spec that names it.
+For DEFSPEC-FUNCTION's :ARGS-GENERATOR, the whole argument list is validated
+before the precondition or target runs.  A generator that
 draws outside its spec makes a property report a counterexample the contract
 refuses, which is a true statement about the generator rather than a silent pass;
 a guard that retried until a draw conformed would recurse with no depth limit,

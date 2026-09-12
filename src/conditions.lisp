@@ -36,6 +36,8 @@
            #:invalid-generator-form
            #:invalid-generator-form-form
            #:invalid-generator-form-reason
+           #:invalid-generated-arguments #:invalid-generated-arguments-generator
+           #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -214,6 +216,19 @@ The rule §17 follows for contracts: a definition this version cannot use is
 refused rather than registered with part of its meaning dropped.  A generator
 whose parameters were silently ignored would look like a working generator and
 produce values from a body called without the bindings its author wrote."))
+
+(define-condition invalid-generated-arguments (cl-spec-error)
+  ((generator :initarg :generator :reader invalid-generated-arguments-generator
+              :documentation "Name of the argument-set generator that produced invalid output.")
+   (value :initarg :value :reader invalid-generated-arguments-value
+          :documentation "Snapshot of the invalid generated argument set.")
+   (reason :initarg :reason :reader invalid-generated-arguments-reason
+           :documentation "Why the generated value cannot be used as arguments."))
+  (:report (lambda (condition stream)
+             (format stream "Argument generator ~S produced invalid arguments: ~A."
+                     (invalid-generated-arguments-generator condition)
+                     (invalid-generated-arguments-reason condition))))
+  (:documentation "Signalled before invoking a target when an argument-set draw is invalid."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec

@@ -180,13 +180,19 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
           (list (error-datum :not-an-instance path value :expected expected)))))))
 
 (defun proper-list-p (object)
-  "Return true when OBJECT is a proper list.
-
-LENGTH and the LOOP list iteration both signal on a dotted list, so collection
-explainers ask this before walking a value the caller supplied."
-  (loop for tail = object then (cdr tail)
-        do (cond ((null tail) (return t))
-                 ((not (consp tail)) (return nil)))))
+  "Recognize a finite proper list before collection explainers iterate it.
+Two cursors detect cycles using constant auxiliary space."
+  (let ((slow object)
+        (fast object))
+    (loop
+      (when (null fast) (return t))
+      (unless (consp fast) (return nil))
+      (setf fast (cdr fast))
+      (when (null fast) (return t))
+      (unless (consp fast) (return nil))
+      (setf fast (cdr fast)
+            slow (cdr slow))
+      (when (eq slow fast) (return nil)))))
 
 (defmethod compile-node ((spec and-spec) context)
   (let* ((children (and-spec-children spec))

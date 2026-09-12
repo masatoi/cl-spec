@@ -7,12 +7,13 @@
 
 (defpackage #:cl-spec/src/property
   (:use #:cl)
+  (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:registry-register-property)
   (:export #:property
            #:property-name
-           #:property-arguments
+           #:property-arguments #:property-argument-schema
            #:property-targets
            #:property-kind
            #:property-tags
@@ -85,6 +86,13 @@ introspection can show the author's source.")
              :reader property-metadata
              :documentation "Arbitrary plist for callers and future extensions."))
   (:documentation "A registered, executable statement about program behaviour."))
+
+(defgeneric property-argument-schema (property)
+  (:documentation "Return the whole positional argument tuple spec compiled by a backend."))
+
+(defmethod property-argument-schema ((property property))
+  "Derive an independent tuple generator from the ordinary property bindings."
+  (make-instance 'tuple-spec :element-specs (mapcar #'second (property-arguments property))))
 
 (defun register-property (property &optional (registry *registry*))
   "Register PROPERTY in REGISTRY under its own name and return PROPERTY.
