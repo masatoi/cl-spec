@@ -8,7 +8,8 @@
                 #:generator-unavailable)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
-                #:current-generator-backend)
+                #:current-generator-backend
+                #:sample)
   (:import-from #:cl-spec/src/backends/check-it
                 #:check-it-backend
                 #:install-check-it-backend
@@ -24,7 +25,14 @@
                 #:generate)
   (:import-from #:cl-spec/src/registry
                 #:make-hash-table-registry
-                #:registry-register-spec))
+                #:registry-register-spec)
+  (:import-from #:cl-spec/src/dsl
+                #:defspec
+                #:defspec-function)
+  (:import-from #:cl-spec/src/function-spec
+                #:check-function)
+  (:import-from #:cl-spec/src/property-runner
+                #:property-result-counterexample))
 
 (in-package #:cl-spec/tests/backends/check-it-test)
 
@@ -188,3 +196,51 @@
   (testing "a nested AND folds the same as its flattened equivalent"
     (ok (every (lambda (value) (<= 10 value 20))
                (draws-for '(and integer (and (range 1 20) (range 10 100))))))))
+
+(defun demo-returns-one (xs)
+  "Return 1 whatever the list is, so the first trial always fails."
+  (declare (ignore xs))
+  1)
+
+(deftest a-run-pins-the-whole-generation-environment
+  (testing "the same seed generates the same arguments however check-it is tuned"
+    ;; RUN-GENERATED-TEST pinned *SIZE* alone, so an image that had tuned
+    ;; CHECK-IT:*LIST-SIZE* or *BIAS-SENSITIVITY* generated different arguments
+    ;; from the same seed -- and a replay disagreeing with the result it was
+    ;; handed is what §72.3 forbids (§73.4 #7).
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-list (list-of (range integer 0 100)))
+      (defspec-function demo-returns-one
+        (:args (xs small-list))
+        (:returns (range integer 0 0)))
+      (let ((at-default (check-function 'demo-returns-one :trials 1 :seed 11))
+            (at-tuned (let ((check-it:*list-size* 1)
+                            (check-it:*list-size-decay* 0.5)
+                            (check-it:*bias-sensitivity* 0.2)
+                            (check-it:*recursive-bias-decay* 3.0)
+                            (check-it:*num-trials* 7))
+                        (check-function 'demo-returns-one :trials 1 :seed 11))))
+        (ok (property-result-counterexample at-default))
+        (ok (equal (property-result-counterexample at-default)
+                   (property-result-counterexample at-tuned)))))))
+
+(deftest sample-uses-the-generation-environment-a-run-uses
+  (testing "an ambient CHECK-IT:*SIZE* does not reach SAMPLE"
+    ;; GENERATE-VALUE read *SIZE* from whatever was ambient and only raised it to
+    ;; the generator's own requirement, so a SAMPLE taken in a tuned image showed
+    ;; a distribution no run draws (§73.4 #6).  It binds what a run binds now.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec wide-integer (type integer))
+      (let ((at-default (sample 'wide-integer :count 20 :seed 11))
+            (at-tuned (let ((check-it:*size* 5000))
+                        (sample 'wide-integer :count 20 :seed 11))))
+        (ok (equal at-default at-tuned)))))
+  (testing "and neither does an ambient CHECK-IT:*LIST-SIZE*"
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-list (list-of (range integer 0 100)))
+      (let ((at-default (sample 'small-list :count 20 :seed 11))
+            (at-tuned (let ((check-it:*list-size* 1)
+                            (check-it:*list-size-decay* 0.5))
+                        (sample 'small-list :count 20 :seed 11))))
+        (ok (every #'listp at-default))
+        (ok (equal at-default at-tuned))))))

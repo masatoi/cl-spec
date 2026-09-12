@@ -5,9 +5,11 @@ designed for both humans and LLM coding agents.
 
 **Status: MVP vertical slice.** Normalization, validation, structured explain,
 spec introspection, the check-it generator backend, `defproperty` and the
-property runner with seed, replay and shrinking are implemented. Function
-specs, custom generators, the `describe-*` printers, instrumentation and the
-cl-mcp adapter are still stubs that signal `not-implemented`.
+property runner with seed, replay and shrinking are implemented, as are
+function specs (`defspec-function`, `check-function`, `function-spec-data`) for
+required positional arguments and one return value. Custom generators,
+the `describe-*` printers and instrumentation are still stubs that signal
+`not-implemented`. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Systems
 

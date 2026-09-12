@@ -8,6 +8,10 @@
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
   (:import-from #:check-it
+                #:generator
+                #:generate
+                #:shrink
+                #:cached-value
                 #:int-generator
                 #:real-generator
                 #:char-generator
@@ -43,7 +47,12 @@
                 #:list-of-spec
                 #:vector-of-spec
                 #:reference-spec
-                #:reference-spec-target)
+                #:reference-spec-target
+                #:spec-generator-name)
+  (:import-from #:cl-spec/src/registry
+                #:registry-find-generator)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator-function)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
@@ -81,6 +90,64 @@ check-it's GENERATE treats a non-generator as a constant."))
   (error 'generator-unavailable
          :spec spec
          :reason (format nil "~S has no generation strategy" (spec-kind spec))))
+
+(defclass custom-value-generator (generator)
+  ((function :initarg :function
+             :reader custom-value-generator-function
+             :documentation "Function of no arguments returning one value."))
+  (:documentation "A generator that calls a user function once per draw.
+
+Its own class rather than the MAPPED-GENERATOR over a constant this first was.
+check-it's MAPPED-GENERATOR shrink method reads its sub-generators' cached values,
+and a constant is not a generator, so every FAILING run with a custom generator
+signalled NO-APPLICABLE-METHOD-ERROR instead of returning a result.  It was on the
+shrink path only, which is why a sample and a passing run hid it (PR review)."))
+
+(defmethod generate ((generator custom-value-generator))
+  "Draw one value from GENERATOR and cache it, as check-it's generators do."
+  (let ((value (funcall (custom-value-generator-function generator))))
+    (setf (cached-value generator) value)
+    value))
+
+(defmethod shrink ((generator custom-value-generator) test)
+  "Return the cached value unchanged: this backend did not build it.
+
+A smaller value would have to come from the user's function, and calling it again
+would put a fresh draw forward as the reduction of a value it has nothing to do
+with.  Returning the value itself keeps the run's own counterexample, and the
+result says through FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME that nothing was reduced."
+  (declare (ignore test))
+  (cached-value generator))
+
+(defun custom-spec-generator (name spec context)
+  "Return a generator drawing from the custom generator NAME names.
+
+The value is not checked against SPEC.  A custom generator that draws outside its
+spec should be seen for what it is -- a property reporting a counterexample the
+contract refuses -- rather than hidden behind a guard, which as AND's method
+notes would retry with no depth limit.
+
+An AND that would fold a conjunct with a custom generator is refused by
+FOLD-AND-CHILDREN. A generator on the whole AND overrides folding explicitly."
+  (let ((entry (registry-find-generator (context-registry context) name)))
+    (unless entry
+      (error 'generator-unavailable
+             :spec spec
+             :reason (format nil "the custom generator ~S is not registered" name)))
+    (make-instance 'custom-value-generator
+                   :function (custom-generator-function entry))))
+
+(defmethod spec-generator :around ((spec spec) context)
+  "Prefer the custom generator SPEC names over the one its node type would build.
+
+An :AROUND method on the base class rather than a check inside each method: a
+(:GENERATOR NAME) clause on an AND, a MEMBER or a REFERENCE has to win over the
+strategy that node type would otherwise get, and this is the only place that runs
+before the type's own method does."
+  (let ((name (spec-generator-name spec)))
+    (if name
+        (custom-spec-generator name spec context)
+        (call-next-method))))
 
 (defun type-specifier-generator (type-specifier spec)
   "Return a generator for the Common Lisp TYPE-SPECIFIER.
@@ -281,8 +348,14 @@ its constraints or, worse, leave them to a GUARD-GENERATOR that rejects every
 draw forever.  The resolution is guarded by *REFERENCE-TRAIL* against
 recursion, exactly as the REFERENCE-SPEC method guards its own.  A nested
 AND-SPEC child is flattened the same way, so (AND A (AND B C)) folds
-identically to (AND A B C).  Anything else is collected into LEFTOVERS."
+identically to (AND A B C). A custom generator on any folded child is refused,
+including one reached through aliases: deriving values would discard its chosen
+distribution. Anything else is collected into LEFTOVERS."
   (dolist (child children)
+    (when (spec-generator-name child)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "a conjunct has a custom generator; name a generator on the whole AND"))
     (typecase child
       (type-spec
        (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))

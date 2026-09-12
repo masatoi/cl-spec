@@ -18,6 +18,9 @@
            #:unknown-spec-name
            #:unknown-property
            #:unknown-property-name
+           #:unknown-function-spec
+           #:unknown-function-spec-name
+           #:unbound-target
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -25,6 +28,12 @@
            #:invalid-property-form
            #:invalid-property-form-form
            #:invalid-property-form-reason
+           #:invalid-function-spec-form
+           #:invalid-function-spec-form-form
+           #:invalid-function-spec-form-reason
+           #:invalid-generator-form
+           #:invalid-generator-form-form
+           #:invalid-generator-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -86,6 +95,30 @@
                      (unknown-property-name condition))))
   (:documentation "Signalled when a property designator resolves to nothing."))
 
+(define-condition unknown-function-spec (cl-spec-error)
+  ((name :initarg :name
+         :reader unknown-function-spec-name
+         :documentation "Symbol that has no registered function spec."))
+  (:report (lambda (condition stream)
+             (format stream "No function spec is registered for ~S."
+                     (unknown-function-spec-name condition))))
+  (:documentation "Signalled when CHECK-FUNCTION is given a name with no contract.
+
+Distinct from a contract that holds: an agent that reads \"nothing is
+registered\" as \"nothing is wrong\" would treat an unspecified function as a
+verified one."))
+
+(define-condition unbound-target (cl-spec-error undefined-function)
+  ()
+  (:documentation "Signalled when a contract's function is not defined.
+
+Inherits from both roots on purpose.  §21 promises a caller can trap the
+framework as a whole, and CL-SPEC-ERROR calls itself the root of every
+condition cl-spec signals -- a plain UNDEFINED-FUNCTION escaped that handler,
+so one unadopted function lost a whole batch of checks.  It is still an
+UNDEFINED-FUNCTION, because that is what it is, and a caller who wrote the
+standard handler keeps it."))
+
 (define-condition no-generator-backend (cl-spec-error)
   ()
   (:report (lambda (condition stream)
@@ -126,6 +159,52 @@
                      (invalid-property-form-reason condition))))
   (:documentation
    "Signalled when DEFPROPERTY cannot make sense of one of its option clauses."))
+
+(define-condition invalid-function-spec-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-function-spec-form-form
+         :documentation "The clause, or the slot value, that could not be accepted.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-function-spec-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid function spec clause~@[: ~A~]."
+                     (invalid-function-spec-form-form condition)
+                     (invalid-function-spec-form-reason condition))))
+  (:documentation
+   "Signalled when a function spec claims something the checker cannot honour.
+
+Specification §17 requires that a contract the checker cannot honour is refused
+rather than partially accepted: one whose unsupported half is silently dropped
+would report a verified result for a claim nothing checked.
+
+Raised from two places, which is why the report does not name a macro: from
+DEFSPEC-FUNCTION at macroexpansion time for syntax the MVP does not support,
+and from the FUNCTION-SPEC class for a contract built directly through the
+public CLOS API in a state its own consumers could not read."))
+
+(define-condition invalid-generator-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-generator-form-form
+         :documentation "The DEFGENERATOR form that could not be accepted.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-generator-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid custom generator~@[: ~A~]."
+                     (invalid-generator-form-form condition)
+                     (invalid-generator-form-reason condition))))
+  (:documentation
+   "Signalled when DEFGENERATOR cannot honour the definition it was given.
+
+The rule §17 follows for contracts: a definition this version cannot use is
+refused rather than registered with part of its meaning dropped.  A generator
+whose parameters were silently ignored would look like a working generator and
+produce values from a body called without the bindings its author wrote."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec

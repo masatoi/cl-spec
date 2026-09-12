@@ -59,21 +59,22 @@
 
 ## 0.2 実装状況表
 
-この表は2026-09-09時点のスナップショットであり、実行時のcapability APIではない。
+この表は2026-09-10時点のスナップショットであり、実行時のcapability APIではない。
 
 | 機能 | 状況 | 現在の利用範囲・制限 |
 |---|---|---|
 | Semantic IR・normalization・hash-table registry | 実装済み | §7〜9、§37。追加registry backendは将来構想 |
 | validation・structured explain | 実装済み | `validp`、`validate`、`explain-data`、`explain` |
-| Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data` |
+| Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data`、`function-spec-data` |
 | symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 一部実装 | IR・registryは存在。`defspec-function`、`check-function`はstub |
-| Custom generator DSL | 未実装 | `defgenerator`はstub。`defgenerator-for`は構想上の名前 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
+| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
-| Instrumentation・cl-mcp adapter | 未実装 | 公開名や想定tool名の存在を利用可能の根拠にしない |
+| Instrumentation | 未実装 | `instrument-function`はstub |
+| cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
 | timeout・状態隔離・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
 | state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
 
@@ -143,6 +144,24 @@ Propertyを削除したり、入力domainや試行予算を縮小したりしな
 
 `run-property`の現在のキーワードは `:profile`、`:seed`、`:options`、`:registry`。
 `:timeout`を直接渡すAPIは未実装。replayの制限は§15を参照する。
+
+関数の契約の取得と検査：
+
+```lisp
+;; TARGETは(defspec-function target ...)が登録済みのsymbol。
+(cl-spec:function-spec-data target)   ; どの入力を受け、どの出力を返すべきか
+
+(let ((result (cl-spec:check-function target :trials 200)))
+  (values (cl-spec:property-result-status result)          ; :passed/:failed/:skipped/:error
+          (cl-spec:function-check-result-rejected result)   ; :preが棄却した生成入力の件数
+          (cl-spec:function-check-result-failure-reason result)
+          (cl-spec:property-result-shrunk-counterexample result)))
+```
+
+`:skipped`は「関数を一度も呼んでいない」であって成功ではない。`:pre`が全入力を
+棄却した場合と、`:trials`が0の場合の両方でこれになる。実際に検査された件数は
+「試行数 − 棄却数」であり、これが0の実行は`:passed`ではなく`:skipped`として
+報告されるので、`:passed`かつ0という状態は存在しない。詳細は§17〜19。
 
 ---
 
@@ -694,7 +713,10 @@ simple structures
 
 # 11. Custom generator
 
-> **位置付け:** 未実装。以下の定義構文・関連付けは概念例。
+> **位置付け:** 実装済み（最小範囲）。以下の定義構文・関連付けは実装で確定した形である。
+> `defgenerator`は空のlambda-listのみを受け付け、関連付けは`defspec`の`(:generator NAME)`節で行う。
+> `defgenerator-for`は提供しない（下の二案のうち節を採用した）。生成値はspecに照らして再検証しない --
+> specの外を引くgeneratorは、契約が拒む反例として見えるほうが、guardで隠すより正直である。
 
 Domain objectについては自動生成できないケースが多い。
 
@@ -722,7 +744,7 @@ verified account requires KYC
 そのため、
 
 ```lisp
-(defgenerator account-generator
+(defgenerator account-generator ()
   ...)
 
 ```
@@ -960,7 +982,8 @@ warning: generated value may have been destructively modified
 
 # 17. Function Spec
 
-> **位置付け:** 一部実装。IR・registryは存在する。以下のDSLと自動検査は未実装。
+> **位置付け:** 実装済み（最小範囲）。必須引数と単一の戻り値を検査する。
+> 対応範囲は§73.1のD1として確定した。
 
 関数仕様は少なくとも、
 
@@ -974,9 +997,44 @@ signals
 
 を記述できるものとする。
 
-Function Specの実装前に、通常引数と`&optional`・`&key`・`&rest`、多値の個数と型、
-pre/postの評価順、`result`の束縛、実行前の可変値の参照、期待するconditionを定義する。
-MVPで対応しない形式は明示的に拒否し、契約の一部を黙って無視しない。詳細判断は§73のD1。
+D1（対応範囲）の決定：
+
+| 項目 | MVPの扱い |
+|---|---|
+| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
+| clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
+| 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
+| `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
+| pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
+| `result`の束縛 | 契約自身のpackageで`RESULT`が指すsymbolを、`:post`に現れかつ引数名でない場合に束縛する。`:post`に現れる`RESULT`という名前のsymbolがそれと一致しない場合は拒否する。マクロは`:post`の文面が読まれたpackageを見られないので、この解決は代理であり、外した場合に黙って別の契約をコンパイルするより拒否する。`:pre`が戻り値の名前に触れる形式も拒否する（引数名である場合を除く） |
+| 実行前の可変値の参照 | 対応しない。副作用のない関数を対象とする |
+| signals | 対応しない。`(:signals ...)`を含む未知のclauseは拒否する |
+| 節の重複 | 拒否する |
+
+対応しない形式は黙って無視せず、`invalid-function-spec-form`を送出して拒否する。
+契約の一部だけを受理すると、検査していない主張について検証済みの結果を
+報告することになる。この拒否はマクロ展開時に行われ、登録には到達しない。
+
+同じ理由から、`function-spec`オブジェクト自体にも不変条件を課す。クラスと
+`register-function-spec`は公開されているため、DSLを経由せずに契約を組み立てられる。
+
+- clauseのformとコンパイル済み述語は、両方あるか両方ないかのいずれかである。
+  formだけでは実行できない（§60が実行時`eval`を禁じている以上、formから述語は
+  復元できない）ため、checkerは主張を無視したまま`:passed`を報告する。
+  述語だけの場合は同じ失敗の裏返しで、述語は実行されるので入力は棄却され
+  結果は判定されるのに、`function-spec-data`はその節が無いと報告する。
+- 引数の名前は一意である。§14の反例は`{name value}`のplistであり、同じ名前を
+  2度束縛したものはplistではない。`getf`は最初の値だけを返し、2つ目は
+  復元できないので、失敗に対して報告された反例でその失敗を再現できない。
+- 引数と戻り値のspec designatorは拒否せず正規化する。述語と違い
+  `normalize-spec-form`で復元でき、正規化済みのspecはそのまま返るので、
+  DSLの出力は素通りする。
+
+これらは`shared-initialize`で検査する。`make-instance`だけがslotを埋める
+標準の経路ではなく、`reinitialize-instance`と`change-class`も同じslotに届く。
+`initialize-instance`だけを覆う検査は、後者が拒否対象の状態をそのまま
+書き戻すのを許してしまう。
 
 例：
 
@@ -1003,7 +1061,7 @@ Clojure specの `fdef` がargs、return、args/return間の関係を仕様とし
 
 # 18. 自動generative function test
 
-> **位置付け:** 未実装。以下はFunction checkerの設計。
+> **位置付け:** 実装済み。`check-function`が以下を行う。
 
 Function specだけで最低限のproperty testを生成できるようにする。
 
@@ -1027,6 +1085,73 @@ API：
 
 これは明示的 `defproperty` とは別物である。
 
+`check-function`の`:trials`は非負整数である。負の値はbackendの試行loopを
+一度も回さずに`:passed`を返すため、型として拒否する。
+
+`check-function`は`function-check-result`を返す。これは`property-result`の
+subclassであり、status・seed・試行数・反例・縮小反例に加えて次を持つ。
+
+- `function-check-result-rejected`：`:pre`が棄却した生成入力の件数。
+  関数に届いた試行の数は「試行数 − 棄却数」である。呼び出し回数ではない
+  ことに注意する。縮小と、壊れた側を特定する再実行も関数を呼ぶ。
+- `function-check-result-failure-reason`：契約のどちら側が壊れたか。
+  `:return-spec`、`:postcondition`、`:condition`、`:contract-error`、または`nil`。
+  `:contract-error`はどちらも壊れていない場合で、契約自身の述語やspecが、関数が
+  返した値の上で送出したことを意味する。責任はどちら側にもあり得る。
+  `undefined-function`と`program-error`だけは伝播させる。存在しない述語、
+  未登録のspec名、arityの合わない述語は構造的で、あらゆる入力で送出するため、
+  失う反例が無く、報告すべきは壊れたspecそのものである。
+  `:precondition`は存在しない。`:pre`が棄却した入力に対して試行の述語は真を
+  返すので、棄却された入力が失敗の理由になることはない。
+- `function-check-result-explanation`：`:return-spec`失敗時の`explain-data`。
+- `function-check-result-shrunk-outcome`：縮小候補がどうなったか（`:used` / `:none` /
+  `:different-failure`）。`shrunk-counterexample`がNILである理由を区別するため。
+- `function-check-result-budget`：その実行に許された試行数。`trials`は実行が
+  止まった位置であって許された数ではないため、両方を記録する。
+  `:seed`にresultを渡した再実行は、seedとともにこの予算も引き継ぐ。
+- `function-check-result-source-form`：実行時点の契約のsource form。実行は契約を
+  同一性で保持するが、resultは名前でしか指していなかった。名前の再登録（reload、
+  編集）があると、resultは「Fはpassした」と言い続けるのに、いまFの下にある契約は
+  Fが破るものになり得る。
+
+readerの前置は2種類ある。propertyの実行にもあるもの（status、trials、seed、
+profile、両方の反例、condition、elapsed）は`property-result-`で読み、契約の実行が
+追加するものだけが`function-check-result-`である。`function-check-result-status`は
+存在せず、しかもreader errorになるので、それを含むform全体が読めなくなる。
+
+関数を一度も呼ばなかった実行のstatusは`:skipped`であり、`:passed`ではない。
+`:pre`が生成入力をすべて棄却した場合と、`:trials`が0の場合の両方が該当する。
+関数を一度も呼んでいない実行を成功として報告しない（§73.3のゼロ件成功）。
+
+`failure-reason`は報告された反例に対して検査を一度やり直して求める。試行loopの
+最後の失敗は、縮小が同じ述語をさらに何度も呼んだあとでは、報告された反例とは
+限らないためである。この再実行は`run-property`が返ったあとに行われるが、
+statusを決めるのはこちらなので、実行のseedから作った`*random-state*`のもとで
+行う。周囲の状態のままでは、可変状態を読むtargetに対して同じseedが別のverdictを
+返す。
+
+再実行で捕捉するのはtargetの呼び出しだけである。契約自身の部分（`:pre`・`:post`の
+述語、`:returns`のspec）が送出した条件は、関数についての所見ではなく契約の
+authoring bugなので、そのまま伝播させる。これを捕捉すると、存在しない述語を
+名指した契約が「関数が送出した」として報告され、あらゆる入力が同一のエラーを
+出す実行に対して最小反例が提示される。§22の説明器も同じ理由で同種の条件を
+再送出する。
+
+縮小結果は、**元の反例と同じ壊れ方**を再現した場合にのみ報告する。§72.4が
+「別の例外が出ただけの候補を、元の論理的失敗の縮小結果として置き換えない」と
+定めている通りである。backendは
+縮小中に送出された条件を「まだ失敗している」と数えるが（§13がそう定めている）、
+これはpropertyには正しくても、targetに適用すらできない候補をより小さい反例として
+通してしまう。実例として`string`引数では、`check-it`がcacheした文字listを述語へ
+渡すためtargetが送出し、縮小が失敗領域の外へ出る。報告された最小反例が契約を
+満たす値になる。確認できない場合は元の反例へ戻し、どちらも再現しなければ
+`failure-reason`は`nil`である。
+
+status・failure-reason・condition・縮小反例は、同じ入力について述べる。
+backendのstatusは最初に失敗した試行のものであり、縮小は契約の一方から他方へ
+渡ることがある。そのままでは、何も送出しない最小入力の隣に`:error`が並び、
+見るべきconditionが無いまま`:failed`と`:condition`が並んだ。
+
 ## Function spec
 
 局所contractから自動生成するテスト。
@@ -1041,7 +1166,7 @@ API：
 
 # 19. Preconditionの扱い
 
-> **位置付け:** 設計方針。Function checkerの棄却規則とdependent generatorの詳細は未決定。
+> **位置付け:** 一部実装。棄却と件数の報告は実装済み。dependent generatorは未実装。
 
 以下のような入力生成は避けるべきである。
 
@@ -1074,6 +1199,11 @@ API：
 のようなdependent generatorを将来的に扱う。
 
 `check-it` はchained generatorを提供しているため、この用途で利用できる。
+
+現在の実装は`:pre`を満たさない生成入力を棄却し、その件数を結果に載せる。
+生成側へ制約を反映するdependent generatorは未実装であり、棄却率の高い契約では
+実際に検査された件数が試行数より大幅に少なくなる。棄却数は結果から読めるので、
+この不足は隠れずに現れる。
 
 ---
 
@@ -2232,6 +2362,16 @@ explain-data
 
 ```lisp
 defgenerator
+register-generator
+find-generator
+list-generators
+custom-generator
+custom-generator-name
+custom-generator-function
+custom-generator-documentation
+custom-generator-source-form
+custom-generator-source-location
+spec-generator-name
 generator-for
 sample
 
@@ -2278,7 +2418,8 @@ semantic-data
 
 裸の名前はCL型名または登録Spec参照となる。複合CL型は`(type (integer 0 *))`のように
 明示する。rangeは`(range lo hi)`または`(range integer lo hi)`・`(range real lo hi)`を用いる。
-現在の`defspec`は名前とSpec formの2引数であり、§11の追加option例は未実装。
+現在の`defspec`は名前とSpec formに加えてoption節を受け付け、§11の`(:generator NAME)`を
+実装している。他のoption節は拒否される。
 
 ```text
 Common Lisp type
@@ -3237,7 +3378,7 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 | ID | 決めること | 関連節 | 決定・検証が必要な時点 |
 |---|---|---|---|
-| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | Function checker実装前 |
+| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | 決定済み（§17の表）。対応範囲を広げるときに再検討 |
 | D2 | status/categoryの対応、棄却・試行数の定義、予算、検証不足の集計 | §14、§19、§47、LLM-01 | 自律実行結果の公開前 |
 | D3 | replay artifact schema、定義識別、復元不能値、options保存、直接反例再検査API | §15、§57、LLM-03 | CI artifact連携前 |
 | D4 | 縮小時の失敗同一性、入力妥当性、完了状態 | §16、LLM-04 | 縮小結果を修正根拠にする機能の拡張前 |
@@ -3258,6 +3399,175 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 5. その結果に基づき、副作用のある対象や高度なPBTへの拡張を判断する。
 
 §70は初期architectureの依存順であり、この実証順は現在の実装から利用価値を確認する順である。
+
+### スレッドについて
+
+§48に従い時間上限を実行ホストが持つ以上、検査は呼び出し元とは別のスレッドで走る。
+新しいスレッドは動的束縛を継承しないので、`*registry*`と`*generator-backend*`の
+rebindはスレッド境界を越えない。ホストはこれを自分で持ち越す必要がある（`progv`、
+または各entry pointが取る`:registry`引数）。持ち越さない場合、実行はglobalな
+registryで名前を解決する。同じ名前が両方に登録されていれば、別の定義を検査して
+その結果を報告し、resultにはそれと分かる情報が無い。
+
+registryのhash tableは`:synchronized t`である。これは名前表を守るが、
+逆引きindexは守らない。`index-property`の`pushnew`はread-modify-writeであり、
+`registry-register-property`のfind→unindex→set→indexも不可分ではない。実測では
+8スレッドから3000件を登録したあと`list-properties`は3000件を返す一方、
+`properties-for`は1146件しか返さなかった。`registration`の並行実行自体は
+ホストモデルの想定外だが、部分的な一覧が黙って返る点は残っている。
+
+`make-seed`はprocess共有の`*random-state*`から引く。スレッドは`*random-state*`を
+共有するので、これは同期されないread-modify-writeであり、衝突率は系の性質では
+なく呼び出しの詰まり方で決まる。実測では、8スレッドが密なループで各5000回引くと
+40000件中の相異なる値は14277件（重複64%）、一方で各スレッドが1回だけ引いて
+joinする形では衝突0だった。判定が誤るわけではないが、並行な掃引では別の実行が
+既に試した入力を黙って引き直すことになる。`run-properties`が無条件に謳う
+「各実行が自分のseedを引く」は、その分弱い。
+
+### 1〜3の実測（2026-09-10）
+
+Function checkerとcl-mcp adapterを接続し、既知の欠陥で一周させた。対象は
+`(floor (* count (- value low)) (- high low))`、閉区間の右端で`count`を返す
+off-by-one。
+
+- `:about`で選ばれる2つのPropertyは両方passした。単調性も左端も、この欠陥では
+  壊れない。契約の`(:post (< result count))`だけが壊れる。
+  Property中心の運用では見つからない欠陥が存在する、という具体例である。
+- 契約の初回実行（100 trials、backend default）はpassした。棄却83件、実際の
+  呼び出しは17回。棄却数を報告しなければ「100試行が通った」と読める実行が、
+  実際には17回しか関数を呼んでいない。§19の懸念は理論上のものではない。
+- 試行数を2000に上げて18試行目で反例。縮小結果は
+  `VALUE=-1 LOW=-2 HIGH=-1 COUNT=1`、壊れた側は`:postcondition`。
+- 修正後、同じseedとdigestで再実行してpass、`reproduction: faithful`。
+  Propertyも引き続きpass。
+
+判明した不足：
+
+1. 契約には`:trials` tableがないため、profileでは試行数を上げられない。
+   adapter側に明示的な試行数の引数が要る。cl-spec本体では`check-function`の
+   `:trials`で足りる。
+2. 棄却率が80%を超えるのは、独立に生成した3つの整数に`(< low high)`と
+   `(<= low value high)`を課したためである。§19のdependent generatorが
+   未実装である限り、この形の契約は試行数で殴るしかない。
+3. 反例が「境界1点」である場合、一様生成では到達確率が試行数に線形にしか
+   効かない。§46のProperty品質と同じ問題が契約側にもある。
+
+## 73.4 繰り越した指摘
+
+独立レビュー4巡で挙がり、Function Spec本体のマージ後に別途扱うと判断したもの。
+いずれも「誤った検証判定」ではなく、報告の精度・一貫性の層である。再現手順は
+各指摘の本文に含まれる。
+
+**報告の正確さ**
+
+1. 契約側で`cl-spec:validate`を使うと、`spec-violation`が`:contract-error`として
+   報告される。`validate`の仕事は「値がspecを満たさない」と断定することであり、
+   「評価できなかった、責任はどちらとも言えない」の正反対である。`:pre`をこれで
+   書くと、30試行passする実行が最初の棄却対象で`:error`になる。
+2. 縮小結果の採否をreason keywordの`eq`で判定している。これは粗すぎる。
+   条件は種類を問わず`:condition`に、範囲違反は種類を問わず`:return-spec`に
+   潰れるので、無関係な縮小がなお採用され、元のconditionやexplanationが
+   上書きされる。分類器が既に持っている情報（conditionの型、`explain-data`の
+   `:kind`）で比べれば両方とも捕まる。
+3. `:returns`を`:post`より先に分類するため、縮小値が同じ契約の別の節にも
+   触れると正当な縮小が捨てられる。
+4. 縮小結果を抑制したことが呼び出し側から見えない。`shrunk-counterexample`が
+   `nil`であることは「縮小は何も小さくできなかった」とも読めるが、引数を持つ
+   契約の失敗では常に「縮小結果を捨てた」の意味になる。
+
+**再実行の副作用**
+
+5. 分類の再実行は、実行が終わったあとにtargetを最大2回追加で呼ぶ。§3.2が
+   既存コードへの後付けを謳う以上、副作用のあるtargetは想定内であり、
+   報告された反例はもはや呼び出し側が置かれている状態を表さない。
+   `*random-state*`を読むtargetでは、再実行はseedの先頭から引くため、
+   失敗した試行が見たのとは別のdrawで分類される。
+
+**生成の再現性**
+
+6. `sample`と`generate-value`は依然として周囲の`check-it:*size*`を読むため、
+   実行が生成する分布と食い違う。`sample`のdocstringは「specが何を認めるかを
+   見るため」と言うが、実行が決して引かない分布を見せうる。
+7. `check-it:*list-size*`・`*list-size-decay*`・`*num-trials*`は固定していない。
+   「生成は(spec, seed, backend)の関数である」はまだ真ではない。
+
+**registry**
+
+8. 上記の逆引きindexの件。
+
+**その他**
+
+9. `run-generated-test`の返すplistがgenericのdocstringに記述されていない。
+   0試行を`:skipped`へ写す規則により、`:trials`は事実上backend protocolの
+   必須keyになったが、protocolはそれを要求していない。
+10. `function-spec-data`の`:kind`は、`spec-data`（IRのkind）や`property-data`
+    （著者の分類）とは別の軸の値である。record typeの判別子としては使えない。
+11. `shared-initialize :around`のrollbackはslot名の手書きリストを使うため、
+    subclassのslotを戻さない。テストがリストとclassの一致を検査していない。
+12. `defproperty`は`defspec-function`より緩く、7つの形式で「受理したうえで
+    意味の一部を落とす」。厳しさ自体は契約側が正しいが、片方だけが厳しい状態は
+    APIとして一貫しない。既存定義を壊す変更になるため、単独で判断する。
+13. `:post`の戻り値束縛は、契約自身のpackageという代理で解決している。マクロは
+    `:post`の文面が読まれたpackageを見られないので、代理が外れうるケースは
+    すべて拒否している（§17）。恒久的な解は明示束縛
+    （`(:post (result) ...)`）だが、§17の公開例とcl-mcpのfixtureに波及する。
+
+### 解決（2026-09-12）
+
+上のうち 1・2・3・4・6・7・8 を実装し、修正前後の挙動を同一の入力で実測して回帰テストを追加した。
+5（分類の再実行が target を余分に呼ぶ）は未着手で、§73.2 の順序では今回の範囲外である。
+条項番号は変えない。
+
+| 項 | 直したこと | 修正前 → 修正後（実測） |
+|---|---|---|
+| 1 | `:pre` を `VALIDATE` で書くと `SPEC-VIOLATION` が `:CONTRACT-ERROR` になっていた。`PRECONDITION-REFUSES-P` がこれを棄却として扱う | 同一契約・同一seed: `:ERROR` / 棄却0 → `:PASSED` / 棄却23 |
+| 2 | 縮小結果の採否を reason keyword の `EQ` で判定していた。`FAILURE-SIGNATURE` が condition の型と、`:RETURN-SPEC` では `EXPLAIN-DATA` の `:ERRORS` の形（`:ACTUAL` を除いたもの）を較べる | 無関係な `SIMPLE-TYPE-ERROR` を縮小値として報告 → 実行が見つけた `SIMPLE-ERROR` を保持。`:RETURNS` の別の連言に移った候補も `:DIFFERENT-FAILURE` になる |
+| 3 | `:RETURNS` を先に分類するため、同じ契約の別の節に触れる正当な縮小が捨てられていた。`:RETURN-SPEC` と `:POSTCONDITION` を一つのクラスとして較べる | 縮小値が `NIL`（破棄）→ 採用（`:RETURN-SPEC` / `:USED`） |
+| 4 | 破棄が呼び出し側から見えなかった。`FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME` を追加（`:USED` / `:NONE` / `:DIFFERENT-FAILURE`） | 引数のない契約と破棄が同じ `NIL` → 区別できる |
+| 6 | `SAMPLE` / `GENERATE-VALUE` が周囲の `CHECK-IT:*SIZE*` を読んでいた | 周囲を `*SIZE*` 5000 にすると ±4000 → 既定と同一の列 |
+| 7 | `*LIST-SIZE*` / `*LIST-SIZE-DECAY*` / `*BIAS-SENSITIVITY*` / `*RECURSIVE-BIAS-DECAY*` が周囲に依存していた。`WITH-GENERATION-ENVIRONMENT` が `*SIZE*` と共に固定する | `*LIST-SIZE*` 1 の下で縮小候補が空リスト → 既定と同一の引数列 |
+| 8 | 逆引きindexが read-modify-write で、並行登録で更新が失われていた。`WITH-REGISTRY-LOCK` が定義表のロックを書き手と読み手の双方で取る | 8スレッド×500（開始バリアあり）で `PROPERTIES-FOR` 1211/4000 → 4000/4000 |
+
+回帰テストは `tests/function-spec-test.lisp`（1・2・3・4）、
+`tests/backends/check-it-test.lisp`（6・7）、`tests/registry-test.lisp`（8）にあり、
+いずれも修正前のコードで失敗することを確認してある。
+
+**レビューでの追加指摘2件**も直した。ひとつは 2 の最初の実装のバグで、`EXPLAIN-DATA` の
+トップレベルから `:kind` と `:path` を読んでいた（トップレベルに `:kind` は無く、`:PATH` は
+常に NIL）。そのため `:RETURN-SPEC` の signature が `(:return-value nil nil)` に潰れ、
+`:RETURNS` の別の連言へ移った候補を縮小として採用していた。もうひとつは
+`hash-table-registry` の `:INITFORM` が `:SYNCHRONIZED` を無条件で渡していたことで、
+このキーワードを受け付けない処理系では CL-SPEC 自体がロードできなかった（CLISP で実測:
+`SIMPLE-KEYWORD-ERROR`）。`MAKE-REGISTRY-TABLE` が、保証がある処理系でだけそれを要求する。
+
+レビュー2巡目でさらに2件。`FAILURE-SHAPE` が `:ERRORS` しか辿らず、`OR` が枝ごとの失敗を
+入れる `:BRANCHES` の中の `:ACTUAL` が署名に残っていた。そのため同じ枝を外す2つの入力が
+別の失敗と見なされ、正当な縮小が捨てられていた（`(or (range integer 0 10) string)` に対して
+`(- -1 value)`、seed 42 で `:DIFFERENT-FAILURE`、`:BRANCHES` も辿るようにして `:USED`）。
+また `:GENERATOR` を `NODE-ATTRIBUTES` の基本メソッドで出していたが、この総称関数のノード別
+メソッドは基本メソッドを**置き換える**ため、TYPE / RANGE / MEMBER / PREDICATE / INSTANCE-OF /
+REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの属性は `SPEC->DATA` が出す。
+
+追加の仕様判断として、ANDの畳み込みで連言のcustom generatorを無視する動作は廃止した。
+直接指定・別名参照・入れ子のANDのいずれでも、該当する連言があれば生成器構築時に
+`generator-unavailable`を通知する。生成方法を指定する場合はAND全体に`(:generator NAME)`を
+付ける。制約が満たされるまで無制限に生成し直す方式は採用しない。
+
+`:post`の複数形式は、先頭から短絡評価し、最初に偽を返した形式の位置を内部の分類に使う。
+別形式を破る縮小候補は`:different-failure`として棄却する。公開スロットは追加せず、DSLが
+生成する既存の述語からタグ付きの追加値として位置を返す。各形式の評価回数は増やさない。
+プログラムから直接渡された通常の述語は内部位置を持たず、引き続き1つの節として扱う。
+`:return-spec`と`:postcondition`間の移動を同じreturn-value失敗クラスとする既存の規則は維持する。
+
+タプルの要素位置は異なる制約を指すため、EXPLAIN-DATAの要素エラーに`:tuple-path`として
+保持し、失敗署名でも比較する。入れ子のタプルでは外側から内側への位置のリストとなる。
+一方、LIST-OFやVECTOR-OFの要素の添字は値の位置であり、従来どおり`:path`には含むが
+失敗署名には含めない。
+
+**残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
+backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と
+記録したのは property 側の経路なので、そこは変わっていない。property に分類を足すかは
+§13（property では condition も失敗）と衝突するため、別途判断が要る。
 
 ## 73.3 LLM向け有用性の評価
 

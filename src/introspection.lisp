@@ -22,6 +22,7 @@
                 #:spec-source-form
                 #:spec-source-location
                 #:spec-children
+                #:spec-generator-name
                 #:type-spec
                 #:type-spec-type-specifier
                 #:reference-spec
@@ -39,6 +40,17 @@
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:resolve-property)
+  (:import-from #:cl-spec/src/function-spec
+                #:resolve-function-spec
+                #:function-spec-name
+                #:function-spec-argument-specs
+                #:function-spec-return-spec
+                #:function-spec-preconditions
+                #:function-spec-postconditions
+                #:function-spec-documentation
+                #:function-spec-source-form
+                #:function-spec-source-location
+                #:function-spec-metadata)
   (:import-from #:cl-spec/src/property
                 #:property-name
                 #:property-arguments
@@ -58,6 +70,7 @@
            #:describe-property
            #:spec-data
            #:property-data
+           #:function-spec-data
            #:semantic-data))
 
 (in-package #:cl-spec/src/introspection)
@@ -72,38 +85,52 @@ introspection API."
           :package (source-location-package location))))
 
 (defgeneric node-attributes (spec)
-  (:documentation "Return the SPEC-DATA keys specific to SPEC's node type."))
+  (:documentation "Return the SPEC-DATA keys specific to SPEC's node type.
+
+Every per-node method combines with CALL-NEXT-METHOD rather than returning a fresh
+list, so a key added to the base method reaches every node type.  A method that
+replaces the base one drops it silently on the kinds that have a method of their
+own -- which is how :GENERATOR went missing from six node kinds before it moved to
+SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec spec))
   nil)
 
 (defmethod node-attributes ((spec type-spec))
-  (list :type (type-spec-type-specifier spec)))
+  (list* :type (type-spec-type-specifier spec) (call-next-method)))
 
 (defmethod node-attributes ((spec reference-spec))
-  (list :target (reference-spec-target spec)))
+  (list* :target (reference-spec-target spec) (call-next-method)))
 
 (defmethod node-attributes ((spec predicate-spec))
-  (list :predicate (predicate-spec-predicate spec)))
+  (list* :predicate (predicate-spec-predicate spec) (call-next-method)))
 
 (defmethod node-attributes ((spec member-spec))
-  (list :values (member-spec-values spec)))
+  (list* :values (member-spec-values spec) (call-next-method)))
 
 (defmethod node-attributes ((spec range-spec))
-  (list :base-type (range-spec-base-type spec)
-        :min (range-spec-minimum spec)
-        :max (range-spec-maximum spec)))
+  (list* :base-type (range-spec-base-type spec)
+         :min (range-spec-minimum spec)
+         :max (range-spec-maximum spec)
+         (call-next-method)))
 
 (defmethod node-attributes ((spec instance-of-spec))
-  (list :class-name (instance-of-spec-class-name spec)))
+  (list* :class-name (instance-of-spec-class-name spec) (call-next-method)))
 
 (defun spec->data (spec)
   "Return the SPEC-DATA plist for one IR node, recursing into its children.
 
 Every node carries the same keys whether or not they have a value, so that a
-consumer never has to distinguish an absent key from a NIL one."
+consumer never has to distinguish an absent key from a NIL one.
+
+The generator is emitted here because it belongs to the definition rather than to
+the node type, next to :NAME and :KIND.  It was in the base NODE-ATTRIBUTES method
+first, where the per-node methods dropped it for every TYPE, RANGE, MEMBER,
+PREDICATE, INSTANCE-OF and REFERENCE spec; those methods combine with
+CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
   (append (list :name (spec-name spec)
-                :kind (spec-kind spec))
+                :kind (spec-kind spec)
+                :generator (spec-generator-name spec))
           (node-attributes spec)
           (list :source-form (spec-source-form spec)
                 :source-location (source-location->data (spec-source-location spec)))
@@ -114,8 +141,9 @@ consumer never has to distinguish an absent key from a NIL one."
 (defun spec-data (spec-designator &key (registry *registry*))
   "Return a plist describing the registered spec named by SPEC-DESIGNATOR.
 
-  (:name <symbol> :kind <keyword> <node specific keys>
-   :source-form <form> :source-location (:file <string> :package <string>)
+  (:name <symbol> :kind <keyword> :generator <symbol or NIL>
+   <node specific keys> :source-form <form>
+   :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
 :CHILDREN is present only on nodes that have children.  This is what the JSON
@@ -146,6 +174,44 @@ compiled function cannot be read (specification §39)."
           :source-form (property-source-form property)
           :source-location (source-location->data (property-source-location property))
           :metadata (property-metadata property))))
+
+(defun function-spec-data (function-spec-designator &key (registry *registry*))
+  "Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
+
+  (:name <symbol> :kind :function-spec :documentation <string-or-nil>
+   :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
+   :preconditions (<form> ...) :returns <spec-data plist or NIL>
+   :postconditions (<form> ...) :source-form <form>
+   :source-location (:file <string> :package <string>) :metadata <plist>)
+
+This is the projection that answers the two questions a caller asks before
+editing a function: which inputs it accepts, and which output it must return
+(§28).  :ARGUMENTS and :RETURNS carry normalized IR rather than the designators
+as written, so a consumer reads one shape whether the contract named a spec or
+inlined it.
+
+:PRE and :POST are the forms as written.  Their compiled counterparts are not
+projected: a function cannot be read, and a caller who wants to know whether
+they hold runs CHECK-FUNCTION rather than inspecting them.
+
+Every key is always present, whatever its value, exactly as SPEC-DATA and
+PROPERTY-DATA promise."
+  (let ((contract (resolve-function-spec function-spec-designator registry)))
+    (list :name (function-spec-name contract)
+          ;; Constant, but present: SPEC-DATA and PROPERTY-DATA both carry a
+          ;; :KIND, and a consumer routing on it should not have to special
+          ;; case the one projection that lacks it.
+          :kind :function-spec
+          :documentation (function-spec-documentation contract)
+          :arguments (loop for (variable spec) in (function-spec-argument-specs contract)
+                           collect (list :variable variable :spec (spec->data spec)))
+          :preconditions (function-spec-preconditions contract)
+          :returns (let ((spec (function-spec-return-spec contract)))
+                     (when spec (spec->data spec)))
+          :postconditions (function-spec-postconditions contract)
+          :source-form (function-spec-source-form contract)
+          :source-location (source-location->data (function-spec-source-location contract))
+          :metadata (function-spec-metadata contract))))
 
 (defun semantic-data (symbol &key (registry *registry*))
   "Return a routing table of what REGISTRY knows about SYMBOL.

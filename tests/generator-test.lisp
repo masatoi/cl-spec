@@ -5,7 +5,8 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
-                #:no-generator-backend)
+                #:no-generator-backend
+                #:generator-unavailable)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:current-generator-backend
@@ -19,7 +20,10 @@
                 #:check-it-backend)
   (:import-from #:cl-spec/src/registry
                 #:make-hash-table-registry
-                #:registry-register-spec)
+                #:registry-register-spec
+                #:registry-register-generator)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/validator
@@ -77,3 +81,27 @@
   (testing "it is read live rather than snapshotted at load time"
     (ok (= 7 (let ((check-it:*num-trials* 7))
                (backend-default-trials (current-generator-backend)))))))
+
+(deftest a-custom-generator-is-what-the-backend-draws-from
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-generator
+     registry 'even-only
+     (make-instance 'custom-generator
+                    :name 'even-only
+                    :function (lambda () (* 2 (random 5)))))
+    (registry-register-spec registry 'even-number
+                            (normalize-spec-form '(and integer (range 0 8))
+                                                 :name 'even-number
+                                                 :generator 'even-only))
+    (testing "the values come from the generator rather than from the DSL"
+      ;; The spec admits odd numbers too, so twenty even values in a row is the
+      ;; generator's doing: at 1/2 each, the DSL would need about a million runs
+      ;; to produce that by chance.
+      (let ((values (sample 'even-number :count 20 :seed 11 :registry registry)))
+        (ok (every #'evenp values))))
+    (testing "a spec naming a generator that is not registered says so"
+      (registry-register-spec registry 'orphan
+                              (normalize-spec-form 'integer :name 'orphan
+                                                   :generator 'not-registered))
+      (ok (signals (sample 'orphan :count 1 :registry registry)
+                   'generator-unavailable)))))

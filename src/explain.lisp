@@ -272,7 +272,15 @@ explainers ask this before walking a value the caller supplied."
         (t
          (loop for function in compiled
                for index from 0
-               append (funcall function (elt value index) (cons index path))))))))
+               append (loop for datum in
+                             (funcall function (elt value index) (cons index path))
+                             collect
+                             (let ((copy (copy-list datum)))
+                               ;; Tuple positions select distinct specs. Collection
+                               ;; indices in :PATH only locate values.
+                               (setf (getf copy :tuple-path)
+                                     (cons index (getf datum :tuple-path)))
+                               copy))))))))
 
 (defmethod compile-node ((spec reference-spec) context)
   (let ((target (reference-spec-target spec))

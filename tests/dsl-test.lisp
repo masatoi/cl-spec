@@ -5,16 +5,26 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented
-                #:invalid-spec-form)
+                #:invalid-spec-form
+                #:invalid-generator-form)
   (:import-from #:cl-spec/src/ir
                 #:spec-kind
                 #:spec-name
-                #:spec-source-form)
+                #:spec-source-form
+                #:spec-generator-name)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:make-hash-table-registry
-                #:find-spec)
+                #:find-spec
+                #:find-generator)
+  (:import-from #:cl-spec/src/introspection
+                #:spec-data)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator
+                #:custom-generator-name
+                #:custom-generator-function
+                #:custom-generator-documentation
+                #:register-generator)
   (:import-from #:cl-spec/src/dsl
                 #:defspec
                 #:defspec-function
@@ -23,8 +33,7 @@
                 #:register-spec
                 #:normalize-spec-form
                 #:register-function-spec
-                #:expand-function-spec-definition
-                #:expand-generator-definition))
+                #:function-spec))
 
 (in-package #:cl-spec/tests/dsl-test)
 
@@ -47,22 +56,28 @@
                          (:args (amount positive-money))
                          (:returns transaction)))))
       (ok (eq 'register-function-spec (first expansion)))
-      (ok (eq 'expand-function-spec-definition (first (second expansion))))
-      (ok (eq 'transfer (second (second (second expansion))))))
+      (ok (eq 'make-instance (first (second expansion))))
+      (ok (eq 'function-spec (second (second (second expansion)))))
+      (ok (eq 'transfer (second (getf (cddr (second expansion)) :name)))))
     (let ((expansion (macroexpand-1
                        '(defgenerator small-integer () (random 100)))))
-      (ok (eq 'expand-generator-definition (first expansion)))
-      (ok (eq 'small-integer (second (second expansion)))))))
+      (ok (eq 'register-generator (first expansion)))
+      (ok (eq 'make-instance (first (second expansion))))
+      (ok (eq 'custom-generator (second (second (second expansion)))))
+      (ok (eq 'small-integer (second (getf (cddr (second expansion)) :name)))))))
 
 (deftest dsl-macros-signal-at-runtime
-  (testing "evaluating an expansion of DEFSPEC-FUNCTION or DEFGENERATOR reaches a
-stub and signals NOT-IMPLEMENTED"
-    (ok (signals (eval '(defspec-function transfer
-                         (:args (amount positive-money))
-                         (:returns transaction)))
-                 'not-implemented))
-    (ok (signals (eval '(defgenerator small-integer () (random 100)))
-                 'not-implemented))))
+  (testing "a DEFGENERATOR this version cannot honour is refused, not registered"
+    ;; A generator with parameters would need a syntax for a spec to pass them,
+    ;; and §11 defines none.  Accepting one would call the body without the
+    ;; bindings its author wrote.
+    (ok (signals (eval '(defgenerator parametrised (n) (* 2 n)))
+                 'invalid-generator-form)))
+  (testing "and a name that is not a symbol is refused too"
+    ;; The registry keys with EQ and sorts generator names by SYMBOL-NAME, so a
+    ;; non-symbol key made LIST-GENERATORS signal a TYPE-ERROR once there were two.
+    (ok (signals (eval '(defgenerator "aa" () 1))
+                 'invalid-generator-form))))
 
 (deftest defspec-registers-a-normalized-spec
   (let ((*registry* (make-hash-table-registry)))
@@ -150,3 +165,48 @@ is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
                           (:kind :invariant :extra)
                           (integerp x)))
                  'cl-spec/src/conditions:invalid-property-form))))
+
+(deftest defgenerator-registers-and-defspec-names-it
+  (let ((*registry* (make-hash-table-registry)))
+    (eval '(defgenerator an-even-number ()
+             "Draw an even number below ten."
+             (* 2 (random 5))))
+    (eval '(defspec even-number (and integer (range 0 8))
+             (:generator an-even-number)))
+    (testing "the generator is registered under its own name, with its prose"
+      (let ((generator (find-generator 'an-even-number)))
+        (ok generator)
+        (ok (eq 'an-even-number (custom-generator-name generator)))
+        (ok (string= "Draw an even number below ten."
+                     (custom-generator-documentation generator)))
+        (ok (functionp (custom-generator-function generator)))))
+    (testing "the spec carries the name, and introspection reports it"
+      (ok (eq 'an-even-number (spec-generator-name (find-spec 'even-number))))
+      (ok (eq 'an-even-number (getf (spec-data 'even-number) :generator))))
+    (testing "and SPEC-DATA reports it on every node type, not only the base one"
+      ;; The attribute is emitted by SPEC->DATA rather than by NODE-ATTRIBUTES:
+      ;; the node-specific methods replace the base method, so an attribute added
+      ;; there survives only on node kinds that have no method of their own
+      ;; (PR review).
+      (dolist (pair '((covered-type integer)
+                      (covered-range (range 1 10))
+                      (covered-member (member 1 2 3))
+                      (covered-predicate (satisfies oddp))
+                      (covered-instance (instance-of standard-object))
+                      (covered-reference an-even-number)))
+        (destructuring-bind (name form) pair
+          (eval `(defspec ,name ,form (:generator an-even-number)))
+          (testing (format nil "~S keeps the generator" form)
+            (ok (eq 'an-even-number (getf (spec-data name) :generator)))))))
+    (testing "an option DEFSPEC does not know is refused, not ignored"
+      ;; A definition that named a generator and lost the clause would look like
+      ;; a spec drawing from it while the backend derived values from the DSL.
+      (ok (signals (eval '(defspec odd-spec integer (:shrink :always)))
+                   'invalid-spec-form)))
+    (testing "and so is (:generator ...) naming something that is not a symbol"
+      (ok (signals (eval '(defspec odd-spec integer (:generator "even")))
+                   'invalid-spec-form)))
+    (testing "a spec object cannot take one after the fact"
+      (ok (signals (normalize-spec-form (normalize-spec-form 'integer)
+                                        :generator 'an-even-number)
+                   'invalid-spec-form)))))

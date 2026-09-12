@@ -33,7 +33,13 @@
   "The generator backend in effect, or NIL when none is installed.
 
 Loading the CL-SPEC/CHECK-IT system installs a CHECK-IT-BACKEND here.  Rebind
-it to swap backends for a dynamic extent, for example in tests.")
+it to swap backends for a dynamic extent, for example in tests.
+
+A rebinding does not cross a thread boundary.  §48 puts the time limit on the
+execution host, so a host that runs checks off the calling thread has to carry
+this value over itself -- PROGV, or an explicit argument.  Without that, a run
+started on another thread reads the global value, and if a backend is installed
+there it generates rather than reporting NO-GENERATOR-BACKEND.")
 
 (defun current-generator-backend ()
   "Return *GENERATOR-BACKEND*, signalling NO-GENERATOR-BACKEND when it is NIL."

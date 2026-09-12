@@ -49,8 +49,13 @@ introspection を実装するときに、アクセサを公開するか、`spec-
 
 ## 4. `defgenerator` の登録先がない
 
-**未決着**: `defgenerator` がMVPスコープ外のため（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md`
-§1.2）、この判断は先送りされたままである。
+**決着**（2026-09-12）: registry に4つ目の索引を足す。generator は spec / function-spec /
+property と同じく `*registry*` で隔離されるべきエンティティ種別であり、別に持つと
+`registry-clear` が generator を消し忘れる、`:registry` 引数の意味が種別ごとに変わる、
+という二つの不整合が生まれる。`src/registry.lisp` を変更するコストはその一貫性のために払う。
+
+以下の経緯は判断の根拠として残す。`defgenerator` がMVPスコープ外のため（`docs/superpowers/specs/2026-09-08-cl-spec-mvp-design.md`
+§1.2）、この判断は先送りされていた。
 
 `src/dsl.lisp` の `expand-generator-definition` の docstring は「ユーザー定義 generator を登録する」と書いているが、`hash-table-registry` は spec / function-spec / property の3索引しか持たない。generator は4つ目のエンティティ種別で、置き場所がない。
 
