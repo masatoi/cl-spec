@@ -102,9 +102,10 @@ The original form and the definition site are kept on the resulting spec.
 
 OPTIONS is a list of clauses.  The only one this version accepts is
 (:GENERATOR NAME), naming a DEFGENERATOR generator whose values the backend draws
-instead of deriving them from FORM (specification §11).  A spec reached only as a
-conjunct of an AND is the exception: the AND folds its type and range rather than
-consulting the generator, which CUSTOM-SPEC-GENERATOR documents."
+instead of deriving them from FORM (specification §11). If an AND would fold a
+conjunct with a custom generator, generator construction signals
+GENERATOR-UNAVAILABLE. Name a generator on the whole AND to choose its draws
+explicitly; the backend never silently ignores a conjunct's generator."
   (let ((location (current-source-location))
         (generator (spec-generator-option options)))
     `(register-spec ',name
@@ -283,6 +284,18 @@ lambda list is a compiler error about a form the author never wrote."
         (push name variables)))
     args))
 
+(defun expand-postcondition-forms (forms &optional (index 0))
+  "Compile short-circuiting FORMS with an internal failure index.
+The primary value remains the predicate result. Only a false result carries the
+tagged secondary values consumed by the function checker; no form runs twice."
+  (let ((value (gensym "POST-VALUE")))
+    `(let ((,value ,(first forms)))
+       (if ,value
+           ,(if (rest forms)
+                (expand-postcondition-forms (rest forms) (1+ index))
+                value)
+           (values nil ,index :cl-spec-post-form-failure)))))
+
 (defun expand-function-spec-definition (whole name clauses source-location)
   "Return the form DEFSPEC-FUNCTION expands into.
 
@@ -357,7 +370,7 @@ return value"
                        ,(when post
                           `(lambda (,result ,@variables)
                              (declare (ignorable ,result ,@variables))
-                             (and ,@post)))
+                             ,(expand-postcondition-forms post)))
                        :documentation ,documentation
                        :source-form ',whole
                        :source-location ',source-location)))))

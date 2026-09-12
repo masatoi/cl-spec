@@ -71,7 +71,7 @@
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
-| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの連言として参照されたspecではfoldが型と範囲だけを畳み、generatorを参照しない |
+| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 未実装 | `instrument-function`はstub |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
@@ -3547,6 +3547,22 @@ off-by-one。
 また `:GENERATOR` を `NODE-ATTRIBUTES` の基本メソッドで出していたが、この総称関数のノード別
 メソッドは基本メソッドを**置き換える**ため、TYPE / RANGE / MEMBER / PREDICATE / INSTANCE-OF /
 REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの属性は `SPEC->DATA` が出す。
+
+追加の仕様判断として、ANDの畳み込みで連言のcustom generatorを無視する動作は廃止した。
+直接指定・別名参照・入れ子のANDのいずれでも、該当する連言があれば生成器構築時に
+`generator-unavailable`を通知する。生成方法を指定する場合はAND全体に`(:generator NAME)`を
+付ける。制約が満たされるまで無制限に生成し直す方式は採用しない。
+
+`:post`の複数形式は、先頭から短絡評価し、最初に偽を返した形式の位置を内部の分類に使う。
+別形式を破る縮小候補は`:different-failure`として棄却する。公開スロットは追加せず、DSLが
+生成する既存の述語からタグ付きの追加値として位置を返す。各形式の評価回数は増やさない。
+プログラムから直接渡された通常の述語は内部位置を持たず、引き続き1つの節として扱う。
+`:return-spec`と`:postcondition`間の移動を同じreturn-value失敗クラスとする既存の規則は維持する。
+
+タプルの要素位置は異なる制約を指すため、EXPLAIN-DATAの要素エラーに`:tuple-path`として
+保持し、失敗署名でも比較する。入れ子のタプルでは外側から内側への位置のリストとなる。
+一方、LIST-OFやVECTOR-OFの要素の添字は値の位置であり、従来どおり`:path`には含むが
+失敗署名には含めない。
 
 **残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
 backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と

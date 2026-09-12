@@ -1296,6 +1296,101 @@ macro expansions would need the lint exemption that file carries."
                  (setf keys (explained-error-keys nested keys))))))
   keys)
 
+(defun demo-post-switch (value)
+  "Violate the lower bound except at zero, where the upper bound fails."
+  (if (zerop value) 20 -1))
+
+(defun demo-tuple-switch (value)
+  "Move the type failure between fixed tuple elements."
+  (if (zerop value) '(1 "bad") '("bad" 1)))
+
+(deftest check-function-preserves-post-form
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec-function demo-post-switch
+      (:args (value (range integer 0 10)))
+      (:post (>= result 0) (<= result 10)))
+    (let ((r (check-function 'demo-post-switch :trials 100 :seed 42)))
+      (ok (equal '(6) (loop for (nil v) on (property-result-counterexample r)
+                            by #'cddr collect v)))
+      (ok (eq :different-failure (function-check-result-shrunk-outcome r)))
+      (ok (null (property-result-shrunk-counterexample r)))
+      (ok (null (function-check-result-explanation r))))))
+
+(deftest check-function-preserves-tuple-element
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec-function demo-tuple-switch
+      (:args (value (range integer 0 10)))
+      (:returns (tuple integer integer)))
+    (let ((r (check-function 'demo-tuple-switch :trials 100 :seed 42)))
+      (ok (eq :different-failure (function-check-result-shrunk-outcome r)))
+      (ok (null (property-result-shrunk-counterexample r)))
+      (ok (equal '(0) (getf (first (getf (function-check-result-explanation r)
+                                       :errors)) :path))))))
+
+(deftest and-refuses-conjunct-generators
+  (let ((*registry* (make-hash-table-registry)))
+    (install-always-one *registry*)
+    (defspec alias-for-one always-one-spec)
+    (dolist (form '( (and always-one-spec integer)
+                    (and integer (and alias-for-one integer))))
+      (ok (handler-case
+              (progn (cl-spec/src/generator:generator-for
+                       (normalize-spec-form form)) nil)
+            (cl-spec/src/conditions:generator-unavailable () t))))
+    (ok (equal '(1 1 1)
+               (cl-spec/src/generator:sample 'always-one-spec :count 3 :seed 42)))
+    (defspec whole-and (and always-one-spec integer) (:generator always-one))
+    (ok (equal '(1 1 1)
+               (cl-spec/src/generator:sample 'whole-and :count 3 :seed 42)))))
+
+(deftest postcondition-evaluates-each-form-once
+  (let ((*registry* (make-hash-table-registry))
+        (calls nil))
+    (defspec-function demo-post-switch
+      (:args (value integer))
+      (:post (progn (push :first calls) (>= result 0))
+             (progn (push :second calls) (<= result 10))))
+    (let ((predicate (function-spec-postcondition-function
+                      (find-function-spec 'demo-post-switch))))
+      (ok (null (funcall predicate -1 0)))
+      (ok (equal '(:first) calls))
+      (setf calls nil)
+      (ok (null (funcall predicate 20 0)))
+      (ok (equal '(:second :first) calls))
+      (setf calls nil)
+      (ok (funcall predicate 5 0))
+      (ok (equal '(:second :first) calls)))))
+
+(deftest postcondition-keeps-the-same-form-reduction
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec-function demo-always-below-range
+      (:args (value (range integer 0 10)))
+      (:post (integerp result) (>= result 0) (error "must short-circuit")))
+    (let ((r (check-function 'demo-always-below-range :trials 100 :seed 42)))
+      (ok (eq :postcondition (function-check-result-failure-reason r)))
+      (ok (eq :used (function-check-result-shrunk-outcome r)))
+      (ok (equal '(0) (loop for (nil v) on (property-result-shrunk-counterexample r)
+                            by #'cddr collect v))))))
+
+(deftest tuple-shapes-preserve-nesting-but-ignore-collection-indices
+  (flet ((signature (form value)
+           (cl-spec/src/function-spec::failure-signature
+            :return-spec (explain-data (normalize-spec-form form) value) nil)))
+    (let ((form '(tuple (tuple integer integer) (tuple integer integer))))
+      (ok (not (cl-spec/src/function-spec::same-failure-p
+                (signature form '(("bad" 1) (1 1)))
+                (signature form '((1 "bad") (1 1))))))
+      (ok (not (cl-spec/src/function-spec::same-failure-p
+                (signature form '(("bad" 1) (1 1)))
+                (signature form '((1 1) ("bad" 1)))))))
+    (let ((form '(list-of (tuple integer integer))))
+      (ok (cl-spec/src/function-spec::same-failure-p
+           (signature form '((1 1) ("bad" 1)))
+           (signature form '(("bad" 1)))))
+      (ok (not (cl-spec/src/function-spec::same-failure-p
+                (signature form '(("bad" 1)))
+                (signature form '((1 "bad")))))))))
+
 (deftest every-explained-error-key-is-classified
   (testing "a new EXPLAIN-DATA key cannot slip past the failure shape unclassified"
     ;; FAILURE-SHAPE keeps a whitelist, so a key nobody has classified is dropped --

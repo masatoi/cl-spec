@@ -127,8 +127,8 @@ spec should be seen for what it is -- a property reporting a counterexample the
 contract refuses -- rather than hidden behind a guard, which as AND's method
 notes would retry with no depth limit.
 
-A spec reached only as a conjunct of an AND is the exception: FOLD-AND-CHILDREN
-resolves it and folds its type and range, and a generator cannot be folded."
+An AND that would fold a conjunct with a custom generator is refused by
+FOLD-AND-CHILDREN. A generator on the whole AND overrides folding explicitly."
   (let ((entry (registry-find-generator (context-registry context) name)))
     (unless entry
       (error 'generator-unavailable
@@ -348,8 +348,14 @@ its constraints or, worse, leave them to a GUARD-GENERATOR that rejects every
 draw forever.  The resolution is guarded by *REFERENCE-TRAIL* against
 recursion, exactly as the REFERENCE-SPEC method guards its own.  A nested
 AND-SPEC child is flattened the same way, so (AND A (AND B C)) folds
-identically to (AND A B C).  Anything else is collected into LEFTOVERS."
+identically to (AND A B C). A custom generator on any folded child is refused,
+including one reached through aliases: deriving values would discard its chosen
+distribution. Anything else is collected into LEFTOVERS."
   (dolist (child children)
+    (when (spec-generator-name child)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "a conjunct has a custom generator; name a generator on the whole AND"))
     (typecase child
       (type-spec
        (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))

@@ -415,7 +415,10 @@ a finding exactly as it was."
          (spec-violation () t))))
 
 (defun classify-function-failure (contract target arguments registry)
-  "Return (values REASON EXPLANATION CONDITION) for ARGUMENTS breaking CONTRACT.
+  "Return (values REASON DETAIL CONDITION) for ARGUMENTS breaking CONTRACT.
+
+DETAIL is EXPLAIN-DATA for a return-spec failure, or internal :POST-FORM metadata
+for a DSL postcondition failure. The public result exposes only EXPLAIN-DATA.
 
 REASON is NIL when ARGUMENTS do not break it -- including when :PRE refuses
 them, which makes them not a counterexample at all rather than a counterexample
@@ -465,15 +468,22 @@ and need not be this one."
                  (values :return-spec
                          (explain-data return-spec result :registry registry)
                          nil))
-                ((and postcondition (not (apply postcondition result arguments)))
-                 (values :postcondition nil nil))
+                (postcondition
+                 (multiple-value-bind (holds index tag)
+                     (apply postcondition result arguments)
+                   (if holds
+                       (values nil nil nil)
+                       (values :postcondition
+                               (when (eq tag :cl-spec-post-form-failure)
+                                 (list :post-form index))
+                               nil))))
                 (t (values nil nil nil)))))
       ((and error (not undefined-function) (not program-error)) (condition)
         (values :contract-error nil condition)))))
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
-    :status)
+    :status :tuple-path)
   "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
 
 A whitelist, not a list of keys to strip.  Stripping by name failed three times in
@@ -501,7 +511,7 @@ shrink of it by construction, so every key derived from one -- :ACTUAL,
 :ACTUAL-LENGTH, a :PATH into the value, a condition's :CONDITION-REPORT -- stays
 out of the shape, and every key derived from the spec -- :KIND, the :EXPECTED
 descriptor, :EXPECTED-LENGTH, :VIOLATED-BOUND, :PREDICATE, :CONDITION-TYPE, a
-conjunct's :STATUS -- stays in.  See *FAILURE-SHAPE-KEYS* for why that is a
+conjunct's :STATUS and fixed :TUPLE-PATH -- stays in.  See *FAILURE-SHAPE-KEYS* for why that is a
 whitelist rather than a list of keys to strip."
   (loop for (key value) on error-datum by #'cddr
         when (member key *failure-shape-containers*)
@@ -526,51 +536,24 @@ gave every return-spec failure the same key: a candidate that crossed from one
 conjunct of :RETURNS to another compared equal to the finding and was put forward
 as its reduction.  The shapes come from the nested errors instead."
   (case reason
-    (:return-spec (list :return-value (mapcar #'failure-shape
+    (:return-spec (list :return-value :return-spec (mapcar #'failure-shape
                                               (getf explanation :errors))))
-    (:postcondition (list :return-value))
+    (:postcondition (list :return-value :postcondition explanation))
     (:condition (list :target-signal (type-of condition)))
     (:contract-error (list :contract-error (type-of condition)))
     (t nil)))
 
 (defun same-failure-p (original candidate)
-  "Return true when CANDIDATE is a reduction of the failure ORIGINAL describes.
-
-Both arguments are FAILURE-SIGNATURE keys or NIL.  They name the same finding
-when they agree on the class of clause that broke and, within a class that admits
-more than one failure, on the detail that tells those failures apart.
-
-:POSTCONDITION and :RETURN-SPEC are one class.  Which of the two a value breaks
-first is a property of the order CLASSIFY-FUNCTION-FAILURE tests them in, not a
-difference in the finding, and comparing them by keyword discarded a legitimate
-reduction whenever the shrinker crossed from one to the other (§73.4 #3).  Two
-return-spec failures are compared further on the shape of their EXPLAIN-DATA
-errors: the return spec is a conjunction, and a value that misses a different
-conjunct is a different finding.
-
-:POSTCONDITION has no such detail, and cannot have it here: DEFSPEC-FUNCTION
-compiles a clause's forms into one predicate, so the classifier can say the
-postcondition is false but not which form made it false.  A candidate that breaks
-a different :POST form is therefore accepted.  It is still a counterexample of the
-same contract, so the finding holds; telling the forms apart would need one
-compiled predicate per form, which the contract does not keep.
-
-A signalled condition is compared on its type, for the same reason.  The backend
-counts any condition as \"still fails\" while shrinking, so a candidate that
-raises a different error is not a reduction of the original one.
-
-A target condition and a contract condition never compare equal: who is at fault
-is the whole point of the distinction."
-  (and original
-       candidate
+  "Compare failure signatures, retaining the existing cross-clause return rule.
+Two postcondition failures must identify the same form. Programmatically supplied
+predicates without the DSL's tagged secondary values remain one opaque clause.
+A return-spec failure and a postcondition failure still share a return-value
+failure class; two return-spec failures must agree on their spec-derived shape."
+  (and original candidate
        (eq (first original) (first candidate))
        (if (eq (first original) :return-value)
-           ;; A :POSTCONDITION key carries no detail, so it compares equal to any
-           ;; key of the same class; two return-spec keys have to agree on the
-           ;; conjunct that failed.
-           (or (null (rest original))
-               (null (rest candidate))
-               (equal (rest original) (rest candidate)))
+           (or (not (eq (second original) (second candidate)))
+               (equal (cddr original) (cddr candidate)))
            (equal (rest original) (rest candidate)))))
 
 (defun reproduce-function-failure (contract target result registry)
@@ -784,4 +767,4 @@ Nothing called the function, so nothing about it was checked."
                      :source-form (function-spec-source-form contract)
                      :rejected rejected
                      :failure-reason reason
-                     :explanation explanation))))
+                     :explanation (when (eq reason :return-spec) explanation)))))
