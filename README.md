@@ -9,9 +9,9 @@ property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
 required positional arguments and one return value, including custom generators
 for whole argument sets. Custom generators are
-implemented for functions of no arguments. The `describe-*` printers and
-instrumentation are still stubs that signal `not-implemented`. The cl-mcp adapter
-lives in cl-mcp, not here.
+implemented for functions of no arguments. Runtime instrumentation supports input,
+output and postcondition scopes through the optional `cl-spec/instrument` system.
+The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Systems
 
@@ -99,6 +99,50 @@ have no automatic shrink strategy; failures retain their original observation.
 The CLOS equivalent is `:argument-generator`; `function-spec-data` includes
 `:argument-generator` and the derived tuple `:argument-schema`.
 
+## Runtime instrumentation
+
+Load the optional system, then select the checks to enforce at call sites:
+
+```lisp
+(asdf:load-system :cl-spec/instrument)
+
+(defun positive-step (x) (1+ x))
+(cl-spec:defspec-function positive-step
+  (:args (x integer))
+  (:pre (plusp x))
+  (:returns integer)
+  (:post (> result x)))
+
+(cl-spec/instrument:instrument-function
+ 'positive-step :scopes '(:input :output :post))
+(positive-step 1) ; => 2
+;; (positive-step 0) signals an input/precondition violation before running the target.
+
+(cl-spec/instrument:instrumented-function-p 'positive-step) ; => T
+(cl-spec/instrument:uninstrument-function 'positive-step)   ; => T
+```
+
+All three scopes are enabled by default. `:input` checks arity, argument specs and
+`:pre`; `:output` checks the primary return value; `:post` checks postconditions.
+Checks use no generator. Violations are `cl-spec/instrument:instrumentation-violation`
+conditions, a subtype of `cl-spec:spec-violation`, with function, scope and reason
+readers in the instrumentation package. Existing spec-violation readers expose
+structured paths and errors. The target executes once; all its return values and
+conditions pass through when checks succeed. Pre/post predicate errors propagate;
+argument and return specs retain the ordinary validation/explanation behavior.
+
+Use `:registry` to select a registry; the earlier positional registry argument
+also works. Reinstall to refresh captured contracts or change scopes. Named spec
+references resolve in the selected registry on each call. Postconditions see the
+arguments after any target mutations, as in `check-function`.
+
+Uninstrumenting restores the original only if the current definition is still
+the installed wrapper. A later redefinition or `fmakunbound` is preserved.
+Only ordinary symbol-named functions outside `COMMON-LISP` are supported; macros,
+special operators and generic functions are refused. Captured function objects,
+lexical calls and inlined calls bypass the wrapper. Serialize installation/removal
+with function redefinition in concurrent applications.
+
 ## Verification evidence
 
 Property and function checks record each failing invocation with its input,
@@ -162,7 +206,10 @@ Construction availability does not promise a valid draw or an accepted reduction
 No trials, targets or custom generator bodies run during built-in introspection.
 Runs reuse capabilities captured from the actual compiled generator; older
 backends that omit this report produce `:unknown` capabilities in results.
-Instrumentation remains `:unavailable`. See specification §38.1 for the full contract.
+Instrumentation is `:available` for supported function targets after loading
+`cl-spec/instrument`, independently of the generator backend. This denotes support,
+not active wrapping; use `cl-spec/instrument:instrumented-function-p` for active state.
+See specification §38.1 for the full contract.
 
 Backend implementers must supply explicit nonnegative `:trials` counts and
 observations for failures. Missing counts or contradictory evidence signal

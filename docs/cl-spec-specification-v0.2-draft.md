@@ -73,7 +73,7 @@
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
-| Instrumentation | 未実装 | `instrument-function`はstub |
+| Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
 | timeout・状態隔離・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
 | state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
@@ -1298,49 +1298,62 @@ seedは通常の実行と同じrandom stateに適用されるため、generator�
 
 # 20. Runtime validation
 
-> **位置付け:** 一部実装。値のvalidationは実装済み。関数instrumentationは未実装。
+> **位置付け:** 実装済み。required positional argumentsと主返り値の契約を対象とする。
 
-Specを実行時contractにも利用できる。
-
-API：
-
-```lisp
-(validp 'positive-money value)
-
-(validate 'positive-money value)
-
-```
-
-差：
-
-```text
-VALIDP
-→ boolean
-
-VALIDATE
-→ value or structured condition
-
-```
-
-関数instrumentation：
+`validp`はboolean、`validate`は有効な値または構造化`spec-violation`を返す。
+関数の呼び出し時検査は独立system `cl-spec/instrument`を明示的にloadして有効化する。
+coreのみのloadでは関数定義を書き換えるmoduleもgenerator backendもloadしない。
 
 ```lisp
-(instrument 'transfer)
-
+(asdf:load-system :cl-spec/instrument)
+(cl-spec/instrument:instrument-function 'transfer
+  :registry cl-spec:*registry*
+  :scopes '(:input :output :post))
+(cl-spec/instrument:instrumented-function-p 'transfer)
+(cl-spec/instrument:uninstrument-function 'transfer)
 ```
 
-すると引数specを呼び出し時に検査する。
+公開packageは`cl-spec/src/instrument`、nicknameは`cl-spec/instrument`。
+`instrument-function`はNAMEを返し、同じ名前への再適用はラッパーを重ねず検査を更新する。
+従来の`(instrument-function name registry)`も利用できる。
 
-```lisp
-(uninstrument 'transfer)
+| scope | 検査内容 | 実行時点 |
+|---|---|---|
+| `:input` | 引数個数、各引数spec、`:pre` | target実行前 |
+| `:output` | 主返り値のspec | targetが正常に返った後 |
+| `:post` | 主返り値と引数の事後条件 | output検査の後 |
 
-```
+既定は全scope。部分集合・空listを指定できる。不明なscope・proper list以外は
+`type-error`で拒否し、既存の関数定義を変更しない。無効scopeの検査はコンパイルも実行もしない。
+targetは一度だけ実行し、正常時は全multiple valuesをそのまま返す。
+契約が検査するのは主返り値のみ（返り値0個の場合はNIL）。target自身のconditionはそのまま伝播する。
+pre/post predicateがerrorを通知した場合もそのconditionを伝播する。
+引数・戻り値specのpredicate errorは通常のexplain/validateと同じ規則で扱う。
 
-で解除する。
+違反は`instrumentation-violation`（`spec-violation`のsubtype）。
+`instrumentation-violation-function`、`-scope`、`-reason`で対象と分類を読み出す。
+reasonは`:arity`、`:argument-spec`、`:precondition`、`:return-spec`、`:postcondition`。
+既存の`spec-violation-spec/value/path/errors`も利用できる。
+pathのprefixは`(:args parameter)`、`(:pre)`、`(:returns)`、`(:post)`。
+DSLで識別できるpost形式は`(:post zero-based-index)`となる。
+引数・戻り値のerrorsはexplainerの構造化エラーを保持し、分類のために述語を再実行しない。
 
-本番環境ではoverheadを避けるため原則無効。
+インストール時の契約の引数名・直接のspec検査・pre/post関数を保持する。
+契約を再定義したら再インストールする。名前によるspec参照は既存explainerと同じく、
+選択したregistryから呼び出しごとに解決する。postにはtargetによる変更後の引数を渡す
+（`check-function`と同じ意味論）。generatorと`:args-generator`は使用しない。
 
-development / CI / stagingで利用する。
+`instrumented-function-p`は現在のfdefinitionと自分のwrapperの同一性を検査する。
+解除はwrapperが現在も有効な場合のみ元関数を復元してTを返す。
+未登録・再定義済み・fmakunbound済みならNILを返し、内部記録だけを除去する。
+再定義後の再インストールは新しい関数を対象にする。
+
+対象はCOMMON-LISP package以外のsymbolで命名された通常関数に限る。
+未知の契約は`unknown-function-spec`、未定義関数・macro・special operator・generic function・
+COMMON-LISPの関数は`program-error`で拒否する。
+既に保存されたfunction object、lexical function、inline展開済み呼び出しは捕捉できない。
+並行実行時のインストール・解除・関数再定義は呼び出し側が直列化する。
+productionでのoverheadを避ける場合は有効化しない。
 
 ---
 
@@ -2107,7 +2120,10 @@ backend無しは`:generation :unavailable :shrinking :unavailable`、query未実
 縮小を無効化したproperty、空tuple、rootがcustom generator（参照経由を含む）、tuple/mappingの
 全要素に縮小戦略が無い場合は`:shrinking :none`。listは要素がcustomでも長さを縮小できる。
 他の`:available`は縮小戦略の存在だけを意味し、要素ごとの縮小可能性や
-必ず有効な縮小候補が得られることを保証しない。`:instrumentation`は現時点で`:unavailable`。
+必ず有効な縮小候補が得られることを保証しない。`:instrumentation`はcoreのみでは`:unavailable`。
+`cl-spec/instrument`をloadすると、対応する通常関数のfunction-specに対して`:available`となる。
+spec・property・未定義関数・非対応targetには`:unavailable`を返す。
+これは有効化状態ではなく利用可能性であり、現在の有効化状態は`instrumented-function-p`で確認する。
 capabilityは現在のbackendに依存するがdigestには含めない。
 
 `run-property`と`check-function`は生成開始前に定義のメタデータを捕捉する。

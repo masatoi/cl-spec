@@ -271,7 +271,8 @@ backend."
       (let ((capabilities (copy-list (getf outcome :capabilities))))
         (when (eq :none (getf (getf metadata :capabilities) :shrinking))
           (setf (getf capabilities :shrinking) :none))
-        (setf (getf capabilities :instrumentation) :unavailable
+        (setf (getf capabilities :instrumentation)
+              (getf (getf metadata :capabilities) :instrumentation)
               (getf metadata :capabilities) capabilities)))
     (make-instance 'property-result
                    ;; Zero generated trials or all preconditions rejected means

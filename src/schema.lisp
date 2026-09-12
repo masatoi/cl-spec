@@ -25,7 +25,8 @@
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:backend-capabilities)
   (:export #:schema-info #:definition-digest #:definition-metadata
            #:definition-description #:definition-entity-kind #:definition-generation-schema
-           #:resolve-definition #:definition-shrink-enabled-p))
+           #:resolve-definition #:definition-shrink-enabled-p
+           #:definition-instrumentation-capability))
 
 (in-package #:cl-spec/src/schema)
 
@@ -255,6 +256,14 @@ NIL/NIL. Extension programming errors propagate rather than becoming incompleten
       (let ((digest (canonical-digest (nreverse records))))
         (values digest (not (null digest)))))))
 
+(defgeneric definition-instrumentation-capability (definition)
+  (:documentation "Return :AVAILABLE or :UNAVAILABLE for runtime instrumentation support.
+The core default is :UNAVAILABLE; only the optional instrumentation module enables it.
+This reports support, not whether the target is currently instrumented.")
+  (:method ((definition t))
+    (declare (ignore definition))
+    :unavailable))
+
 (defun metadata-definition-p (definition)
   "Return true for an entity supported by the public metadata envelope."
   (not (null (member (definition-entity-kind definition) '(:spec :property :function-spec)))))
@@ -275,7 +284,8 @@ to avoid compiling a disposable generator before constructing the actual one."
       (unless (definition-shrink-enabled-p definition)
         (setf (getf capabilities :shrinking) :none))
       ;; Instrumentation belongs to the separate core module, not the generator backend.
-      (setf (getf capabilities :instrumentation) :unavailable)
+      (setf (getf capabilities :instrumentation)
+            (definition-instrumentation-capability definition))
       (list :schema-version 1 :record-kind :definition
             :entity-kind (definition-entity-kind definition)
             :definition-digest digest :definition-digest-complete complete
