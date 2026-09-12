@@ -16,8 +16,7 @@
                 #:*bias-sensitivity*
                 #:*recursive-bias-decay*
                 #:cached-value
-                #:shrink
-                #:tuple-generator)
+                #:shrink)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator)
   (:import-from #:cl-spec/src/generator
@@ -27,13 +26,16 @@
                 #:run-generated-test
                 #:backend-default-trials)
   (:import-from #:cl-spec/src/execution
-                #:snapshot-value #:observe-trial #:observation-failure-p #:failure-identities-match-p #:same-value-p
+                #:snapshot-value #:observe-trial #:observation-failure-p
+                #:failure-identities-match-p #:same-value-p
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status
                 #:trial-observation-signature)
+  (:import-from #:cl-spec/src/conditions #:invalid-generated-arguments)
+  (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/property
-                #:property-arguments
+                #:property-arguments #:property-argument-schema
                 #:property-metadata)
   (:import-from #:cl-spec/src/utils/random
                 #:seed->random-state)
@@ -166,6 +168,27 @@ distribution no run draws (§73.4 #6)."
            (setf arguments (cdr arguments)))
   (null arguments))
 
+(defun validate-generated-arguments (name validators arguments)
+  "Reject malformed or out-of-domain custom draws before evaluating a contract."
+  (let ((tail arguments))
+    (dolist (validator validators)
+      (declare (ignore validator))
+      (unless (consp tail)
+        (error 'invalid-generated-arguments :generator name
+               :value (snapshot-value arguments) :reason "expected a proper list of the arity"))
+      (setf tail (cdr tail)))
+    (when tail
+      (error 'invalid-generated-arguments :generator name
+             :value (snapshot-value arguments) :reason "expected a proper list of the arity")))
+  (let ((before (snapshot-value arguments)))
+    (unless (admitted-arguments-p validators arguments)
+      (error 'invalid-generated-arguments :generator name
+             :value before :reason "an argument does not satisfy its spec"))
+    (unless (same-value-p before arguments)
+      (error 'invalid-generated-arguments :generator name
+             :value before :reason "validation mutated the generated argument set")))
+  arguments)
+
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
   "Generate trials and retain only admitted, observed reductions of the original failure.
 The shrinker's return value is not evidence: some generators transform it after
@@ -174,20 +197,20 @@ calling user code, and keep existing evidence if shrinking itself fails."
   (let* ((context (list :registry (getf options :registry)))
          (trials (getf options :trials))
          (shrink-p (getf (property-metadata property) :shrink t))
-         (compiled (loop for (nil spec) in (property-arguments property)
-                         collect (compile-generator backend spec :context context)))
+         (schema (property-argument-schema property))
+         (custom-name (spec-generator-name schema))
+         (compiled (compile-generator backend schema :context context))
          (validators (loop for (nil spec) in (property-arguments property)
                            collect (compile-validator spec :context context)))
-         (generator (make-instance 'tuple-generator
-                                   :sub-generators
-                                   (mapcar #'compiled-generator-generator compiled)))
+         (generator (compiled-generator-generator compiled))
          (rejected 0))
     (with-generation-environment
-        ((reduce #'max compiled
-                 :key #'compiled-generator-size :initial-value *base-size*)
+        ((max *base-size* (compiled-generator-size compiled))
          :trials trials)
       (loop for trial from 1 to trials
             do (generate generator)
+               (when custom-name
+                 (validate-generated-arguments custom-name validators (cached-value generator)))
                (let ((original (observe-trial property (cached-value generator)
                                               :context context)))
                  (when (eq :rejected (trial-observation-status original))

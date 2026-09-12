@@ -7,7 +7,8 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required positional arguments and one return value. Custom generators are
+required positional arguments and one return value, including custom generators
+for whole argument sets. Custom generators are
 implemented for functions of no arguments. The `describe-*` printers and
 instrumentation are still stubs that signal `not-implemented`. The cl-mcp adapter
 lives in cl-mcp, not here.
@@ -55,6 +56,48 @@ The vertical slice from specification §67, working end to end:
 (cl-spec:properties-for '+)
 (cl-spec:run-property 'addition-preserves-order)
 ```
+
+## Generate related arguments together
+
+Use `:args-generator` when independently generated arguments would mostly be
+rejected by `:pre`. A registered generator returns the whole positional argument
+list in one draw:
+
+```lisp
+(defun bounded-value (low high value)
+  (declare (ignore low high))
+  value)
+
+(cl-spec:defgenerator bounded-arguments ()
+  (let* ((low (random 10))
+         (high (+ low 1 (random 10)))
+         (value (+ low (random (1+ (- high low))))))
+    (list low high value)))
+
+(cl-spec:defspec-function bounded-value
+  (:args (low (range integer 0 20))
+         (high (range integer 0 20))
+         (value (range integer 0 20)))
+  (:args-generator bounded-arguments)
+  (:pre (< low high) (<= low value high))
+  (:returns integer))
+
+(let ((result (cl-spec:check-function 'bounded-value :trials 100 :seed 42)))
+  (list :generated (cl-spec:property-result-trials result)
+        :rejected (cl-spec:function-check-result-rejected result)))
+;; => (:GENERATED 100 :REJECTED 0) — all 100 draws checked the function.
+```
+
+In the regression example, independent generation checked 20 of 100 draws;
+the coordinated generator checked all 100. Each custom draw must be a proper
+list of the declared arity and satisfy every argument spec before `:pre` or the
+target runs. Invalid output signals `invalid-generated-arguments`, without retries.
+`:pre` still rejects valid tuples that fail its additional constraints.
+
+Use the run's random state, as above, for seeded replay. Custom argument tuples
+have no automatic shrink strategy; failures retain their original observation.
+The CLOS equivalent is `:argument-generator`; `function-spec-data` includes
+`:argument-generator` and the derived tuple `:argument-schema`.
 
 ## Verification evidence
 

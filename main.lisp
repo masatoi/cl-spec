@@ -33,6 +33,8 @@
                 #:invalid-function-spec-form-form
                 #:invalid-function-spec-form-reason
                 #:invalid-generator-form
+                #:invalid-generated-arguments #:invalid-generated-arguments-generator
+                #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
                 #:invalid-generator-form-form
                 #:invalid-generator-form-reason
                 #:generator-unavailable
@@ -107,6 +109,7 @@
                 #:property
                 #:property-name
                 #:property-arguments
+                #:property-argument-schema
                 #:property-targets
                 #:property-kind
                 #:property-tags
@@ -160,6 +163,7 @@
                 #:function-spec
                 #:function-spec-name
                 #:function-spec-argument-specs
+                #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
@@ -226,6 +230,8 @@
            #:invalid-function-spec-form-form
            #:invalid-function-spec-form-reason
            #:invalid-generator-form
+           #:invalid-generated-arguments #:invalid-generated-arguments-generator
+           #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
            #:invalid-generator-form-form
            #:invalid-generator-form-reason
            #:generator-unavailable
@@ -300,6 +306,7 @@
            #:property
            #:property-name
            #:property-arguments
+           #:property-argument-schema
            #:property-targets
            #:property-kind
            #:property-tags
@@ -353,6 +360,7 @@
            #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
+           #:function-spec-argument-generator #:function-spec-argument-schema
            #:function-spec-return-spec
            #:function-spec-preconditions
            #:function-spec-postconditions

@@ -70,7 +70,7 @@
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 未実装 | `instrument-function`はstub |
@@ -1063,6 +1063,7 @@ D1（対応範囲）の決定：
 | 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
 | `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
 | pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
+| 全引数generator | `(:args-generator NAME)`で登録済み`defgenerator`を指定可能。引数順のproper listを一回で生成し、個数と各specを検証した後に`:pre`を適用する |
 | `result`の束縛 | 契約自身のpackageで`RESULT`が指すsymbolを、`:post`に現れかつ引数名でない場合に束縛する。`:post`に現れる`RESULT`という名前のsymbolがそれと一致しない場合は拒否する。マクロは`:post`の文面が読まれたpackageを見られないので、この解決は代理であり、外した場合に黙って別の契約をコンパイルするより拒否する。`:pre`が戻り値の名前に触れる形式も拒否する（引数名である場合を除く） |
 | 実行前の可変値の参照 | pre-stateを参照するDSLは未提供。観測には実行前のcons・配列のコピーを保存するが、任意の状態の復元は行わない |
 | signals | 対応しない。`(:signals ...)`を含む未知のclauseは拒否する |
@@ -1086,6 +1087,11 @@ D1（対応範囲）の決定：
 - 引数と戻り値のspec designatorは拒否せず正規化する。述語と違い
   `normalize-spec-form`で復元でき、正規化済みのspecはそのまま返るので、
   DSLの出力は素通りする。
+- `:argument-generator`はgenerator名のsymbolまたは`nil`。`nil`は独立生成を表す。
+  generatorの登録は実行時のregistryで解決し、前方定義を許す。
+  `function-spec-argument-generator`はその名前を返し、`function-spec-argument-schema`は
+  現在の引数specとgenerator名からtuple specを導出する。schemaは保存しないため、
+  `reinitialize-instance`後にも古い引数宣言を使い続けない。
 
 これらは`shared-initialize`で検査する。`make-instance`だけがslotを埋める
 標準の経路ではなく、`reinitialize-instance`と`change-class`も同じslotに届く。
@@ -1213,7 +1219,8 @@ status・failure-reason・condition・縮小反例は採用した一つの観測
 
 # 19. Preconditionの扱い
 
-> **位置付け:** 一部実装。棄却と件数の報告は実装済み。dependent generatorは未実装。
+> **位置付け:** 一部実装。棄却と件数の報告、function-level argument-set generatorは実装済み。
+> 個々の引数から別の引数を参照するdependent DSLや制約solverは未実装。
 
 以下のような入力生成は避けるべきである。
 
@@ -1247,10 +1254,45 @@ status・failure-reason・condition・縮小反例は採用した一つの観測
 
 `check-it` はchained generatorを提供しているため、この用途で利用できる。
 
-現在の実装は`:pre`を満たさない生成入力を棄却し、その件数を結果に載せる。
-生成側へ制約を反映するdependent generatorは未実装であり、棄却率の高い契約では
-実際に検査された件数が試行数より大幅に少なくなる。棄却数は結果から読めるので、
-この不足は隠れずに現れる。
+現在は、関数全体にcustom generatorを指定して引数間の制約を生成側へ反映できる。
+
+```lisp
+(defgenerator bounded-arguments ()
+  (let* ((low (random 10))
+         (high (+ low 1 (random 10)))
+         (value (+ low (random (1+ (- high low))))))
+    (list low high value)))
+
+(defspec-function bounded-value
+  (:args (low (range integer 0 20))
+         (high (range integer 0 20))
+         (value (range integer 0 20)))
+  (:args-generator bounded-arguments)
+  (:pre (< low high) (<= low value high))
+  (:returns integer))
+```
+
+`(:args-generator NAME)`を省略した場合は従来の独立生成である。内部では全引数を一つの
+tuple schemaとしてcompileする。backendは`property-argument-schema`を使い、
+Function Specのadapterは`function-spec-argument-schema`を返す。
+`function-spec-data`の`:argument-generator`と`:argument-schema`からこの指定を読める。
+schemaは通常のspec-dataで、generator未指定時にも両キーを返す。
+
+generatorは引数なしで一回呼ばれ、引数順のproper listを返す（引数なしの関数では`nil`）。
+個数・型・各specの違反、検証中のcons/配列の変更は`invalid-generated-arguments`となる。
+そのreaderは`invalid-generated-arguments-generator`、`-value`、`-reason`で、
+検証前の生成値を確認できる。targetや`:pre`は呼ばれず、関数の反例として報告しない。
+generator自身のerrorは伝播し、有効な値が出るまで再試行する隠れたloopはない。
+この検証は全引数generatorの規則であり、§11の単一spec custom generatorの規則とは異なる。
+
+有効な引数でも`:pre`を満たさなければ棄却し、その件数を結果に載せる。
+seedは通常の実行と同じrandom stateに適用されるため、generatorがそのstateを使い、
+外部状態に依存しなければ入力列を再現できる。custom tupleに縮小方法は定義しない。
+失敗時は元の観測を保持して`:shrunk-outcome :none`とし、独立生成用shrinkerへ置き換えない。
+
+上記3変数の比較テスト（100生成、seed 42）では、独立生成は80棄却・20回の関数検査、
+全引数generatorは0棄却・100回の関数検査となった。これはこの生成分布での実測であり、
+一般にcustom generatorが`:pre`を満たす保証ではない。
 
 ---
 
@@ -3494,8 +3536,8 @@ off-by-one。
    adapter側に明示的な試行数の引数が要る。cl-spec本体では`check-function`の
    `:trials`で足りる。
 2. 棄却率が80%を超えるのは、独立に生成した3つの整数に`(< low high)`と
-   `(<= low value high)`を課したためである。§19のdependent generatorが
-   未実装である限り、この形の契約は試行数で殴るしかない。
+   `(<= low value high)`を課したためである。当時は生成側にこの関係を反映できなかった。
+   現在は§19の`(:args-generator NAME)`で引数集合全体を生成できる。
 3. 反例が「境界1点」である場合、一様生成では到達確率が試行数に線形にしか
    効かない。§46のProperty品質と同じ問題が契約側にもある。
 

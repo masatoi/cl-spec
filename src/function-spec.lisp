@@ -17,8 +17,9 @@
                 #:*registry*
                 #:registry-find-function-spec
                 #:registry-register-function-spec)
+  (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
-                #:property)
+                #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
                 #:property-result-status
@@ -45,6 +46,7 @@
   (:export #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
+           #:function-spec-argument-generator #:function-spec-argument-schema
            #:function-spec-return-spec
            #:function-spec-preconditions
            #:function-spec-postconditions
@@ -79,6 +81,12 @@
 order, from :ARGS.  SPEC is always a Semantic IR object: a designator handed to
 the constructor is normalized in place, so every reader sees one shape.  Each
 PARAMETER is named once.")
+   (argument-generator :initarg :argument-generator
+                       :initform nil
+                       :reader function-spec-argument-generator
+                       :documentation "Name of a registered no-argument generator returning
+the entire positional argument list, or NIL for independent argument generation.
+Each draw is checked against the argument specs before preconditions or the target.")
    (return-spec :initarg :return-spec
                 :initform nil
                 :reader function-spec-return-spec
@@ -136,7 +144,7 @@ The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
-  '(name argument-specs return-spec preconditions postconditions
+  '(name argument-specs argument-generator return-spec preconditions postconditions
     precondition-function postcondition-function documentation-string
     source-form source-location metadata)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
@@ -265,9 +273,19 @@ would run while introspection reported no such clause"
                        (refuse entry "the same parameter is named twice"))
                      (push (first entry) seen)
                   collect (list (first entry) (normalize-spec-form (second entry))))))
+    (let ((generator (function-spec-argument-generator contract)))
+      (unless (or (null generator)
+                  (and (symbolp generator) (not (keywordp generator))))
+        (refuse generator ":argument-generator must be NIL or a registered generator name")))
     (let ((returns (function-spec-return-spec contract)))
       (when returns
         (setf (slot-value contract 'return-spec) (normalize-spec-form returns))))))
+
+(defun function-spec-argument-schema (contract)
+  "Derive the whole argument tuple schema from CONTRACT's current declarations."
+  (make-instance 'tuple-spec
+                 :element-specs (mapcar #'second (function-spec-argument-specs contract))
+                 :generator (function-spec-argument-generator contract)))
 
 (defun register-function-spec (function-spec &optional (registry *registry*))
   "Register FUNCTION-SPEC in REGISTRY under its own name and return it."
@@ -483,6 +501,10 @@ as its reduction.  The shapes come from the nested errors instead."
   ((contract :initarg :contract :reader checked-contract)
    (target :initarg :target :reader checked-target))
   (:documentation "Internal property adapter whose trial evaluation records the contract outcome."))
+
+(defmethod property-argument-schema ((property function-check-property))
+  "Use the function's whole argument schema, including its custom generator."
+  (function-spec-argument-schema (checked-contract property)))
 
 (defmethod evaluate-trial ((property function-check-property) arguments &key context)
   "Call the target once and classify that invocation before returning its evidence."
