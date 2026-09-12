@@ -9,7 +9,14 @@
 (defpackage #:cl-spec/src/generator
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:no-generator-backend)
+                #:no-generator-backend
+                #:invalid-backend-result)
+  (:import-from #:cl-spec/src/property #:property-arguments)
+  (:import-from #:cl-spec/src/execution
+                #:*trial-observations* #:observation-from-current-run-p #:trial-observation-status
+                #:trial-observation-arguments #:trial-observation-signature
+                #:trial-observation-condition #:observation-failure-p
+                #:failure-identities-match-p #:same-value-p)
   (:import-from #:cl-spec/src/ir
                 #:spec)
   (:import-from #:cl-spec/src/registry
@@ -59,10 +66,113 @@ everything except BACKEND and GENERATE-VALUE."))
 SEED, when supplied, makes the value reproducible (specification §15)."))
 
 (defgeneric run-generated-test (backend property &key options)
-  (:documentation "Run PROPERTY on BACKEND and return a PROPERTY-RESULT.
+  (:documentation "Run PROPERTY and return a validated backend outcome plist.
+OPTIONS must contain :TRIALS, a nonnegative integer budget, and may carry :REGISTRY.
+The outcome requires :STATUS (:passed, :failed, :error or :skipped) and :TRIALS,
+the nonnegative count actually generated, never greater than the budget.
+:REJECTED counts precondition refusals in generated trials, excluding shrinking.
+Failures require :FAILURE (a TRIAL-OBSERVATION), :SHRUNK-OUTCOME (:none, :used or
+:different-failure), and optionally :SHRUNK-FAILURE (an observed matching failure).
+Only :used carries a shrink observation. Status describes the selected observation.
+Backends must use OBSERVE-TRIAL, preserve original evidence, and never label an
+untested shrink return value as a counterexample. :PASSED consumes the full budget."))
 
-The backend owns trial generation, failure detection and shrinking; the caller
-owns interpretation of the result."))
+(defun proper-list-p (value)
+  "Recognize a finite proper list without traversing its elements."
+  (let ((seen (make-hash-table :test #'eq)))
+    (loop for tail = value then (cdr tail)
+          while tail
+          do (unless (and (consp tail) (not (gethash tail seen)))
+               (return-from proper-list-p nil))
+             (setf (gethash tail seen) t))
+    t))
+
+(defun finite-signature-p (value)
+  "Require a proper signature spine and acyclic nested constants before comparison."
+  (let ((active (make-hash-table :test #'eq)))
+    (labels ((walk (item)
+               (cond
+                 ((null item) t)
+                 ((atom item) t)
+                 ((gethash item active) nil)
+                 (t
+                  (setf (gethash item active) t)
+                  (prog1 (and (walk (car item)) (walk (cdr item)))
+                    (remhash item active))))))
+      (and (consp value) (proper-list-p value) (walk value)))))
+
+(defun validate-backend-outcome (outcome property budget)
+  "Reject missing counts, contradictory statuses and unsupported shrink evidence."
+  (flet ((refuse (reason)
+           (error 'invalid-backend-result :reason reason)))
+    (let ((tail outcome) (seen nil) (cells (make-hash-table :test #'eq)))
+      (loop while tail
+            do (unless (and (consp tail) (consp (cdr tail))
+                            (keywordp (car tail))
+                            (not (member (car tail) seen))
+                            (not (gethash tail cells)))
+                 (refuse "outcome must be a proper keyword plist without duplicate keys"))
+               (setf (gethash tail cells) t)
+               (push (car tail) seen)
+               (setf tail (cddr tail))))
+    (let* ((status (getf outcome :status))
+           (trials (getf outcome :trials :missing))
+           (rejected (getf outcome :rejected 0))
+           (original (getf outcome :failure))
+           (shrunk (getf outcome :shrunk-failure))
+           (disposition (getf outcome :shrunk-outcome))
+           (selected (or shrunk original)))
+      (unless (and (integerp trials) (<= 0 trials budget))
+        (refuse ":trials is required and must be an integer between zero and the budget"))
+      (unless (and (integerp rejected) (<= 0 rejected trials))
+        (refuse ":rejected must count only generated trials"))
+      (unless (member status '(:passed :failed :error :skipped))
+        (refuse "unknown or missing :status"))
+      (cond
+        ((member status '(:passed :skipped))
+         (when (or original shrunk disposition)
+           (refuse "a nonfailing outcome cannot carry failure evidence"))
+         (when (and (eq status :passed) (/= trials budget))
+           (refuse ":passed must account for the full trial budget"))
+         (when (and (eq status :skipped) (/= trials rejected))
+           (refuse ":skipped cannot contain admitted trials")))
+        (t
+         (unless (and (plusp trials) (< rejected trials)
+                      (observation-failure-p original))
+           (refuse "a failing outcome requires an observed original failure"))
+         (dolist (observation (remove nil (list original shrunk)))
+           (unless (and (observation-failure-p observation)
+                        (finite-signature-p (trial-observation-signature observation))
+                        (proper-list-p (trial-observation-arguments observation))
+                        (observation-from-current-run-p observation property)
+                        (= (length (trial-observation-arguments observation))
+                           (length (property-arguments property)))
+                        (if (eq :error (trial-observation-status observation))
+                            (typep (trial-observation-condition observation) 'error)
+                            (null (trial-observation-condition observation))))
+             (refuse "failure evidence has invalid status, identity, arguments or condition")))
+         (unless (member disposition '(:none :used :different-failure))
+           (refuse "failures require an explicit :shrunk-outcome"))
+         (unless (eq (not (null shrunk)) (eq disposition :used))
+           (refuse ":used must identify an observed shrunk failure"))
+         (when (and shrunk
+                    (or (not (failure-identities-match-p
+                              (trial-observation-signature original)
+                              (trial-observation-signature shrunk)))
+                        (same-value-p (trial-observation-arguments original)
+                                      (trial-observation-arguments shrunk))))
+           (refuse "shrunk evidence must preserve failure identity and change the input"))
+         (unless (eq status (trial-observation-status selected))
+           (refuse "status must describe the selected counterexample"))))
+      outcome)))
+
+(defmethod run-generated-test :around (backend property &key options)
+  "Enforce the backend count and observation protocol at its public boundary."
+  (let ((budget (getf options :trials :missing))
+        (*trial-observations* (list nil)))
+    (unless (and (integerp budget) (not (minusp budget)))
+      (error 'type-error :datum budget :expected-type '(integer 0 *)))
+    (validate-backend-outcome (call-next-method) property budget)))
 
 (defgeneric backend-default-trials (backend)
   (:documentation "Return the trial count BACKEND uses when a property names none.

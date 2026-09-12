@@ -11,6 +11,11 @@
                 #:property-name
                 #:property-arguments
                 #:property-trials)
+  (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-arguments #:trial-observation-condition
+                #:trial-observation-reason #:trial-observation-signature
+                #:trial-observation-explanation)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -22,7 +27,12 @@
   (:import-from #:cl-spec/src/utils/random
                 #:make-seed
                 #:seed->random-state)
-  (:export #:property-result
+  (:export #:property-result-entity-kind
+           #:property-result-failure-evidence #:property-result-shrunk-evidence
+           #:property-result-shrunk-outcome #:property-result-rejected
+           #:property-result-failure-reason #:property-result-failure-signature
+           #:property-result-explanation
+           #:property-result
            #:property-result-status
            #:property-result-property
            #:property-result-trials
@@ -39,7 +49,18 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((status :initarg :status
+  ((failure-evidence :initarg :failure-evidence :initform nil
+                     :reader property-result-failure-evidence
+                     :documentation "Observation from the original failing trial.")
+   (shrunk-evidence :initarg :shrunk-evidence :initform nil
+                    :reader property-result-shrunk-evidence
+                    :documentation "Observed accepted shrink, or NIL.")
+   (shrunk-outcome :initarg :shrunk-outcome :initform nil
+                   :reader property-result-shrunk-outcome
+                   :documentation ":USED, :NONE or :DIFFERENT-FAILURE on a failure, else NIL.")
+   (rejected :initarg :rejected :initform 0 :reader property-result-rejected
+             :documentation "Generated trials refused before invoking a function target.")
+   (status :initarg :status
            :initform :pending
            :reader property-result-status
            :documentation "One of :PASSED, :FAILED, :ERROR, :SKIPPED or
@@ -49,7 +70,7 @@
              :reader property-result-property
              :documentation "Name of the property that was run.")
    (trials :initarg :trials
-           :initform nil
+           :initform (error 'invalid-backend-result :reason "result requires :trials")
            :reader property-result-trials
            :documentation "Number of trials actually executed.")
    (seed :initarg :seed
@@ -71,8 +92,9 @@ of the bare seed.")
    (shrunk-counterexample :initarg :shrunk-counterexample
                           :initform nil
                           :reader property-result-shrunk-counterexample
-                          :documentation "Minimal failing arguments after
-shrinking.  This is the value an agent should be shown first.")
+                          :documentation "Observed failing arguments accepted during shrinking.
+The failure identity matches the original trial. This is not a proof of global
+minimality; NIL means no observed reduction was accepted.")
    (signalled-condition :initarg :condition
                         :initform nil
                         :reader property-result-condition
@@ -87,10 +109,43 @@ body, or NIL.")
 A property run is never reported as a bare boolean: the seed, the trial count
 and the shrunk counterexample are what make a failure actionable."))
 
+(defmethod initialize-instance :after ((result property-result) &key)
+  "Require an explicit, nonnegative executed-trial count."
+  (unless (and (integerp (property-result-trials result))
+               (not (minusp (property-result-trials result))))
+    (error 'invalid-backend-result :reason "result :trials must be a nonnegative integer")))
+
 (declaim (ftype (function ((or symbol property)
                            &key (:profile t) (:seed t) (:options t) (:registry t))
                           (values property-result &optional))
                 run-property))
+
+(defgeneric property-result-entity-kind (result)
+  (:documentation "Return :PROPERTY or :FUNCTION-SPEC, independently of author classification."))
+
+(defmethod property-result-entity-kind ((result property-result))
+  :property)
+
+(defun selected-evidence (result)
+  "Return the observation that RESULT puts forward."
+  (or (property-result-shrunk-evidence result)
+      (property-result-failure-evidence result)))
+
+(defun property-result-failure-reason (result)
+  "Return the selected observation's reason, or NIL on success."
+  (let ((evidence (selected-evidence result)))
+    (when evidence (trial-observation-reason evidence))))
+
+(defun property-result-failure-signature (result)
+  "Return the selected observation's failure identity, or NIL on success."
+  (let ((evidence (selected-evidence result)))
+    (when evidence (trial-observation-signature evidence))))
+
+(defun property-result-explanation (result)
+  "Return the selected failure explanation; internal post-form tags are excluded."
+  (let ((evidence (selected-evidence result)))
+    (when (and evidence (eq :return-spec (trial-observation-reason evidence)))
+      (trial-observation-explanation evidence))))
 
 (defun resolve-trials (property profile backend)
   "Return the trial count for PROPERTY under PROFILE (specification §33).
@@ -153,24 +208,31 @@ backend."
                                                         :registry registry
                                                         options))))
          (elapsed (/ (float (- (get-internal-real-time) start))
-                     internal-time-units-per-second)))
+                     internal-time-units-per-second))
+         (original (getf outcome :failure))
+         (shrunk (getf outcome :shrunk-failure))
+         (selected (or shrunk original)))
     (make-instance 'property-result
-                   ;; A budget of zero runs the loop no times, and the backend
-                   ;; reports :PASSED for it.  Nothing was executed, so there
-                   ;; is nothing to have passed -- §73.3's zero-count success,
-                   ;; which CHECK-FUNCTION already refuses to call a pass.
+                   ;; Zero generated trials or all preconditions rejected means
+                   ;; no admitted trial supplied verification evidence.
                    :status (if (and (eq :passed (getf outcome :status))
-                                    (not (plusp (or (getf outcome :trials) 0))))
+                                    (= (getf outcome :trials) (getf outcome :rejected 0)))
                                :skipped
                                (getf outcome :status))
                    :property (property-name property)
                    :trials (getf outcome :trials)
                    :seed effective-seed
                    :profile effective-profile
-                   :counterexample (name-arguments property (getf outcome :counterexample))
-                   :shrunk-counterexample (name-arguments
-                                           property (getf outcome :shrunk-counterexample))
-                   :condition (getf outcome :condition)
+                   :failure-evidence original :shrunk-evidence shrunk
+                   :shrunk-outcome (getf outcome :shrunk-outcome)
+                   :rejected (getf outcome :rejected 0)
+                   :counterexample (when original
+                                     (name-arguments property
+                                                     (trial-observation-arguments original)))
+                   :shrunk-counterexample
+                   (when shrunk
+                     (name-arguments property (trial-observation-arguments shrunk)))
+                   :condition (when selected (trial-observation-condition selected))
                    :elapsed elapsed)))
 
 (defun run-properties (property-designators &key profile options (registry *registry*))
