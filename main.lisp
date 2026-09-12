@@ -31,6 +31,9 @@
                 #:invalid-function-spec-form
                 #:invalid-function-spec-form-form
                 #:invalid-function-spec-form-reason
+                #:invalid-generator-form
+                #:invalid-generator-form-form
+                #:invalid-generator-form-reason
                 #:generator-unavailable
                 #:generator-unavailable-spec
                 #:generator-unavailable-reason
@@ -42,6 +45,7 @@
                 #:spec-source-form
                 #:spec-source-location
                 #:spec-metadata
+                #:spec-generator-name
                 #:spec-kind
                 #:spec-children)
   (:import-from #:cl-spec/src/utils/source-location
@@ -57,6 +61,9 @@
                 #:registry-find-function-spec
                 #:registry-register-function-spec
                 #:registry-list-function-specs
+                #:registry-find-generator
+                #:registry-register-generator
+                #:registry-list-generators
                 #:registry-find-property
                 #:registry-register-property
                 #:registry-list-properties
@@ -68,6 +75,8 @@
                 #:register-spec
                 #:find-function-spec
                 #:list-function-specs
+                #:find-generator
+                #:list-generators
                 #:find-property
                 #:list-properties
                 #:properties-for
@@ -143,7 +152,16 @@
                 #:function-check-result-rejected
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
+                #:function-check-result-shrunk-outcome
                 #:check-function)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator
+                #:custom-generator-name
+                #:custom-generator-function
+                #:custom-generator-documentation
+                #:custom-generator-source-form
+                #:custom-generator-source-location
+                #:register-generator)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
@@ -182,6 +200,9 @@
            #:invalid-function-spec-form
            #:invalid-function-spec-form-form
            #:invalid-function-spec-form-reason
+           #:invalid-generator-form
+           #:invalid-generator-form-form
+           #:invalid-generator-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -193,6 +214,7 @@
            #:spec-source-form
            #:spec-source-location
            #:spec-metadata
+           #:spec-generator-name
            #:spec-kind
            #:spec-children
            #:source-location-file
@@ -207,6 +229,9 @@
            #:registry-find-function-spec
            #:registry-register-function-spec
            #:registry-list-function-specs
+           #:registry-find-generator
+           #:registry-register-generator
+           #:registry-list-generators
            #:registry-find-property
            #:registry-register-property
            #:registry-list-properties
@@ -218,6 +243,8 @@
            #:register-spec
            #:find-function-spec
            #:list-function-specs
+           #:find-generator
+           #:list-generators
            #:find-property
            #:list-properties
            #:properties-for
@@ -293,7 +320,16 @@
            #:function-check-result-rejected
            #:function-check-result-failure-reason
            #:function-check-result-explanation
+           #:function-check-result-shrunk-outcome
            #:check-function
+           ;; Custom generators
+           #:custom-generator
+           #:custom-generator-name
+           #:custom-generator-function
+           #:custom-generator-documentation
+           #:custom-generator-source-form
+           #:custom-generator-source-location
+           #:register-generator
            ;; Introspection
            #:describe-spec
            #:describe-property

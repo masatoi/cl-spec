@@ -13,6 +13,9 @@
                 #:registry-find-function-spec
                 #:registry-register-function-spec
                 #:registry-list-function-specs
+                #:registry-find-generator
+                #:registry-register-generator
+                #:registry-list-generators
                 #:registry-find-property
                 #:registry-register-property
                 #:registry-list-properties
@@ -177,3 +180,64 @@
 (deftest default-registry-exists-at-load-time
   (testing "*REGISTRY* is bound to a usable registry without any setup"
     (ok (typep *registry* 'hash-table-registry))))
+
+#+sbcl
+(deftest concurrent-registration-keeps-the-reverse-index-complete
+  (testing "every name registered from every thread is in the reverse index"
+    ;; The measurement §73.4 #8 records: 8 threads registering 3000 properties
+    ;; left PROPERTIES-FOR answering with 1146 of them.  INDEX-PROPERTY pushes
+    ;; onto a list it has just read, so a lost update leaves the names table
+    ;; whole and only the reverse index short -- and nothing said so.
+    (let ((registry (make-hash-table-registry))
+          (threads 8)
+          (per-thread 500))
+      ;; The names are interned here, on one thread.  Interning from eight
+      ;; threads at once is a second race, and this test is about the registry's:
+      ;; with one binding shared by every closure, all eight workers registered
+      ;; the same names.
+      (let ((work (loop for thread below threads
+                        collect (loop for index below per-thread
+                                      collect (intern (format nil "CONCURRENT-~D-~D"
+                                                              thread index))))))
+        (let ((gate (sb-thread:make-semaphore :count 0)))
+          (let ((workers (mapcar (lambda (names)
+                                   (sb-thread:make-thread
+                                    (lambda ()
+                                      (sb-thread:wait-on-semaphore gate)
+                                      (dolist (name names)
+                                        (registry-register-property
+                                         registry name :property-object
+                                         :targets (list 'shared-target)
+                                         :tags (list :shared-tag))))))
+                                 work)))
+            ;; Release every worker at once.  The lost update needs two threads
+            ;; inside PUSHNEW together, and eight threads started one after
+            ;; another never are: measured here, 4000 registrations lost 2789 of
+            ;; them with a gate and none without one.
+            (loop repeat threads do (sb-thread:signal-semaphore gate))
+            (mapc #'sb-thread:join-thread workers))))
+      (let ((expected (* threads per-thread)))
+        (testing "the names table holds them all, so the threads did register"
+          (ok (= expected (length (registry-list-properties registry)))))
+        (testing "so the reverse index must hold them all too"
+          (ok (= expected (length (registry-properties-for registry 'shared-target)))))
+        (testing "and so must the tag index"
+          (ok (= expected
+                 (length (registry-properties-with-tag registry :shared-tag)))))))))
+
+(deftest generator-round-trip
+  (testing "a registered generator is found again, unregistered names are not"
+    (let ((registry (make-hash-table-registry)))
+      (registry-register-generator registry 'even-only :generator-object)
+      (multiple-value-bind (generator foundp)
+          (registry-find-generator registry 'even-only)
+        (ok (eq :generator-object generator))
+        (ok (eq t foundp)))
+      (multiple-value-bind (generator foundp)
+          (registry-find-generator registry 'nothing-here)
+        (ok (null generator))
+        (ok (null foundp)))
+      (ok (equal '(even-only) (registry-list-generators registry)))
+      (testing "and REGISTRY-CLEAR drops it with the other entity kinds"
+        (registry-clear registry)
+        (ok (null (registry-list-generators registry)))))))

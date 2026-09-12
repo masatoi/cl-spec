@@ -28,7 +28,9 @@ in the user's own package, so RANGE in (RANGE 1 *) there is not EQ to the RANGE
 interned here.  Anything not named in this list is either a reference to a
 registered spec or an error.")
 
-(declaim (ftype (function (t &key (:name symbol) (:source-location list)) spec)
+(declaim (ftype (function (t &key (:name symbol) (:generator symbol)
+                            (:source-location list))
+                          spec)
                 normalize-spec-form))
 
 (defun cl-type-name-p (symbol)
@@ -46,9 +48,14 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
   "Return true when OBJECT is the * that the DSL writes for an open bound."
   (and (symbolp object) (string= (symbol-name object) "*")))
 
-(defun spec-initargs (form name source-location)
-  "Return the initargs every IR node receives, whatever its class."
-  (list :name name :source-form form :source-location source-location))
+(defun spec-initargs (form name source-location generator)
+  "Return the initargs every IR node receives, whatever its class.
+
+GENERATOR is threaded through rather than read from the environment, because only
+the top level node of a definition receives one: a (:GENERATOR NAME) clause
+belongs to the definition, so a child normalized from inside it is passed NIL."
+  (list :name name :source-form form :source-location source-location
+        :generator generator))
 
 (defun require-arity (args count form)
   "Return ARGS, signalling INVALID-SPEC-FORM unless it has exactly COUNT elements."
@@ -58,15 +65,15 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
                                               count (length args))))
   args)
 
-(defun normalize-symbol (form name source-location)
+(defun normalize-symbol (form name source-location generator)
   "Normalize a bare symbol into a TYPE-SPEC or a REFERENCE-SPEC."
   (if (cl-type-name-p form)
       (apply #'make-instance 'type-spec :type-specifier form
-             (spec-initargs form name source-location))
+             (spec-initargs form name source-location generator))
       (apply #'make-instance 'reference-spec :target form
-             (spec-initargs form name source-location))))
+             (spec-initargs form name source-location generator))))
 
-(defun normalize-range (args form name source-location)
+(defun normalize-range (args form name source-location generator)
   "Normalize the arguments of a RANGE form into a RANGE-SPEC."
   (multiple-value-bind (base-type minimum maximum)
       (cond ((and (= (length args) 3)
@@ -98,9 +105,9 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
              :base-type base-type
              :minimum (bound minimum)
              :maximum (bound maximum)
-             (spec-initargs form name source-location)))))
+             (spec-initargs form name source-location generator)))))
 
-(defun normalize-compound (form name source-location)
+(defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
   (let ((head (first form))
         (args (rest form)))
@@ -112,54 +119,54 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
         ((string= head-name "TYPE")
          (apply #'make-instance 'type-spec
                 :type-specifier (first (require-arity args 1 form))
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "SATISFIES")
          (let ((predicate (first (require-arity args 1 form))))
            (unless (symbolp predicate)
              (error 'invalid-spec-form :form form
                                        :reason "SATISFIES takes a symbol naming a predicate"))
            (apply #'make-instance 'predicate-spec :predicate predicate
-                  (spec-initargs form name source-location))))
+                  (spec-initargs form name source-location generator))))
         ((string= head-name "MEMBER")
          (apply #'make-instance 'member-spec :values args
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "RANGE")
-         (normalize-range args form name source-location))
+         (normalize-range args form name source-location generator))
         ((string= head-name "INSTANCE-OF")
          (let ((class-name (first (require-arity args 1 form))))
            (unless (symbolp class-name)
              (error 'invalid-spec-form :form form
                                        :reason "INSTANCE-OF takes a symbol naming a class"))
            (apply #'make-instance 'instance-of-spec :class-name class-name
-                  (spec-initargs form name source-location))))
+                  (spec-initargs form name source-location generator))))
         ((string= head-name "AND")
          (apply #'make-instance 'and-spec
                 :children (mapcar #'normalize-spec-form args)
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "OR")
          (apply #'make-instance 'or-spec
                 :children (mapcar #'normalize-spec-form args)
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "NOT")
          (apply #'make-instance 'not-spec
                 :inner-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "LIST-OF")
          (apply #'make-instance 'list-of-spec
                 :element-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "VECTOR-OF")
          (apply #'make-instance 'vector-of-spec
                 :element-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "TUPLE")
          (apply #'make-instance 'tuple-spec
                 :element-specs (mapcar #'normalize-spec-form args)
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "NULLABLE")
          (apply #'make-instance 'nullable-spec
                 :inner-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location)))
+                (spec-initargs form name source-location generator)))
         ((string= head-name "CONS-OF")
          (error 'invalid-spec-form :form form
                                    :reason "CONS-OF is post-MVP; use TUPLE or LIST-OF"))
@@ -169,18 +176,23 @@ would silently turn (OR NULL USER) into a type check instead of a reference."
                                             (instance-of ...) for a user-defined type, or ~
                                             reference a registered spec by name"))))))
 
-(defun normalize-spec-form (form &key name source-location)
+(defun normalize-spec-form (form &key name generator source-location)
   "Normalize spec DSL FORM into a Semantic IR object.
 
 NAME is the symbol the resulting spec will be registered under, or NIL for an
-anonymous inline spec.  SOURCE-LOCATION is a plist as produced by
+anonymous inline spec.  GENERATOR names a custom generator the backend should
+draw this spec's values from (§11), or NIL to have it derive them from the spec.
+SOURCE-LOCATION is a plist as produced by
 CL-SPEC/SRC/UTILS/SOURCE-LOCATION:CURRENT-SOURCE-LOCATION.  When FORM is parsed
-from a symbol or a list, both are attached to the top level node only; children
-carry their own source form and nothing else.
+from a symbol or a list, all three are attached to the top level node only;
+children carry their own source form and nothing else.
 
 When FORM is already a SPEC object -- the branch programmatic and agent-driven
 composition relies on -- it is returned unchanged, and NAME/SOURCE-LOCATION are
-NOT attached even when supplied.  SPEC's NAME slot has no writer, and the same
+NOT attached even when supplied.  A GENERATOR alongside one is refused rather
+than dropped: NAME and SOURCE-LOCATION are missing metadata, while a generator is
+a claim about where values come from, and dropping it would leave the backend
+deriving them from the spec the definition said not to use.  SPEC's NAME slot has no writer, and the same
 object may already be registered elsewhere or shared as a child of another
 spec, so setting it in place could rename that other registration or a nested
 node out from under whoever else holds a reference to it. Attaching a
@@ -192,9 +204,14 @@ CL-SPEC/SRC/REGISTRY:REGISTER-SPEC) rather than relying on NAME here.
 
 The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot."
   (cond
-    ((typep form 'spec) form)
-    ((symbolp form) (normalize-symbol form name source-location))
-    ((consp form) (normalize-compound form name source-location))
+    ((typep form 'spec)
+     (when generator
+       (error 'invalid-spec-form
+              :form form
+              :reason "a spec object takes no :generator; name it where the spec is defined"))
+     form)
+    ((symbolp form) (normalize-symbol form name source-location generator))
+    ((consp form) (normalize-compound form name source-location generator))
     (t (error 'invalid-spec-form
               :form form
               :reason "a spec form is a symbol, a list or a spec object"))))

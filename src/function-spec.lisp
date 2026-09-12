@@ -9,7 +9,8 @@
   (:import-from #:cl-spec/src/conditions
                 #:unknown-function-spec
                 #:unbound-target
-                #:invalid-function-spec-form)
+                #:invalid-function-spec-form
+                #:spec-violation)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -59,6 +60,7 @@
            #:function-check-result-rejected
            #:function-check-result-failure-reason
            #:function-check-result-explanation
+           #:function-check-result-shrunk-outcome
            #:check-function))
 
 (in-package #:cl-spec/src/function-spec)
@@ -340,7 +342,19 @@ told apart by the status, not by this slot.")
                 :documentation "EXPLAIN-DATA for a :RETURN-SPEC failure, else NIL.
 
 \"The return value is wrong\" is not actionable on its own; this says which
-part of the return spec the value missed."))
+part of the return spec the value missed.")
+   (shrunk-outcome :initarg :shrunk-outcome
+                   :initform nil
+                   :reader function-check-result-shrunk-outcome
+                   :documentation "What became of the shrink candidate: :USED,
+:NONE or :DIFFERENT-FAILURE, or NIL when no failure was reported.
+
+A NIL SHRUNK-COUNTEREXAMPLE cannot say this on its own -- it reads the same
+whether the shrinker found nothing smaller or produced a candidate the checker
+refused to put forward -- and on a failing contract run the second reading is the
+common one.  :DIFFERENT-FAILURE names that discard: the candidate broke the
+contract some other way, and the original counterexample is reported in its place
+(§72.4)."))
   (:documentation "Outcome of checking a function against its registered contract.
 
 A PROPERTY-RESULT, so one set of readers covers a DEFPROPERTY run and a
@@ -380,6 +394,23 @@ time rather than at definition time."
   (loop for (nil value) on plist by #'cddr
         collect value))
 
+(defun precondition-refuses-p (precondition arguments)
+  "Return true when PRECONDITION refuses ARGUMENTS, NIL when it admits them.
+
+A :PRE written with CL-SPEC:VALIDATE signals SPEC-VIOLATION instead of answering
+NIL, because judging that a value misses a spec is what VALIDATE does.  That
+signal is a refusal, not an unevaluable contract: left to the trial loop's error
+handler it ended the run as :ERROR / :CONTRACT-ERROR at the first input the
+contract did not admit, so a run that passes on every input it accepts was
+reported as a failure of the function (§73.4 #1).
+
+SPEC-VIOLATION is a refusal only here.  One raised by :POST, by :RETURNS or by
+the target is about a value the function produced, and stays a contract error or
+a finding exactly as it was."
+  (and precondition
+       (handler-case (not (apply precondition arguments))
+         (spec-violation () t))))
+
 (defun classify-function-failure (contract target arguments registry)
   "Return (values REASON EXPLANATION CONDITION) for ARGUMENTS breaking CONTRACT.
 
@@ -414,7 +445,7 @@ and need not be this one."
         (precondition (function-spec-precondition-function contract))
         (postcondition (function-spec-postcondition-function contract)))
     (handler-case
-        (if (and precondition (not (apply precondition arguments)))
+        (if (precondition-refuses-p precondition arguments)
             (values nil nil nil)
             (multiple-value-bind (result signalled)
                 ;; Every condition, with no carve-out.  The exclusion below
@@ -437,8 +468,59 @@ and need not be this one."
       ((and error (not undefined-function) (not program-error)) (condition)
         (values :contract-error nil condition)))))
 
+(defun failure-signature (reason explanation condition)
+  "Return a comparable key for a classified failure, or NIL when there is none.
+
+REASON alone is too coarse to compare two classifications with.  Every signalled
+condition collapses to :CONDITION and every return-spec violation to
+:RETURN-SPEC, so two unrelated failures of the same shape compared equal and a
+shrink candidate that had walked out of the failing region was reported as its
+reduction (§73.4 #2).  The key carries the detail the keyword throws away -- the
+condition's type, and the EXPLAIN-DATA kind and path of a return-spec violation
+-- which CLASSIFY-FUNCTION-FAILURE already knows."
+  (case reason
+    (:return-spec
+     (list :return-value (getf explanation :kind) (getf explanation :path)))
+    (:postcondition (list :return-value))
+    (:condition (list :target-signal (type-of condition)))
+    (:contract-error (list :contract-error (type-of condition)))
+    (t nil)))
+
+(defun same-failure-p (original candidate)
+  "Return true when CANDIDATE is a reduction of the failure ORIGINAL describes.
+
+Both arguments are FAILURE-SIGNATURE keys or NIL.  They name the same finding
+when they agree on the class of clause that broke and, within a class that admits
+more than one failure, on the detail that tells those failures apart.
+
+:POSTCONDITION and :RETURN-SPEC are one class.  Which of the two a value breaks
+first is a property of the order CLASSIFY-FUNCTION-FAILURE tests them in, not a
+difference in the finding, and comparing them by keyword discarded a legitimate
+reduction whenever the shrinker crossed from one to the other (§73.4 #3).  Two
+return-spec failures are compared further on the EXPLAIN-DATA kind and path: the
+return spec is a conjunction, and a value that misses a different conjunct is a
+different finding.
+
+A signalled condition is compared on its type, for the same reason.  The backend
+counts any condition as \"still fails\" while shrinking, so a candidate that
+raises a different error is not a reduction of the original one.
+
+A target condition and a contract condition never compare equal: who is at fault
+is the whole point of the distinction."
+  (and original
+       candidate
+       (eq (first original) (first candidate))
+       (if (eq (first original) :return-value)
+           ;; A :POSTCONDITION key carries no detail, so it compares equal to any
+           ;; key of the same class; two return-spec keys have to agree on the
+           ;; conjunct that failed.
+           (or (null (rest original))
+               (null (rest candidate))
+               (equal (rest original) (rest candidate)))
+           (equal (rest original) (rest candidate)))))
+
 (defun reproduce-function-failure (contract target result registry)
-  "Return (values REASON EXPLANATION CONDITION SHRUNK-USABLE-P) for RESULT.
+  "Return (values REASON EXPLANATION CONDITION SHRUNK-USABLE-P SHRUNK-OUTCOME) for RESULT.
 
 The original counterexample decides what the run found.  The shrunk one is used
 only if it breaks the contract the same way, because the backend counts a
@@ -461,14 +543,21 @@ value the shrinker invented, which no trial ever found.
 
 When the original does not reproduce either, REASON is NIL -- the slot's
 documented meaning, a function that does not answer the same way twice, and now
-only that."
+only that.
+
+SHRUNK-OUTCOME names what became of the shrink candidate, because a NIL
+SHRUNK-COUNTEREXAMPLE cannot say it on its own: :USED when the candidate is the
+value put forward, :NONE when there was nothing to shrink, and :DIFFERENT-FAILURE
+when a candidate existed and broke the contract a different way -- the case a
+caller has to be able to tell from the other two (§73.4 #4)."
   (let* ((shrunk-plist (property-result-shrunk-counterexample result))
          (original (counterexample-values (property-result-counterexample result)))
          (shrunk (counterexample-values shrunk-plist))
+         (nothing-to-shrink (null (function-spec-argument-specs contract)))
          ;; A contract over no arguments has an empty counterexample that is
          ;; nonetheless present, so emptiness alone cannot say whether the
          ;; backend produced a shrunk value.
-         (shrunk-present (or shrunk-plist (null (function-spec-argument-specs contract)))))
+         (shrunk-present (or shrunk-plist nothing-to-shrink)))
     (flet ((classify-shrunk ()
              (handler-case (classify-function-failure contract target shrunk registry)
                (error () (values nil nil nil)))))
@@ -479,16 +568,19 @@ only that."
            (if shrunk-present
                (multiple-value-bind (reason explanation condition) (classify-shrunk)
                  (if reason
-                     (values reason explanation condition t)
-                     (values nil nil nil nil)))
-               (values nil nil nil nil)))
+                     (values reason explanation condition t :used)
+                     (values nil nil nil nil :none)))
+               (values nil nil nil nil :none)))
           ((and shrunk-present (not (equal shrunk original)))
            (multiple-value-bind (shrunk-reason shrunk-explanation shrunk-condition)
                (classify-shrunk)
-             (if (eq shrunk-reason reason)
-                 (values shrunk-reason shrunk-explanation shrunk-condition t)
-                 (values reason explanation condition nil))))
-          (t (values reason explanation condition shrunk-present)))))))
+             (if (same-failure-p (failure-signature reason explanation condition)
+                                 (failure-signature shrunk-reason shrunk-explanation
+                                                    shrunk-condition))
+                 (values shrunk-reason shrunk-explanation shrunk-condition t :used)
+                 (values reason explanation condition nil :different-failure))))
+          (t (values reason explanation condition shrunk-present
+                     (if (and shrunk-present (not nothing-to-shrink)) :used :none))))))))
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Generatively check FUNCTION-DESIGNATOR against its registered contract.
@@ -574,8 +666,7 @@ Nothing called the function, so nothing about it was checked."
                             (handler-bind ((error (lambda (condition)
                                                     (declare (ignore condition))
                                                     (setf countingp nil))))
-                              (if (and precondition
-                                       (not (apply precondition arguments)))
+                              (if (precondition-refuses-p precondition arguments)
                                   (progn
                                     (when countingp (incf rejected))
                                     t)
@@ -598,7 +689,7 @@ Nothing called the function, so nothing about it was checked."
          ;; reached the function, and a count that is not positive answers no
          ;; however it got that way.
          (vacuous (and (eq :passed backend-status) (not (plusp executed)))))
-    (multiple-value-bind (reason explanation condition shrunk-usable)
+    (multiple-value-bind (reason explanation condition shrunk-usable shrunk-outcome)
         (if (member backend-status '(:failed :error))
             ;; Under the run's own seed.  RUN-PROPERTY binds *RANDOM-STATE*
             ;; around the trial and shrink loop so a run can be replayed; this
@@ -609,7 +700,7 @@ Nothing called the function, so nothing about it was checked."
             ;; :ERROR and once as :FAILED.
             (let ((*random-state* (seed->random-state (property-result-seed result))))
               (reproduce-function-failure contract target result registry))
-            (values nil nil nil nil))
+            (values nil nil nil nil nil))
       (make-instance 'function-check-result
                      ;; The status describes the counterexample the result puts
                      ;; forward.  The backend's own comes from the first
@@ -628,6 +719,7 @@ Nothing called the function, so nothing about it was checked."
                      :counterexample (property-result-counterexample result)
                      :shrunk-counterexample (when shrunk-usable
                                               (property-result-shrunk-counterexample result))
+                     :shrunk-outcome shrunk-outcome
                      :condition (if reason condition (property-result-condition result))
                      :elapsed (property-result-elapsed result)
                      :budget budget

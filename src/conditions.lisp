@@ -31,6 +31,9 @@
            #:invalid-function-spec-form
            #:invalid-function-spec-form-form
            #:invalid-function-spec-form-reason
+           #:invalid-generator-form
+           #:invalid-generator-form-form
+           #:invalid-generator-form-reason
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -181,6 +184,27 @@ Raised from two places, which is why the report does not name a macro: from
 DEFSPEC-FUNCTION at macroexpansion time for syntax the MVP does not support,
 and from the FUNCTION-SPEC class for a contract built directly through the
 public CLOS API in a state its own consumers could not read."))
+
+(define-condition invalid-generator-form (cl-spec-error)
+  ((form :initarg :form
+         :initform nil
+         :reader invalid-generator-form-form
+         :documentation "The DEFGENERATOR form that could not be accepted.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-generator-form-reason
+           :documentation "Human readable explanation, or NIL."))
+  (:report (lambda (condition stream)
+             (format stream "~S is not a valid custom generator~@[: ~A~]."
+                     (invalid-generator-form-form condition)
+                     (invalid-generator-form-reason condition))))
+  (:documentation
+   "Signalled when DEFGENERATOR cannot honour the definition it was given.
+
+The rule §17 follows for contracts: a definition this version cannot use is
+refused rather than registered with part of its meaning dropped.  A generator
+whose parameters were silently ignored would look like a working generator and
+produce values from a body called without the bindings its author wrote."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec

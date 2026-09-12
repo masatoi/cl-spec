@@ -22,6 +22,7 @@
                 #:spec-source-form
                 #:spec-source-location
                 #:spec-children
+                #:spec-generator-name
                 #:type-spec
                 #:type-spec-type-specifier
                 #:reference-spec
@@ -87,7 +88,10 @@ introspection API."
   (:documentation "Return the SPEC-DATA keys specific to SPEC's node type."))
 
 (defmethod node-attributes ((spec spec))
-  nil)
+  ;; A custom generator belongs to the definition rather than to the node type,
+  ;; so it is reported here: any node kind can carry one.
+  (when (spec-generator-name spec)
+    (list :generator (spec-generator-name spec))))
 
 (defmethod node-attributes ((spec type-spec))
   (list :type (type-spec-type-specifier spec)))

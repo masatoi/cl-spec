@@ -43,7 +43,12 @@
                 #:list-of-spec
                 #:vector-of-spec
                 #:reference-spec
-                #:reference-spec-target)
+                #:reference-spec-target
+                #:spec-generator-name)
+  (:import-from #:cl-spec/src/registry
+                #:registry-find-generator)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator-function)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
@@ -81,6 +86,45 @@ check-it's GENERATE treats a non-generator as a constant."))
   (error 'generator-unavailable
          :spec spec
          :reason (format nil "~S has no generation strategy" (spec-kind spec))))
+
+(defun custom-spec-generator (name spec context)
+  "Return a generator drawing from the custom generator NAME names.
+
+CHECK-IT:MAPPED-GENERATOR applies its MAPPING to the values of its sub-generators,
+and check-it treats a value that is not a generator as a constant, so a
+one-element list holding NIL makes the mapping the whole generator.  Going
+through an existing class keeps this on check-it's public API.
+
+The value is not checked against SPEC.  A custom generator that draws outside its
+spec should be seen for what it is -- a property reporting a counterexample the
+contract refuses -- rather than hidden behind a guard, which as AND's method
+notes would retry with no depth limit.
+
+A spec reached only as a conjunct of an AND is the exception: FOLD-AND-CHILDREN
+resolves it and folds its type and range, and a generator cannot be folded."
+  (let ((entry (registry-find-generator (context-registry context) name)))
+    (unless entry
+      (error 'generator-unavailable
+             :spec spec
+             :reason (format nil "the custom generator ~S is not registered" name)))
+    (let ((function (custom-generator-function entry)))
+      (make-instance 'mapped-generator
+                     :mapping (lambda (ignored)
+                                (declare (ignore ignored))
+                                (funcall function))
+                     :sub-generators (list nil)))))
+
+(defmethod spec-generator :around ((spec spec) context)
+  "Prefer the custom generator SPEC names over the one its node type would build.
+
+An :AROUND method on the base class rather than a check inside each method: a
+(:GENERATOR NAME) clause on an AND, a MEMBER or a REFERENCE has to win over the
+strategy that node type would otherwise get, and this is the only place that runs
+before the type's own method does."
+  (let ((name (spec-generator-name spec)))
+    (if name
+        (custom-spec-generator name spec context)
+        (call-next-method))))
 
 (defun type-specifier-generator (type-specifier spec)
   "Return a generator for the Common Lisp TYPE-SPECIFIER.

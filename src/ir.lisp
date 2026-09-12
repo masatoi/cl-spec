@@ -13,6 +13,7 @@
            #:spec-source-form
            #:spec-source-location
            #:spec-metadata
+           #:spec-generator-name
            #:spec-kind
            #:spec-children
            #:reference-spec
@@ -72,7 +73,16 @@ CL-SPEC/SRC/UTILS/SOURCE-LOCATION:CURRENT-SOURCE-LOCATION, or NIL.")
    (metadata :initarg :metadata
              :initform nil
              :reader spec-metadata
-             :documentation "Arbitrary plist for callers and future extensions."))
+             :documentation "Arbitrary plist for callers and future extensions.")
+   (generator :initarg :generator
+              :initform nil
+              :reader spec-generator-name
+              :documentation "Symbol naming a custom generator, defined with
+DEFGENERATOR, that produces this spec's values; or NIL when the backend derives
+one from the spec itself (specification §11).
+
+Attached to the top level node only, like NAME and SOURCE-LOCATION: a
+(:GENERATOR NAME) clause belongs to the definition, not to each conjunct of it."))
   (:documentation "Base class of every Semantic IR node."))
 
 (defgeneric spec-kind (spec)

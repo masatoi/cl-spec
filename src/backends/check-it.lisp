@@ -11,6 +11,10 @@
                 #:*num-trials*
                 #:generate
                 #:*size*
+                #:*list-size*
+                #:*list-size-decay*
+                #:*bias-sensitivity*
+                #:*recursive-bias-decay*
                 #:cached-value
                 #:shrink
                 #:tuple-generator)
@@ -48,6 +52,58 @@ of which this design invites -- inherited the outer run's size and generated
 different inputs.  The same call then reported :FAILED nested and :PASSED alone,
 and replaying the nested result contradicted it, which §72.3 forbids.")
 
+(defparameter *base-list-size* 20
+  "The longest list a run generates from, independent of anything ambient.
+
+CHECK-IT:LIST-GENERATOR draws a length against *LIST-SIZE* and shrinks that
+allowance for nested lists by *LIST-SIZE-DECAY*, so leaving the pair ambient made
+a LIST-OF or VECTOR-OF argument's values depend on how the image happened to have
+tuned check-it before cl-spec loaded.  These literals repeat check-it's own
+defaults on purpose: the pin is what makes generation a function of the spec, the
+seed and the backend (§73.4 #7).")
+
+(defparameter *base-list-size-decay* 0.8
+  "The factor *BASE-LIST-SIZE* shrinks by for a nested list.  See it for why.")
+
+(defparameter *base-bias-sensitivity* 6.0
+  "The sigmoid steepness CHECK-IT:CHOOSE-GENERATOR picks a branch with.
+
+An OR, a MEMBER and a NULLABLE all draw through CHOOSE-GENERATOR, so an ambient
+value here decides which branch a value comes from: the same seed picked
+different branches in differently tuned images.  See *BASE-LIST-SIZE*.")
+
+(defparameter *base-recursive-bias-decay* 1.5
+  "The factor a recursive generator's bias decays by.  See *BASE-LIST-SIZE*.
+
+No recursive spec has a generator in this version, so this changes nothing yet.
+It is pinned with the rest so that adding one does not reintroduce an ambient
+input -- the kind of gap that surfaces only as a replay disagreeing with the
+result it was handed (§72.3).")
+
+(defmacro with-generation-environment ((size &key trials) &body body)
+  "Run BODY with every check-it special that decides what is generated pinned.
+
+SIZE is the CHECK-IT:*SIZE* to bind, already raised to whatever the widest
+argument's bounds need.  TRIALS, when supplied, also pins CHECK-IT:*NUM-TRIALS*
+to the count this run resolved, so nothing reached from BODY reads a trial count
+other than the one the run is running.  That count is not thereby hidden: it is
+what RUN-PROPERTY resolved and recorded on the result.
+
+Generation is documented as a function of the spec, the seed and the backend
+(§15), and it was not one.  RUN-GENERATED-TEST pinned *SIZE* while *LIST-SIZE*,
+*LIST-SIZE-DECAY*, *BIAS-SENSITIVITY* and *RECURSIVE-BIAS-DECAY* stayed ambient,
+so one seed produced different arguments in a differently tuned image; and
+GENERATE-VALUE read *SIZE* ambiently rather than from the generator it was given,
+so SAMPLE could show a distribution no run draws (§73.4 #6, #7).  One place binds
+them all, which is what keeps the two from drifting apart again."
+  `(let ((*size* ,size)
+         (*list-size* *base-list-size*)
+         (*list-size-decay* *base-list-size-decay*)
+         (*bias-sensitivity* *base-bias-sensitivity*)
+         (*recursive-bias-decay* *base-recursive-bias-decay*)
+         ,@(when trials `((*num-trials* ,trials))))
+     ,@body))
+
 (defclass check-it-backend ()
   ()
   (:documentation "Generator backend delegating to the check-it library."))
@@ -74,10 +130,18 @@ its own specials rather than per-generator options."
     (make-compiled-generator generator size)))
 
 (defmethod generate-value ((backend check-it-backend) compiled-generator &key seed)
-  "Draw one value from COMPILED-GENERATOR, optionally from a seeded state."
+  "Draw one value from COMPILED-GENERATOR, optionally from a seeded state.
+
+The generation environment is the one RUN-GENERATED-TEST binds, so a value drawn
+here and a value drawn inside a run come from the same distribution, at the same
+size -- the size COMPILED-GENERATOR's own bounds require, not whatever *SIZE*
+happened to be ambient.  Reading the ambient value made a SAMPLE taken inside
+another run inherit the outer run's size, and let a SAMPLE taken alone show a
+distribution no run draws (§73.4 #6)."
   (declare (ignore backend))
   (flet ((draw ()
-           (let ((*size* (max *size* (compiled-generator-size compiled-generator))))
+           (with-generation-environment
+               ((max *base-size* (compiled-generator-size compiled-generator)))
              (generate (compiled-generator-generator compiled-generator)))))
     (if seed
         (let ((*random-state* (seed->random-state seed)))
@@ -151,31 +215,33 @@ is what keeps this method from having to know the property's variables."
          (shrink-p (getf (property-metadata property) :shrink t))
          (compiled (loop for (nil spec) in (property-arguments property)
                          collect (compile-generator backend spec :context context)))
-         ;; One binding covers generation and shrinking alike, and has to be
-         ;; wide enough for the widest bound any argument asks for.
-         (*size* (reduce #'max compiled
-                         :key #'compiled-generator-size :initial-value *base-size*))
          (generator (make-instance 'tuple-generator
                                    :sub-generators
                                    (mapcar #'compiled-generator-generator compiled))))
-    (loop for trial from 1 to trials
-          do (generate generator)
-             ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
-             ;; place, so the counterexample must be copied out before it runs
-             ;; -- deeply, since a compound argument's elements are EQ to a
-             ;; sub-generator's own cached value and get mutated the same way.
-             (let ((arguments (copy-generated-value (cached-value generator))))
-               (multiple-value-bind (result condition) (call-property function arguments)
-                 (when (or condition (null result))
-                   (return (list :status (if condition :error :failed)
-                                 :trials trial
-                                 :counterexample arguments
-                                 :shrunk-counterexample
-                                 (when shrink-p
-                                   (copy-generated-value
-                                    (shrink generator (shrinking-test function))))
-                                 :condition condition)))))
-          finally (return (list :status :passed :trials trials)))))
+    ;; One binding covers generation and shrinking alike, and has to be wide
+    ;; enough for the widest bound any argument asks for.
+    (with-generation-environment
+        ((reduce #'max compiled
+                 :key #'compiled-generator-size :initial-value *base-size*)
+         :trials trials)
+      (loop for trial from 1 to trials
+            do (generate generator)
+               ;; CHECK-IT:SHRINK rewrites the tuple generator's cached value in
+               ;; place, so the counterexample must be copied out before it runs
+               ;; -- deeply, since a compound argument's elements are EQ to a
+               ;; sub-generator's own cached value and get mutated the same way.
+               (let ((arguments (copy-generated-value (cached-value generator))))
+                 (multiple-value-bind (result condition) (call-property function arguments)
+                   (when (or condition (null result))
+                     (return (list :status (if condition :error :failed)
+                                   :trials trial
+                                   :counterexample arguments
+                                   :shrunk-counterexample
+                                   (when shrink-p
+                                     (copy-generated-value
+                                      (shrink generator (shrinking-test function))))
+                                   :condition condition)))))
+            finally (return (list :status :passed :trials trials))))))
 
 (defun install-check-it-backend ()
   "Install a CHECK-IT-BACKEND into *GENERATOR-BACKEND* and return it.

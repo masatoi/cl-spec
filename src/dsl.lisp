@@ -5,16 +5,17 @@
 ;;;; normalizer and the registry.  Keeping them thin is what lets the DSL
 ;;;; change without disturbing the Semantic IR or the introspection API.
 ;;;;
-;;;; Each macro expands successfully even while the normalizer is a stub, so a
-;;;; file using the DSL still compiles; the NOT-IMPLEMENTED condition is
-;;;; signalled when the expansion runs.
+;;;; Every macro here compiles even when the form it describes cannot be
+;;;; honoured, so a file using the DSL still loads; the refusal is signalled when
+;;;; the expansion runs.
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
-                #:not-implemented
+                #:invalid-spec-form
                 #:invalid-property-form
-                #:invalid-function-spec-form)
+                #:invalid-function-spec-form
+                #:invalid-generator-form)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -25,6 +26,9 @@
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
                 #:register-function-spec)
+  (:import-from #:cl-spec/src/generator-definition
+                #:custom-generator
+                #:register-generator)
   (:import-from #:cl-spec/src/utils/source-location
                 #:current-source-location)
   (:export #:defspec
@@ -34,18 +38,77 @@
 
 (in-package #:cl-spec/src/dsl)
 
-(defmacro defspec (name form)
+(defun proper-list-p (object)
+  "Return true when OBJECT is a proper list.
+
+A dotted clause is not one, and nothing downstream survives it: (:args . a)
+reached DOLIST as a non-list and gave a bare TYPE-ERROR instead of the
+condition this parser promises, and (:pre . b) expanded into (AND . B), which
+is not a form at all."
+  (and (listp object)
+       (null (cdr (last object)))))
+
+(defparameter *spec-option-keywords* '(:generator)
+  "Keywords that may head an option clause in a DEFSPEC form.
+
+Deliberately short: §52 keeps the MVP spec syntax to a form and this one clause,
+and a clause DEFSPEC does not know is refused rather than ignored -- a definition
+that named a generator and lost the clause would look like a spec drawing from
+that generator while the backend went on deriving values from the DSL.")
+
+(defun spec-generator-option (options)
+  "Return the custom generator named by the DEFSPEC OPTIONS, or NIL.
+
+Only (:GENERATOR NAME) is accepted, and anything else is refused for the reason
+§17 refuses an unknown contract clause: a definition that named a generator and
+had the clause silently dropped would look like a spec drawing from it while the
+backend derived values from the DSL instead."
+  (let ((generator nil))
+    (dolist (option options)
+      (unless (and (consp option)
+                   (proper-list-p option)
+                   (keywordp (first option)))
+        (error 'invalid-spec-form :form option
+                                  :reason "expected a clause headed by a keyword"))
+      (let ((head (first option)))
+        (unless (member head *spec-option-keywords*)
+          (error 'invalid-spec-form
+                 :form option
+                 :reason (format nil "~S is not a DEFSPEC option; the only one is ~
+                                      (:generator NAME)"
+                                 head)))
+        (unless (= 2 (length option))
+          (error 'invalid-spec-form :form option
+                                    :reason ":generator takes exactly one name"))
+        (when generator
+          (error 'invalid-spec-form :form option
+                                    :reason ":generator appears more than once"))
+        (let ((name (second option)))
+          (unless (and name (symbolp name) (not (keywordp name)))
+            (error 'invalid-spec-form
+                   :form option
+                   :reason ":generator takes a symbol naming a generator"))
+          (setf generator name))))
+    generator))
+
+(defmacro defspec (name form &body options)
   "Define a spec named NAME from spec DSL FORM.
 
 FORM is normalized into a Semantic IR object and registered in *REGISTRY*.
 The original form and the definition site are kept on the resulting spec.
 
   (defspec positive-integer
-    (and integer (range 1 *)))"
-  (let ((location (current-source-location)))
+    (and integer (range 1 *)))
+
+OPTIONS is a list of clauses.  The only one this version accepts is
+(:GENERATOR NAME), naming a DEFGENERATOR generator whose values the backend draws
+instead of deriving them from FORM (specification §11)."
+  (let ((location (current-source-location))
+        (generator (spec-generator-option options)))
     `(register-spec ',name
                     (normalize-spec-form ',form
                                          :name ',name
+                                         :generator ',generator
                                          :source-location ',location))))
 
 (defparameter *function-spec-clause-keywords* '(:args :pre :returns :post)
@@ -59,16 +122,6 @@ silently dropped.")
 (defun function-spec-error (form reason)
   "Signal INVALID-FUNCTION-SPEC-FORM for FORM with REASON."
   (error 'invalid-function-spec-form :form form :reason reason))
-
-(defun proper-list-p (object)
-  "Return true when OBJECT is a proper list.
-
-A dotted clause is not one, and nothing downstream survives it: (:args . a)
-reached DOLIST as a non-list and gave a bare TYPE-ERROR instead of the
-condition this parser promises, and (:pre . b) expanded into (AND . B), which
-is not a form at all."
-  (and (listp object)
-       (null (cdr (last object)))))
 
 (defun lambda-list-keyword-name-p (object)
   "Return true when OBJECT is a symbol whose name begins with an ampersand."
@@ -436,20 +489,38 @@ result or a signalled condition counts as a failure.
     (> (+ x y) x))"
   (expand-property-definition whole name arguments body (current-source-location)))
 
-(defun expand-generator-definition (name lambda-list body source-location)
-  "Register a user-defined generator built from a DEFGENERATOR form.
-
-Not implemented yet."
-  (declare (ignore name lambda-list body source-location))
-  (error 'not-implemented :operator 'defgenerator))
-
-(defmacro defgenerator (name lambda-list &body body)
+(defmacro defgenerator (&whole whole name lambda-list &body body)
   "Define a custom generator named NAME (specification §11).
 
 Use this when a spec cannot express how values should be produced, for example
-when generation must satisfy a global invariant.
+when generation must satisfy a global invariant:
 
   (defgenerator small-integer ()
-    (random 100))"
+    (random 100))
+
+  (defspec small (and integer (range 0 100)) (:generator small-integer))
+
+BODY produces one value per draw and is compiled into a function of no
+arguments, so LAMBDA-LIST must be empty.  A generator that took parameters would
+need a syntax for a spec to pass them and §11 defines none, and accepting one
+would call the body without the bindings its author wrote.
+
+The value is not re-validated against the spec that names it.  A generator that
+draws outside its spec makes a property report a counterexample the contract
+refuses, which is a true statement about the generator rather than a silent pass;
+a guard that retried until a draw conformed would recurse with no depth limit,
+which SRC/BACKENDS/CHECK-IT-GENERATORS.LISP refuses to build elsewhere."
+  (unless (null lambda-list)
+    (error 'invalid-generator-form
+           :form whole
+           :reason (format nil "LAMBDA-LIST must be empty, but ~S was given"
+                           lambda-list)))
   (let ((location (current-source-location)))
-    `(expand-generator-definition ',name ',lambda-list ',body ',location)))
+    `(register-generator
+      (make-instance 'custom-generator
+                     :name ',name
+                     :function (lambda ,lambda-list ,@body)
+                     :documentation ,(when (and (stringp (first body)) (rest body))
+                                       (first body))
+                     :source-form ',whole
+                     :source-location ',location))))

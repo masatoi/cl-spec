@@ -22,6 +22,8 @@
                 #:reference-spec-target)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
+  (:import-from #:cl-spec/src/validator
+                #:validate)
   (:import-from #:cl-spec/src/introspection
                 #:function-spec-data)
   (:import-from #:cl-spec/src/registry
@@ -54,6 +56,7 @@
                 #:function-check-result-rejected
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
+                #:function-check-result-shrunk-outcome
                 #:check-function))
 
 (defpackage #:cl-spec/tests/function-spec-test/stash
@@ -938,6 +941,96 @@ counterexample."
         (ok (property-result-counterexample result))
         (ok (typep (property-result-condition result) 'undefined-function))))))
 
+(defun demo-clause-crossing (value)
+  "Break :POST everywhere but at the generator's floor, which breaks :RETURNS.
+
+CHECK-IT shrinks towards that floor, so the candidate the backend keeps fails a
+different clause of the same contract than the trial the run found."
+  (if (= value 20) -1 (1+ value)))
+
+(deftest check-function-keeps-a-shrink-that-breaks-another-clause
+  (testing "a shrunk value that breaks another clause of the same contract is kept"
+    ;; CLASSIFY-FUNCTION-FAILURE tests :RETURNS before :POST, so a candidate that
+    ;; breaks both is classified :RETURN-SPEC while the trial broke :POST alone.
+    ;; Comparing the two by keyword discarded the reduction and reported no
+    ;; shrunk counterexample for a run that had one (§73.4 #3).
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-clause-crossing
+        (:args (value (range integer 20 30)))
+        (:returns (range integer 0 *))
+        (:post (= result (* 2 value))))
+      (let* ((result (check-function 'demo-clause-crossing :trials 50 :seed 1))
+             (original (loop for (nil value) on
+                             (property-result-counterexample result)
+                             by #'cddr collect value))
+             (shrunk (loop for (nil value) on
+                           (property-result-shrunk-counterexample result)
+                           by #'cddr collect value)))
+        (ok (eq :failed (property-result-status result)))
+        (testing "the trial the run found broke :POST and not :RETURNS"
+          (ok (plusp (apply #'demo-clause-crossing original)))
+          (ok (not (= (apply #'demo-clause-crossing original)
+                      (* 2 (first original))))))
+        (testing "the reduction is put forward rather than discarded"
+          (ok shrunk)
+          (ok (< (first shrunk) (first original)))
+          (ok (eq :used (function-check-result-shrunk-outcome result))))
+        (testing "and the half named is the one the reported value breaks"
+          (ok (eq :return-spec (function-check-result-failure-reason result)))
+          (ok (minusp (apply #'demo-clause-crossing shrunk))))))))
+
+(defun demo-signal-varies (value)
+  "Signal SIMPLE-ERROR above the generator's floor and SIMPLE-TYPE-ERROR at it.
+
+Both are :CONDITION, so the reason keyword cannot tell the run's own failure from
+the one shrinking walks into; the condition's type can."
+  (if (> value 20)
+      (error "above twenty")
+      (error 'simple-type-error :datum value :expected-type 'null)))
+
+(deftest check-function-compares-a-condition-by-its-type-not-its-keyword
+  (testing "the reported condition is the one the reported counterexample raises"
+    ;; Every candidate is :CONDITION, so (EQ SHRUNK-REASON REASON) accepted the
+    ;; shrinker's unrelated exception and put it forward as the run's finding
+    ;; (§73.4 #2).  Two conditions are compared on their type now.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-signal-varies
+        (:args (value (range integer 20 60)))
+        (:returns integer))
+      (let* ((result (check-function 'demo-signal-varies :trials 50 :seed 1))
+             (values (loop for (nil value) on
+                           (property-result-counterexample result)
+                           by #'cddr collect value))
+             (raised (handler-case (progn (apply #'demo-signal-varies values) nil)
+                       (error (condition) (type-of condition)))))
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :condition (function-check-result-failure-reason result)))
+        (testing "so the counterexample and the condition describe one failure"
+          (ok (eq (type-of (property-result-condition result)) raised)))
+        (testing "and the discarded candidate is named rather than silent"
+          (ok (null (property-result-shrunk-counterexample result)))
+          (ok (eq :different-failure
+                  (function-check-result-shrunk-outcome result))))))))
+
+(defun demo-zero-argument-contract ()
+  "Return a string.  Its contract asks for an integer and names no :ARGS."
+  "not an integer")
+
+(deftest check-function-distinguishes-a-discarded-shrink-from-no-shrink
+  (testing "a contract with nothing to shrink reports :NONE rather than a discard"
+    ;; SHRUNK-COUNTEREXAMPLE is NIL here and in the test above, and the two mean
+    ;; opposite things: this contract has no argument to reduce, that one had a
+    ;; candidate the checker refused.  §73.4 #4 is that the slot could not say
+    ;; which of the two had happened.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-zero-argument-contract
+        (:returns integer))
+      (let ((result (check-function 'demo-zero-argument-contract :trials 5 :seed 1)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :return-spec (function-check-result-failure-reason result)))
+        (ok (null (property-result-shrunk-counterexample result)))
+        (ok (eq :none (function-check-result-shrunk-outcome result)))))))
+
 (defun demo-doubles-a-count (count)
   "Return twice COUNT.
 
@@ -965,3 +1058,27 @@ found nothing and the author's RESULT was left free."
                         (find-function-spec 'demo-doubles-a-count))))
         (ok (funcall predicate 4 2))
         (ok (not (funcall predicate 5 2)))))))
+
+(defun demo-adds (a b)
+  "Return the sum of A and B."
+  (+ a b))
+
+(deftest check-function-treats-a-validating-precondition-as-a-refusal
+  (testing "a :PRE written with VALIDATE refuses an input instead of erroring"
+    ;; VALIDATE's job is to judge that a value misses a spec, so the
+    ;; SPEC-VIOLATION it signals is a refusal.  Reaching the trial loop's error
+    ;; handler made it :CONTRACT-ERROR and turned a run that passes on every
+    ;; input it accepts into a report about the function (§73.4 #1).
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec small-integer (range integer 0 100))
+      (defspec admissible-low (range integer 0 50))
+      (defspec-function demo-adds
+        (:args (a small-integer) (b small-integer))
+        (:pre (validate 'admissible-low a))
+        (:returns (range integer 0 *)))
+      (let ((result (check-function 'demo-adds :trials 50 :seed 5)))
+        (ok (eq :passed (property-result-status result)))
+        (testing "and the refused inputs are counted rather than reported"
+          ;; About half the generated A values are above 50, so a run reporting
+          ;; no refusals would have quietly checked a different domain.
+          (ok (plusp (function-check-result-rejected result))))))))

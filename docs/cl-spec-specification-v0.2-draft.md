@@ -71,7 +71,7 @@
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値のみ。§17〜19、§73.1 D1 |
-| Custom generator DSL | 未実装 | `defgenerator`はstub。`defgenerator-for`は構想上の名前 |
+| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 未実装 | `instrument-function`はstub |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
@@ -713,7 +713,10 @@ simple structures
 
 # 11. Custom generator
 
-> **位置付け:** 未実装。以下の定義構文・関連付けは概念例。
+> **位置付け:** 実装済み（最小範囲）。以下の定義構文・関連付けは実装で確定した形である。
+> `defgenerator`は空のlambda-listのみを受け付け、関連付けは`defspec`の`(:generator NAME)`節で行う。
+> `defgenerator-for`は提供しない（下の二案のうち節を採用した）。生成値はspecに照らして再検証しない --
+> specの外を引くgeneratorは、契約が拒む反例として見えるほうが、guardで隠すより正直である。
 
 Domain objectについては自動生成できないケースが多い。
 
@@ -2357,6 +2360,10 @@ explain-data
 
 ```lisp
 defgenerator
+register-generator
+find-generator
+list-generators
+custom-generator
 generator-for
 sample
 
@@ -3495,6 +3502,31 @@ off-by-one。
     `:post`の文面が読まれたpackageを見られないので、代理が外れうるケースは
     すべて拒否している（§17）。恒久的な解は明示束縛
     （`(:post (result) ...)`）だが、§17の公開例とcl-mcpのfixtureに波及する。
+
+### 解決（2026-09-12）
+
+上のうち 1・2・3・4・6・7・8 を実装し、修正前後の挙動を同一の入力で実測して回帰テストを追加した。
+5（分類の再実行が target を余分に呼ぶ）は未着手で、§73.2 の順序では今回の範囲外である。
+条項番号は変えない。
+
+| 項 | 直したこと | 修正前 → 修正後（実測） |
+|---|---|---|
+| 1 | `:pre` を `VALIDATE` で書くと `SPEC-VIOLATION` が `:CONTRACT-ERROR` になっていた。`PRECONDITION-REFUSES-P` がこれを棄却として扱う | 同一契約・同一seed: `:ERROR` / 棄却0 → `:PASSED` / 棄却23 |
+| 2 | 縮小結果の採否を reason keyword の `EQ` で判定していた。`FAILURE-SIGNATURE` が condition の型と `EXPLAIN-DATA` の `:kind`/`:path` を較べる | 無関係な `SIMPLE-TYPE-ERROR` を縮小値として報告 → 実行が見つけた `SIMPLE-ERROR` を保持 |
+| 3 | `:RETURNS` を先に分類するため、同じ契約の別の節に触れる正当な縮小が捨てられていた。`:RETURN-SPEC` と `:POSTCONDITION` を一つのクラスとして較べる | 縮小値が `NIL`（破棄）→ 採用（`:RETURN-SPEC` / `:USED`） |
+| 4 | 破棄が呼び出し側から見えなかった。`FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME` を追加（`:USED` / `:NONE` / `:DIFFERENT-FAILURE`） | 引数のない契約と破棄が同じ `NIL` → 区別できる |
+| 6 | `SAMPLE` / `GENERATE-VALUE` が周囲の `CHECK-IT:*SIZE*` を読んでいた | 周囲を `*SIZE*` 5000 にすると ±4000 → 既定と同一の列 |
+| 7 | `*LIST-SIZE*` / `*LIST-SIZE-DECAY*` / `*BIAS-SENSITIVITY*` / `*RECURSIVE-BIAS-DECAY*` が周囲に依存していた。`WITH-GENERATION-ENVIRONMENT` が `*SIZE*` と共に固定する | `*LIST-SIZE*` 1 の下で縮小候補が空リスト → 既定と同一の引数列 |
+| 8 | 逆引きindexが read-modify-write で、並行登録で更新が失われていた。`WITH-REGISTRY-LOCK` が定義表のロックを書き手と読み手の双方で取る | 8スレッド×500（開始バリアあり）で `PROPERTIES-FOR` 1211/4000 → 4000/4000 |
+
+回帰テストは `tests/function-spec-test.lisp`（1・2・3・4）、
+`tests/backends/check-it-test.lisp`（6・7）、`tests/registry-test.lisp`（8）にあり、
+いずれも修正前のコードで失敗することを確認してある。
+
+**残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
+backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と
+記録したのは property 側の経路なので、そこは変わっていない。property に分類を足すかは
+§13（property では condition も失敗）と衝突するため、別途判断が要る。
 
 ## 73.3 LLM向け有用性の評価
 

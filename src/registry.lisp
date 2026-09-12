@@ -20,6 +20,9 @@
            #:registry-find-function-spec
            #:registry-register-function-spec
            #:registry-list-function-specs
+           #:registry-find-generator
+           #:registry-register-generator
+           #:registry-list-generators
            #:registry-find-property
            #:registry-register-property
            #:registry-list-properties
@@ -34,6 +37,8 @@
            #:register-spec
            #:find-function-spec
            #:list-function-specs
+           #:find-generator
+           #:list-generators
            #:find-property
            #:list-properties
            #:properties-for
@@ -63,6 +68,17 @@ previous definition.  Returns FUNCTION-SPEC."))
 
 (defgeneric registry-list-function-specs (registry)
   (:documentation "Return the names of every function spec in REGISTRY, sorted."))
+
+(defgeneric registry-find-generator (registry name)
+  (:documentation "Return the custom generator registered in REGISTRY under NAME.
+Returns two values: the generator (NIL when absent) and a found-p boolean."))
+
+(defgeneric registry-register-generator (registry name generator)
+  (:documentation "Register GENERATOR in REGISTRY under NAME, replacing any
+previous definition.  Returns GENERATOR."))
+
+(defgeneric registry-list-generators (registry)
+  (:documentation "Return the names of every custom generator in REGISTRY, sorted."))
 
 (defgeneric registry-find-property (registry name)
   (:documentation "Return the property registered in REGISTRY under NAME.
@@ -103,6 +119,9 @@ re-registration can retract the previous keys."
    (function-specs :initform (make-hash-table :test #'eq :synchronized t)
                    :reader registry-function-specs
                    :documentation "Symbol -> function spec.")
+   (generators :initform (make-hash-table :test #'eq :synchronized t)
+               :reader registry-generators
+               :documentation "Symbol -> CUSTOM-GENERATOR (specification §11).")
    (properties :initform (make-hash-table :test #'eq :synchronized t)
                :reader registry-properties
                :documentation "Symbol -> PROPERTY-ENTRY.")
@@ -113,6 +132,32 @@ re-registration can retract the previous keys."
                       :reader registry-properties-by-tag
                       :documentation "Tag -> list of property names."))
   (:documentation "In-image registry backed by hash tables.  The default backend."))
+
+(defmacro with-registry-lock ((registry) &body body)
+  "Run BODY with REGISTRY's property table locked, so that a compound update
+lands as one and no reader can see it half applied.
+
+Each table is :SYNCHRONIZED, which makes a single GETHASH, SETF GETHASH or
+REMHASH atomic -- and nothing more.  The reverse indexes are maintained with
+read-modify-write: INDEX-PROPERTY pushes onto a list it has just read, and
+REGISTRY-REGISTER-PROPERTY's find, unindex, set, index sequence straddles four
+tables.  Under contention a push is simply lost, and the loss is invisible in
+the names table: 8 threads registering 3000 properties left PROPERTIES-FOR
+answering with 1146 of them, with nothing on any listing to say the index had
+holes (§73.4 #8).
+
+Every writer and every reader of the reverse indexes takes this same lock -- the
+one belonging to the table that holds the definitions -- so the acquisition
+order is the same on both sides and it cannot deadlock.  BODY may use the hash
+tables normally; the lock is recursive.
+
+On an implementation without SB-EXT:WITH-LOCKED-HASH-TABLE the body runs
+unlocked, which is the behaviour this registry has always had there: correct
+when a registry is written from one thread, which is the host model §40
+describes."
+  #+sbcl `(sb-ext:with-locked-hash-table ((registry-properties ,registry))
+            ,@body)
+  #-sbcl `(progn ,@body))
 
 (defun make-hash-table-registry ()
   "Return a fresh empty HASH-TABLE-REGISTRY."
@@ -173,6 +218,17 @@ definition and reports a verdict for it, with nothing on the result to say so.")
 (defmethod registry-list-function-specs ((registry hash-table-registry))
   (hash-table-keys-sorted (registry-function-specs registry)))
 
+(defmethod registry-find-generator ((registry hash-table-registry) name)
+  (gethash name (registry-generators registry)))
+
+(defmethod registry-register-generator ((registry hash-table-registry)
+                                        name generator)
+  (setf (gethash name (registry-generators registry)) generator)
+  generator)
+
+(defmethod registry-list-generators ((registry hash-table-registry))
+  (hash-table-keys-sorted (registry-generators registry)))
+
 (defmethod registry-find-property ((registry hash-table-registry) name)
   (let ((entry (gethash name (registry-properties registry))))
     (if entry
@@ -204,32 +260,38 @@ Index keys that end up empty are dropped so that lookups return NIL."
 
 (defmethod registry-register-property ((registry hash-table-registry) name property
                                        &key targets tags)
-  (let ((previous (gethash name (registry-properties registry))))
-    (when previous
-      (unindex-property registry name
-                        (property-entry-targets previous)
-                        (property-entry-tags previous))))
-  (setf (gethash name (registry-properties registry))
-        (make-property-entry property targets tags))
-  (index-property registry name targets tags)
-  property)
+  (with-registry-lock (registry)
+    (let ((previous (gethash name (registry-properties registry))))
+      (when previous
+        (unindex-property registry name
+                          (property-entry-targets previous)
+                          (property-entry-tags previous))))
+    (setf (gethash name (registry-properties registry))
+          (make-property-entry property targets tags))
+    (index-property registry name targets tags)
+    property))
 
 (defmethod registry-list-properties ((registry hash-table-registry))
-  (hash-table-keys-sorted (registry-properties registry)))
+  (with-registry-lock (registry)
+    (hash-table-keys-sorted (registry-properties registry))))
 
 (defmethod registry-properties-for ((registry hash-table-registry) target)
-  (sorted-symbols (gethash target (registry-properties-by-target registry))))
+  (with-registry-lock (registry)
+    (sorted-symbols (gethash target (registry-properties-by-target registry)))))
 
 (defmethod registry-properties-with-tag ((registry hash-table-registry) tag)
-  (sorted-symbols (gethash tag (registry-properties-by-tag registry))))
+  (with-registry-lock (registry)
+    (sorted-symbols (gethash tag (registry-properties-by-tag registry)))))
 
 (defmethod registry-clear ((registry hash-table-registry))
-  (clrhash (registry-specs registry))
-  (clrhash (registry-function-specs registry))
-  (clrhash (registry-properties registry))
-  (clrhash (registry-properties-by-target registry))
-  (clrhash (registry-properties-by-tag registry))
-  registry)
+  (with-registry-lock (registry)
+    (clrhash (registry-specs registry))
+    (clrhash (registry-function-specs registry))
+    (clrhash (registry-generators registry))
+    (clrhash (registry-properties registry))
+    (clrhash (registry-properties-by-target registry))
+    (clrhash (registry-properties-by-tag registry))
+    registry))
 
 (defun find-spec (name &optional (registry *registry*))
   "Return the spec registered under NAME in REGISTRY, and a found-p second value."
@@ -250,6 +312,14 @@ Index keys that end up empty are dropped so that lookups return NIL."
 (defun list-function-specs (&optional (registry *registry*))
   "Return the names of every function spec in REGISTRY, sorted."
   (registry-list-function-specs registry))
+
+(defun find-generator (name &optional (registry *registry*))
+  "Return the custom generator registered under NAME, and a found-p second value."
+  (registry-find-generator registry name))
+
+(defun list-generators (&optional (registry *registry*))
+  "Return the names of every custom generator in REGISTRY, sorted."
+  (registry-list-generators registry))
 
 (defun find-property (name &optional (registry *registry*))
   "Return the property registered under NAME in REGISTRY, and found-p."
