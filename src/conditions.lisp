@@ -139,6 +139,13 @@ standard handler keeps it."))
   (:documentation
    "Signalled when generation is requested while *GENERATOR-BACKEND* is NIL."))
 
+(defun report-invalid-form (stream form description reason)
+  "Print a malformed declaration without recursively expanding circular list structure."
+  (let ((*print-circle* t)
+        (*print-length* 20)
+        (*print-level* 8))
+    (format stream "~S is not a valid ~A~@[: ~A~]." form description reason)))
+
 (define-condition invalid-spec-form (cl-spec-error)
   ((form :initarg :form
          :initform nil
@@ -149,9 +156,9 @@ standard handler keeps it."))
            :reader invalid-spec-form-reason
            :documentation "Human readable explanation, or NIL."))
   (:report (lambda (condition stream)
-             (format stream "~S is not a valid spec form~@[: ~A~]."
-                     (invalid-spec-form-form condition)
-                     (invalid-spec-form-reason condition))))
+             (report-invalid-form stream (invalid-spec-form-form condition)
+                                  "spec form"
+                                  (invalid-spec-form-reason condition))))
   (:documentation
    "Signalled when NORMALIZE-SPEC-FORM cannot make sense of a form."))
 
@@ -159,17 +166,17 @@ standard handler keeps it."))
   ((form :initarg :form
          :initform nil
          :reader invalid-property-form-form
-         :documentation "The DEFPROPERTY option clause that could not be parsed.")
+         :documentation "The rejected DEFPROPERTY name, bindings, body, or option clause.")
    (reason :initarg :reason
            :initform nil
            :reader invalid-property-form-reason
            :documentation "Human readable explanation, or NIL."))
   (:report (lambda (condition stream)
-             (format stream "~S is not a valid DEFPROPERTY clause~@[: ~A~]."
-                     (invalid-property-form-form condition)
-                     (invalid-property-form-reason condition))))
+             (report-invalid-form stream (invalid-property-form-form condition)
+                                  "DEFPROPERTY declaration fragment"
+                                  (invalid-property-form-reason condition))))
   (:documentation
-   "Signalled when DEFPROPERTY cannot make sense of one of its option clauses."))
+   "Signalled when DEFPROPERTY cannot parse a declaration fragment."))
 
 (define-condition invalid-function-spec-form (cl-spec-error)
   ((form :initarg :form
@@ -181,9 +188,9 @@ standard handler keeps it."))
            :reader invalid-function-spec-form-reason
            :documentation "Human readable explanation, or NIL."))
   (:report (lambda (condition stream)
-             (format stream "~S is not a valid function spec clause~@[: ~A~]."
-                     (invalid-function-spec-form-form condition)
-                     (invalid-function-spec-form-reason condition))))
+             (report-invalid-form stream (invalid-function-spec-form-form condition)
+                                  "function spec clause"
+                                  (invalid-function-spec-form-reason condition))))
   (:documentation
    "Signalled when a function spec claims something the checker cannot honour.
 
@@ -206,9 +213,9 @@ public CLOS API in a state its own consumers could not read."))
            :reader invalid-generator-form-reason
            :documentation "Human readable explanation, or NIL."))
   (:report (lambda (condition stream)
-             (format stream "~S is not a valid custom generator~@[: ~A~]."
-                     (invalid-generator-form-form condition)
-                     (invalid-generator-form-reason condition))))
+             (report-invalid-form stream (invalid-generator-form-form condition)
+                                  "custom generator"
+                                  (invalid-generator-form-reason condition))))
   (:documentation
    "Signalled when DEFGENERATOR cannot honour the definition it was given.
 

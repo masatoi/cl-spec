@@ -193,13 +193,63 @@ is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
     (cl-spec/src/dsl:defproperty unchanged ((x integer))
       (:about +) (:trials (:normal 1)) (integerp x))
     (let ((original (cl-spec/src/registry:find-property 'unchanged)))
-      (ok (signals (macroexpand-1
+      (ok (signals (eval
                     '(cl-spec/src/dsl:defproperty unchanged ((x integer dropped))
                       (:about -) nil))
                    'cl-spec/src/conditions:invalid-property-form))
       (ok (eq original (cl-spec/src/registry:find-property 'unchanged)))
       (ok (equal '(unchanged) (cl-spec/src/registry:properties-for '+)))
       (ok (null (cl-spec/src/registry:properties-for '-))))))
+
+(deftest property-options-end-at-the-first-predicate
+  (multiple-value-bind (documentation options forms)
+      (cl-spec/src/dsl::parse-property-body '(t (:trials (:normal 7))))
+    (ok (null documentation))
+    (ok (null options))
+    (ok (equal '(t (:trials (:normal 7))) forms))))
+
+(deftest defproperty-requires-symbol-targets
+  (dolist (target '(42 "target" (setf target)))
+    (let ((condition
+            (handler-case
+                (progn (macroexpand-1
+                        (list 'defproperty 'bad-target nil (list :about target) t))
+                       nil)
+              (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+      (ok condition)
+      (when condition
+        (ok (search ":ABOUT"
+                    (cl-spec/src/conditions:invalid-property-form-reason condition)))))))
+
+(deftest declaration-parsers-refuse-improper-outer-lists
+  (dolist (tail '(tail nil))
+    (let ((clauses (list '(:args (x integer)))))
+      (setf (cdr clauses) (or tail clauses))
+      (ok (signals (cl-spec/src/dsl::parse-function-spec-clauses 'target clauses)
+                   'cl-spec/src/conditions:invalid-function-spec-form)))
+    (let ((options (list '(:generator source))))
+      (setf (cdr options) (or tail options))
+      (ok (signals (cl-spec/src/dsl::spec-generator-option options)
+                   'cl-spec/src/conditions:invalid-spec-form)))))
+
+(deftest property-refusals-identify-the-offending-option
+  (dolist (case '((((:kind)) ":KIND")
+                  (((:shrink nil) (:shrink t)) ":SHRINK")
+                  (((:timeout 10)) ":TIMEOUT")
+                  (((:trials (:normal -1))) ":TRIALS")))
+    (destructuring-bind (options diagnostic) case
+      (let ((condition
+              (handler-case
+                  (progn
+                    (macroexpand-1
+                     (list* 'defproperty 'bad-options nil (append options '(t))))
+                    nil)
+                (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+        (ok condition)
+        (when condition
+          (ok (search diagnostic
+                      (string-upcase
+                       (cl-spec/src/conditions:invalid-property-form-reason condition)))))))))
 
 (deftest defproperty-requires-a-name-and-predicate
   (dolist (form '((cl-spec/src/dsl:defproperty nil () t)
@@ -210,19 +260,35 @@ is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
     (ok (signals (macroexpand-1 form) 'cl-spec/src/conditions:invalid-property-form))))
 
 (deftest defproperty-rejects-duplicate-and-malformed-options
-  (dolist (options '(((:trials (:normal 1)) (:trials (:normal 99)))
-                     ((:about +) (:about -)) ((:tags :one) (:tags :two))
-                     ((:kind :one) (:kind :two)) ((:shrink nil) (:shrink t))
-                     ((:kind)) ((:shrink)) ((:trials))
-                     ((:kind . :invariant)) ((:about . +))
-                     ((:trials (:normal -1))) ((:trials (:normal 1.5)))
-                     ((:trials (:normal 1 :normal 99)))
-                     ((:trials (:normal 1 . tail))) ((:trials (normal 1)))
-                     ((:trials (:normal))) ((:timeout 10))))
-    (ok (signals (macroexpand-1
-                  (list* 'cl-spec/src/dsl:defproperty 'invalid-option '((x integer))
-                         (append options '((integerp x)))))
-                 'cl-spec/src/conditions:invalid-property-form))))
+  (dolist (case '((((:trials (:normal 1)) (:trials (:normal 99))) "more than once")
+                  (((:about +) (:about -)) "more than once")
+                  (((:tags :one) (:tags :two)) "more than once")
+                  (((:kind :one) (:kind :two)) "more than once")
+                  (((:shrink nil) (:shrink t)) "more than once")
+                  (((:kind)) "exactly one") (((:shrink)) "exactly one")
+                  (((:trials)) "exactly one")
+                  (((:kind . :invariant)) "finite proper list")
+                  (((:about . +)) "finite proper list")
+                  (((:trials (:normal -1))) "nonnegative integer")
+                  (((:trials (:normal 1.5))) "nonnegative integer")
+                  (((:trials (:normal 1 :normal 99))) "unique keyword")
+                  (((:trials (:normal 1 . tail))) "unique keyword")
+                  (((:trials (normal 1))) "unique keyword")
+                  (((:trials (:normal))) "unique keyword")
+                  (((:timeout 10)) "unknown")))
+    (destructuring-bind (options reason-fragment) case
+      (let ((condition
+              (handler-case
+                  (progn
+                    (macroexpand-1
+                     (list* 'defproperty 'invalid-option '((x integer))
+                            (append options '((integerp x)))))
+                    nil)
+                (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+        (ok condition)
+        (when condition
+          (ok (search reason-fragment
+                      (cl-spec/src/conditions:invalid-property-form-reason condition))))))))
 
 (deftest defproperty-rejects-malformed-bindings
   (dolist (arguments '(((x integer ignored)) ((x)) (x) ((x . integer))

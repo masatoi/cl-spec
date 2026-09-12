@@ -23,10 +23,24 @@
                 #:invalid-spec-form-reason
                 #:generator-unavailable
                 #:generator-unavailable-spec
-                #:generator-unavailable-reason
                 #:unsupported-seed))
 
 (in-package #:cl-spec/tests/conditions-test)
+
+(deftest malformed-form-reports-handle-cycles
+  (let ((form (list :bad)))
+    (setf (cdr form) form)
+    (dolist (type '(cl-spec/src/conditions:invalid-spec-form
+                    cl-spec/src/conditions:invalid-property-form
+                    cl-spec/src/conditions:invalid-function-spec-form
+                    cl-spec/src/conditions:invalid-generator-form))
+      ;; The length limit keeps this regression safe even before the fix.
+      (let* ((*print-circle* nil)
+             (*print-length* 20)
+             (condition (make-condition type :form form :reason "finite list required"))
+             (report (princ-to-string condition)))
+        (ok (search "#1=" report))
+        (ok (search "finite list required" report))))))
 
 (deftest condition-hierarchy
   (testing "every framework condition inherits from CL-SPEC-ERROR"

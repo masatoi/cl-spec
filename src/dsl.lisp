@@ -14,7 +14,10 @@
                 #:invalid-spec-form
                 #:invalid-property-form
                 #:invalid-function-spec-form
+                #:invalid-function-spec-form-form
+                #:invalid-function-spec-form-reason
                 #:invalid-generator-form)
+  (:import-from #:cl-spec/src/explain)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -38,17 +41,8 @@
 (in-package #:cl-spec/src/dsl)
 
 (defun proper-list-p (object)
-  "Return true for a finite proper list, rejecting dotted and circular clauses."
-  (let ((slow object)
-        (fast object))
-    (loop
-      (when (null fast) (return t))
-      (unless (consp fast) (return nil))
-      (setf fast (cdr fast))
-      (when (null fast) (return t))
-      (unless (consp fast) (return nil))
-      (setf fast (cdr fast) slow (cdr slow))
-      (when (eq slow fast) (return nil)))))
+  "Use the shared cycle-safe list check before walking declaration structure."
+  (cl-spec/src/explain:proper-list-p object))
 
 (defparameter *spec-option-keywords* '(:generator)
   "Keywords that may head an option clause in a DEFSPEC form.
@@ -65,6 +59,9 @@ Only (:GENERATOR NAME) is accepted, and anything else is refused for the reason
 §17 refuses an unknown contract clause: a definition that named a generator and
 had the clause silently dropped would look like a spec drawing from it while the
 backend derived values from the DSL instead."
+  (unless (proper-list-p options)
+    (error 'invalid-spec-form :form options
+                              :reason "options must be a finite proper list"))
   (let ((generator nil))
     (dolist (option options)
       (unless (and (consp option)
@@ -191,6 +188,8 @@ means the contract named no return spec: (:returns nil) is refused, so the two
 cannot be confused."
   (unless (and name (symbolp name) (not (keywordp name)))
     (function-spec-error name "the specified function must be named by a symbol"))
+  (unless (proper-list-p clauses)
+    (function-spec-error clauses "clauses must be a finite proper list"))
   (let ((documentation nil)
         (seen '())
         (args nil)
@@ -266,6 +265,8 @@ signature nothing had checked.
 A parameter name also has to be bindable: the :PRE and :POST predicates are
 compiled into lambdas over these names, and a constant such as T emitted into a
 lambda list is a compiler error about a form the author never wrote."
+  (unless (proper-list-p args)
+    (function-spec-error args "arguments must be a finite proper list"))
   (let ((variables '()))
     (dolist (entry args)
       (when (lambda-list-keyword-name-p entry)
@@ -289,7 +290,7 @@ lambda list is a compiler error about a form the author never wrote."
            (format nil "~S names a constant and cannot be bound as a parameter"
                    name)))
         (when (member name variables)
-          (function-spec-error entry "the same parameter is specified twice"))
+          (function-spec-error entry (format nil "~S is specified twice as a parameter" name)))
         (push name variables)))
     args))
 
@@ -416,45 +417,40 @@ a contract whose unchecked half would still be reported as verified
   (error 'invalid-property-form :form form :reason reason))
 
 (defun parse-property-arguments (arguments)
-  "Validate exact (VARIABLE SPEC) pairs with distinct, bindable required variables."
-  (unless (proper-list-p arguments)
-    (property-form-error arguments "arguments must be a finite proper list"))
-  (let ((variables nil))
-    (dolist (entry arguments)
-      (unless (and (consp entry) (proper-list-p entry) (= 2 (length entry)))
-        (property-form-error entry "expected exactly (variable spec-form)"))
-      (let ((variable (first entry)))
-        (unless (and variable (symbolp variable) (not (keywordp variable))
-                     (not (constantp variable)) (not (lambda-list-keyword-name-p variable)))
-          (property-form-error entry "expected a bindable required variable"))
-        (when (member variable variables)
-          (property-form-error entry "the same variable is specified more than once"))
-        (push variable variables))))
-  arguments)
+  "Validate the same required bindings accepted by function contracts.
+Translate only declaration refusals, preserving the offending fragment and the
+specific explanation for constants, lambda-list keywords, and malformed pairs."
+  (handler-case (parse-function-spec-arguments arguments)
+    (invalid-function-spec-form (condition)
+      (property-form-error (invalid-function-spec-form-form condition)
+                           (invalid-function-spec-form-reason condition)))))
 
 (defun parse-property-body (body)
   "Split BODY into documentation, validated unique options, and predicate forms.
-A lone string remains a predicate. Unknown leading keyword clauses are refused.
+A lone string remains a predicate. Unknown leading keyword clauses are refused,
+since silently treating a misspelled option as code loses its intended meaning.
 After the first non-option form, all remaining forms are ordinary Lisp code."
   (unless (proper-list-p body)
     (property-form-error body "body must be a finite proper list"))
   (let ((documentation nil)
         (options nil)
-        (seen nil)
         (forms body))
     (when (and (stringp (first forms)) (rest forms))
       (setf documentation (pop forms)))
     (loop while (and (consp (first forms)) (keywordp (first (first forms))))
-          for clause = (pop forms)
-          for keyword = (first clause)
-          do (unless (proper-list-p clause)
-               (property-form-error clause "option clause must be a finite proper list"))
-             (unless (member keyword *property-option-keywords*)
-               (property-form-error clause "unknown property option"))
-             (when (member keyword seen)
-               (property-form-error clause "property option appears more than once"))
-             (push keyword seen)
-             (push clause options))
+          do (let* ((clause (pop forms))
+                    (keyword (first clause)))
+               (unless (proper-list-p clause)
+                 (property-form-error clause
+                                      (format nil "~S clause must be a finite proper list"
+                                              keyword)))
+               (unless (member keyword *property-option-keywords*)
+                 (property-form-error
+                  clause (format nil "~S is unknown; expected one of ~{~S~^, ~}"
+                                 keyword *property-option-keywords*)))
+               (when (find keyword options :key #'first)
+                 (property-form-error clause (format nil "~S appears more than once" keyword)))
+               (push clause options)))
     (unless forms
       (property-form-error body "at least one predicate form is required"))
     (values documentation (nreverse options) forms)))
@@ -464,12 +460,16 @@ After the first non-option form, all remaining forms are ordinary Lisp code."
   (find keyword options :key #'first))
 
 (defun check-single-value-clause (clause)
-  "Require one explicit value for :KIND, :TRIALS and :SHRINK clauses."
+  "Require one explicit value for :KIND, :TRIALS and :SHRINK clauses.
+A missing value must not look like an explicit NIL, and extra values must not
+be silently discarded by SECOND when constructing the registered property."
   (when (and clause (/= 2 (length clause)))
-    (property-form-error clause "option takes exactly one value")))
+    (property-form-error clause (format nil "~S takes exactly one value" (first clause)))))
 
 (defun trials-plist-p (value)
-  "Recognize a finite plist of unique keyword profiles and nonnegative integer budgets."
+  "Recognize a finite plist of unique keyword profiles and nonnegative budgets.
+Duplicate profiles make GETF silently ignore a budget; a negative or fractional
+count cannot describe executed trials. NIL remains a valid empty table."
   (and (proper-list-p value)
        (evenp (length value))
        (let ((seen nil))
@@ -490,13 +490,16 @@ predicate has to be compiled into a real function rather than kept as a list."
     (let ((shrink-clause (option-clause options :shrink))
           (kind-clause (option-clause options :kind))
           (trials-clause (option-clause options :trials)))
+      (let ((about-clause (option-clause options :about)))
+        (unless (every #'symbolp (rest about-clause))
+          (property-form-error about-clause ":ABOUT takes symbols naming its targets")))
       (check-single-value-clause shrink-clause)
       (check-single-value-clause kind-clause)
       (check-single-value-clause trials-clause)
       (when (and trials-clause (not (trials-plist-p (second trials-clause))))
         (error 'invalid-property-form
                :form trials-clause
-               :reason "expected a plist, e.g. (:trials (:smoke 5 :normal 100))"))
+               :reason ":TRIALS requires unique keyword profiles and nonnegative integer budgets"))
       `(register-property
         (make-instance 'property
                        :name ',name

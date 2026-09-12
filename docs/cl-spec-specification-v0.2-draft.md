@@ -336,8 +336,9 @@ Property-Based Testingの低レベルバックエンドには `check-it` を利�
   名前が`&`で始まるsymbolを拒否する。引数なしは許可する。
 - 先頭のoptionは`:about`・`:kind`・`:tags`・`:trials`・`:shrink`だけ。
   各optionは1回までで、節自体も有限proper listでなければならない。
-- `:kind`・`:trials`・`:shrink`は値を正確に1個取る。欠落と明示的なNILを区別する。
-  `:about`・`:tags`は従来どおり列を取り、空でもよい。
+- `:kind`・`:trials`・`:shrink`は値を正確に1個取る。例えば`(:kind)`は拒否し、
+  `(:kind nil)`は受理する。節自体の省略と明示的NILが異なる値になるという意味ではない。
+  `:about`はsymbolの列、`:tags`はtag designatorの列を取り、どちらも空でよい。
 - `:trials`は重複しないkeyword profileと非負整数予算のplist。空tableも許可する。
   0は明示的な0試行であり、backend defaultへ読み替えない。
 - 本文は最低1形式必要。明示的なNILは偽を返す本文であり、空本文とは違う。
@@ -349,10 +350,17 @@ Property-Based Testingの低レベルバックエンドには `check-it` を利�
 
 違反はmacroexpansion時の`invalid-property-form`となる。
 conditionには問題のformと理由を保持する。既存定義と逆引きindexを変更する前に拒否する。
+formはoption節に限らず、名前・binding・本文全体の場合もある。
+不正DSL形式のcondition reportは循環参照を表示し、表示する長さと深さを制限する。
+`defspec`のoptionsと`defspec-function`のclausesも、走査前に有限proper listを要求する。
 spec自体の文法は引き続きnormalizerが検査し、不正なspecには`invalid-spec-form`を通知する。
 
 例えば`((x integer ignored))`や重複する`:trials`は、末尾・後続節を無視せず拒否する。
 各option値の意味は従来どおりであり、分類keywordの有限な一覧やtagの新しい型制約は導入しない。
+tagの逆引きはEQ比較である。文字列等を内容で照合する保証はなく、安定した照合にはsymbolを使う。
+tagの型制限や正規化は§73.5のmetadata検証課題に含む。
+`:trials`等の設定は必ず本文より前に置く。本文開始後の`(:trials ...)`は予算設定ではなく
+関数呼出しであり、通常は未定義関数のエラーになる。この構文境界は変更しない。
 この保証は`defproperty`の宣言parserについてであり、公開CLOS APIで直接作った任意の
 `property`を包括的に検証する保証ではない（§73.5）。
 
