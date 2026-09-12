@@ -59,7 +59,8 @@
 
 ## 0.2 実装状況表
 
-この表は2026-09-10時点のスナップショットであり、実行時のcapability APIではない。
+この表は2026-09-13時点（main `502a6f2`と本改訂）のスナップショットであり、
+実行時のcapability APIではない。直近の現状整理と残課題の優先順位は§73.5を参照する。
 
 | 機能 | 状況 | 現在の利用範囲・制限 |
 |---|---|---|
@@ -68,7 +69,7 @@
 | Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data`、`function-spec-data` |
 | symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
-| Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties` |
+| Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
@@ -313,6 +314,55 @@ Property-Based Testingの低レベルバックエンドには `check-it` を利�
 - execution configuration
 
 ---
+
+## 4.1 DEFPROPERTYの確定構文
+
+> **位置付け:** 実装済み。曖昧な宣言を受理して一部を無視する動作を廃止した。
+
+```lisp
+(defproperty name ((variable spec-form) ...)
+  "任意のdocstring"
+  (:about target-symbol ...)
+  (:kind :classification)
+  (:tags tag ...)
+  (:trials (:smoke 10 :normal 100))
+  (:shrink t)
+  predicate-form ...)
+```
+
+- 名前はNIL・keyword以外のsymbol。
+- 引数全体と各bindingは有限proper list。bindingは正確に2要素。
+  変数は重複のない束縛可能symbolとし、NIL・T等の定数・keyword・非symbol・
+  名前が`&`で始まるsymbolを拒否する。引数なしは許可する。
+- 先頭のoptionは`:about`・`:kind`・`:tags`・`:trials`・`:shrink`だけ。
+  各optionは1回までで、節自体も有限proper listでなければならない。
+- `:kind`・`:trials`・`:shrink`は値を正確に1個取る。例えば`(:kind)`は拒否し、
+  `(:kind nil)`は受理する。節自体の省略と明示的NILが異なる値になるという意味ではない。
+  `:about`はsymbolの列、`:tags`はtag designatorの列を取り、どちらも空でよい。
+- `:trials`は重複しないkeyword profileと非負整数予算のplist。空tableも許可する。
+  0は明示的な0試行であり、backend defaultへ読み替えない。
+- 本文は最低1形式必要。明示的なNILは偽を返す本文であり、空本文とは違う。
+  全bodyが文字列1個ならdocstringではなく本文とする。
+- 最初の非option形式で本文が始まり、それ以降はoptionに見えても通常のLispコードとして保持する。
+  本文開始前の未知keyword節は拒否する。先頭にkeywordを関数位置として使う特殊なコードを
+  意図する場合は`progn`等で明示的に本文を開始する。
+- `:shrink`の値は登録時に評価する式のまま維持する。変数や式による指定を禁止しない。
+
+違反はmacroexpansion時の`invalid-property-form`となる。
+conditionには問題のformと理由を保持する。既存定義と逆引きindexを変更する前に拒否する。
+formはoption節に限らず、名前・binding・本文全体の場合もある。
+不正DSL形式のcondition reportは循環参照を表示し、表示する長さと深さを制限する。
+`defspec`のoptionsと`defspec-function`のclausesも、走査前に有限proper listを要求する。
+spec自体の文法は引き続きnormalizerが検査し、不正なspecには`invalid-spec-form`を通知する。
+
+例えば`((x integer ignored))`や重複する`:trials`は、末尾・後続節を無視せず拒否する。
+各option値の意味は従来どおりであり、分類keywordの有限な一覧やtagの新しい型制約は導入しない。
+tagの逆引きはEQ比較である。文字列等を内容で照合する保証はなく、安定した照合にはsymbolを使う。
+tagの型制限や正規化は§73.5のmetadata検証課題に含む。
+`:trials`等の設定は必ず本文より前に置く。本文開始後の`(:trials ...)`は予算設定ではなく
+関数呼出しであり、通常は未定義関数のエラーになる。この構文境界は変更しない。
+この保証は`defproperty`の宣言parserについてであり、公開CLOS APIで直接作った任意の
+`property`を包括的に検証する保証ではない（§73.5）。
 
 # 5. 仕様とPropertyの位置付け
 
@@ -1655,13 +1705,19 @@ machine-readable
 
 # 27. cl-mcpとの統合
 
-> **位置付け:** 一部実装。semantic-dataは実装済み。MCP tool群は想定API。
+> **位置付け:** 一部実装。semantic-dataとcl-mcp側のspec adapterは実装済み。
+> 下の長い想定API一覧全体が実装済みという意味ではない。
 
 本フレームワーク自体はMCP implementationへ依存させない。
 
 代わりにpublic introspection APIを提供する。
 
-cl-mcp側がそれをtoolとして公開する。
+cl-mcp側は`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`を公開している。
+`spec-symbol`がruntime情報とsemantic-dataの関連登録名をjoinし、定義本文と検査は
+describe/checkで取得する。cl-mcp PR #154のversioned metadata投影もmainへマージ済み。
+coreのschema versionと外部JSON schema versionの境界は§38.1を参照する。
+
+以下の`describe_symbol`や個別操作名は設計上の概念であり、現行tool名を列挙したものではない。
 
 §28の `describe_symbol` はcl-spec単独の値を返す関数ではなく、joinである。signature、CL型宣言、
 CLOS methods、source locationはcl-mcp側だけが持つ情報であり、cl-specのregistryには存在しない。
@@ -1716,7 +1772,8 @@ uninstrument_function
 
 # 28. LLMが関数編集前に取得すべき情報
 
-> **位置付け:** 設計方針。情報の一括取得を行うcl-mcp adapterは未実装。
+> **位置付け:** 設計方針＋一部実装。cl-mcpのspec-symbolがruntime情報と登録名をjoinし、
+> spec-describeが定義本文を返す。下の情報すべてを1つの応答に集める保証ではない。
 
 例えば `TRANSFER` を変更しようとするLLMには、
 
@@ -3571,7 +3628,9 @@ imageの状態が不明な場合は、クリーンなプロセスで必要な検
 
 Lisp内部のIR/plistと外部JSON schemaを区別し、外部表現にschema versionを持たせる。
 MCP公開時には利用可能な操作・未対応機能・実行制限を取得できるようにする。
-capabilityの具体的なAPI名と返却形式は未決定。
+coreの`schema-info`・definition/resultの`:capabilities`と、adapterの`core_schema`投影は
+§38.1で確定済み。MCP全操作の可否・実行制限を統一的に列挙するprotocolと、
+任意値の可逆な外部表現は引き続きD7の残課題である。
 
 外部表現では、少なくとも次の区別を保持する。
 
@@ -3597,29 +3656,31 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 以下の項目はAPIを推測で補うための候補一覧ではなく、実装前に決める判断事項である。
 解決時には当該節・実装状況表・対応する受け入れテストを併せて更新する。
 
-| ID | 決めること | 関連節 | 決定・検証が必要な時点 |
+| ID | 決定・実装済み | 残る判断・受け入れ条件 | 関連節 |
 |---|---|---|---|
-| D1 | Function Specのlambda list、多値、pre/post、signals、実行前状態、未対応構文 | §17〜19、§21 | 決定済み（§17の表）。対応範囲を広げるときに再検討 |
-| D2 | status/categoryの対応、棄却・試行数の定義、予算、検証不足の集計 | §14、§19、§47、LLM-01 | 自律実行結果の公開前 |
-| D3 | replay artifact schema、定義識別、復元不能値、options保存、直接反例再検査API | §15、§57、LLM-03 | CI artifact連携前 |
-| D4 | 縮小時の失敗同一性、入力妥当性、完了状態 | §16、LLM-04 | 縮小結果を修正根拠にする機能の拡張前 |
-| D5 | fixture lifecycle、timeout、強制終了、cleanup、ワーカー再利用の責務 | §40、§48、§60、LLM-04 | 副作用を伴う自律実行前 |
-| D6 | reload時の定義削除、参照更新、registry世代とcache invalidation | §8、§9.1、§69、LLM-05 | 継続的REPL連携の保証前 |
-| D7 | JSONの型表現、schema version、capability、情報省略の規則 | §26〜28、LLM-06 | cl-mcp adapter公開前 |
-| D8 | trustの保存形式、由来、内容変更時の扱い、状態遷移の権限 | §44〜45、LLM-02 | LLM生成Propertyの採用自動化前 |
+| D1 | required引数・主返り値・pre/postの最小範囲、全引数generator、runtime scope | optional/key/rest・多値・signals・実行前状態・明示post束縛は拡張時に決める | §17〜21 |
+| D2 | statusとreason、必須trials、budget・棄却数、0件／全件棄却のskip、adapterの検証不足集計 | 実行環境・入力coverageの未知情報、fixture／timeout等の結果との統合 | §14・19・47、LLM-01 |
+| D3 | seed/profile replay、宣言digest、観測した元／縮小反例の保持 | 保存入力の直接再検査API、可逆artifact、options・環境・fixture復元条件 | §15・57、LLM-03 |
+| D4 | 入力domain/pre検査、failure identity、未知post identity拒否、縮小採否の表示、mutation検知 | 中断・時間／回数予算切れ・完了を分ける結果、任意状態の復元。大域最小性は保証しない | §14・16、LLM-04 |
+| D5 | adapterの実行ホストtimeout・worker診断 | coreのtrial／候補ごとのfixture lifecycle、cleanup保証、強制終了との責務境界 | §40・48・60、LLM-04 |
+| D6 | SBCLのregistry複合更新lock、参照specの動的解決、wrapperの安全な再設定／解除 | 定義削除・registry世代・in-place編集・cache無効化・並行seed取得 | §8・9.1・20、LLM-05 |
+| D7 | Lisp schema v1とMCP JSONの分離、entity-kind、digest・capability投影、表示の省略情報 | 可逆な値表現、opaque/cycle/shared値の復元、MCP操作可否・制限の統一記述 | §26〜28・38.1、LLM-06 |
+| D8 | source form・documentation・metadata・宣言digestの保持 | trust／由来の標準保存形式、内容に紐づくreview、遷移権限と変更時の失効 | §44〜45、LLM-02 |
 
 ## 73.2 次の実証順
 
-既存のvertical sliceを基礎に、次の順でLLMの開発作業に接続する。
+初期のFunction Spec、cl-mcp接続、既知の純粋関数のseed再実行は実証済み。
+2026-09-10の実測は以下に履歴として残す。保存入力を直接再検査した実証ではない。
 
-1. 純粋な小関数を対象にFunction Specの最小対応範囲を確定し、checkerを実装する。
-2. 既存の`semantic-data`・`property-data`・runnerを最小限のcl-mcp adapterへ接続する。
-   初回は副作用のない対象を選び、実行ホストで時間上限を設ける。
-3. 既知の不具合について、契約取得・反例取得・修正・保存反例の再検査を一周させる。
-4. 実行結果の不足、再現条件、取得情報量を測り、LLM-01〜06の未達項目を明示する。
-5. その結果に基づき、副作用のある対象や高度なPBTへの拡張を判断する。
+現在は次の順で進める。詳細な受け入れ条件は§73.5に定める。
 
-§70は初期architectureの依存順であり、この実証順は現在の実装から利用価値を確認する順である。
+1. 仕様と現状の不一致を整理し、defpropertyの宣言検査を厳格化する（本改訂で実施）。
+2. 保存反例の直接再検査と最小artifact形式を定め、修正前後を同じ入力で検査する。
+3. trial・縮小候補ごとのfixture、cleanup、中断結果、worker再利用の責務を固める。
+4. registry更新・reload・cache無効化の規則を定め、その上でnamed specの実行コストを測る。
+5. これらの実証結果を踏まえてFunction Specの表現力や副作用対象を広げる。
+
+§70は初期architectureの依存順であり、現在の完了状況を意味しない。
 
 ### スレッドについて
 
@@ -3630,12 +3691,12 @@ rebindはスレッド境界を越えない。ホストはこれを自分で持�
 registryで名前を解決する。同じ名前が両方に登録されていれば、別の定義を検査して
 その結果を報告し、resultにはそれと分かる情報が無い。
 
-registryのhash tableは`:synchronized t`である。これは名前表を守るが、
-逆引きindexは守らない。`index-property`の`pushnew`はread-modify-writeであり、
-`registry-register-property`のfind→unindex→set→indexも不可分ではない。実測では
-8スレッドから3000件を登録したあと`list-properties`は3000件を返す一方、
-`properties-for`は1146件しか返さなかった。`registration`の並行実行自体は
-ホストモデルの想定外だが、部分的な一覧が黙って返る点は残っている。
+**registryの過去の問題と現状:** 2026-09-10には表の単一操作だけが同期され、
+逆引きindexのread-modify-writeで更新が失われた。8スレッドから3000件を登録して
+properties-forが1146件しか返さなかった実測は修正前の履歴である。
+現在はSBCLで書き手・読み手が同じWITH-REGISTRY-LOCKを取得し、複合更新も保護する。
+回帰テストと4000/4000の修正後実測は§73.4 #8に記録した。
+他処理系では単一writerを前提とし、汎用の並行更新保証とはしない。
 
 `make-seed`はprocess共有の`*random-state*`から引く。スレッドは`*random-state*`を
 共有するので、これは同期されないread-modify-writeであり、衝突率は系の性質では
@@ -3675,9 +3736,9 @@ off-by-one。
 
 ## 73.4 繰り越した指摘
 
-独立レビュー4巡で挙がり、Function Spec本体のマージ後に別途扱うと判断したもの。
-いずれも「誤った検証判定」ではなく、報告の精度・一貫性の層である。再現手順は
-各指摘の本文に含まれる。
+以下はFunction Spec初期レビューで挙がった指摘の履歴であり、現在も全件が未解決という
+意味ではない。1〜10は下の解決記録を参照し、12は本改訂で解決した。
+11・13は§73.5の残課題へ引き継ぐ。本文の修正前の挙動と現行仕様を混同しない。
 
 **報告の正確さ**
 
@@ -3733,11 +3794,13 @@ off-by-one。
     すべて拒否している（§17）。恒久的な解は明示束縛
     （`(:post (result) ...)`）だが、§17の公開例とcl-mcpのfixtureに波及する。
 
-### 解決（2026-09-12）
+### 解決記録（2026-09-12以降）
 
 上のうち 1・2・3・4・6・7・8 を実装し、修正前後の挙動を同一の入力で実測して回帰テストを追加した。
 その後、verification evidenceの修正で5・9・10とproperty側のfailure identityを実装した。
-条項番号は変えない。
+2026-09-13の本改訂では12のdefproperty宣言検査を厳格化した（§4.1）。
+余分なbinding要素と重複optionが受理された修正前の挙動を再現し、拒否と既存定義の保持を
+tests/dsl-test.lispで検証する。条項番号は変えない。
 
 | 項 | 直したこと | 修正前 → 修正後（実測） |
 |---|---|---|
@@ -3777,8 +3840,10 @@ REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの
 `:post`の複数形式は、先頭から短絡評価し、最初に偽を返した形式の位置を内部の分類に使う。
 別形式を破る縮小候補は`:different-failure`として棄却する。公開スロットは追加せず、DSLが
 生成する既存の述語からタグ付きの追加値として位置を返す。各形式の評価回数は増やさない。
-プログラムから直接渡された通常の述語は内部位置を持たず、引き続き1つの節として扱う。
-`:return-spec`と`:postcondition`間の移動を同じreturn-value失敗クラスとする既存の規則は維持する。
+プログラムから直接渡された通常の1値述語は内部位置を持たず、失敗形式identityは不明となる。
+その観測は有効な反例として保持するが、同一性を確定できないため縮小候補としては採用しない。
+既知identityの場合だけ、`:return-spec`と`:postcondition`間の移動を同じreturn-value失敗クラスとする
+既存の規則を維持する。未知identityは節を横断しても一致させない。
 
 タプルの要素位置は異なる制約を指すため、EXPLAIN-DATAの要素エラーに`:tuple-path`として
 保持し、失敗署名でも比較する。入れ子のタプルでは外側から内側への位置のリストとなる。
@@ -3815,3 +3880,65 @@ REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの
 評価用の受け入れ条件は、修正を行うLLMが都合よく変更できない形で管理する。
 単一の成功例や生成したPropertyの成功率だけで、開発全体の改善を主張しない。
 数値目標は初期実証のbaseline取得後に決める。
+
+## 73.5 現在の残課題と受け入れ順（2026-09-13）
+
+以下は未実装・未確定の作業であり、新しい公開APIが利用できるという意味ではない。
+純粋関数の反例を修正根拠として扱う用途から順に進める。
+
+### A. 保存反例の直接再検査と最小artifact（D3、優先度高）
+
+現状のreplay-propertyはseedとprofileを使って再生成する。resultには予算とdigestが保存されるが、
+replayはそれらを強制復元しない。実測では元の予算2を7へ変更してから同じresultでreplayすると、
+7試行でpassしdigestも変わる（現在の§14の制限内）。これは保存入力の修正確認とは別の操作である。
+
+次に決めること：
+- 保存した入力を生成器なしで評価するAPIと、入力spec／preの不適合を反例解消と区別する結果。
+- property／Function Spec、元／縮小入力、failure identity、seed、profile、数値予算、
+  options、宣言digest、target revision、framework/backend/Lisp環境を保持する最小artifact。
+- 直接復元できる値の範囲。opaque・循環・共有・表示省略された値とfixture要件の扱い。
+
+受け入れ条件：targetの修正前後を同一保存入力で評価できる。宣言や環境の不一致、
+復元不能値は明示し、preview文字列をreaderへ渡して入力復元しない。
+既存の再生成replayと直接再検査を、API・結果・文書のすべてで区別する。
+
+### B. Fixture・中断・cleanup（D4/D5、副作用対象を広げる前）
+
+cons/array snapshotとmutation検知は、初期状態の復元ではない。
+cl-mcpのホストtimeoutも、coreのtrial／縮小候補の独立性を保証しない。
+
+次に決めること：各trialと各候補のsetup/evaluate/cleanup境界、復元不能な任意オブジェクト、
+全体／trial／縮小の予算、完了・中断・予算切れ・cleanup失敗の結果とworker再利用条件。
+受け入れ条件：通常終了・失敗・errorでcleanupを実行し、強制終了で保証できない場合は
+状態不明を明示する。未復元の状態を次候補の反例の根拠にしない。
+
+### C. Registry世代・reload・cache（D6、継続的REPL運用の保証前）
+
+named specは現在、参照先を呼び出しごとに解決・compileする。同じIR objectへの
+reinitialize-instanceも次の呼び出しへ反映するため、objectのEQだけを使うcacheは不正となる。
+
+次に決めること：ファイルから消えた登録定義の削除、更新世代、in-place編集、依存先の無効化、
+instrumentationの捕捉契約との関係、並行時のseed取得。
+受け入れ条件：再定義・削除・参照先変更後の検査が古いcompiled artifactを使わない。
+世代規則を先に確定し、測定に基づいてcacheを追加する。SBCLの既存index lockを
+全処理系・任意のREPL操作の整合性保証へ拡大解釈しない。
+
+### D. 型・由来・宣言APIの整合性（D2/D7/D8）
+
+- core Lisp schemaとMCP JSONの可逆値表現を分けて設計する。現行core_schemaはメタデータ投影であり、
+  artifactのserializerではない。操作capabilityと実行制限の一覧も別途定める。
+- trust/reviewを特定の宣言digestに紐づけ、内容変更で古いreviewを自動継承しない規則を定める。
+  任意metadataに保存できることは、権限や状態遷移が強制されることを意味しない。
+- defpropertyの厳格化はDSLの宣言parserが対象。直接構築するpropertyのCLOS APIについて、
+  初期化・再初期化・登録時の検査責務、metadata値の型制約と互換性を別途確定する。
+- Function Specのsubclass追加slotまでrollbackする一般規則（§73.4 #11）は未対応。
+  postの明示的な返り値束縛（#13）はDSLとadapter fixtureへ波及するため独立した変更とする。
+- condition reportの生成サイズ制限と、大きな値のsnapshotコストを評価する。
+  adapterの表示制限だけではcoreでの巨大report構築を防げない。
+
+### E. その後の表現力拡張
+
+optional/key/rest、多値、expected conditions/signals、generic function instrumentationは、
+A〜Cの意味論と結果protocolが固まってから追加する。
+引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
+describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。

@@ -5,9 +5,8 @@
 ;;;; normalizer and the registry.  Keeping them thin is what lets the DSL
 ;;;; change without disturbing the Semantic IR or the introspection API.
 ;;;;
-;;;; Every macro here compiles even when the form it describes cannot be
-;;;; honoured, so a file using the DSL still loads; the refusal is signalled when
-;;;; the expansion runs.
+;;;; Malformed declarations are refused during macroexpansion. Spec normalization
+;;;; runs when the expansion is evaluated, before the definition is registered.
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
@@ -15,7 +14,10 @@
                 #:invalid-spec-form
                 #:invalid-property-form
                 #:invalid-function-spec-form
+                #:invalid-function-spec-form-form
+                #:invalid-function-spec-form-reason
                 #:invalid-generator-form)
+  (:import-from #:cl-spec/src/explain)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -39,14 +41,8 @@
 (in-package #:cl-spec/src/dsl)
 
 (defun proper-list-p (object)
-  "Return true when OBJECT is a proper list.
-
-A dotted clause is not one, and nothing downstream survives it: (:args . a)
-reached DOLIST as a non-list and gave a bare TYPE-ERROR instead of the
-condition this parser promises, and (:pre . b) expanded into (AND . B), which
-is not a form at all."
-  (and (listp object)
-       (null (cdr (last object)))))
+  "Use the shared cycle-safe list check before walking declaration structure."
+  (cl-spec/src/explain:proper-list-p object))
 
 (defparameter *spec-option-keywords* '(:generator)
   "Keywords that may head an option clause in a DEFSPEC form.
@@ -63,6 +59,9 @@ Only (:GENERATOR NAME) is accepted, and anything else is refused for the reason
 §17 refuses an unknown contract clause: a definition that named a generator and
 had the clause silently dropped would look like a spec drawing from it while the
 backend derived values from the DSL instead."
+  (unless (proper-list-p options)
+    (error 'invalid-spec-form :form options
+                              :reason "options must be a finite proper list"))
   (let ((generator nil))
     (dolist (option options)
       (unless (and (consp option)
@@ -189,6 +188,8 @@ means the contract named no return spec: (:returns nil) is refused, so the two
 cannot be confused."
   (unless (and name (symbolp name) (not (keywordp name)))
     (function-spec-error name "the specified function must be named by a symbol"))
+  (unless (proper-list-p clauses)
+    (function-spec-error clauses "clauses must be a finite proper list"))
   (let ((documentation nil)
         (seen '())
         (args nil)
@@ -264,6 +265,8 @@ signature nothing had checked.
 A parameter name also has to be bindable: the :PRE and :POST predicates are
 compiled into lambdas over these names, and a constant such as T emitted into a
 lambda list is a compiler error about a form the author never wrote."
+  (unless (proper-list-p args)
+    (function-spec-error args "arguments must be a finite proper list"))
   (let ((variables '()))
     (dolist (entry args)
       (when (lambda-list-keyword-name-p entry)
@@ -287,7 +290,7 @@ lambda list is a compiler error about a form the author never wrote."
            (format nil "~S names a constant and cannot be bound as a parameter"
                    name)))
         (when (member name variables)
-          (function-spec-error entry "the same parameter is specified twice"))
+          (function-spec-error entry (format nil "~S is specified twice as a parameter" name)))
         (push name variables)))
     args))
 
@@ -409,23 +412,47 @@ a contract whose unchecked half would still be reported as verified
 (defparameter *property-option-keywords* '(:about :kind :tags :trials :shrink)
   "Keywords that may head an option clause in a DEFPROPERTY body.")
 
-(defun parse-property-body (body)
-  "Split a DEFPROPERTY BODY into (values DOCUMENTATION OPTIONS PREDICATE-FORMS).
+(defun property-form-error (form reason)
+  "Refuse a malformed property declaration before it can reach the registry."
+  (error 'invalid-property-form :form form :reason reason))
 
-A leading string is documentation unless it is the entire body.  Option clauses
-are conses headed by one of *PROPERTY-OPTION-KEYWORDS*, and the first form that
-is not one ends them: an unrecognised keyword clause becomes part of the
-predicate rather than being silently dropped, so adding a keyword later cannot
-quietly swallow an existing property's first body form."
+(defun parse-property-arguments (arguments)
+  "Validate the same required bindings accepted by function contracts.
+Translate only declaration refusals, preserving the offending fragment and the
+specific explanation for constants, lambda-list keywords, and malformed pairs."
+  (handler-case (parse-function-spec-arguments arguments)
+    (invalid-function-spec-form (condition)
+      (property-form-error (invalid-function-spec-form-form condition)
+                           (invalid-function-spec-form-reason condition)))))
+
+(defun parse-property-body (body)
+  "Split BODY into documentation, validated unique options, and predicate forms.
+A lone string remains a predicate. Unknown leading keyword clauses are refused,
+since silently treating a misspelled option as code loses its intended meaning.
+After the first non-option form, all remaining forms are ordinary Lisp code."
+  (unless (proper-list-p body)
+    (property-form-error body "body must be a finite proper list"))
   (let ((documentation nil)
-        (options '())
+        (options nil)
         (forms body))
     (when (and (stringp (first forms)) (rest forms))
-      (setf documentation (first forms)
-            forms (rest forms)))
-    (loop while (and (consp (first forms))
-                     (member (first (first forms)) *property-option-keywords*))
-          do (push (pop forms) options))
+      (setf documentation (pop forms)))
+    (loop while (and (consp (first forms)) (keywordp (first (first forms))))
+          do (let* ((clause (pop forms))
+                    (keyword (first clause)))
+               (unless (proper-list-p clause)
+                 (property-form-error clause
+                                      (format nil "~S clause must be a finite proper list"
+                                              keyword)))
+               (unless (member keyword *property-option-keywords*)
+                 (property-form-error
+                  clause (format nil "~S is unknown; expected one of ~{~S~^, ~}"
+                                 keyword *property-option-keywords*)))
+               (when (find keyword options :key #'first)
+                 (property-form-error clause (format nil "~S appears more than once" keyword)))
+               (push clause options)))
+    (unless forms
+      (property-form-error body "at least one predicate form is required"))
     (values documentation (nreverse options) forms)))
 
 (defun option-clause (options keyword)
@@ -433,49 +460,46 @@ quietly swallow an existing property's first body form."
   (find keyword options :key #'first))
 
 (defun check-single-value-clause (clause)
-  "Signal INVALID-PROPERTY-FORM when CLAUSE carries more than the one value its
-keyword accepts.
-
-(:kind :invariant), (:trials ...) and (:shrink ...) each take exactly one
-value; a clause with an extra element, e.g.
-(:trials (:smoke 5) (:normal 200)) -- a plausible mis-write for a two profile
-:TRIALS plist -- would otherwise pass CLAUSE's well formed first value through
-while silently dropping the rest."
-  (when (and clause (cddr clause))
-    (error 'invalid-property-form
-           :form clause
-           :reason (format nil "~S takes exactly one value, but ~S was given"
-                            (first clause) clause))))
+  "Require one explicit value for :KIND, :TRIALS and :SHRINK clauses.
+A missing value must not look like an explicit NIL, and extra values must not
+be silently discarded by SECOND when constructing the registered property."
+  (when (and clause (/= 2 (length clause)))
+    (property-form-error clause (format nil "~S takes exactly one value" (first clause)))))
 
 (defun trials-plist-p (value)
-  "Return true when VALUE is a well formed :TRIALS plist.
-
-A well formed plist alternates a profile keyword and its integer trial count,
-for example (:SMOKE 5 :NORMAL 200).  (:TRIALS 25) -- a plausible mis-write for
-a flat trial count -- is not one: VALUE is 25 here, not a list at all, and
-would otherwise reach RESOLVE-TRIALS's GETF and signal an unrelated
-SIMPLE-TYPE-ERROR."
-  (and (listp value)
+  "Recognize a finite plist of unique keyword profiles and nonnegative budgets.
+Duplicate profiles make GETF silently ignore a budget; a negative or fractional
+count cannot describe executed trials. NIL remains a valid empty table."
+  (and (proper-list-p value)
        (evenp (length value))
-       (loop for (profile count) on value by #'cddr
-             always (and (keywordp profile) (integerp count)))))
+       (let ((seen nil))
+         (loop for (profile count) on value by #'cddr
+               always (and (keywordp profile) (not (member profile seen))
+                           (integerp count) (>= count 0)
+                           (progn (push profile seen) t))))))
 
 (defun expand-property-definition (whole name arguments body source-location)
   "Return the form DEFPROPERTY expands into.
 
 Unlike the other expanders this runs at macroexpansion time, because the
 predicate has to be compiled into a real function rather than kept as a list."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (property-form-error name "property must be named by a non-keyword symbol"))
+  (parse-property-arguments arguments)
   (multiple-value-bind (documentation options forms) (parse-property-body body)
     (let ((shrink-clause (option-clause options :shrink))
           (kind-clause (option-clause options :kind))
           (trials-clause (option-clause options :trials)))
+      (let ((about-clause (option-clause options :about)))
+        (unless (every #'symbolp (rest about-clause))
+          (property-form-error about-clause ":ABOUT takes symbols naming its targets")))
       (check-single-value-clause shrink-clause)
       (check-single-value-clause kind-clause)
       (check-single-value-clause trials-clause)
       (when (and trials-clause (not (trials-plist-p (second trials-clause))))
         (error 'invalid-property-form
                :form trials-clause
-               :reason "expected a plist, e.g. (:trials (:smoke 5 :normal 100))"))
+               :reason ":TRIALS requires unique keyword profiles and nonnegative integer budgets"))
       `(register-property
         (make-instance 'property
                        :name ',name
@@ -507,6 +531,13 @@ ARGUMENTS is a list of (VARIABLE SPEC-FORM) bindings.  BODY may start with a
 docstring, then option clauses (:ABOUT ...), (:KIND ...), (:TAGS ...),
 (:TRIALS ...) and (:SHRINK ...), followed by the forms of the predicate.  A NIL
 result or a signalled condition counts as a failure.
+
+Bindings must be exact pairs with distinct, bindable required variables.
+Each leading option appears at most once; unknown leading keyword options,
+missing/extra single-option values and malformed trial tables are refused with
+INVALID-PROPERTY-FORM at macroexpansion. Trial budgets are nonnegative integers
+with unique keyword profiles. At least one predicate form is required.
+After the first non-option form, remaining forms are ordinary Lisp code.
 
   (defproperty addition-preserves-order
       ((x positive-integer) (y positive-integer))

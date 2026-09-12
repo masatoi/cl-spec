@@ -166,6 +166,154 @@ is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
                           (integerp x)))
                  'cl-spec/src/conditions:invalid-property-form))))
 
+(deftest defproperty-keeps-supported-empty-and-dynamic-options
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry))
+        (shrink-p nil))
+    (cl-spec/src/dsl:defproperty supported ()
+      (:about) (:tags) (:kind nil) (:trials (:normal 0 :smoke 2)) (:shrink shrink-p)
+      t)
+    (cl-spec/src/dsl:defproperty empty-trials () (:trials nil) t)
+    (ok (null (cl-spec/src/property:property-trials
+               (cl-spec/src/registry:find-property 'empty-trials))))
+    (cl-spec/src/dsl:defproperty string-body () "A truthy predicate.")
+    (cl-spec/src/dsl:defproperty nil-body () nil)
+    (let ((property (cl-spec/src/registry:find-property 'supported)))
+      (ok (null (cl-spec/src/property:property-arguments property)))
+      (ok (equal '(:normal 0 :smoke 2) (cl-spec/src/property:property-trials property)))
+      (ok (not (getf (cl-spec/src/property:property-metadata property) :shrink)))
+      (ok (funcall (cl-spec/src/property:property-function property))))
+    (ok (equal "A truthy predicate."
+               (funcall (cl-spec/src/property:property-function
+                         (cl-spec/src/registry:find-property 'string-body)))))
+    (ok (not (funcall (cl-spec/src/property:property-function
+                       (cl-spec/src/registry:find-property 'nil-body)))))))
+
+(deftest invalid-property-replacement-preserves-the-registry
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (cl-spec/src/dsl:defproperty unchanged ((x integer))
+      (:about +) (:trials (:normal 1)) (integerp x))
+    (let ((original (cl-spec/src/registry:find-property 'unchanged)))
+      (ok (signals (eval
+                    '(cl-spec/src/dsl:defproperty unchanged ((x integer dropped))
+                      (:about -) nil))
+                   'cl-spec/src/conditions:invalid-property-form))
+      (ok (eq original (cl-spec/src/registry:find-property 'unchanged)))
+      (ok (equal '(unchanged) (cl-spec/src/registry:properties-for '+)))
+      (ok (null (cl-spec/src/registry:properties-for '-))))))
+
+(deftest property-options-end-at-the-first-predicate
+  (multiple-value-bind (documentation options forms)
+      (cl-spec/src/dsl::parse-property-body '(t (:trials (:normal 7))))
+    (ok (null documentation))
+    (ok (null options))
+    (ok (equal '(t (:trials (:normal 7))) forms))))
+
+(deftest defproperty-requires-symbol-targets
+  (dolist (target '(42 "target" (setf target)))
+    (let ((condition
+            (handler-case
+                (progn (macroexpand-1
+                        (list 'defproperty 'bad-target nil (list :about target) t))
+                       nil)
+              (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+      (ok condition)
+      (when condition
+        (ok (search ":ABOUT"
+                    (cl-spec/src/conditions:invalid-property-form-reason condition)))))))
+
+(deftest declaration-parsers-refuse-improper-outer-lists
+  (dolist (tail '(tail nil))
+    (let ((clauses (list '(:args (x integer)))))
+      (setf (cdr clauses) (or tail clauses))
+      (ok (signals (cl-spec/src/dsl::parse-function-spec-clauses 'target clauses)
+                   'cl-spec/src/conditions:invalid-function-spec-form)))
+    (let ((options (list '(:generator source))))
+      (setf (cdr options) (or tail options))
+      (ok (signals (cl-spec/src/dsl::spec-generator-option options)
+                   'cl-spec/src/conditions:invalid-spec-form)))))
+
+(deftest property-refusals-identify-the-offending-option
+  (dolist (case '((((:kind)) ":KIND")
+                  (((:shrink nil) (:shrink t)) ":SHRINK")
+                  (((:timeout 10)) ":TIMEOUT")
+                  (((:trials (:normal -1))) ":TRIALS")))
+    (destructuring-bind (options diagnostic) case
+      (let ((condition
+              (handler-case
+                  (progn
+                    (macroexpand-1
+                     (list* 'defproperty 'bad-options nil (append options '(t))))
+                    nil)
+                (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+        (ok condition)
+        (when condition
+          (ok (search diagnostic
+                      (string-upcase
+                       (cl-spec/src/conditions:invalid-property-form-reason condition)))))))))
+
+(deftest defproperty-requires-a-name-and-predicate
+  (dolist (form '((cl-spec/src/dsl:defproperty nil () t)
+                  (cl-spec/src/dsl:defproperty :bad () t)
+                  (cl-spec/src/dsl:defproperty 12 () t)
+                  (cl-spec/src/dsl:defproperty empty ())
+                  (cl-spec/src/dsl:defproperty empty () "Documentation." (:kind :invariant))))
+    (ok (signals (macroexpand-1 form) 'cl-spec/src/conditions:invalid-property-form))))
+
+(deftest defproperty-rejects-duplicate-and-malformed-options
+  (dolist (case '((((:trials (:normal 1)) (:trials (:normal 99))) "more than once")
+                  (((:about +) (:about -)) "more than once")
+                  (((:tags :one) (:tags :two)) "more than once")
+                  (((:kind :one) (:kind :two)) "more than once")
+                  (((:shrink nil) (:shrink t)) "more than once")
+                  (((:kind)) "exactly one") (((:shrink)) "exactly one")
+                  (((:trials)) "exactly one")
+                  (((:kind . :invariant)) "finite proper list")
+                  (((:about . +)) "finite proper list")
+                  (((:trials (:normal -1))) "nonnegative integer")
+                  (((:trials (:normal 1.5))) "nonnegative integer")
+                  (((:trials (:normal 1 :normal 99))) "unique keyword")
+                  (((:trials (:normal 1 . tail))) "unique keyword")
+                  (((:trials (normal 1))) "unique keyword")
+                  (((:trials (:normal))) "unique keyword")
+                  (((:timeout 10)) "unknown")))
+    (destructuring-bind (options reason-fragment) case
+      (let ((condition
+              (handler-case
+                  (progn
+                    (macroexpand-1
+                     (list* 'defproperty 'invalid-option '((x integer))
+                            (append options '((integerp x)))))
+                    nil)
+                (cl-spec/src/conditions:invalid-property-form (condition) condition))))
+        (ok condition)
+        (when condition
+          (ok (search reason-fragment
+                      (cl-spec/src/conditions:invalid-property-form-reason condition))))))))
+
+(deftest defproperty-rejects-malformed-bindings
+  (dolist (arguments '(((x integer ignored)) ((x)) (x) ((x . integer))
+                       ((x integer) (x string)) ((nil integer)) ((t integer))
+                       ((:x integer)) ((42 integer)) ((&optional integer))
+                       (&rest (x integer)) ((x integer) . tail)))
+    (ok (signals (macroexpand-1
+                  (list 'cl-spec/src/dsl:defproperty 'invalid-binding arguments t))
+                 'cl-spec/src/conditions:invalid-property-form))))
+
+(deftest defproperty-refuses-circular-declarations
+  (let ((arguments (list '(x integer)))
+        (binding (list 'x 'integer))
+        (clause (list :tags :one))
+        (trials (list :normal 1)))
+    (setf (cdr arguments) arguments
+          (cddr binding) binding
+          (cddr clause) clause
+          (cddr trials) trials)
+    (dolist (form (list (list 'defproperty 'cycle arguments t)
+                       (list 'defproperty 'cycle (list binding) t)
+                       (list 'defproperty 'cycle nil clause t)
+                       (list 'defproperty 'cycle nil (list :trials trials) t)))
+      (ok (signals (macroexpand-1 form) 'cl-spec/src/conditions:invalid-property-form)))))
+
 (deftest defgenerator-registers-and-defspec-names-it
   (let ((*registry* (make-hash-table-registry)))
     (eval '(defgenerator an-even-number ()
