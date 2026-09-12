@@ -27,10 +27,11 @@
                 #:run-generated-test
                 #:backend-default-trials)
   (:import-from #:cl-spec/src/execution
-                #:observe-trial #:observation-failure-p #:failure-identities-match-p #:same-value-p
+                #:snapshot-value #:observe-trial #:observation-failure-p #:failure-identities-match-p #:same-value-p
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status
                 #:trial-observation-signature)
+  (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/property
                 #:property-arguments
                 #:property-metadata)
@@ -157,15 +158,26 @@ distribution no run draws (§73.4 #6)."
   (declare (ignore backend))
   *num-trials*)
 
+(defun admitted-arguments-p (validators arguments)
+  "Check each candidate against its argument spec before invoking the property."
+  (loop for validator in validators
+        do (unless (and (consp arguments) (funcall validator (car arguments)))
+             (return-from admitted-arguments-p nil))
+           (setf arguments (cdr arguments)))
+  (null arguments))
+
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
-  "Generate trials and retain only observed reductions of the original failure.
-The shrinker's return value is deliberately not evidence: some check-it generators
-transform it after the last callback. Only callback observations may be reported."
+  "Generate trials and retain only admitted, observed reductions of the original failure.
+The shrinker's return value is not evidence: some generators transform it after
+the last callback. Reject internal representations and domain violations before
+calling user code, and keep existing evidence if shrinking itself fails."
   (let* ((context (list :registry (getf options :registry)))
          (trials (getf options :trials))
          (shrink-p (getf (property-metadata property) :shrink t))
          (compiled (loop for (nil spec) in (property-arguments property)
                          collect (compile-generator backend spec :context context)))
+         (validators (loop for (nil spec) in (property-arguments property)
+                           collect (compile-validator spec :context context)))
          (generator (make-instance 'tuple-generator
                                    :sub-generators
                                    (mapcar #'compiled-generator-generator compiled)))
@@ -184,29 +196,36 @@ transform it after the last callback. Only callback observations may be reported
                    (let ((accepted nil) (different nil))
                      (when (and shrink-p (property-arguments property)
                                 (not (trial-observation-arguments-mutated-p original)))
-                       (block shrink-search
-                         (shrink
-                          generator
-                          (lambda (arguments)
-                            ;; A structural contract error on a shrink candidate
-                            ;; cannot destroy the original observation.
-                            (handler-case
-                                (let ((candidate (observe-trial property arguments
-                                                                :context context)))
-                                  (when (trial-observation-arguments-mutated-p candidate)
-                                    (return-from shrink-search nil))
-                                (cond
-                                  ((not (observation-failure-p candidate)) t)
-                                  ((failure-identities-match-p
-                                    (trial-observation-signature original)
-                                    (trial-observation-signature candidate))
-                                   (unless (same-value-p
-                                            (trial-observation-arguments original)
-                                            (trial-observation-arguments candidate))
-                                     (setf accepted candidate))
-                                   nil)
-                                  (t (setf different t) t)))
-                            (error () (setf different t) t))))))
+                       (handler-case
+                           (block shrink-search
+                             (shrink
+                              generator
+                              (lambda (arguments)
+                                (handler-case
+                                    (let ((before (snapshot-value arguments))
+                                           (admitted (admitted-arguments-p validators arguments)))
+                                      (unless (same-value-p before arguments)
+                                        (return-from shrink-search nil))
+                                      (if (not admitted)
+                                          t
+                                          (let ((candidate
+                                                  (observe-trial property arguments
+                                                                 :context context)))
+                                            (when (trial-observation-arguments-mutated-p candidate)
+                                              (return-from shrink-search nil))
+                                            (cond
+                                              ((not (observation-failure-p candidate)) t)
+                                              ((failure-identities-match-p
+                                                (trial-observation-signature original)
+                                                (trial-observation-signature candidate))
+                                               (unless (same-value-p
+                                                        (trial-observation-arguments original)
+                                                        (trial-observation-arguments candidate))
+                                                 (setf accepted candidate))
+                                               nil)
+                                              (t (setf different t) t)))))
+                                  (error () (setf different t) t)))))
+                         (error () (setf different t))))
                      (return
                        (list :status (trial-observation-status (or accepted original))
                              :trials trial :rejected rejected

@@ -514,10 +514,11 @@ as its reduction.  The shapes come from the nested errors instead."
                                (values :passed nil nil nil nil value)
                                (failure :postcondition
                                         (when (and (eq tag :cl-spec-post-form-failure)
-                                                    (integerp index)
-                                                    (<= 0 index)
-                                                    (< index (length (function-spec-postconditions
-                                                                      contract))))
+                                                   (integerp index)
+                                                   (<= 0 index)
+                                                   (< index
+                                                      (length
+                                                       (function-spec-postconditions contract))))
                                           (list :post-form index))
                                         nil value))))
                         (t (values :passed nil nil nil nil value)))))))

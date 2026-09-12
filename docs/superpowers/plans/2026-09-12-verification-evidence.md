@@ -44,3 +44,19 @@ Do not introduce runtime EVAL or interning into production. Preserve existing pu
   preserve graph sharing, bind evidence to its run/property and reject cyclic lists.
   Follow-up review confirmed sharing/provenance fixes and identified valid dotted
   MEMBER constants; signature validation now accepts them with regression coverage.
+
+## PR review follow-up (2026-09-13)
+
+- Reproduced domain violations for guarded integers, string internal representations
+  and MEMBER constants; candidates now pass compiled argument validators before invocation.
+- Reproduced stack exhaustion on long snapshots/return values; copying and graph
+  comparison now use iterative work lists. The regression checks 100,000 elements.
+- Reproduced lost evidence after a shrinker exception and unknown evaluator status
+  reported as passing. Both paths now preserve the failure or reject invalid evaluation.
+- Replaced the observation retention table with a per-run token and fixed comparison
+  of copied array constants in failure signatures.
+- Strengthened shrink-identity tests to require an actual accepted reduction, and
+  captured adversarial backend evidence inside the run to test beyond provenance.
+- Full REPL suite: 221 tests passed. Clean-process Rove exited 0; forced core compile
+  had no warnings beyond definition reloading. Mallet has only 10 pre-existing warnings.
+- Independent read-only review found no new blocking issue in these fixes.

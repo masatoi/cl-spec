@@ -8,8 +8,9 @@ spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
 required positional arguments and one return value. Custom generators are
-implemented for functions of no arguments. The `describe-*` printers and instrumentation are still stubs that signal
-`not-implemented`. The cl-mcp adapter lives in cl-mcp, not here.
+implemented for functions of no arguments. The `describe-*` printers and
+instrumentation are still stubs that signal `not-implemented`. The cl-mcp adapter
+lives in cl-mcp, not here.
 
 ## Systems
 
@@ -60,9 +61,12 @@ The vertical slice from specification §67, working end to end:
 Property and function checks record each failing invocation with its input,
 failure identity, condition and explanation. Shrinking accepts only observations
 with the original failure identity: a false result cannot shrink into an error,
-and an error cannot shrink into another condition type. Function contracts also
-retain their return-spec and post-form distinctions. Classification never
-calls the target again; shrinking itself still executes candidate inputs.
+and an error cannot shrink into another condition type. Within each function
+contract clause, return-spec failure shapes and post-form positions must match;
+the existing rule still permits crossings between return-spec and postcondition
+failures with known identities. Unknown post-form identities cannot match.
+Classification never calls the target again; shrinking itself executes candidates
+only after checking their argument specs.
 
 ```lisp
 (cl-spec:defproperty under-five ((value (range integer 0 10)))
@@ -80,8 +84,14 @@ calls the target again; shrinking itself still executes candidate inputs.
 A shrunk result is an observed reduction, not a guarantee of global minimality.
 If none is accepted, the original observation remains available. Conses and
 arrays are copied for evidence while the target receives the actual generated
-objects. Detected argument mutation stops shrinking; arbitrary object state
-and external state are not checkpointed.
+objects. Detected argument mutation or a shrinker error stops the search while
+preserving any earlier accepted observation. Arbitrary object state and external
+state are not checkpointed. Copies and comparisons use iterative graph traversal,
+and invocation provenance does not retain all trial observations.
+
+Some check-it shrink callbacks expose internal representations, such as character
+lists for strings. These are rejected when they do not satisfy the argument spec;
+the original counterexample remains available if no valid reduction was observed.
 
 Introspection records have `:entity-kind` (`:spec`, `:property`, or
 `:function-spec`); existing `:kind` fields retain their node or author

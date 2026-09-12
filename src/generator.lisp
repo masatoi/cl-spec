@@ -13,7 +13,7 @@
                 #:invalid-backend-result)
   (:import-from #:cl-spec/src/property #:property-arguments)
   (:import-from #:cl-spec/src/execution
-                #:*trial-observations* #:trial-observation-status
+                #:*trial-observations* #:observation-from-current-run-p #:trial-observation-status
                 #:trial-observation-arguments #:trial-observation-signature
                 #:trial-observation-condition #:observation-failure-p
                 #:failure-identities-match-p #:same-value-p)
@@ -144,8 +144,7 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
            (unless (and (observation-failure-p observation)
                         (finite-signature-p (trial-observation-signature observation))
                         (proper-list-p (trial-observation-arguments observation))
-                        *trial-observations*
-                        (eq property (gethash observation *trial-observations*))
+                        (observation-from-current-run-p observation property)
                         (= (length (trial-observation-arguments observation))
                            (length (property-arguments property)))
                         (if (eq :error (trial-observation-status observation))
@@ -170,7 +169,7 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
 (defmethod run-generated-test :around (backend property &key options)
   "Enforce the backend count and observation protocol at its public boundary."
   (let ((budget (getf options :trials :missing))
-        (*trial-observations* (make-hash-table :test #'eq)))
+        (*trial-observations* (list nil)))
     (unless (and (integerp budget) (not (minusp budget)))
       (error 'type-error :datum budget :expected-type '(integer 0 *)))
     (validate-backend-outcome (call-next-method) property budget)))

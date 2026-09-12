@@ -49,7 +49,9 @@
                                   nil)))
             :seed 42)))
     (ok (eq :failed (property-result-status r)))
-    (ok (plusp (reported-x r)))
+    (ok (= 1 (reported-x r)))
+    (ok (eq :used (property-result-shrunk-outcome r)))
+    (ok (equal '(x 6) (property-result-counterexample r)))
     (ok (null (property-result-condition r)))))
 
 (deftest property-shrinking-preserves-condition-type
@@ -60,7 +62,9 @@
                                   (error "original ~D" x))))
             :seed 42)))
     (ok (eq :error (property-result-status r)))
-    (ok (plusp (reported-x r)))
+    (ok (= 1 (reported-x r)))
+    (ok (eq :used (property-result-shrunk-outcome r)))
+    (ok (equal '(x 6) (property-result-counterexample r)))
     (ok (typep (property-result-condition r) 'simple-error))))
 
 (deftest property-condition-belongs-to-selected-input
@@ -156,22 +160,30 @@
             (invalid-backend-result () t))))))
 
 (deftest backend-cannot-substitute-incompatible-evidence
-  (let* ((p (probe-property (lambda (x)
-                             (if (zerop x) (error "different") nil))))
-         (original (observe-trial p '(6)))
-         (other (observe-trial p '(0)))
-         (replies
-           (list (list :status :error :trials 1 :failure original
-                       :shrunk-failure other :shrunk-outcome :used)
-                 (list :status :error :trials 1 :failure original :shrunk-outcome :none)
-                 (list :status :failed :trials 1 :failure original :shrunk-outcome :used)
-                 (list :status :passed :trials 10 :failure original)
-                 (list :status :failed :trials 1 :failure original
-                       :shrunk-failure original :shrunk-outcome :used))))
-    (dolist (reply replies)
-      (let ((*generator-backend* (make-instance 'reply-backend :reply reply)))
-        (ok (handler-case (progn (run-property p) nil)
-              (invalid-backend-result () t)))))))
+  (dolist (case '(:identity :status :missing-shrink :passed-failure :unchanged-input))
+    (let ((p (probe-property (lambda (x) (if (zerop x) (error "different") nil))))
+           (*generator-backend*
+             (make-instance
+              'reply-backend
+              :reply
+              (lambda (property)
+                ;; Capture inside this invocation so provenance validation passes.
+                (let ((original (observe-trial property '(6)))
+                      (other (observe-trial property '(0))))
+                  (ecase case
+                    (:identity
+                     (list :status :error :trials 1 :failure original
+                           :shrunk-failure other :shrunk-outcome :used))
+                    (:status
+                     (list :status :error :trials 1 :failure original :shrunk-outcome :none))
+                    (:missing-shrink
+                     (list :status :failed :trials 1 :failure original :shrunk-outcome :used))
+                    (:passed-failure (list :status :passed :trials 10 :failure original))
+                    (:unchanged-input
+                     (list :status :failed :trials 1 :failure original
+                           :shrunk-failure original :shrunk-outcome :used))))))))
+      (ok (handler-case (progn (run-property p) nil)
+            (invalid-backend-result () t))))))
 
 (deftest executed-trials-is-required-on-results
   (ok (handler-case (progn (make-instance 'property-result) nil)
@@ -324,6 +336,99 @@
         (known '(:return-value :return-spec ((:kind :type)))))
     (ok (not (cl-spec/src/execution:failure-identities-match-p unknown known)))
     (ok (not (cl-spec/src/execution:failure-identities-match-p known unknown)))))
+
+(deftest shrink-counterexamples-stay-in-the-argument-domain
+  (dolist (spec '((and integer (satisfies plusp)) string (member 1 100)))
+    (let* ((invalid-calls 0)
+           (ir (normalize-spec-form spec))
+           (result
+             (run-property
+              (probe-property
+               (lambda (x)
+                 (unless (cl-spec/src/validator:validp ir x) (incf invalid-calls))
+                 nil)
+               :spec spec)
+              :seed 5)))
+      (ok (zerop invalid-calls))
+      (ok (cl-spec/src/validator:validp ir (reported-x result)))
+      (ok (eq :failed (property-result-status result))))))
+
+(defun domain-target (x)
+  "Ignore X and violate the return contract."
+  (declare (ignore x))
+  5)
+
+(deftest function-shrink-counterexamples-stay-in-the-argument-domain
+  (dolist (spec '((and integer (satisfies plusp)) string (member 1 100)))
+    (let* ((contract
+             (make-instance 'cl-spec/src/function-spec:function-spec
+                            :name 'domain-target :argument-specs (list (list 'x spec))
+                            :return-spec '(range integer 0 0)))
+           (result (check-function contract :trials 30 :seed 5)))
+      (ok (cl-spec/src/validator:validp (normalize-spec-form spec) (reported-x result)))
+      (ok (eq :return-spec (function-check-result-failure-reason result))))))
+
+(deftest large-snapshots-do-not-use-the-control-stack
+  (ok (handler-case
+          (let* ((value (make-list 100000 :initial-element 1))
+                 (copy (cl-spec/src/execution:snapshot-value value)))
+            (and (= 100000 (length copy))
+                 (not (eq value copy))
+                 (cl-spec/src/execution:same-value-p value copy)))
+        (storage-condition () nil))))
+
+(defun long-return-target ()
+  "Return a long valid list."
+  (make-list 100000 :initial-element 1))
+
+(deftest long-return-values-remain-checkable
+  (let ((contract
+          (make-instance 'cl-spec/src/function-spec:function-spec
+                         :name 'long-return-target
+                         :return-spec '(satisfies listp))))
+    (ok (handler-case
+            (eq :passed (property-result-status (check-function contract :trials 1)))
+          (storage-condition () nil)))))
+
+(defclass invalid-status-property (property) ())
+
+(defmethod cl-spec/src/execution:evaluate-trial
+    ((property invalid-status-property) arguments &key context)
+  "Exercise an invalid evaluator extension."
+  (declare (ignore property arguments context))
+  (values :typo nil nil nil nil t))
+
+(deftest unknown-trial-status-is-never-a-pass
+  (ok (handler-case
+          (progn (run-property (make-instance 'invalid-status-property :trials '(:normal 1)))
+                 nil)
+        (invalid-backend-result () t))))
+
+(defvar *shrink-internal-error-p* nil)
+
+(defmethod check-it:shrink :around ((generator check-it:tuple-generator) test)
+  "Inject a shrinker error without replacing the production method."
+  (if *shrink-internal-error-p*
+      (error "shrinker internals failed")
+      (call-next-method)))
+
+(deftest shrinker-errors-preserve-the-original-observation
+  (let ((*shrink-internal-error-p* t))
+    (let ((result (run-property (probe-property (lambda (x) (declare (ignore x)) nil))
+                                :seed 42)))
+      (ok (eq :failed (property-result-status result)))
+      (ok (equal '(x 6) (property-result-counterexample result)))
+      (ok (null (property-result-shrunk-counterexample result))))))
+
+(deftest failure-identity-compares-snapshotted-array-constants
+  (let* ((contract
+           (make-instance 'cl-spec/src/function-spec:function-spec
+                          :name 'domain-target
+                          :argument-specs '((x (range integer 0 10)))
+                          :return-spec '(member #(1 2))))
+         (result (check-function contract :trials 10 :seed 42)))
+    (ok (eq :used (property-result-shrunk-outcome result)))
+    (ok (equal '(x 0) (property-result-shrunk-counterexample result)))))
 
 (deftest review-evidence-boundaries
   (let* ((p (probe-property (lambda (x)
