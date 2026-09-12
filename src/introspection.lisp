@@ -88,10 +88,7 @@ introspection API."
   (:documentation "Return the SPEC-DATA keys specific to SPEC's node type."))
 
 (defmethod node-attributes ((spec spec))
-  ;; A custom generator belongs to the definition rather than to the node type,
-  ;; so it is reported here: any node kind can carry one.
-  (when (spec-generator-name spec)
-    (list :generator (spec-generator-name spec))))
+  nil)
 
 (defmethod node-attributes ((spec type-spec))
   (list :type (type-spec-type-specifier spec)))
@@ -117,9 +114,16 @@ introspection API."
   "Return the SPEC-DATA plist for one IR node, recursing into its children.
 
 Every node carries the same keys whether or not they have a value, so that a
-consumer never has to distinguish an absent key from a NIL one."
+consumer never has to distinguish an absent key from a NIL one.
+
+The generator is emitted here rather than by NODE-ATTRIBUTES.  Those methods are
+per node type and replace the base method instead of extending it, so a
+definition-level attribute added there survived only on node kinds that had no
+method of their own: every TYPE, RANGE, MEMBER, PREDICATE, INSTANCE-OF and
+REFERENCE spec lost it (PR review)."
   (append (list :name (spec-name spec)
-                :kind (spec-kind spec))
+                :kind (spec-kind spec)
+                :generator (spec-generator-name spec))
           (node-attributes spec)
           (list :source-form (spec-source-form spec)
                 :source-location (source-location->data (spec-source-location spec)))

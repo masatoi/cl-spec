@@ -3531,6 +3531,14 @@ off-by-one。
 このキーワードを受け付けない処理系では CL-SPEC 自体がロードできなかった（CLISP で実測:
 `SIMPLE-KEYWORD-ERROR`）。`MAKE-REGISTRY-TABLE` が、保証がある処理系でだけそれを要求する。
 
+レビュー2巡目でさらに2件。`FAILURE-SHAPE` が `:ERRORS` しか辿らず、`OR` が枝ごとの失敗を
+入れる `:BRANCHES` の中の `:ACTUAL` が署名に残っていた。そのため同じ枝を外す2つの入力が
+別の失敗と見なされ、正当な縮小が捨てられていた（`(or (range integer 0 10) string)` に対して
+`(- -1 value)`、seed 42 で `:DIFFERENT-FAILURE`、`:BRANCHES` も辿るようにして `:USED`）。
+また `:GENERATOR` を `NODE-ATTRIBUTES` の基本メソッドで出していたが、この総称関数のノード別
+メソッドは基本メソッドを**置き換える**ため、TYPE / RANGE / MEMBER / PREDICATE / INSTANCE-OF /
+REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの属性は `SPEC->DATA` が出す。
+
 **残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
 backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と
 記録したのは property 側の経路なので、そこは変わっていない。property に分類を足すかは

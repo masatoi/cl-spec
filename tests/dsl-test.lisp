@@ -178,6 +178,21 @@ is the well formed (:smoke 5) alone and (:normal 200) is silently dropped"
     (testing "the spec carries the name, and introspection reports it"
       (ok (eq 'an-even-number (spec-generator-name (find-spec 'even-number))))
       (ok (eq 'an-even-number (getf (spec-data 'even-number) :generator))))
+    (testing "and SPEC-DATA reports it on every node type, not only the base one"
+      ;; The attribute is emitted by SPEC->DATA rather than by NODE-ATTRIBUTES:
+      ;; the node-specific methods replace the base method, so an attribute added
+      ;; there survives only on node kinds that have no method of their own
+      ;; (PR review).
+      (dolist (pair '((covered-type integer)
+                      (covered-range (range 1 10))
+                      (covered-member (member 1 2 3))
+                      (covered-predicate (satisfies oddp))
+                      (covered-instance (instance-of standard-object))
+                      (covered-reference an-even-number)))
+        (destructuring-bind (name form) pair
+          (eval `(defspec ,name ,form (:generator an-even-number)))
+          (testing (format nil "~S keeps the generator" form)
+            (ok (eq 'an-even-number (getf (spec-data name) :generator)))))))
     (testing "an option DEFSPEC does not know is refused, not ignored"
       ;; A definition that named a generator and lost the clause would look like
       ;; a spec drawing from it while the backend derived values from the DSL.

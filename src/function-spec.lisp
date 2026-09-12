@@ -476,11 +476,17 @@ the run happened to produce: :ACTUAL is the original counterexample's number or
 the shrink candidate's, so it differs between the two by construction.  What is
 left -- each error's :KIND and :PATH, the :EXPECTED descriptor, the :CONJUNCTS
 statuses, :VIOLATED-BOUND, :PREDICATE -- says which part of the spec the value
-missed, and that is what decides whether two failures are the same finding."
+missed, and that is what decides whether two failures are the same finding.
+
+Two keys hold nested failures and both have to be walked.  :ERRORS is the
+conjunct and negation case; :BRANCHES is an OR's, where each branch carries its
+own :EXPECTED and :ERRORS.  Walking only :ERRORS left the branch values in the
+signature, so a target that failed the same branches at two different inputs
+looked like two findings and its reduction was thrown away (PR review)."
   (loop for (key value) on error-datum by #'cddr
         unless (eq key :actual)
           append (list key
-                       (if (and (eq key :errors) (listp value))
+                       (if (and (member key '(:errors :branches)) (listp value))
                            (mapcar #'failure-shape value)
                            value))))
 

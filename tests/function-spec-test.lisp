@@ -1133,3 +1133,36 @@ candidate crosses from one conjunct of :RETURNS to the other."
         (ok (eq :failed (property-result-status result)))
         (ok (eq :used (function-check-result-shrunk-outcome result)))
         (ok (property-result-shrunk-counterexample result))))))
+
+(defun demo-fails-both-branches-of-or (value)
+  "Return an integer below the first branch's range, so both branches fail.
+
+Every VALUE from the generator gives the same kind of failure, so a reduction is
+legitimate however far the shrinker moves."
+  (- -1 value))
+
+(deftest check-function-keeps-a-reduction-that-fails-an-or-the-same-way
+  (testing "an OR's branch errors are compared without the values in them"
+    ;; An OR reports each branch's own errors under :BRANCHES, and a shape that
+    ;; walked only :ERRORS left every branch's :ACTUAL in the signature.  Two
+    ;; inputs that fail the same branches then looked like two different
+    ;; findings and the reduction was thrown away (PR review).
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-fails-both-branches-of-or
+        (:args (value (range integer 0 10)))
+        (:returns (or (range integer 0 10) string)))
+      (let* ((result (check-function 'demo-fails-both-branches-of-or
+                                     :trials 100 :seed 42))
+             (original (loop for (nil value) on
+                             (property-result-counterexample result)
+                             by #'cddr collect value))
+             (shrunk (loop for (nil value) on
+                           (property-result-shrunk-counterexample result)
+                           by #'cddr collect value)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :return-spec (function-check-result-failure-reason result)))
+        (testing "the candidate misses the same branches, so it is kept"
+          (ok (plusp (first original)))
+          (ok shrunk)
+          (ok (< (first shrunk) (first original)))
+          (ok (eq :used (function-check-result-shrunk-outcome result))))))))
