@@ -1082,3 +1082,54 @@ found nothing and the author's RESULT was left free."
           ;; About half the generated A values are above 50, so a run reporting
           ;; no refusals would have quietly checked a different domain.
           (ok (plusp (function-check-result-rejected result))))))))
+
+(defun demo-breaks-one-return-spec-two-ways (value)
+  "Miss the return spec's RANGE for a nonzero VALUE and its TYPE at zero.
+
+Both failures are :RETURN-SPEC, and CHECK-IT shrinks towards zero, so the
+candidate crosses from one conjunct of :RETURNS to the other."
+  (if (zerop value) "not an integer" -1))
+
+(defun demo-always-below-range (value)
+  "Return -1 for every VALUE, so the same conjunct fails on every input."
+  (declare (ignore value))
+  -1)
+
+(deftest check-function-does-not-swap-one-return-spec-failure-for-another
+  (testing "a shrink that crosses to another conjunct of :RETURNS is not a reduction"
+    ;; EXPLAIN-DATA's top level has no :KIND and its :PATH is always NIL: the
+    ;; kinds and paths live inside :ERRORS.  Reading those two keys gave every
+    ;; return-spec failure the same signature, so a candidate that moved from one
+    ;; conjunct to another compared equal and was put forward as the reduction.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-breaks-one-return-spec-two-ways
+        (:args (value (range integer 0 10)))
+        (:returns (and integer (range 0 10))))
+      (let* ((result (check-function 'demo-breaks-one-return-spec-two-ways
+                                     :trials 100 :seed 42))
+             (original (loop for (nil value) on
+                             (property-result-counterexample result)
+                             by #'cddr collect value))
+             (explanation (function-check-result-explanation result))
+             (top (first (getf explanation :errors)))
+             (nested (first (getf top :errors))))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :return-spec (function-check-result-failure-reason result)))
+        (testing "the trial the run found missed the range conjunct"
+          (ok (plusp (first original)))
+          (ok (eq :out-of-range (getf nested :kind))))
+        (testing "so the type-violating candidate is put aside, not reported"
+          (ok (null (property-result-shrunk-counterexample result)))
+          (ok (eq :different-failure
+                  (function-check-result-shrunk-outcome result)))))))
+  (testing "and two failures of the same conjunct are still a reduction"
+    ;; The signature has to tell the conjuncts apart and no more: a target that
+    ;; misses one conjunct on every input still has its counterexample reduced.
+    (let ((*registry* (make-hash-table-registry)))
+      (defspec-function demo-always-below-range
+        (:args (value (range integer 0 10)))
+        (:returns (and integer (range 0 10))))
+      (let ((result (check-function 'demo-always-below-range :trials 100 :seed 42)))
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :used (function-check-result-shrunk-outcome result)))
+        (ok (property-result-shrunk-counterexample result))))))

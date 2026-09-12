@@ -468,19 +468,41 @@ and need not be this one."
       ((and error (not undefined-function) (not program-error)) (condition)
         (values :contract-error nil condition)))))
 
+(defun failure-shape (error-datum)
+  "Return one EXPLAIN-DATA error datum with every :ACTUAL removed, recursively.
+
+The shape of a failure is everything EXPLAIN-DATA says about it except the value
+the run happened to produce: :ACTUAL is the original counterexample's number or
+the shrink candidate's, so it differs between the two by construction.  What is
+left -- each error's :KIND and :PATH, the :EXPECTED descriptor, the :CONJUNCTS
+statuses, :VIOLATED-BOUND, :PREDICATE -- says which part of the spec the value
+missed, and that is what decides whether two failures are the same finding."
+  (loop for (key value) on error-datum by #'cddr
+        unless (eq key :actual)
+          append (list key
+                       (if (and (eq key :errors) (listp value))
+                           (mapcar #'failure-shape value)
+                           value))))
+
 (defun failure-signature (reason explanation condition)
   "Return a comparable key for a classified failure, or NIL when there is none.
 
-REASON alone is too coarse to compare two classifications with.  Every signalled
+REASON alone is too coarse to compare two classifications with: every signalled
 condition collapses to :CONDITION and every return-spec violation to
 :RETURN-SPEC, so two unrelated failures of the same shape compared equal and a
 shrink candidate that had walked out of the failing region was reported as its
 reduction (§73.4 #2).  The key carries the detail the keyword throws away -- the
-condition's type, and the EXPLAIN-DATA kind and path of a return-spec violation
--- which CLASSIFY-FUNCTION-FAILURE already knows."
+condition's type, and for a return-spec violation the shape of the EXPLAIN-DATA
+errors.
+
+Those errors are where the detail lives.  A return spec's EXPLAIN-DATA has no
+:KIND at its top level at all, and its :PATH is NIL, so reading those two keys
+gave every return-spec failure the same key: a candidate that crossed from one
+conjunct of :RETURNS to another compared equal to the finding and was put forward
+as its reduction.  The shapes come from the nested errors instead."
   (case reason
-    (:return-spec
-     (list :return-value (getf explanation :kind) (getf explanation :path)))
+    (:return-spec (list :return-value (mapcar #'failure-shape
+                                              (getf explanation :errors))))
     (:postcondition (list :return-value))
     (:condition (list :target-signal (type-of condition)))
     (:contract-error (list :contract-error (type-of condition)))
@@ -497,9 +519,9 @@ more than one failure, on the detail that tells those failures apart.
 first is a property of the order CLASSIFY-FUNCTION-FAILURE tests them in, not a
 difference in the finding, and comparing them by keyword discarded a legitimate
 reduction whenever the shrinker crossed from one to the other (§73.4 #3).  Two
-return-spec failures are compared further on the EXPLAIN-DATA kind and path: the
-return spec is a conjunction, and a value that misses a different conjunct is a
-different finding.
+return-spec failures are compared further on the shape of their EXPLAIN-DATA
+errors: the return spec is a conjunction, and a value that misses a different
+conjunct is a different finding.
 
 A signalled condition is compared on its type, for the same reason.  The backend
 counts any condition as \"still fails\" while shrinking, so a candidate that

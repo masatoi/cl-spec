@@ -112,23 +112,41 @@ re-registration can retract the previous keys."
   (targets nil :type list)
   (tags nil :type list))
 
+(defun make-registry-table ()
+  "Return a hash table for one registry index, keyed with EQ.
+
+:SYNCHRONIZED is an implementation extension, and on one that does not accept it
+MAKE-HASH-TABLE signals.  From a class :INITFORM that meant the default registry
+could not be built, so CL-SPEC would not load at all -- measured on CLISP, which
+rejects the keyword with SIMPLE-KEYWORD-ERROR.  Asking for the guarantee and
+falling back keeps it where the implementation provides it instead of trading a
+load failure for a silent loss of thread safety.
+
+The handler is deliberately broad: every argument here is a literal, so the only
+error this call can raise is the implementation refusing one of them.  A fallback
+table is a plain EQ table, so on such an implementation the registry has no
+protection of its own; §40's host model registers from one thread, and
+WITH-REGISTRY-LOCK is guarded separately."
+  (handler-case (make-hash-table :test #'eq :synchronized t)
+    (error () (make-hash-table :test #'eq))))
+
 (defclass hash-table-registry ()
-  ((specs :initform (make-hash-table :test #'eq :synchronized t)
+  ((specs :initform (make-registry-table)
           :reader registry-specs
           :documentation "Symbol -> spec.")
-   (function-specs :initform (make-hash-table :test #'eq :synchronized t)
+   (function-specs :initform (make-registry-table)
                    :reader registry-function-specs
                    :documentation "Symbol -> function spec.")
-   (generators :initform (make-hash-table :test #'eq :synchronized t)
+   (generators :initform (make-registry-table)
                :reader registry-generators
                :documentation "Symbol -> CUSTOM-GENERATOR (specification §11).")
-   (properties :initform (make-hash-table :test #'eq :synchronized t)
+   (properties :initform (make-registry-table)
                :reader registry-properties
                :documentation "Symbol -> PROPERTY-ENTRY.")
-   (properties-by-target :initform (make-hash-table :test #'eq :synchronized t)
+   (properties-by-target :initform (make-registry-table)
                          :reader registry-properties-by-target
                          :documentation "Target symbol -> list of property names.")
-   (properties-by-tag :initform (make-hash-table :test #'eq :synchronized t)
+   (properties-by-tag :initform (make-registry-table)
                       :reader registry-properties-by-tag
                       :documentation "Tag -> list of property names."))
   (:documentation "In-image registry backed by hash tables.  The default backend."))
@@ -137,7 +155,8 @@ re-registration can retract the previous keys."
   "Run BODY with REGISTRY's property table locked, so that a compound update
 lands as one and no reader can see it half applied.
 
-Each table is :SYNCHRONIZED, which makes a single GETHASH, SETF GETHASH or
+Each table is :SYNCHRONIZED where the implementation provides it (see
+MAKE-REGISTRY-TABLE), which makes a single GETHASH, SETF GETHASH or
 REMHASH atomic -- and nothing more.  The reverse indexes are maintained with
 read-modify-write: INDEX-PROPERTY pushes onto a list it has just read, and
 REGISTRY-REGISTER-PROPERTY's find, unindex, set, index sequence straddles four

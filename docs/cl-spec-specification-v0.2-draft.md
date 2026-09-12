@@ -3512,7 +3512,7 @@ off-by-one。
 | 項 | 直したこと | 修正前 → 修正後（実測） |
 |---|---|---|
 | 1 | `:pre` を `VALIDATE` で書くと `SPEC-VIOLATION` が `:CONTRACT-ERROR` になっていた。`PRECONDITION-REFUSES-P` がこれを棄却として扱う | 同一契約・同一seed: `:ERROR` / 棄却0 → `:PASSED` / 棄却23 |
-| 2 | 縮小結果の採否を reason keyword の `EQ` で判定していた。`FAILURE-SIGNATURE` が condition の型と `EXPLAIN-DATA` の `:kind`/`:path` を較べる | 無関係な `SIMPLE-TYPE-ERROR` を縮小値として報告 → 実行が見つけた `SIMPLE-ERROR` を保持 |
+| 2 | 縮小結果の採否を reason keyword の `EQ` で判定していた。`FAILURE-SIGNATURE` が condition の型と、`:RETURN-SPEC` では `EXPLAIN-DATA` の `:ERRORS` の形（`:ACTUAL` を除いたもの）を較べる | 無関係な `SIMPLE-TYPE-ERROR` を縮小値として報告 → 実行が見つけた `SIMPLE-ERROR` を保持。`:RETURNS` の別の連言に移った候補も `:DIFFERENT-FAILURE` になる |
 | 3 | `:RETURNS` を先に分類するため、同じ契約の別の節に触れる正当な縮小が捨てられていた。`:RETURN-SPEC` と `:POSTCONDITION` を一つのクラスとして較べる | 縮小値が `NIL`（破棄）→ 採用（`:RETURN-SPEC` / `:USED`） |
 | 4 | 破棄が呼び出し側から見えなかった。`FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME` を追加（`:USED` / `:NONE` / `:DIFFERENT-FAILURE`） | 引数のない契約と破棄が同じ `NIL` → 区別できる |
 | 6 | `SAMPLE` / `GENERATE-VALUE` が周囲の `CHECK-IT:*SIZE*` を読んでいた | 周囲を `*SIZE*` 5000 にすると ±4000 → 既定と同一の列 |
@@ -3522,6 +3522,14 @@ off-by-one。
 回帰テストは `tests/function-spec-test.lisp`（1・2・3・4）、
 `tests/backends/check-it-test.lisp`（6・7）、`tests/registry-test.lisp`（8）にあり、
 いずれも修正前のコードで失敗することを確認してある。
+
+**レビューでの追加指摘2件**も直した。ひとつは 2 の最初の実装のバグで、`EXPLAIN-DATA` の
+トップレベルから `:kind` と `:path` を読んでいた（トップレベルに `:kind` は無く、`:PATH` は
+常に NIL）。そのため `:RETURN-SPEC` の signature が `(:return-value nil nil)` に潰れ、
+`:RETURNS` の別の連言へ移った候補を縮小として採用していた。もうひとつは
+`hash-table-registry` の `:INITFORM` が `:SYNCHRONIZED` を無条件で渡していたことで、
+このキーワードを受け付けない処理系では CL-SPEC 自体がロードできなかった（CLISP で実測:
+`SIMPLE-KEYWORD-ERROR`）。`MAKE-REGISTRY-TABLE` が、保証がある処理系でだけそれを要求する。
 
 **残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
 backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と
