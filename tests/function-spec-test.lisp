@@ -1016,10 +1016,11 @@ the one shrinking walks into; the condition's type can."
         (ok (eq :condition (function-check-result-failure-reason result)))
         (testing "so the counterexample and the condition describe one failure"
           (ok (eq (type-of (property-result-condition result)) raised)))
-        (testing "and the discarded candidate is named rather than silent"
-          (ok (null (property-result-shrunk-counterexample result)))
-          (ok (eq :different-failure
-                  (function-check-result-shrunk-outcome result))))))))
+        (testing "shrinking stops above the different exception at twenty"
+          (ok (equal '(21) (loop for (nil value) on
+                                 (property-result-shrunk-counterexample result)
+                                 by #'cddr collect value)))
+          (ok (eq :used (function-check-result-shrunk-outcome result))))))))
 
 (defun demo-zero-argument-contract ()
   "Return a string.  Its contract asks for an integer and names no :ARGS."
@@ -1127,10 +1128,11 @@ candidate crosses from one conjunct of :RETURNS to the other."
         (testing "the trial the run found missed the range conjunct"
           (ok (plusp (first original)))
           (ok (eq :out-of-range (getf nested :kind))))
-        (testing "so the type-violating candidate is put aside, not reported"
-          (ok (null (property-result-shrunk-counterexample result)))
-          (ok (eq :different-failure
-                  (function-check-result-shrunk-outcome result)))))))
+        (testing "the type violation at zero is refused while one remains a range violation"
+          (ok (equal '(1) (loop for (nil value) on
+                                (property-result-shrunk-counterexample result)
+                                by #'cddr collect value)))
+          (ok (eq :used (function-check-result-shrunk-outcome result)))))))
   (testing "and two failures of the same conjunct are still a reduction"
     ;; The signature has to tell the conjuncts apart and no more: a target that
     ;; misses one conjunct on every input still has its counterexample reduced.
@@ -1270,7 +1272,7 @@ macro expansions would need the lint exemption that file carries."
         (ok (eq :return-spec (function-check-result-failure-reason result)))
         (testing "the value the generator drew is the counterexample"
           (ok (equal '(1) (loop for (nil value) on
-                                (property-result-shrunk-counterexample result)
+                                (property-result-counterexample result)
                                 by #'cddr collect value)))))))
   (testing "and a failing property over one returns a result too"
     ;; RUN-PROPERTIES is a bare MAPCAR, so one such property aborted a whole batch.
@@ -1284,7 +1286,8 @@ macro expansions would need the lint exemption that file carries."
                       :function (lambda (x) (= x 4))))
       (let ((result (run-property 'four-is-the-answer :seed 3)))
         (ok (eq :failed (property-result-status result)))
-        (ok (property-result-shrunk-counterexample result))))))
+        (ok (property-result-counterexample result))
+        (ok (null (property-result-shrunk-counterexample result)))))))
 
 (defun explained-error-keys (datum keys)
   "Return KEYS with every key of the error data under DATUM added."
@@ -1312,8 +1315,10 @@ macro expansions would need the lint exemption that file carries."
     (let ((r (check-function 'demo-post-switch :trials 100 :seed 42)))
       (ok (equal '(6) (loop for (nil v) on (property-result-counterexample r)
                             by #'cddr collect v)))
-      (ok (eq :different-failure (function-check-result-shrunk-outcome r)))
-      (ok (null (property-result-shrunk-counterexample r)))
+      (ok (eq :used (function-check-result-shrunk-outcome r)))
+      (ok (equal '(1) (loop for (nil value) on
+                            (property-result-shrunk-counterexample r)
+                            by #'cddr collect value)))
       (ok (null (function-check-result-explanation r))))))
 
 (deftest check-function-preserves-tuple-element
@@ -1322,8 +1327,10 @@ macro expansions would need the lint exemption that file carries."
       (:args (value (range integer 0 10)))
       (:returns (tuple integer integer)))
     (let ((r (check-function 'demo-tuple-switch :trials 100 :seed 42)))
-      (ok (eq :different-failure (function-check-result-shrunk-outcome r)))
-      (ok (null (property-result-shrunk-counterexample r)))
+      (ok (eq :used (function-check-result-shrunk-outcome r)))
+      (ok (equal '(1) (loop for (nil value) on
+                            (property-result-shrunk-counterexample r)
+                            by #'cddr collect value)))
       (ok (equal '(0) (getf (first (getf (function-check-result-explanation r)
                                        :errors)) :path))))))
 

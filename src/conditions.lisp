@@ -6,7 +6,9 @@
 
 (defpackage #:cl-spec/src/conditions
   (:use #:cl)
-  (:export #:cl-spec-error
+  (:export #:invalid-backend-result
+           #:invalid-backend-result-reason
+           #:cl-spec-error
            #:not-implemented
            #:not-implemented-operator
            #:spec-violation
@@ -44,6 +46,13 @@
 (define-condition cl-spec-error (error)
   ()
   (:documentation "Root of every condition signalled by cl-spec."))
+
+(define-condition invalid-backend-result (cl-spec-error)
+  ((reason :initarg :reason :reader invalid-backend-result-reason))
+  (:report (lambda (condition stream)
+             (format stream "Invalid backend result: ~A"
+                     (invalid-backend-result-reason condition))))
+  (:documentation "A backend violated the required trial count or evidence protocol."))
 
 (define-condition not-implemented (cl-spec-error)
   ((operator :initarg :operator

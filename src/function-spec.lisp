@@ -30,16 +30,18 @@
                 #:property-result-shrunk-counterexample
                 #:property-result-condition
                 #:property-result-elapsed
-                #:run-property)
+                #:run-property
+                #:property-result-failure-evidence #:property-result-shrunk-evidence
+                #:property-result-shrunk-outcome #:property-result-rejected
+                #:property-result-failure-reason #:property-result-explanation
+                #:property-result-entity-kind)
   (:import-from #:cl-spec/src/generator
                 #:current-generator-backend
                 #:backend-default-trials)
-  (:import-from #:cl-spec/src/validator
-                #:validp)
+  (:import-from #:cl-spec/src/execution
+                #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
                 #:explain-data)
-  (:import-from #:cl-spec/src/utils/random
-                #:seed->random-state)
   (:export #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
@@ -314,9 +316,8 @@ TRIALS counts what the backend generated; TRIALS minus this is the number of
 trials that reached the function.  Reporting only the first would let a run
 that rejected every input read as a run that checked every input (§19, §73.3).
 
-Not the number of calls: shrinking runs the function many more times after the
-failing trial, and so does the re-run that names the broken half.  This counts
-trials, which is what the trial budget is about.")
+Not the number of calls: shrinking may invoke the function on candidate inputs.
+Classification itself makes no additional call. This counts generated trials.")
    (failure-reason :initarg :failure-reason
                    :initform nil
                    :reader function-check-result-failure-reason
@@ -333,9 +334,8 @@ when there is one, the original otherwise -- and the status agrees with it.
 There is no :PRECONDITION: the trial predicate answers true for every input
 :PRE refuses, so one can never be the reason a run failed.
 
-NIL on a passing run, and also on a failing run neither counterexample
-reproduced -- a function that does not answer the same way twice.  The two are
-told apart by the status, not by this slot.")
+NIL on a passing or skipped run. Failure reasons come from the recorded
+invocation, including for a function that would not answer the same way twice.")
    (explanation :initarg :explanation
                 :initform nil
                 :reader function-check-result-explanation
@@ -353,11 +353,11 @@ A NIL SHRUNK-COUNTEREXAMPLE cannot say this on its own -- it reads the same
 whether the shrinker found nothing smaller or produced a candidate the checker
 refused to put forward -- and on a failing contract run the second reading is the
 common one.  :USED means the value in SHRUNK-COUNTEREXAMPLE is the candidate.
-:DIFFERENT-FAILURE means a candidate existed and was not put forward: it broke the
-contract some other way, or broke it not at all when the checker re-ran it, and
-the original counterexample is reported in its place (§72.4).  :NONE means nothing
-is put forward, whether because the shrinker produced no candidate or because the
-one it produced reproduced no failure."))
+:DIFFERENT-FAILURE means incompatible failures were rejected and no matching
+reduction was observed. :NONE means no reduction was observed, including when
+there were no arguments, shrinking was disabled, or argument mutation stopped it.
+When a matching candidate is observed, :USED takes precedence over earlier
+rejections. The original evidence remains available in every case."))
   (:documentation "Outcome of checking a function against its registered contract.
 
 A PROPERTY-RESULT, so one set of readers covers a DEFPROPERTY run and a
@@ -392,11 +392,6 @@ time rather than at definition time."
       (error 'unbound-target :name name))
     (symbol-function name)))
 
-(defun counterexample-values (plist)
-  "Return the values of a {name value} counterexample PLIST, in argument order."
-  (loop for (nil value) on plist by #'cddr
-        collect value))
-
 (defun precondition-refuses-p (precondition arguments)
   "Return true when PRECONDITION refuses ARGUMENTS, NIL when it admits them.
 
@@ -413,73 +408,6 @@ a finding exactly as it was."
   (and precondition
        (handler-case (not (apply precondition arguments))
          (spec-violation () t))))
-
-(defun classify-function-failure (contract target arguments registry)
-  "Return (values REASON DETAIL CONDITION) for ARGUMENTS breaking CONTRACT.
-
-DETAIL is EXPLAIN-DATA for a return-spec failure, or internal :POST-FORM metadata
-for a DSL postcondition failure. The public result exposes only EXPLAIN-DATA.
-
-REASON is NIL when ARGUMENTS do not break it -- including when :PRE refuses
-them, which makes them not a counterexample at all rather than a counterexample
-of a fourth kind.  The trial predicate answers true for every input :PRE
-refuses, so one can never be the reason a run failed; reporting :PRECONDITION
-read as \"your caller broke the contract, the function is fine\" for runs where
-the function was the broken thing.
-
-Three outcomes, not two, because a condition can come from either party.
-
-A condition from TARGET is :CONDITION -- the function signalled.
-
-A condition from the contract's own parts is :CONTRACT-ERROR.  It is not a half
-of the contract breaking: (:post (= result (* 2 x))) against a function that
-returns NIL signals from = on the value the FUNCTION chose, so the fault could
-be either side's and this code cannot tell.  Reporting it as :CONDITION blamed
-the function; letting it propagate destroyed the finding entirely --
-counterexample, seed and all -- for an ordinary bug under an ordinary contract.
-
-UNDEFINED-FUNCTION and PROGRAM-ERROR still propagate.  Those are structural: a
-SATISFIES predicate that does not exist, a spec name that is not registered, a
-predicate of the wrong arity.  They would signal for every input, so there is
-no counterexample to lose and nothing to report but the broken spec.
-SRC/EXPLAIN.LISP draws the line in the same place.
-
-CONDITION is the one ARGUMENTS actually signal, captured here rather than taken
-from the trial loop, whose condition belongs to whichever input failed first
-and need not be this one."
-  (let ((return-spec (function-spec-return-spec contract))
-        (precondition (function-spec-precondition-function contract))
-        (postcondition (function-spec-postcondition-function contract)))
-    (handler-case
-        (if (precondition-refuses-p precondition arguments)
-            (values nil nil nil)
-            (multiple-value-bind (result signalled)
-                ;; Every condition, with no carve-out.  The exclusion below
-                ;; is about the CONTRACT being unevaluable; this form runs only
-                ;; the target, and a target that signals UNDEFINED-FUNCTION or
-                ;; PROGRAM-ERROR on one branch is an ordinary bug with an
-                ;; ordinary counterexample.  Excluding them here destroyed the
-                ;; finding -- the same mistake, on the other side of the call.
-                (handler-case (values (apply target arguments) nil)
-                  (error (condition) (values nil condition)))
-              (cond
-                (signalled (values :condition nil signalled))
-                ((and return-spec (not (validp return-spec result :registry registry)))
-                 (values :return-spec
-                         (explain-data return-spec result :registry registry)
-                         nil))
-                (postcondition
-                 (multiple-value-bind (holds index tag)
-                     (apply postcondition result arguments)
-                   (if holds
-                       (values nil nil nil)
-                       (values :postcondition
-                               (when (eq tag :cl-spec-post-form-failure)
-                                 (list :post-form index))
-                               nil))))
-                (t (values nil nil nil)))))
-      ((and error (not undefined-function) (not program-error)) (condition)
-        (values :contract-error nil condition)))))
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
@@ -511,8 +439,8 @@ shrink of it by construction, so every key derived from one -- :ACTUAL,
 :ACTUAL-LENGTH, a :PATH into the value, a condition's :CONDITION-REPORT -- stays
 out of the shape, and every key derived from the spec -- :KIND, the :EXPECTED
 descriptor, :EXPECTED-LENGTH, :VIOLATED-BOUND, :PREDICATE, :CONDITION-TYPE, a
-conjunct's :STATUS and fixed :TUPLE-PATH -- stays in.  See *FAILURE-SHAPE-KEYS* for why that is a
-whitelist rather than a list of keys to strip."
+conjunct's :STATUS and fixed :TUPLE-PATH -- stays in. See *FAILURE-SHAPE-KEYS*
+for why that is a whitelist rather than a list of keys to strip."
   (loop for (key value) on error-datum by #'cddr
         when (member key *failure-shape-containers*)
           append (list key (mapcar #'failure-shape value))
@@ -536,235 +464,106 @@ gave every return-spec failure the same key: a candidate that crossed from one
 conjunct of :RETURNS to another compared equal to the finding and was put forward
 as its reduction.  The shapes come from the nested errors instead."
   (case reason
-    (:return-spec (list :return-value :return-spec (mapcar #'failure-shape
-                                              (getf explanation :errors))))
+    (:return-spec
+     (list :return-value :return-spec
+           (mapcar #'failure-shape (getf explanation :errors))))
     (:postcondition (list :return-value :postcondition explanation))
     (:condition (list :target-signal (type-of condition)))
     (:contract-error (list :contract-error (type-of condition)))
     (t nil)))
 
 (defun same-failure-p (original candidate)
-  "Compare failure signatures, retaining the existing cross-clause return rule.
-Two postcondition failures must identify the same form. Programmatically supplied
-predicates without the DSL's tagged secondary values remain one opaque clause.
-A return-spec failure and a postcondition failure still share a return-value
-failure class; two return-spec failures must agree on their spec-derived shape."
-  (and original candidate
-       (eq (first original) (first candidate))
-       (if (eq (first original) :return-value)
-           (or (not (eq (second original) (second candidate)))
-               (equal (cddr original) (cddr candidate)))
-           (equal (rest original) (rest candidate)))))
+  "Compare function failure identities using the shared execution protocol."
+  (failure-identities-match-p original candidate))
 
-(defun reproduce-function-failure (contract target result registry)
-  "Return (values REASON EXPLANATION CONDITION SHRUNK-USABLE-P SHRUNK-OUTCOME) for RESULT.
+(defclass function-check-property (property)
+  ((contract :initarg :contract :reader checked-contract)
+   (target :initarg :target :reader checked-target))
+  (:documentation "Internal property adapter whose trial evaluation records the contract outcome."))
 
-The original counterexample decides what the run found.  The shrunk one is used
-only if it breaks the contract the same way -- except when the original does not
-reproduce at all, where there is no signature to compare and the candidate is
-reported if it breaks the contract at all.  The same-way rule exists because the
-backend counts a signalled condition as \"still fails\" while shrinking -- right
-for a property, §13 says a condition is a failure, but it lets the shrinker walk
-out of the failure it was shrinking and into an unrelated one.  §72.4 names the
-rule: a candidate that merely raised a different exception is not the reduction of
-the original logical failure.
+(defmethod evaluate-trial ((property function-check-property) arguments &key context)
+  "Call the target once and classify that invocation before returning its evidence."
+  (let* ((contract (checked-contract property))
+         (registry (getf context :registry))
+         (returns (function-spec-return-spec contract))
+         (pre (function-spec-precondition-function contract))
+         (post (function-spec-postcondition-function contract)))
+    (flet ((failure (reason detail condition &optional value)
+             (values (if condition :error :failed) reason
+                     (failure-signature reason detail condition) detail condition value)))
+      (handler-case
+          (if (precondition-refuses-p pre arguments)
+              (values :rejected nil nil nil nil nil)
+              (multiple-value-bind (value condition)
+                  (handler-case (values (apply (checked-target property) arguments) nil)
+                    (error (condition) (values nil condition)))
+                (if condition
+                    (failure :condition nil condition)
+                    (let ((explanation (when returns
+                                         (explain-data returns value :registry registry))))
+                      (cond
+                        ((and explanation (not (getf explanation :valid)))
+                         (failure :return-spec explanation nil value))
+                        (post
+                         (multiple-value-bind (holds index tag)
+                             (apply post value arguments)
+                           (if holds
+                               (values :passed nil nil nil nil value)
+                               (failure :postcondition
+                                        (when (eq tag :cl-spec-post-form-failure)
+                                          (list :post-form index))
+                                        nil value))))
+                        (t (values :passed nil nil nil nil value)))))))
+        ;; Structural errors in the contract itself still abort an initial trial.
+        ;; The backend rejects these if encountered only during shrinking.
+        ((and error (not undefined-function) (not program-error)) (condition)
+          (failure :contract-error nil condition))))))
 
-That is also how a shrunk value the contract holds for gets discarded.  Against
-a STRING argument it is routine: CHECK-IT hands the test the cached character
-list, the target signals on it, and shrinking leaves the failing region
-entirely.  The value then put forward as \"the value an agent should be shown
-first\" was one the contract holds for.
-
-Classifying the shrunk value cannot cost the original.  CLASSIFY-FUNCTION-FAILURE
-lets a structural condition propagate, and on a shrink candidate that unwound
-past a finding already in hand -- destroying a reproduced counterexample over a
-value the shrinker invented, which no trial ever found.
-
-When the original does not reproduce, its own classification is not what the
-re-run could confirm -- but what the shrinker kept is then the only counterexample
-there is, so it is reported with its own reason when it classifies at all.  REASON
-is NIL only when neither reproduces: the slot's documented meaning, a function
-that does not answer the same way twice.
-
-SHRUNK-OUTCOME names what became of the shrink candidate, because a NIL
-SHRUNK-COUNTEREXAMPLE cannot say it on its own: :USED when the candidate is the
-value put forward, :NONE when there was nothing to shrink, and :DIFFERENT-FAILURE
-when a candidate existed and broke the contract a different way -- the case a
-caller has to be able to tell from the other two (§73.4 #4)."
-  (let* ((shrunk-plist (property-result-shrunk-counterexample result))
-         (original (counterexample-values (property-result-counterexample result)))
-         (shrunk (counterexample-values shrunk-plist))
-         (nothing-to-shrink (null (function-spec-argument-specs contract)))
-         ;; A contract over no arguments has an empty counterexample that is
-         ;; nonetheless present, so emptiness alone cannot say whether the
-         ;; backend produced a shrunk value.
-         (shrunk-present (or shrunk-plist nothing-to-shrink)))
-    (flet ((classify-shrunk ()
-             (handler-case (classify-function-failure contract target shrunk registry)
-               (error () (values nil nil nil)))))
-      (multiple-value-bind (reason explanation condition)
-          (classify-function-failure contract target original registry)
-        (cond
-          ((null reason)
-           (if shrunk-present
-               (multiple-value-bind (reason explanation condition) (classify-shrunk)
-                 (if reason
-                     (values reason explanation condition t :used)
-                     (values nil nil nil nil :none)))
-               (values nil nil nil nil :none)))
-          ((and shrunk-present (not (equal shrunk original)))
-           (multiple-value-bind (shrunk-reason shrunk-explanation shrunk-condition)
-               (classify-shrunk)
-             (if (same-failure-p (failure-signature reason explanation condition)
-                                 (failure-signature shrunk-reason shrunk-explanation
-                                                    shrunk-condition))
-                 (values shrunk-reason shrunk-explanation shrunk-condition t :used)
-                 (values reason explanation condition nil :different-failure))))
-          (t (values reason explanation condition shrunk-present
-                     (if (and shrunk-present (not nothing-to-shrink)) :used :none))))))))
+(defmethod property-result-entity-kind ((result function-check-result))
+  :function-spec)
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
-  "Generatively check FUNCTION-DESIGNATOR against its registered contract.
-
-Arguments are generated from the :ARGS specs, :PRE filters the generated
-inputs, the function is called, and the value it returns is checked against
-:RETURNS and then :POST (specification §18).  TRIALS overrides the backend's
-default trial count; SEED reproduces an earlier run; OPTIONS is passed through
-to the backend.
-
-Returns a FUNCTION-CHECK-RESULT, which is a PROPERTY-RESULT carrying the seed,
-the trial count, the counterexample and its shrunk form, plus the count of
-inputs :PRE refused and which half of the contract broke.
-
-A run that never called the function reports :SKIPPED, never :PASSED --
-whether because :PRE refused every generated input or because TRIALS was zero.
-Nothing called the function, so nothing about it was checked."
-  ;; Checked before anything is resolved.  A negative count makes the backend's
-  ;; trial loop run zero times and report :PASSED with that count, and the
-  ;; vacuous-run guard below reads a negative EXECUTED as "some trials ran" --
-  ;; a verified contract whose function was never called.
+  "Check a function contract using evidence captured during each invocation.
+No target or predicate is called again to classify the result. Shrinking still
+executes candidate inputs; only candidates with the original failure identity
+are accepted. A run with no admitted trials is :SKIPPED."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
-  ;; The seed is guarded here for the same reason, and a result is accepted in
-  ;; its place the way REPLAY-PROPERTY accepts one: FUNCTION-CHECK-RESULT is a
-  ;; PROPERTY-RESULT so that one reader set covers both, and digging the
-  ;; integer back out of it was the only spelling that worked.  Unguarded, an
-  ;; unusable seed reached SEED->RANDOM-STATE and leaked a condition naming an
-  ;; internal symbol.
-  (unless (or (null seed)
-              (typep seed 'property-result)
+  (unless (or (null seed) (typep seed 'property-result)
               (and (integerp seed) (not (minusp seed))))
     (error 'type-error :datum seed
-                       :expected-type '(or null property-result (integer 0 *))))
-  (let* ((trials (or trials
-                     ;; A result stands in for its whole run, not just its
-                     ;; seed.  REPLAY-PROPERTY reuses the profile alongside the
-                     ;; seed because the profile is what fixes the count; the
-                     ;; contract family's equivalent is the recorded budget.
+                      :expected-type '(or null property-result (integer 0 *))))
+  (let* ((budget (or trials
                      (when (typep seed 'function-check-result)
-                       (function-check-result-budget seed))))
+                       (function-check-result-budget seed))
+                     (backend-default-trials (current-generator-backend))))
          (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
-         (target (function-spec-target contract))
-         (budget (or trials (backend-default-trials (current-generator-backend))))
-         (return-spec (function-spec-return-spec contract))
-         (precondition (function-spec-precondition-function contract))
-         (postcondition (function-spec-postcondition-function contract))
-         (rejected 0)
-         ;; Shrinking re-runs this predicate long after the failing trial, and
-         ;; those runs are not trials.  Counting stops at the first real
-         ;; failure so REJECTED stays a statement about generation.
-         (countingp t)
-         (property
-           (make-instance 'property
-                          :name name
-                          :arguments (function-spec-argument-specs contract)
-                          :targets (list name)
-                          :kind :function-spec
-                          :documentation (function-spec-documentation contract)
-                          ;; Always explicit, so the budget the result records
-                          ;; is the budget the run was given rather than one
-                          ;; the reader has to re-derive from the backend.
-                          :trials (list :normal budget)
-                          :source-form (function-spec-source-form contract)
-                          :source-location (function-spec-source-location contract)
-                          :metadata (list :shrink t)
-                          :function
-                          (lambda (&rest arguments)
-                            ;; A signalled condition ends the trial loop
-                            ;; exactly as a false result does, so counting has
-                            ;; to stop there too: everything the backend runs
-                            ;; afterwards is shrinking, and a shrink candidate
-                            ;; :PRE refuses is not a rejected trial.  Left
-                            ;; counting, REJECTED overtakes TRIALS and the
-                            ;; call count they imply goes negative.
-                            ;;
-                            ;; HANDLER-BIND rather than HANDLER-CASE: the
-                            ;; handler declines, so the condition still
-                            ;; reaches the backend unchanged and the run is
-                            ;; still reported as :ERROR.
-                            (handler-bind ((error (lambda (condition)
-                                                    (declare (ignore condition))
-                                                    (setf countingp nil))))
-                              (if (precondition-refuses-p precondition arguments)
-                                  (progn
-                                    (when countingp (incf rejected))
-                                    t)
-                                  (let ((result (apply target arguments)))
-                                    (cond
-                                      ((and return-spec
-                                            (not (validp return-spec result
-                                                         :registry registry)))
-                                       (setf countingp nil)
-                                       nil)
-                                      ((and postcondition
-                                            (not (apply postcondition result arguments)))
-                                       (setf countingp nil)
-                                       nil)
-                                      (t t))))))))
-         (result (run-property property :seed seed :options options :registry registry))
-         (executed (- (or (property-result-trials result) 0) rejected))
-         (backend-status (property-result-status result))
-         ;; NOT PLUSP rather than ZEROP: the question is whether any trial
-         ;; reached the function, and a count that is not positive answers no
-         ;; however it got that way.
-         (vacuous (and (eq :passed backend-status) (not (plusp executed)))))
-    (multiple-value-bind (reason explanation condition shrunk-usable shrunk-outcome)
-        (if (member backend-status '(:failed :error))
-            ;; Under the run's own seed.  RUN-PROPERTY binds *RANDOM-STATE*
-            ;; around the trial and shrink loop so a run can be replayed; this
-            ;; re-run happens after it returns, and it decides the reported
-            ;; status.  Left on the ambient state, a target that reads mutable
-            ;; state gave two different verdicts for one seed -- the same
-            ;; counterexample and the same shrunk value, reported once as
-            ;; :ERROR and once as :FAILED.
-            (let ((*random-state* (seed->random-state (property-result-seed result))))
-              (reproduce-function-failure contract target result registry))
-            (values nil nil nil nil nil))
-      (make-instance 'function-check-result
-                     ;; The status describes the counterexample the result puts
-                     ;; forward.  The backend's own comes from the first
-                     ;; failing trial, and shrinking can cross from one half of
-                     ;; the contract to the other: that gave :ERROR beside a
-                     ;; minimal input signalling nothing, and :FAILED beside
-                     ;; :CONDITION with no condition to look at.
-                     :status (cond (vacuous :skipped)
-                                   ((member reason '(:condition :contract-error)) :error)
-                                   ((member reason '(:return-spec :postcondition)) :failed)
-                                   (t backend-status))
-                     :property name
-                     :trials (property-result-trials result)
-                     :seed (property-result-seed result)
-                     :profile (property-result-profile result)
-                     :counterexample (property-result-counterexample result)
-                     :shrunk-counterexample (when shrunk-usable
-                                              (property-result-shrunk-counterexample result))
-                     :shrunk-outcome shrunk-outcome
-                     :condition (if reason condition (property-result-condition result))
-                     :elapsed (property-result-elapsed result)
-                     :budget budget
-                     :source-form (function-spec-source-form contract)
-                     :rejected rejected
-                     :failure-reason reason
-                     :explanation (when (eq reason :return-spec) explanation)))))
+         (source (snapshot-value (function-spec-source-form contract)))
+         (property (make-instance 'function-check-property
+                                  :contract contract :target (function-spec-target contract)
+                                  :name name :arguments (function-spec-argument-specs contract)
+                                  :targets (list name) :kind :function-spec
+                                  :documentation (function-spec-documentation contract)
+                                  :trials (list :normal budget)
+                                  :source-form source
+                                  :source-location (function-spec-source-location contract)
+                                  :metadata (list :shrink t)))
+         (result (run-property property :seed seed :options options :registry registry)))
+    (make-instance 'function-check-result
+                   :status (property-result-status result)
+                   :property name :budget budget :source-form source
+                   :trials (property-result-trials result)
+                   :seed (property-result-seed result)
+                   :profile (property-result-profile result)
+                   :counterexample (property-result-counterexample result)
+                   :shrunk-counterexample (property-result-shrunk-counterexample result)
+                   :failure-evidence (property-result-failure-evidence result)
+                   :shrunk-evidence (property-result-shrunk-evidence result)
+                   :shrunk-outcome (property-result-shrunk-outcome result)
+                   :condition (property-result-condition result)
+                   :elapsed (property-result-elapsed result)
+                   :rejected (property-result-rejected result)
+                   :failure-reason (property-result-failure-reason result)
+                   :explanation (property-result-explanation result))))

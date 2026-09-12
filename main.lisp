@@ -6,6 +6,7 @@
   (:nicknames #:cl-spec)
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
+                #:invalid-backend-result #:invalid-backend-result-reason
                 #:cl-spec-error
                 #:not-implemented
                 #:not-implemented-operator
@@ -117,7 +118,31 @@
                 #:property-trials
                 #:property-metadata
                 #:register-property)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation
+                #:make-trial-observation
+                #:trial-observation-arguments
+                #:trial-observation-arguments-mutated-p
+                #:trial-observation-status
+                #:trial-observation-reason
+                #:trial-observation-signature
+                #:trial-observation-explanation
+                #:trial-observation-condition
+                #:trial-observation-condition-report
+                #:trial-observation-value
+                #:evaluate-trial
+                #:observe-trial
+                #:observation-failure-p
+                #:failure-identities-match-p)
   (:import-from #:cl-spec/src/property-runner
+                #:property-result-entity-kind
+                #:property-result-failure-evidence
+                #:property-result-shrunk-evidence
+                #:property-result-shrunk-outcome
+                #:property-result-rejected
+                #:property-result-failure-reason
+                #:property-result-failure-signature
+                #:property-result-explanation
                 #:property-result
                 #:property-result-status
                 #:property-result-property
@@ -207,6 +232,7 @@
            #:generator-unavailable-spec
            #:generator-unavailable-reason
            #:unsupported-seed
+           #:invalid-backend-result #:invalid-backend-result-reason
            ;; Semantic IR
            #:spec
            #:spec-name
@@ -285,6 +311,30 @@
            #:property-trials
            #:property-metadata
            #:register-property
+           ;; Observed execution evidence
+           #:trial-observation
+           #:make-trial-observation
+           #:trial-observation-arguments-mutated-p
+           #:trial-observation-arguments
+           #:trial-observation-status
+           #:trial-observation-reason
+           #:trial-observation-signature
+           #:trial-observation-explanation
+           #:trial-observation-condition
+           #:trial-observation-condition-report
+           #:trial-observation-value
+           #:evaluate-trial
+           #:observe-trial
+           #:observation-failure-p
+           #:failure-identities-match-p
+           #:property-result-entity-kind
+           #:property-result-failure-evidence
+           #:property-result-shrunk-evidence
+           #:property-result-shrunk-outcome
+           #:property-result-rejected
+           #:property-result-failure-reason
+           #:property-result-failure-signature
+           #:property-result-explanation
            ;; Property results
            #:property-result
            #:property-result-status

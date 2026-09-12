@@ -845,6 +845,9 @@ NIL
 を返す場合をfailureとする。
 
 想定外のエラーは成功に含めず、真偽値NILによる失敗と区別して記録する。
+各試行は入力と結果を`trial-observation`として記録する。縮小候補についても同じ経路を使い、
+NILによる失敗から例外への移動、および異なるcondition型への移動は拒否する。
+通常のproperty本体の内部でどの式が偽になったかまでは判別しない。
 warning・通常のsignal・期待するconditionまで一律に失敗とする意味ではない。
 Function Specの`:signals`、condition分類、restartを含む詳細規則は§73のD1・D4で確定する。
 
@@ -878,6 +881,22 @@ profile名だけでは数値の予算は固定されない。Propertyの`:trials
 
 現在の`property-result`はstatus、property、trials、seed、profile、counterexample、
 shrunk-counterexample、condition、elapsedを公開readerで提供する。
+`:trials`は構築時の必須引数であり、非負整数を指定する。欠落を0と推測しない。
+追加のreaderは次の通りで、Function Specの結果にも共通する。
+
+- `property-result-failure-evidence`：最初に失敗した試行の観測。
+- `property-result-shrunk-evidence`：採用された縮小候補の観測。無ければNIL。
+- `property-result-shrunk-outcome`：失敗時は`:used`、`:none`、`:different-failure`。
+- `property-result-failure-reason`、`property-result-failure-signature`、
+  `property-result-explanation`：採用した観測の理由・署名・戻り値specの説明。
+- `property-result-rejected`：生成試行のうち前提条件により棄却された件数。
+- `property-result-entity-kind`：`:property`または`:function-spec`。
+
+`trial-observation-*`のreaderからarguments、status、reason、signature、explanation、
+condition、condition-report、value、arguments-mutated-pを取得できる。argumentsは
+呼び出し前の入力、valueはその呼び出しの返り値である。conditionは実際の条件オブジェクトを
+保持し、condition-reportは観測時点の表示文字列を保持する。表示処理が失敗しても証拠は失わない。
+引数なしの失敗ではcounterexampleがNILでもfailure-evidenceは存在する。
 statusの定義上の候補は`:passed`、`:failed`、`:error`、`:skipped`、`:pending`。
 すべての候補を現在のbackendが返すとは限らない。§47のfailure categoryとは別の軸である。
 
@@ -903,6 +922,30 @@ statusの定義上の候補は`:passed`、`:failed`、`:error`、`:skipped`、`:
 ```
 
 これはLLM利用に極めて重要である。
+
+## Backend outcome protocol（実装済み）
+
+`run-generated-test`はPROPERTY-RESULTオブジェクトではなく、次のplistを返す。
+呼び出し時のoptionsにも`:trials`（非負整数の予算）が必須である。
+
+```lisp
+(:status :failed :trials 1 :rejected 0
+ :failure <trial-observation>
+ :shrunk-failure <trial-observation-or-nil>
+ :shrunk-outcome :used)
+```
+
+`:status`と実際の生成件数`:trials`は常に必須。件数は予算以下で、`:passed`は予算全体を
+消費した場合だけ返す。`:rejected`の省略値は0であり、縮小中の棄却を数えない。
+`:failed`・`:error`には元の`:failure`と`:shrunk-outcome`が必須である。
+`:used`の場合だけ`:shrunk-failure`を持ち、入力が元と異なり失敗署名が一致することを要求する。
+statusとconditionは採用された観測を指す。失敗のない応答にfailureを付けてはならない。
+欠落・矛盾した応答は`invalid-backend-result`として拒否する。旧形式のbackendはこのprotocolへ
+移行する必要がある。`observe-trial`で評価し、返った観測をそのまま保存するのが基本経路となる。
+失敗の観測は同じ`run-generated-test`呼び出し内で、対象propertyを評価して得たものに限る。
+別実行からの流用や直接構築した観測は拒否する。この検証はbackendとのprotocol検証であり、
+任意のLispコードを実行できるbackendに対するセキュリティ境界ではない。
+生成0件、または全件棄却だった実行はrunnerが`:skipped`にする。
 
 ---
 
@@ -965,14 +1008,17 @@ shrinkingは `check-it` を利用する。
 
 を指定可能にする。
 
-生成された値を破壊的変更するpropertyについては、
+実行前のcons・配列（文字列を含む）はコピーして証拠として保持する。対象には生成された
+オブジェクト自体を渡し、EQなどの同一性に依存する挙動を変更しない。入力の破壊的変更を
+検出した場合はarguments-mutated-pを記録し、変更されたgenerator cacheから縮小を続けない。
+任意のCLOSオブジェクトや外部状態のcheckpointは提供しない。
 
-```text
-warning: generated value may have been destructively modified
-
-```
-
-の診断を将来的に検討する。
+縮小中は元の試行の失敗署名と比較し、一致した候補だけを受理する。shrinkerが最後に返す値が
+callbackへ渡した値と異なる場合があるため、最終返り値だけを証拠にはしない。
+`:used`は実際に評価して受理した候補があることを表す。`:different-failure`は異なる失敗を
+拒否し、一致する縮小候補を得られなかったことを表す。`:none`は縮小無効・引数なし・入力変更に
+よる停止・候補なしなどで、観測済みの縮小を採用していないことを表す。
+候補の試行と分類は一度の実行で行うが、通常のshrinking自体は対象を複数回呼ぶ。
 
 本書の「最小反例」は、backendが探索して得た縮小済み反例を指す。
 大域的な最小性を保証しない。縮小の完了・予算切れ・中断を区別し、元の失敗理由を保持する
@@ -1008,7 +1054,7 @@ D1（対応範囲）の決定：
 | `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
 | pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
 | `result`の束縛 | 契約自身のpackageで`RESULT`が指すsymbolを、`:post`に現れかつ引数名でない場合に束縛する。`:post`に現れる`RESULT`という名前のsymbolがそれと一致しない場合は拒否する。マクロは`:post`の文面が読まれたpackageを見られないので、この解決は代理であり、外した場合に黙って別の契約をコンパイルするより拒否する。`:pre`が戻り値の名前に触れる形式も拒否する（引数名である場合を除く） |
-| 実行前の可変値の参照 | 対応しない。副作用のない関数を対象とする |
+| 実行前の可変値の参照 | pre-stateを参照するDSLは未提供。観測には実行前のcons・配列のコピーを保存するが、任意の状態の復元は行わない |
 | signals | 対応しない。`(:signals ...)`を含む未知のclauseは拒否する |
 | 節の重複 | 拒否する |
 
@@ -1093,7 +1139,7 @@ subclassであり、status・seed・試行数・反例・縮小反例に加え�
 
 - `function-check-result-rejected`：`:pre`が棄却した生成入力の件数。
   関数に届いた試行の数は「試行数 − 棄却数」である。呼び出し回数ではない
-  ことに注意する。縮小と、壊れた側を特定する再実行も関数を呼ぶ。
+  ことに注意する。縮小は候補の試行として関数を呼ぶが、分類用の追加呼び出しは行わない。
 - `function-check-result-failure-reason`：契約のどちら側が壊れたか。
   `:return-spec`、`:postcondition`、`:condition`、`:contract-error`、または`nil`。
   `:contract-error`はどちらも壊れていない場合で、契約自身の述語やspecが、関数が
@@ -1123,34 +1169,19 @@ profile、両方の反例、condition、elapsed）は`property-result-`で読み
 `:pre`が生成入力をすべて棄却した場合と、`:trials`が0の場合の両方が該当する。
 関数を一度も呼んでいない実行を成功として報告しない（§73.3のゼロ件成功）。
 
-`failure-reason`は報告された反例に対して検査を一度やり直して求める。試行loopの
-最後の失敗は、縮小が同じ述語をさらに何度も呼んだあとでは、報告された反例とは
-限らないためである。この再実行は`run-property`が返ったあとに行われるが、
-statusを決めるのはこちらなので、実行のseedから作った`*random-state*`のもとで
-行う。周囲の状態のままでは、可変状態を読むtargetに対して同じseedが別のverdictを
-返す。
+`failure-reason`は試行のその場で求め、入力・返り値・condition・説明と一緒に観測へ保存する。
+targetを再実行する分類処理は無い。戻り値のspec検査も`explain-data`を一度だけ呼び、
+`validp`の後で再び説明を作ることによるSATISFIES述語の二重実行を避ける。
 
-再実行で捕捉するのはtargetの呼び出しだけである。契約自身の部分（`:pre`・`:post`の
-述語、`:returns`のspec）が送出した条件は、関数についての所見ではなく契約の
-authoring bugなので、そのまま伝播させる。これを捕捉すると、存在しない述語を
-名指した契約が「関数が送出した」として報告され、あらゆる入力が同一のエラーを
-出す実行に対して最小反例が提示される。§22の説明器も同じ理由で同種の条件を
-再送出する。
+targetが送出したerrorは`:condition`、契約の述語側のerrorは`:contract-error`として区別する。
+ただし契約側の`undefined-function`・`program-error`は初期試行では伝播する。
+縮小時にのみ現れた構造的エラーは候補の拒否として扱い、既存の証拠を失わない。
 
-縮小結果は、**元の反例と同じ壊れ方**を再現した場合にのみ報告する。§72.4が
-「別の例外が出ただけの候補を、元の論理的失敗の縮小結果として置き換えない」と
-定めている通りである。backendは
-縮小中に送出された条件を「まだ失敗している」と数えるが（§13がそう定めている）、
-これはpropertyには正しくても、targetに適用すらできない候補をより小さい反例として
-通してしまう。実例として`string`引数では、`check-it`がcacheした文字listを述語へ
-渡すためtargetが送出し、縮小が失敗領域の外へ出る。報告された最小反例が契約を
-満たす値になる。確認できない場合は元の反例へ戻し、どちらも再現しなければ
-`failure-reason`は`nil`である。
-
-status・failure-reason・condition・縮小反例は、同じ入力について述べる。
-backendのstatusは最初に失敗した試行のものであり、縮小は契約の一方から他方へ
-渡ることがある。そのままでは、何も送出しない最小入力の隣に`:error`が並び、
-見るべきconditionが無いまま`:failed`と`:condition`が並んだ。
+縮小候補は**元の試行の失敗署名と一致**する場合だけ受理する。property側も同じ仕組みを使う。
+Function Specではcondition型に加え、戻り値specの失敗形状、タプル位置、`:post`の形式位置を
+比較する。`:return-spec`と`:postcondition`間を同じreturn-value失敗クラスとする既存規則は維持する。
+status・failure-reason・condition・縮小反例は採用した一つの観測から作り、元の観測も残す。
+状態を持つtargetについても当時の所見を保持するが、後の再実行が同じ結果になるとは保証しない。
 
 ## Function spec
 
@@ -3515,7 +3546,7 @@ off-by-one。
 ### 解決（2026-09-12）
 
 上のうち 1・2・3・4・6・7・8 を実装し、修正前後の挙動を同一の入力で実測して回帰テストを追加した。
-5（分類の再実行が target を余分に呼ぶ）は未着手で、§73.2 の順序では今回の範囲外である。
+その後、verification evidenceの修正で5・9・10とproperty側のfailure identityを実装した。
 条項番号は変えない。
 
 | 項 | 直したこと | 修正前 → 修正後（実測） |
@@ -3564,10 +3595,18 @@ REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの
 一方、LIST-OFやVECTOR-OFの要素の添字は値の位置であり、従来どおり`:path`には含むが
 失敗署名には含めない。
 
-**残る制限**: 2・3 は契約（`check-function`）の分類を直したもので、property 実行は依然として
-backend の縮小値をそのまま報告する。コーパス F4 の D4・D6 が「反例が欠陥を指さない」と
-記録したのは property 側の経路なので、そこは変わっていない。property に分類を足すかは
-§13（property では condition も失敗）と衝突するため、別途判断が要る。
+**Verification evidenceの追加修正**: propertyも偽の戻り値と例外を区別し、例外はcondition型を
+比較して縮小候補の採否を決める。§13の「conditionも失敗」と「元と同じ失敗の縮小」は別の判断で
+あり、両立する。通常のproperty本体の内部式までは区別せず、同型の例外も同じ分類になる。
+
+分類用のtarget再実行を廃止し、各試行を`trial-observation`に保存する。回帰例では引数なしの
+失敗がtarget呼び出し2回→1回、戻り値SATISFIES述語3回→1回となり、返り値の説明も当時の値を指す。
+`:trials`欠落のbackend応答は`:skipped`へ推測せず拒否する。結果とbackendのprotocolは§14を参照。
+
+`spec-data`、`property-data`、`function-spec-data`は`:entity-kind`を持ち、それぞれ`:spec`、
+`:property`、`:function-spec`でrecordを判別する。既存の`:kind`は互換性のため保持し、IRの種類や
+著者の分類として読む。例えば`:kind :function-spec`のpropertyでも`:entity-kind :property`である。
+結果オブジェクトは`property-result-entity-kind`で同じ軸を取得する。
 
 ## 73.3 LLM向け有用性の評価
 
