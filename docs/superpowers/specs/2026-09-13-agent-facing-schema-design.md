@@ -7,6 +7,8 @@ Add :schema-version 1, :record-kind (:definition/:result), :definition-digest,
 Required keys are present even when NIL. Optional unknown keys are ignored by
 consumers; incompatible meanings or required-key removals require a new version.
 The Lisp schema version is independent of the MCP JSON envelope version.
+After review, only root records carry the full envelope. Nested IR projections
+retain :entity-kind without repeating dependency walks and generator compilation.
 
 Digest a canonical, bounded representation of the declaration and its reachable
 IR, registered reference specs, and registered custom generator definitions.
@@ -24,6 +26,8 @@ own file to avoid dependency cycles. Backend capability probes may compile a
 schema but must never draw values or run target/predicate functions. Unknown
 backends default to unknown. Custom whole-argument generators advertise generation
 available and automatic shrinking none; missing backend/generator is explicit.
+During a run, the backend reports capabilities captured from its actual compiled
+generator; the runner does not compile a second generator solely for metadata.
 Expose schema-info and result-data, while preserving existing result readers.
 
 cl-mcp already has a legacy digest and JSON schema version. Prefer core metadata

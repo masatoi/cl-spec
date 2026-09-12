@@ -14,6 +14,113 @@
 
 (in-package #:cl-spec/tests/schema-test)
 
+#+sbcl
+(deftest nonfinite-floats-have-an-incomplete-digest
+  (let ((spec (make-instance 'cl-spec/src/ir:member-spec
+                             :values (list sb-ext:double-float-positive-infinity))))
+    (multiple-value-bind (digest complete) (definition-digest spec)
+      (ok (null digest))
+      (ok (null complete)))))
+
+(deftest result-capabilities-use-the-pre-run-shrink-setting
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty changing-law ((x (range integer 1 10))) (:trials (:normal 1))
+      (reinitialize-instance (cl-spec/src/registry:find-property 'changing-law)
+                             :metadata '(:shrink nil))
+      (< x 0))
+    (let ((data (result-data (run-property 'changing-law :seed 42))))
+      (ok (eq :available (getf (getf data :capabilities) :shrinking)))
+      (ok (eq :none (getf (getf (property-data 'changing-law) :capabilities) :shrinking))))))
+
+(deftest backend-capability-reports-must-match-the-schema
+  (dolist (capabilities '((:generation :invented :shrinking :available)
+                          (:generation :available)
+                          (:generation :available :shrinking :none :shrinking :available)))
+    (ok (handler-case
+            (progn
+              (cl-spec/src/generator::validate-backend-outcome
+               (list :status :passed :trials 0 :capabilities capabilities) nil 0)
+              nil)
+          (cl-spec/src/conditions:invalid-backend-result () t)))))
+
+(deftest result-data-copies-protect-retained-evidence
+  (let ((*registry* (make-hash-table-registry)))
+    (defgenerator draw () (list 1 2))
+    (defspec input (list-of integer) (:generator draw))
+    (defproperty failure ((x input)) (:shrink nil) (null x))
+    (let* ((result (run-property 'failure :seed 42))
+           (data (result-data result)))
+      (setf (car (getf (getf data :counterexample) 'x)) 99)
+      (ok (equal '(1 2) (getf (getf (result-data result) :counterexample) 'x))))))
+
+(defvar *schema-compilations* 0
+  "Number of generator compilations during the measured operation.")
+
+(defclass broken-description () ()
+  (:documentation "A fixture representing a programming error in an extension."))
+
+(defclass counted-backend (cl-spec/src/backends/check-it:check-it-backend) ()
+  (:documentation "Count top-level generator compilations in schema regressions."))
+
+(deftest introspection-and-execution-compile-only-the-root-once
+  (let ((*registry* (make-hash-table-registry))
+        (*generator-backend* (make-instance 'counted-backend)))
+    (defspec input (tuple integer integer integer integer integer integer integer integer
+                         integer integer integer integer integer integer integer integer integer))
+    (defproperty law ((x integer)) (:trials (:normal 1)) (integerp x))
+    (let ((*schema-compilations* 0))
+      (spec-data 'input)
+      (ok (= 1 *schema-compilations*)))
+    (let ((*schema-compilations* 0))
+      (let ((data (result-data (run-property 'law :seed 42))))
+        (ok (= 1 *schema-compilations*))
+        (ok (eq :available (getf (getf data :capabilities) :generation)))))))
+
+(defmethod cl-spec/src/generator:compile-generator :around
+    ((backend counted-backend) spec &key context options)
+  (declare (ignore context options))
+  (incf *schema-compilations*)
+  (call-next-method))
+
+(deftest metadata-rejects-unsupported-entity-types-explicitly
+  (ok (handler-case
+          (progn (cl-spec/src/schema:definition-metadata
+                  (make-instance 'cl-spec/src/generator-definition:custom-generator)) nil)
+        (type-error () t))))
+
+(deftest digest-errors-are-not-confused-with-opaque-definitions
+  (ok (handler-case (progn (definition-digest 'identity) nil) (type-error () t)))
+  (ok (handler-case (progn (definition-digest (make-instance 'broken-description)) nil)
+        (simple-error () t)))
+  (let ((*registry* (make-hash-table-registry)))
+    (ok (null (definition-digest 'absent :entity-kind :spec)))))
+
+(defmethod cl-spec/src/schema:definition-description ((definition broken-description))
+  (declare (ignore definition))
+  (error "broken declaration method"))
+
+(deftest tuples-of-custom-generators-have-no-shrink-strategy
+  (let ((*registry* (make-hash-table-registry)))
+    (defgenerator draw () 1)
+    (defspec input integer (:generator draw))
+    (defproperty all-custom ((x input) (y input)) (= x y))
+    (defproperty mixed ((x input) (y integer)) (= x y))
+    (defspec-function identity (:args (x input)) (:returns integer))
+    (ok (eq :none (getf (getf (property-data 'all-custom) :capabilities) :shrinking)))
+    (ok (eq :none (getf (getf (function-spec-data 'identity) :capabilities) :shrinking)))
+    (ok (eq :available (getf (getf (property-data 'mixed) :capabilities) :shrinking)))))
+
+(deftest digests-include-clos-description-fields
+  (flet ((spec (text)
+           (make-instance 'cl-spec/src/ir:type-spec :type-specifier 'integer :description text))
+         (contract (text)
+           (make-instance 'cl-spec/src/function-spec:function-spec :name 'identity
+                          :documentation text)))
+    (ok (nth-value 1 (definition-digest (spec "first"))))
+    (ok (not (equal (definition-digest (spec "first")) (definition-digest (spec "second")))))
+    (ok (not (equal (definition-digest (contract "first"))
+                    (definition-digest (contract "second")))))))
+
 (defclass extended-type-spec (cl-spec/src/ir:type-spec)
   ((extra :initarg :extra :reader extended-type-spec-extra))
   (:documentation "Test an extension whose semantic fields are not built-in."))

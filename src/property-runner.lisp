@@ -249,7 +249,9 @@ backend."
          ;; construction rather than by both paths happening to default the same way.
          (effective-profile (or profile :normal))
          (trials (resolve-trials property effective-profile backend))
-         (metadata (definition-metadata property :registry registry))
+         (metadata (definition-metadata
+                    property :registry registry
+                    :capabilities '(:generation :unknown :shrinking :unknown)))
          (start (get-internal-real-time))
          ;; One binding covers generation and shrinking alike, because the whole
          ;; trial loop lives inside this single call.
@@ -263,6 +265,14 @@ backend."
          (original (getf outcome :failure))
          (shrunk (getf outcome :shrunk-failure))
          (selected (or shrunk original)))
+    ;; Backends may report capabilities captured when they compiled the actual
+    ;; generator. Older backends leave the pre-run UNKNOWN metadata intact.
+    (when (getf outcome :capabilities)
+      (let ((capabilities (copy-list (getf outcome :capabilities))))
+        (when (eq :none (getf (getf metadata :capabilities) :shrinking))
+          (setf (getf capabilities :shrinking) :none))
+        (setf (getf capabilities :instrumentation) :unavailable
+              (getf metadata :capabilities) capabilities)))
     (make-instance 'property-result
                    ;; Zero generated trials or all preconditions rejected means
                    ;; no admitted trial supplied verification evidence.

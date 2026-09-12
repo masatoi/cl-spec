@@ -37,3 +37,28 @@ Validation completed 2026-09-13:
 The cl-mcp adapter changes are in its separate checkout. Its pre-existing staged
 random-spec sources and untracked coverage directory were preserved. Publish the
 core and adapter changes as separate pull requests targeting their respective main branches.
+
+## PR #4 review follow-up
+
+| Finding | Disposition |
+|---|---|
+| Metadata for custom-generator | v1 supports spec/property/function-spec records only. Documented and changed unsupported objects to explicit TYPE-ERROR; generators remain digest dependencies. |
+| Spec completeness / description | Included description. Built-in IR slots can describe constraints completely without an original source form. |
+| Suppressed extension errors | Removed broad digest handler. Unsupported non-finite float encoding is handled locally; extension programming errors propagate. |
+| Missing entity namespace | Named digest calls require a valid explicit entity kind. Missing registered definitions remain incomplete. |
+| Instrumentation override | Retained: instrumentation belongs to the separate instrumentation system, not generator backends. |
+| Missing blank lines | Fixed. |
+| Custom generators inside argument tuples | Walk compiled tuple/mapped/guard generators; no shrink strategy when all elements lack one. |
+| Function documentation digest | Included documentation, also property/generator documentation and property tags. |
+| Duplicate budget slots | Removed function result's duplicate; existing reader delegates to shared slot. |
+| TRIALS integer versus plist | Retained legacy types, explicitly discriminated by record-kind. |
+| Double compilation per run | Backend reports capabilities from its actual compiled generator; no disposable metadata compilation. |
+| Result-data defensive copies | Retained and tested: consumer mutation must not alter retained evidence. |
+| Metadata per nested node | Full envelope only on public root records; nested IR retains entity-kind. Measured 18 top-level compile calls reduced to 1. |
+| Public reader docstrings | Updated all three to describe the seven envelope keys and root/nested distinction. |
+
+Verification: 257 core tests and 7 actual cl-mcp integration tests passed; changed
+Lisp files pass mallet. Added regressions establish compilation counts of 1 for
+both an 18-node introspection and a property run. Independent follow-up review
+found post-run shrink-setting rereads and non-finite floats; both were reproduced
+and fixed. Capabilities now preserve the setting captured before user code runs.

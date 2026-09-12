@@ -4,7 +4,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
   (:import-from #:cl-spec/src/ir
-                #:spec #:spec-name #:spec-kind #:spec-source-form #:spec-metadata
+                #:spec #:spec-name #:spec-description #:spec-kind #:spec-source-form #:spec-metadata
                 #:spec-children #:spec-generator-name
                 #:type-spec #:type-spec-type-specifier
                 #:reference-spec #:reference-spec-target
@@ -16,10 +16,12 @@
                 #:list-of-spec #:vector-of-spec #:tuple-spec)
   (:import-from #:cl-spec/src/property
                 #:property #:property-name #:property-arguments #:property-source-form
-                #:property-body #:property-kind #:property-targets #:property-trials
+                #:property-body #:property-documentation #:property-tags
+                #:property-kind #:property-targets #:property-trials
                 #:property-metadata #:property-argument-schema)
   (:import-from #:cl-spec/src/generator-definition
-                #:custom-generator #:custom-generator-name #:custom-generator-source-form)
+                #:custom-generator #:custom-generator-name #:custom-generator-source-form
+                #:custom-generator-documentation)
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:backend-capabilities)
   (:export #:schema-info #:definition-digest #:definition-metadata
            #:definition-description #:definition-entity-kind #:definition-generation-schema
@@ -49,15 +51,20 @@
   designator)
 
 (defmethod resolve-definition ((designator symbol) (entity-kind (eql :spec)) registry)
-  (or (find-spec designator registry) (error "Unknown spec ~S" designator)))
+  (find-spec designator registry))
 
 (defmethod resolve-definition ((designator symbol) (entity-kind (eql :property)) registry)
-  (or (find-property designator registry) (error "Unknown property ~S" designator)))
+  (find-property designator registry))
 
 (defgeneric definition-entity-kind (definition)
   (:documentation "Return the entity namespace for a definition object."))
 
+(defmethod definition-entity-kind ((definition t))
+  (declare (ignore definition))
+  nil)
+
 (defmethod definition-entity-kind ((definition spec)) :spec)
+
 (defmethod definition-entity-kind ((definition property)) :property)
 
 (defgeneric definition-description (definition)
@@ -72,6 +79,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
 (defmethod definition-description ((definition spec))
   (values
    (list :entity-kind :spec :name (spec-name definition) :kind (spec-kind definition)
+         :description (spec-description definition)
          :source (spec-source-form definition) :metadata (spec-metadata definition)
          :generator (spec-generator-name definition)
          :fields
@@ -98,6 +106,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
   (values
    (list :entity-kind :property :name (property-name definition)
          :variables (mapcar #'first (property-arguments definition))
+         :documentation (property-documentation definition) :tags (property-tags definition)
          :source (property-source-form definition) :body (property-body definition)
          :kind (property-kind definition) :targets (property-targets definition)
          :trials (property-trials definition) :metadata (property-metadata definition))
@@ -107,6 +116,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
 
 (defmethod definition-description ((definition custom-generator))
   (values (list :entity-kind :generator :name (custom-generator-name definition)
+                :documentation (custom-generator-documentation definition)
                 :source (custom-generator-source-form definition))
           nil nil (and (eq (class-name (class-of definition)) 'custom-generator)
                         (not (null (custom-generator-source-form definition))))))
@@ -123,6 +133,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
   (:documentation "Return whether the declaration enables automatic shrinking."))
 
 (defmethod definition-shrink-enabled-p ((definition t)) t)
+
 (defmethod definition-shrink-enabled-p ((definition property))
   (getf (property-metadata definition) :shrink t))
 
@@ -168,7 +179,11 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
                     (token "R" (number-text (numerator item)))
                     (token "/" (number-text (denominator item))))
                    ((floatp item)
-                    (multiple-value-bind (significand exponent sign) (integer-decode-float item)
+                    (destructuring-bind (significand exponent sign)
+                         (handler-case (multiple-value-list (integer-decode-float item))
+                           ;; Non-finite floats have no portable INTEGER-DECODE-FLOAT encoding.
+                           ;; Keep this handler on the primitive, not on extension methods.
+                           (error () (return-from hashing nil)))
                       (emit "F")
                       (push (cons (list (type-of item) significand exponent sign
                                         (float-radix item) (float-digits item))
@@ -204,50 +219,62 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
 
 (defun definition-digest (designator &key entity-kind (registry *registry*))
   "Return (values DIGEST COMPLETE-P) for a declaration and registered dependencies.
-This is a bounded, non-cryptographic change detector, not an implementation digest.
-Opaque/missing definitions return NIL/NIL; incomplete fingerprints are never trusted."
-  (handler-case
-      (let ((root (resolve-definition designator entity-kind registry))
-            (seen (make-hash-table :test #'eq))
-            (pending nil) (records nil) (count 0))
-        (labels ((reference (object)
-                   (multiple-value-bind (id found) (gethash object seen)
-                     (if found id
-                         (let ((id (incf count)))
-                           (when (> count 10000)
-                             (return-from definition-digest (values nil nil)))
-                           (setf (gethash object seen) id)
-                           (push object pending)
-                           id)))))
-          (reference root)
-          (loop while pending
-                for object = (pop pending)
-                do (multiple-value-bind (data children links complete)
-                       (definition-description object)
-                     (unless complete (return-from definition-digest (values nil nil)))
-                     (let ((child-ids (mapcar #'reference children))
-                           (link-ids
-                             (loop for (kind . name) in links
-                                   for target = (ecase kind
-                                                  (:spec (find-spec name registry))
-                                                  (:generator (find-generator name registry)))
-                                   do (unless target
-                                        (return-from definition-digest (values nil nil)))
-                                   collect (list kind name (reference target)))))
-                       (push (list (gethash object seen) data child-ids link-ids) records))))
-          (let ((digest (canonical-digest (nreverse records))))
-            (values digest (not (null digest))))))
-    (error () (values nil nil))))
+A symbol requires an explicit :ENTITY-KIND. Missing or opaque definitions return
+NIL/NIL. Extension programming errors propagate rather than becoming incompleteness."
+  (when (symbolp designator)
+    (check-type entity-kind (member :spec :property :function-spec)))
+  (let ((root (resolve-definition designator entity-kind registry))
+        (seen (make-hash-table :test #'eq))
+        (pending nil) (records nil) (count 0))
+    (unless root (return-from definition-digest (values nil nil)))
+    (labels ((reference (object)
+               (multiple-value-bind (id found) (gethash object seen)
+                 (if found id
+                     (let ((id (incf count)))
+                       (when (> count 10000)
+                         (return-from definition-digest (values nil nil)))
+                       (setf (gethash object seen) id)
+                       (push object pending)
+                       id)))))
+      (reference root)
+      (loop while pending
+            for object = (pop pending)
+            do (multiple-value-bind (data children links complete)
+                   (definition-description object)
+                 (unless complete (return-from definition-digest (values nil nil)))
+                 (let ((child-ids (mapcar #'reference children))
+                       (link-ids
+                         (loop for (kind . name) in links
+                               for target = (ecase kind
+                                              (:spec (find-spec name registry))
+                                              (:generator (find-generator name registry)))
+                               do (unless target
+                                    (return-from definition-digest (values nil nil)))
+                               collect (list kind name (reference target)))))
+                   (push (list (gethash object seen) data child-ids link-ids) records))))
+      (let ((digest (canonical-digest (nreverse records))))
+        (values digest (not (null digest)))))))
 
-(defun definition-metadata (definition &key (registry *registry*))
-  "Return the shared schema envelope for a definition without running any trials."
+(defun metadata-definition-p (definition)
+  "Return true for an entity supported by the public metadata envelope."
+  (not (null (member (definition-entity-kind definition) '(:spec :property :function-spec)))))
+
+(defun definition-metadata (definition &key (registry *registry*)
+                                          (capabilities nil capabilities-p))
+  "Return v1 metadata for a spec, property or function-spec definition.
+Other objects, including custom-generator dependencies, signal TYPE-ERROR.
+CAPABILITIES, when supplied, replaces the backend probe; execution uses this
+to avoid compiling a disposable generator before constructing the actual one."
+  (check-type definition (satisfies metadata-definition-p))
   (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
     (let ((capabilities
-            (copy-list (backend-capabilities *generator-backend*
-                                            (definition-generation-schema definition)
-                                            :registry registry))))
+            (copy-list (if capabilities-p capabilities
+                           (backend-capabilities *generator-backend*
+                                                 (definition-generation-schema definition)
+                                                 :registry registry)))))
       (unless (definition-shrink-enabled-p definition)
         (setf (getf capabilities :shrinking) :none))
+      ;; Instrumentation belongs to the separate core module, not the generator backend.
       (setf (getf capabilities :instrumentation) :unavailable)
       (list :schema-version 1 :record-kind :definition
             :entity-kind (definition-entity-kind definition)

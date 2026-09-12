@@ -16,7 +16,9 @@
                 #:*bias-sensitivity*
                 #:*recursive-bias-decay*
                 #:cached-value
-                #:shrink)
+                #:shrink
+                #:tuple-generator #:mapped-generator #:guard-generator
+                #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator)
   (:import-from #:cl-spec/src/generator
@@ -32,7 +34,7 @@
                 #:trial-observation-status
                 #:trial-observation-signature)
   (:import-from #:cl-spec/src/conditions #:invalid-generated-arguments)
-  (:import-from #:cl-spec/src/ir #:spec-generator-name #:spec-kind #:spec-children)
+  (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/property
                 #:property-arguments #:property-argument-schema
@@ -200,6 +202,7 @@ calling user code, and keep existing evidence if shrinking itself fails."
          (schema (property-argument-schema property))
          (custom-name (spec-generator-name schema))
          (compiled (compile-generator backend schema :context context))
+         (capabilities (compiled-capabilities compiled shrink-p))
          (validators (loop for (nil spec) in (property-arguments property)
                            collect (compile-validator spec :context context)))
          (generator (compiled-generator-generator compiled))
@@ -251,22 +254,35 @@ calling user code, and keep existing evidence if shrinking itself fails."
                          (error () (setf different t))))
                      (return
                        (list :status (trial-observation-status (or accepted original))
-                             :trials trial :rejected rejected
+                             :trials trial :rejected rejected :capabilities capabilities
                              :failure original :shrunk-failure accepted
                              :shrunk-outcome (cond (accepted :used)
                                                    (different :different-failure)
                                                    (t :none)))))))
-            finally (return (list :status :passed :trials trials :rejected rejected))))))
+            finally (return (list :status :passed :trials trials :rejected rejected
+                                   :capabilities capabilities))))))
+
+(defun generator-shrink-strategy-p (generator)
+  "Return false when the compiled tree can only return its cached arguments.
+Lists can shrink in length even when their element generator cannot shrink."
+  (typecase generator
+    (custom-value-generator nil)
+    ((or tuple-generator mapped-generator)
+     (some #'generator-shrink-strategy-p (sub-generators generator)))
+    (guard-generator (generator-shrink-strategy-p (sub-generator generator)))
+    (t t)))
+
+(defun compiled-capabilities (compiled &optional (shrink-p t))
+  "Describe the generator actually constructed, without compiling or drawing again."
+  (list :generation :available
+        :shrinking (if (and shrink-p
+                            (generator-shrink-strategy-p (compiled-generator-generator compiled)))
+                       :available :none)))
 
 (defmethod backend-capabilities ((backend check-it-backend) spec &key registry)
   "Probe generator construction only; availability does not guarantee valid draws."
   (handler-case
-      (let ((compiled (compile-generator backend spec :context (list :registry registry))))
-        (list :generation :available
-              :shrinking (if (or (typep (compiled-generator-generator compiled)
-                                       'custom-value-generator)
-                                 (and (eq :tuple (spec-kind spec)) (null (spec-children spec))))
-                             :none :available)))
+      (compiled-capabilities (compile-generator backend spec :context (list :registry registry)))
     (error () (list :generation :unavailable :shrinking :unavailable))))
 
 (defun install-check-it-backend ()

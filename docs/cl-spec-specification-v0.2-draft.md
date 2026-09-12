@@ -2041,7 +2041,9 @@ Introspection-firstの原則はconsumer側にも及ぶ。consumerはregistryが 
 
 `schema-info`はLisp plist protocolのversion・必須メタデータ・列挙値・digestの範囲を返す。
 `spec-data`、`property-data`、`function-spec-data`の各definition recordと、
-`result-data`のresult recordは次のキーを必ず持つ。入れ子のspecも同じ規則に従う。
+`result-data`のresult recordは次のキーを必ず持つ。メタデータは公開APIが返すルートrecordに
+集約する。`:children`・引数・戻り値・argument-schema内のspecは`:entity-kind :spec`を持つ
+通常のIR投影であり、独立したdigest計算やbackend probeは行わない。
 
 | キー | v1の意味 |
 |---|---|
@@ -2064,9 +2066,15 @@ versionの無い旧recordは旧protocolとして扱う。新しい省略可能�
 `definition-digest`はdefinition object、または`(definition-digest name :entity-kind kind
 :registry registry)`を受け取り、`(values digest complete-p)`を返す。
 同名のspec/property/function-specは独立したnamespaceである。
-`definition-metadata`はdefinition objectから上表のメタデータを返す。
+`definition-metadata`はspec・property・function-spec objectから上表のメタデータを返す。
+custom-generatorはdigestの依存先としては扱うが、v1の独立したmetadata recordではない。
+非対応objectをmetadataへ渡すと`type-error`、名前のdigestで`:entity-kind`を省略・誤指定しても
+`type-error`となる。欠落した登録先は`NIL/NIL`。拡張の記述method内のプログラムエラーは伝播し、
+比較不能へ黙って変換しない。
 
-digestは保存されたsource form・正規化IR・宣言metadataを基にする。参照されたspecと登録された
+digestは保存されたsource form・正規化IR・説明文・documentation・tags・宣言metadataを基にする。
+標準IRの制約を全てslotで表現できる場合は、元source formが無くても完全な記述となる。
+参照されたspecと登録された
 custom generatorのsource formを推移的に含む。全引数generatorも対象であり、呼び出し側の宣言を
 変えずにgeneratorを再定義した場合もdigestが変わる。登録先を解決できない場合、custom-specの
 ように標準記述では実装を表せない場合、関数述語だけでsource formの無いproperty/generator等は
@@ -2082,7 +2090,8 @@ digestに含めない。`:definition-digest-complete T`はこの限定された�
 v1はpackage-qualified symbol・整数・有理数・浮動小数点数・文字・文字列・cons・配列をタグ付きで
 符号化する。cons/配列の共有と循環は参照番号で表す。printer設定やユーザーpretty printerに依存せず、
 各character codeを4個のlittle-endian octetとしてFNV-1a 64-bitに入力する。暗号学的hashではない。
-不透明なオブジェクトや非interned symbolは比較不能。definition objectは10,000個まで、符号化は
+不透明なオブジェクト、非interned symbol、移植可能に符号化できないNaN/無限大は比較不能。
+definition objectは10,000個まで、符号化は
 100,000ノード・1,000,000文字・CAR/配列の入れ子128段まで。長いCDR列は反復処理する。
 整数のbit長は65,536まで、配列要素数は100,000まで。上限超過も`NIL/NIL`とし、切り詰めたdigestは返さない。
 異なるLisp実装での浮動小数点型・array element type等の一致は保証しない。
@@ -2095,18 +2104,27 @@ backend無しは`:generation :unavailable :shrinking :unavailable`、query未実
 として返す。値を生成せず、custom generator・対象関数・SATISFIES述語を実行しない。
 生成成功や契約を満たすdrawの存在を保証するqueryではない。
 
-縮小を無効化したproperty、空tuple、rootがcustom generator（参照経由を含む）なら
-`:shrinking :none`。他の`:available`は縮小戦略の存在だけを意味し、要素ごとの縮小可能性や
+縮小を無効化したproperty、空tuple、rootがcustom generator（参照経由を含む）、tuple/mappingの
+全要素に縮小戦略が無い場合は`:shrinking :none`。listは要素がcustomでも長さを縮小できる。
+他の`:available`は縮小戦略の存在だけを意味し、要素ごとの縮小可能性や
 必ず有効な縮小候補が得られることを保証しない。`:instrumentation`は現時点で`:unavailable`。
 capabilityは現在のbackendに依存するがdigestには含めない。
 
-`run-property`と`check-function`は生成開始前にメタデータを結果へ保存する。
+`run-property`と`check-function`は生成開始前に定義のメタデータを捕捉する。
+capability probe用の捨てるgeneratorは構築せず、backendが実行用generatorの構築時に捕捉した
+`:capabilities`をoutcomeへ任意で返す。`:generation`と`:shrinking`の有効な列挙値が必須であり、
+不正なreportは`invalid-backend-result`となる。未報告のbackendは結果で`:unknown`となる。
+`definition-metadata`の`:capabilities`引数はこのprobeを省略するための明示的なreport指定である。
+instrumentationは別systemの責務なので、generator backendのreportでは有効化されない。
 `property-result-schema-metadata`と`property-result-budget`で保存値を読める。
 `result-data`は保存したメタデータと`:name`、`:status`、必須の`:trials`、`:budget`、`:rejected`、
 `:seed`、`:profile`、`:elapsed`、`:counterexample`、`:shrunk-counterexample`、`:shrunk-outcome`、
 `:failure`、`:shrunk-failure`を返す。failureは捕捉済みの引数・status・reason・signature・explanation・
 value・condition-reportを持つ。失敗の無い箇所は`NIL`。condition objectの代わりに捕捉済みreportを返す。
-返すcons/配列はsnapshotされるが、任意のオブジェクトをJSON化したり復元可能にしたりするAPIではない。
+返すcons/配列はsnapshotされる。これはconsumerによる返却dataの変更から保存済み証拠を保護するためで、
+任意のオブジェクトをJSON化したり復元可能にしたりするAPIではない。
+`:trials`の型は`:record-kind`に従う。propertyのdefinitionではprofile table、resultでは実行件数であり、
+互換性を維持するため既存キーを改名しない。Function Specのbudget readerは共通resultのslotを読む。
 実行後にregistryを変更しても過去のresultのdigestは変わらない。手組みresultに保存メタデータが無ければ
 digestは明示的に比較不能となり、budgetは不明なら`NIL`となる。
 実行途中に著者が依存定義や外部状態を変更することをfreezeする機能ではない。
