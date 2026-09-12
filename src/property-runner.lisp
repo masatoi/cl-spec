@@ -178,7 +178,7 @@ results without captured metadata have an explicitly incomplete digest."
                      :definition-digest-complete nil
                      :definition-digest-covers :declaration-and-registered-dependencies
                      :capabilities '(:generation :unknown :shrinking :unknown
-                                     :instrumentation :unavailable))))))
+                                     :instrumentation :unknown))))))
     (setf (getf metadata :record-kind) :result
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value
@@ -271,7 +271,8 @@ backend."
       (let ((capabilities (copy-list (getf outcome :capabilities))))
         (when (eq :none (getf (getf metadata :capabilities) :shrinking))
           (setf (getf capabilities :shrinking) :none))
-        (setf (getf capabilities :instrumentation) :unavailable
+        (setf (getf capabilities :instrumentation)
+              (getf (getf metadata :capabilities) :instrumentation)
               (getf metadata :capabilities) capabilities)))
     (make-instance 'property-result
                    ;; Zero generated trials or all preconditions rejected means

@@ -19,7 +19,7 @@
                 #:registry-register-function-spec)
   (:import-from #:cl-spec/src/schema
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
-                #:resolve-definition)
+                #:resolve-definition #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema)
@@ -47,7 +47,8 @@
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
                 #:explain-data)
-  (:export #:function-spec
+  (:export #:precondition-refuses-p
+           #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema
@@ -499,6 +500,9 @@ as its reduction.  The shapes come from the nested errors instead."
   ((contract :initarg :contract :reader checked-contract)
    (target :initarg :target :reader checked-target))
   (:documentation "Internal property adapter whose trial evaluation records the contract outcome."))
+
+(defmethod definition-instrumentation-capability ((property function-check-property))
+  (definition-instrumentation-capability (checked-contract property)))
 
 (defmethod property-argument-schema ((property function-check-property))
   "Use the function's whole argument schema, including its custom generator."
