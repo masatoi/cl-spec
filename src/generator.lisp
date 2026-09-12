@@ -32,7 +32,7 @@
            #:run-generated-test
            #:generator-for
            #:sample
-           #:backend-default-trials))
+           #:backend-default-trials #:backend-capabilities))
 
 (in-package #:cl-spec/src/generator)
 
@@ -173,6 +173,15 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
     (unless (and (integerp budget) (not (minusp budget)))
       (error 'type-error :datum budget :expected-type '(integer 0 *)))
     (validate-backend-outcome (call-next-method) property budget)))
+
+(defgeneric backend-capabilities (backend spec &key registry)
+  (:documentation "Describe generation and shrinking without drawing or invoking user predicates."))
+
+(defmethod backend-capabilities ((backend t) spec &key registry)
+  "Unknown backends must opt in to capability reporting."
+  (declare (ignore spec registry))
+  (list :generation (if backend :unknown :unavailable)
+        :shrinking (if backend :unknown :unavailable)))
 
 (defgeneric backend-default-trials (backend)
   (:documentation "Return the trial count BACKEND uses when a property names none.

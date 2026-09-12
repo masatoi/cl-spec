@@ -42,7 +42,6 @@
                 #:nullable-spec-inner-spec
                 #:tuple-spec
                 #:tuple-spec-element-specs
-                #:collection-spec
                 #:collection-spec-element-spec
                 #:list-of-spec
                 #:vector-of-spec
@@ -58,7 +57,7 @@
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
-  (:export #:spec-generator
+  (:export #:custom-value-generator #:spec-generator
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)

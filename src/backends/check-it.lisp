@@ -18,13 +18,13 @@
                 #:cached-value
                 #:shrink)
   (:import-from #:cl-spec/src/backends/check-it-generators
-                #:compile-spec-generator)
+                #:compile-spec-generator #:custom-value-generator)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:compile-generator
                 #:generate-value
                 #:run-generated-test
-                #:backend-default-trials)
+                #:backend-default-trials #:backend-capabilities)
   (:import-from #:cl-spec/src/execution
                 #:snapshot-value #:observe-trial #:observation-failure-p
                 #:failure-identities-match-p #:same-value-p
@@ -32,7 +32,7 @@
                 #:trial-observation-status
                 #:trial-observation-signature)
   (:import-from #:cl-spec/src/conditions #:invalid-generated-arguments)
-  (:import-from #:cl-spec/src/ir #:spec-generator-name)
+  (:import-from #:cl-spec/src/ir #:spec-generator-name #:spec-kind #:spec-children)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/property
                 #:property-arguments #:property-argument-schema
@@ -257,6 +257,17 @@ calling user code, and keep existing evidence if shrinking itself fails."
                                                    (different :different-failure)
                                                    (t :none)))))))
             finally (return (list :status :passed :trials trials :rejected rejected))))))
+
+(defmethod backend-capabilities ((backend check-it-backend) spec &key registry)
+  "Probe generator construction only; availability does not guarantee valid draws."
+  (handler-case
+      (let ((compiled (compile-generator backend spec :context (list :registry registry))))
+        (list :generation :available
+              :shrinking (if (or (typep (compiled-generator-generator compiled)
+                                       'custom-value-generator)
+                                 (and (eq :tuple (spec-kind spec)) (null (spec-children spec))))
+                             :none :available)))
+    (error () (list :generation :unavailable :shrinking :unavailable))))
 
 (defun install-check-it-backend ()
   "Install a CHECK-IT-BACKEND into *GENERATOR-BACKEND* and return it.

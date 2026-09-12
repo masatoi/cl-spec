@@ -104,7 +104,7 @@
                 #:run-generated-test
                 #:generator-for
                 #:sample
-                #:backend-default-trials)
+                #:backend-default-trials #:backend-capabilities)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
@@ -137,7 +137,10 @@
                 #:observe-trial
                 #:observation-failure-p
                 #:failure-identities-match-p)
+  (:import-from #:cl-spec/src/schema
+                #:schema-info #:definition-digest #:definition-metadata #:definition-description)
   (:import-from #:cl-spec/src/property-runner
+                #:result-data #:property-result-schema-metadata #:property-result-budget
                 #:property-result-entity-kind
                 #:property-result-failure-evidence
                 #:property-result-shrunk-evidence
@@ -203,7 +206,9 @@
                 #:defspec-function
                 #:defproperty
                 #:defgenerator)
-  (:export ;; Conditions
+  (:export #:schema-info #:definition-digest #:definition-metadata #:definition-description
+           #:result-data #:property-result-schema-metadata #:property-result-budget
+           ;; Conditions
            #:cl-spec-error
            #:not-implemented
            #:not-implemented-operator
@@ -301,7 +306,7 @@
            #:run-generated-test
            #:generator-for
            #:sample
-           #:backend-default-trials
+           #:backend-default-trials #:backend-capabilities
            ;; Properties
            #:property
            #:property-name

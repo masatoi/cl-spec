@@ -17,11 +17,15 @@
                 #:*registry*
                 #:registry-find-function-spec
                 #:registry-register-function-spec)
+  (:import-from #:cl-spec/src/schema
+                #:definition-description #:definition-entity-kind #:definition-generation-schema
+                #:resolve-definition)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
+                #:property-result-schema-metadata
                 #:property-result-status
                 #:property-result-property
                 #:property-result-trials
@@ -552,6 +556,39 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod property-result-entity-kind ((result function-check-result))
   :function-spec)
 
+(defmethod resolve-definition ((designator symbol) (kind (eql :function-spec)) registry)
+  (resolve-function-spec designator registry))
+
+(defmethod definition-entity-kind ((contract function-spec)) :function-spec)
+
+(defmethod definition-generation-schema ((contract function-spec))
+  (function-spec-argument-schema contract))
+
+(defmethod definition-description ((contract function-spec))
+  "Describe the contract declaration, not the target implementation."
+  (values
+   (list :entity-kind :function-spec :name (function-spec-name contract)
+         :variables (mapcar #'first (function-spec-argument-specs contract))
+         :source (function-spec-source-form contract)
+         :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
+         :returns (not (null (function-spec-return-spec contract)))
+         :generator (function-spec-argument-generator contract)
+         :metadata (function-spec-metadata contract))
+   (append (mapcar #'second (function-spec-argument-specs contract))
+           (when (function-spec-return-spec contract)
+             (list (function-spec-return-spec contract))))
+   (when (function-spec-argument-generator contract)
+     (list (cons :generator (function-spec-argument-generator contract))))
+   (and (eq (class-name (class-of contract)) 'function-spec)
+        (or (not (or (function-spec-precondition-function contract)
+                     (function-spec-postcondition-function contract)))
+            (not (null (function-spec-source-form contract)))))))
+
+(defmethod definition-description ((property function-check-property))
+  (definition-description (checked-contract property)))
+
+(defmethod definition-entity-kind ((property function-check-property)) :function-spec)
+
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
 No target or predicate is called again to classify the result. Shrinking still
@@ -582,6 +619,7 @@ are accepted. A run with no admitted trials is :SKIPPED."
                                   :metadata (list :shrink t)))
          (result (run-property property :seed seed :options options :registry registry)))
     (make-instance 'function-check-result
+                   :schema-metadata (property-result-schema-metadata result)
                    :status (property-result-status result)
                    :property name :budget budget :source-form source
                    :trials (property-result-trials result)

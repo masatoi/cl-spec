@@ -6,6 +6,7 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
+  (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
@@ -13,6 +14,8 @@
                 #:property-trials)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/execution
+                #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
+                #:trial-observation-status
                 #:trial-observation-arguments #:trial-observation-condition
                 #:trial-observation-reason #:trial-observation-signature
                 #:trial-observation-explanation)
@@ -27,7 +30,8 @@
   (:import-from #:cl-spec/src/utils/random
                 #:make-seed
                 #:seed->random-state)
-  (:export #:property-result-entity-kind
+  (:export #:result-data #:property-result-schema-metadata #:property-result-budget
+           #:property-result-entity-kind
            #:property-result-failure-evidence #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-rejected
            #:property-result-failure-reason #:property-result-failure-signature
@@ -49,7 +53,12 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((failure-evidence :initarg :failure-evidence :initform nil
+  ((schema-metadata :initarg :schema-metadata :initform nil
+                    :reader property-result-schema-metadata
+                    :documentation "Definition metadata captured before the run, or NIL.")
+   (trial-budget :initarg :budget :initform nil :reader property-result-budget
+                 :documentation "Resolved trial budget, or NIL on a manually built result.")
+   (failure-evidence :initarg :failure-evidence :initform nil
                      :reader property-result-failure-evidence
                      :documentation "Observation from the original failing trial.")
    (shrunk-evidence :initarg :shrunk-evidence :initform nil
@@ -147,6 +156,47 @@ and the shrunk counterexample are what make a failure actionable."))
     (when (and evidence (eq :return-spec (trial-observation-reason evidence)))
       (trial-observation-explanation evidence))))
 
+(defun observation-data (observation)
+  "Project captured trial evidence as Lisp data rather than a structure object."
+  (when observation
+    (list :arguments (trial-observation-arguments observation)
+          :status (trial-observation-status observation)
+          :reason (trial-observation-reason observation)
+          :signature (trial-observation-signature observation)
+          :explanation (trial-observation-explanation observation)
+          :value (trial-observation-value observation)
+          :condition-report (trial-observation-condition-report observation))))
+
+(defun result-data (result)
+  "Return a versioned result record using metadata captured before execution.
+Never resolve the current registry to describe an old result. Manually constructed
+results without captured metadata have an explicitly incomplete digest."
+  (let ((metadata
+          (copy-list
+           (or (property-result-schema-metadata result)
+               (list :schema-version 1 :definition-digest nil
+                     :definition-digest-complete nil
+                     :definition-digest-covers :declaration-and-registered-dependencies
+                     :capabilities '(:generation :unknown :shrinking :unknown
+                                     :instrumentation :unavailable))))))
+    (setf (getf metadata :record-kind) :result
+          (getf metadata :entity-kind) (property-result-entity-kind result))
+    (snapshot-value
+     (append metadata
+             (list :name (property-result-property result)
+                   :status (property-result-status result)
+                   :trials (property-result-trials result)
+                   :budget (property-result-budget result)
+                   :rejected (property-result-rejected result)
+                   :seed (property-result-seed result)
+                   :profile (property-result-profile result)
+                   :counterexample (property-result-counterexample result)
+                   :shrunk-counterexample (property-result-shrunk-counterexample result)
+                   :shrunk-outcome (property-result-shrunk-outcome result)
+                   :failure (observation-data (property-result-failure-evidence result))
+                   :shrunk-failure (observation-data (property-result-shrunk-evidence result))
+                   :elapsed (property-result-elapsed result))))))
+
 (defun resolve-trials (property profile backend)
   "Return the trial count for PROPERTY under PROFILE (specification §33).
 
@@ -199,6 +249,7 @@ backend."
          ;; construction rather than by both paths happening to default the same way.
          (effective-profile (or profile :normal))
          (trials (resolve-trials property effective-profile backend))
+         (metadata (definition-metadata property :registry registry))
          (start (get-internal-real-time))
          ;; One binding covers generation and shrinking alike, because the whole
          ;; trial loop lives inside this single call.
@@ -219,6 +270,7 @@ backend."
                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
                                :skipped
                                (getf outcome :status))
+                   :schema-metadata metadata :budget trials
                    :property (property-name property)
                    :trials (getf outcome :trials)
                    :seed effective-seed
