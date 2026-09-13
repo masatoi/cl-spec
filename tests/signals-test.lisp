@@ -17,7 +17,8 @@
   (:import-from #:cl-spec/src/instrument
                 #:instrument-function #:uninstrument-function
                 #:unsupported-instrumentation-target
-                #:unsupported-instrumentation-target-reason)
+                #:unsupported-instrumentation-target-reason
+                #:instrumentation-violation #:instrumentation-violation-reason)
   (:import-from #:cl-spec/src/backends/check-it))
 
 (in-package #:cl-spec/tests/signals-test)
@@ -70,12 +71,37 @@
            (ok (eq :unavailable
                    (getf (getf (function-spec-data 'raise-error) :capabilities)
                          :instrumentation)))
-           (ok (handler-case (progn (instrument-function 'raise-error) nil)
-                 (unsupported-instrumentation-target (condition)
-                   (eq :expected-condition-contract
-                       (unsupported-instrumentation-target-reason condition)))))
-           (ok (eq original (fdefinition 'raise-error))))
+           (dolist (scopes '((:input :output :post) (:input) nil))
+             (ok (handler-case
+                     (progn (instrument-function 'raise-error :scopes scopes) nil)
+                   (unsupported-instrumentation-target (condition)
+                     (eq :expected-condition-contract
+                         (unsupported-instrumentation-target-reason condition)))))
+             (ok (eq original (fdefinition 'raise-error)))))
       (uninstrument-function 'raise-error))))
+
+(deftest switching-to-signals-requires-explicit-uninstrumentation
+  (let ((*registry* (make-hash-table-registry))
+        (original (fdefinition 'return-normally)))
+    (defspec-function return-normally (:returns string))
+    (unwind-protect
+         (progn
+           (instrument-function 'return-normally)
+           (let ((wrapper (fdefinition 'return-normally)))
+             (reinitialize-instance (find-function-spec 'return-normally)
+                                    :return-spec nil :signal-spec '(type simple-error))
+             (ok (eq wrapper (fdefinition 'return-normally)))
+             (ok (handler-case
+                     (progn (funcall (fdefinition 'return-normally)) nil)
+                   (instrumentation-violation (condition)
+                     (eq :return-spec (instrumentation-violation-reason condition)))))
+             (ok (handler-case (progn (instrument-function 'return-normally) nil)
+                   (unsupported-instrumentation-target () t)))
+             (ok (eq wrapper (fdefinition 'return-normally))))
+           (uninstrument-function 'return-normally)
+           (ok (eq original (fdefinition 'return-normally)))
+           (ok (= 42 (funcall (fdefinition 'return-normally)))))
+      (uninstrument-function 'return-normally))))
 
 (deftest signals-predicate-errors-do-not-pass
   (let ((*registry* (make-hash-table-registry)))
@@ -209,6 +235,41 @@
 (defun return-normally ()
   "Return a value instead of the required error."
   42)
+
+(defun needs-two-args (a b)
+  "Require two arguments to expose an invalid contract invocation."
+  (+ a b))
+
+(defun calls-missing-helper ()
+  "Expose an undefined function inside the target."
+  (funcall (symbol-function 'absent-signals-helper)))
+
+(deftest signals-never-accepts-programming-errors
+  (let ((*registry* (make-hash-table-registry)))
+    (dolist (expected '(t (type error) (type program-error) (type undefined-function)))
+      (dolist (target '(needs-two-args calls-missing-helper))
+        (register-function-spec
+         (make-instance 'function-spec :name target :signal-spec expected))
+        (let ((result (check-function target :trials 1)))
+          (ok (eq :error (property-result-status result)))
+          (ok (eq :condition (function-check-result-failure-reason result)))
+          (ok (typep (property-result-condition result)
+                     (if (eq target 'needs-two-args) 'program-error 'undefined-function))))))))
+
+(deftest missing-condition-describes-composite-expectations
+  (let ((*registry* (make-hash-table-registry)))
+    (dolist (entry '(((and (type error) (satisfies broken-condition-predicate))
+                      (:and (:type error) (:satisfies broken-condition-predicate)))
+                     ((or (type simple-error) (type type-error))
+                      (:or (:type simple-error) (:type type-error)))
+                     ((nullable (type simple-error))
+                      (:nullable (:type simple-error)))))
+      (register-function-spec
+       (make-instance 'function-spec :name 'return-normally :signal-spec (first entry)))
+      (let ((result (check-function 'return-normally :trials 1)))
+        (ok (eq :missing-condition (function-check-result-failure-reason result)))
+        (ok (equal (second entry)
+                   (getf (function-check-result-explanation result) :expected)))))))
 
 (deftest signals-clause-is-accepted
   (ok (handler-case

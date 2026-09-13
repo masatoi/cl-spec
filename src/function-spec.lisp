@@ -98,7 +98,8 @@ Each draw is checked against the argument specs before preconditions or the targ
                 :reader function-spec-signal-spec
                 :documentation "Normalized spec required of an error escaping the target,
 or NIL for an ordinary return contract. Normal return violates a signal contract.
-Mutually exclusive with return-spec and postconditions.")
+Mutually exclusive with return-spec and postconditions. PROGRAM-ERROR and
+UNDEFINED-FUNCTION are reserved execution failures, never accepted by this spec.")
    (return-spec :initarg :return-spec
                 :initform nil
                 :reader function-spec-return-spec
@@ -544,6 +545,10 @@ as its reduction.  The shapes come from the nested errors instead."
                   (handler-case (values (apply (checked-target property) arguments) nil)
                     (error (condition) (values nil condition)))
                 (cond
+                  ;; A broad expected-error spec must not certify a broken call.
+                  ;; Preserve target evidence, as for contracts without :SIGNALS.
+                  ((typep condition '(or program-error undefined-function))
+                   (failure :condition nil condition))
                   (signals
                    (if condition
                        (let ((explanation (explain-data signals condition :registry registry)))

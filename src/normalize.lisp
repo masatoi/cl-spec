@@ -111,15 +111,13 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
              (spec-initargs form name source-location generator)))))
 
 (defun normalize-plist (form name source-location generator)
-  "Normalize strict required/optional field clauses without assuming list well-formedness."
+  "Normalize field clauses in a form whose outer list was checked by NORMALIZE-COMPOUND."
   (let ((seen-clauses nil)
         (seen-keys nil)
         (fields nil)
         (closed-p nil))
     (flet ((refuse (reason)
              (error 'invalid-spec-form :form form :reason reason)))
-      (unless (finite-list-p form)
-        (refuse "PLIST must be a finite proper list"))
       (dolist (clause (rest form))
         (unless (and (consp clause) (finite-list-p clause)
                      (member (first clause) '(:required :optional :closed)))

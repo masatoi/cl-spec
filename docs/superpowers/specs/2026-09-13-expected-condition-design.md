@@ -6,7 +6,9 @@ with `:signals`. There is at most one signals clause and it takes one non-NIL sp
 SPEC uses the existing normalized DSL; user condition classes use `(type CLASS)`
 or `(instance-of CLASS)`, and condition slots use named `satisfies` predicates.
 Warnings and non-error signals retain their ordinary Common Lisp behavior and do
-not satisfy this contract. Only errors escaping the target invocation are checked.
+not satisfy this contract. Only errors escaping the target invocation are checked. PROGRAM-ERROR and
+UNDEFINED-FUNCTION subclasses are reserved execution failures: they always retain
+:error / :condition, even when the declared spec explicitly accepts their type.
 
 The function-spec stores normalized `signal-spec`, exposed by
 `function-spec-signal-spec`. Constructor and reinitialization enforce exclusivity,
@@ -35,3 +37,8 @@ finite malformed-DSL corpus, requiring invalid-spec-form and a nonempty reason.
 The existing validate contract and its relational Property remain intact.
 The corpus exposed an existing dotted-spine bug; normalize-compound now checks
 finite proper list structure before dispatching to list operations.
+
+Review clarifications: status records return versus error outcome; failure reason
+distinguishes mismatches from contract errors. AND/OR/NULLABLE expected descriptors
+include their children. All instrumentation scopes remain unavailable; an existing
+captured wrapper requires explicit uninstrumentation after a switch to signals.

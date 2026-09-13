@@ -62,3 +62,33 @@ docs/cl-spec-specification-v0.2-draft.md.
   neither check-it nor cl-mcp was loaded: exit 0.
 - Green: mallet on all changed Lisp files and git diff --check.
 - Independent read-only code review: no actionable findings.
+
+## PR #8 review follow-up
+
+- Fixed: broad :signals specs accepted target PROGRAM-ERROR/UNDEFINED-FUNCTION.
+  These classes and their subclasses now retain :error/:condition before expected
+  spec matching, even if explicitly named in the expected spec. Contract predicate
+  authoring errors still propagate through the existing outer handler.
+- Fixed: AND/OR/NULLABLE expected descriptors now include child descriptors.
+- Simplified: one unsupported-contract-reason helper serves instrumentation
+  capability and installation checks.
+- Removed: normalize-plist's redundant outer finite-list-p check. Its sole caller
+  has already checked the same spine; clause and entry validation remains.
+- Retained: :failed means normal-return violation, :error means error outcome.
+  failure-reason distinguishes :condition-spec from :contract-error. Changing
+  statuses would alter the approved observation protocol.
+- Retained: captured wrappers require explicit refresh/removal. A refused refresh
+  preserves an existing wrapper; changing to unsupported signals requires
+  uninstrument-function. A new test demonstrates this lifecycle.
+- Retained: signals instrumentation is unavailable for all scopes, including
+  input-only and NIL. Tests now cover these scopes explicitly.
+- Rejected complexity claim: finite-list-p walks only CDR spines, not nested
+  elements. The added traversal is aggregate linear in ordinary tree-shaped DSL
+  conses, not a full subtree scan at each depth.
+
+Red/green evidence: focused tests initially failed 23 assertions for programming
+errors and composite descriptors. Final suite: 333 passed, 0 failed. Clean-process
+Rove: exit 0, 26 suites completed (existing dependency/fixture warnings only).
+Cold forced core compilation and dependency-isolation assertions: exit 0, no
+warnings. Mallet on all PR Lisp files and git diff --check passed.
+Independent review of final code changes: no actionable regressions.

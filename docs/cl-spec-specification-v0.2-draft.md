@@ -1246,7 +1246,10 @@ conditionのslot検査には名前付きの`satisfies`述語を用いる。
 - 期待specを満たすerrorなら試行成功。成功を失敗conditionとして保存しない。
 - 正常復帰は`:failed / :missing-condition`。explanationには`:expected`を保存する。
 - 不一致のerrorは`:error / :condition-spec`。実際のconditionと`explain-data`を保存する。
-- `:signals`が無い契約でのtarget errorは従来どおり`:error / :condition`。
+- `program-error`・`undefined-function`とそのsubclassは、`:signals`の有無や内容に
+  関わらず`:error / :condition`として保持する。明示的にその型を指定しても成功にしない。
+  不正な引数個数や存在しない関数の呼び出しを、広い期待specで検証済みにしないためである。
+- `:signals`が無い契約でのその他のtarget errorも従来どおり`:error / :condition`。
 - warning・非errorのsignalは通常のCLの動作を保ち、この契約を満たさない。
   target内部で処理されて外へ出ないerrorも対象外。
 - specの解決・検査はtarget捕捉境界の外で行う。述語のerrorは既存explainerの
@@ -1266,6 +1269,13 @@ condition不一致、従来の返り値違反を別の失敗として扱う。�
 runtime instrumentationはこの契約に未対応。`instrument-function`は
 `unsupported-instrumentation-target`（reason `:expected-condition-contract`）で拒否し、
 fdefinitionを変更しない。capabilityのinstrumentationは`:unavailable`となる。
+`:input`のみ・空scopeでも同じ制限を適用する。既存wrapperの契約を`:signals`へ変更した場合は
+明示的に`uninstrument-function`で解除する。再初期化は捕捉済みの検査を変更せず、
+拒否された再インストールも既存wrapperを保持する（§20のlifecycleと同じ）。
+
+statusは正常復帰かerror outcomeかを区別する。契約不一致と契約自身の異常の区別には
+`failure-reason`（`:condition-spec`と`:contract-error`）を使う。
+欠落時の`:expected`ではAND・OR・NULLABLEも子specのdescriptorを保持する。
 
 # 18. 自動generative function test
 

@@ -89,9 +89,14 @@ slots, or reference a named spec. Custom condition class names require explicit
 
 Normal return produces `:failed / :missing-condition`; an error that does not
 match produces `:error / :condition-spec`, retaining its condition object and
-structured explanation. Preconditions still gate invocation. Warnings and
+structured explanation. Status distinguishes normal return from an error outcome;
+use `failure-reason` to distinguish a contract mismatch from `:contract-error`.
+Preconditions still gate invocation. Warnings and
 non-error signals retain their ordinary behavior and do not satisfy the contract.
-Internally handled errors do not satisfy it either. Predicate errors follow
+Internally handled errors do not satisfy it either. `program-error` and
+`undefined-function`, including subclasses, always remain `:error / :condition`;
+even an explicit spec accepting these classes cannot certify a broken invocation.
+Predicate errors follow
 the existing explainer rules; they cannot become expected target errors.
 
 `:signals` takes one non-NIL spec and cannot coexist with `:returns` or `:post`.
@@ -103,6 +108,10 @@ spec-derived failure shape, and cannot cross between missing and mismatching err
 Runtime instrumentation of `:signals` contracts is unavailable.
 `instrument-function` refuses them with `unsupported-instrumentation-target`
 and reason `:expected-condition-contract`, before changing the function.
+This applies even to input-only or empty scopes. If an already instrumented
+function's contract is changed to `:signals`, explicitly call `uninstrument-function`:
+contract edits do not refresh captured checks, and a refused reinstall leaves
+the existing wrapper intact.
 
 ## Example
 

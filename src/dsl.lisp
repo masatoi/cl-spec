@@ -403,6 +403,8 @@ sees the parameters, :POST sees them and RESULT, the value the call returned.
 :SIGNALS requires an error escaping the target to satisfy SPEC. Normal return
 fails; :SIGNALS cannot coexist with :RETURNS or :POST. Warnings and non-error
 signals keep their ordinary behavior and do not satisfy this clause.
+PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
+:CONDITION failures, even if SPEC would accept them.
 
 Required positional parameters and one return value are supported. Lambda list
 keywords, (:returns (values ...)) and unknown clauses signal
