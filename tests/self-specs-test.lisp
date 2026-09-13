@@ -109,7 +109,7 @@
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
     (ok (= 27 (length (cl-spec:list-function-specs))))
-    (ok (= 21 (length (cl-spec:list-properties))))))
+    (ok (= 22 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
@@ -117,7 +117,7 @@
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
       (ok (= 27 (length (cl-spec:list-function-specs))))
-      (ok (= 21 (length (cl-spec:list-properties))))
+      (ok (= 22 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))
     (ok (null (cl-spec:list-properties)))))
@@ -145,6 +145,7 @@
                  (cl-spec/specs::plist (:required (:id integer)) (:closed t))
                  (cl-spec/specs::plist (:required (:id integer))
                                        (:optional (:nickname (cl-spec/specs::nullable string))))
+                 (cl-spec/specs::list-of integer :min-length 1 :max-length 3)
                  (cl-spec/specs::range integer -1 1)
                  (cl-spec/specs::range integer -20 20)
                  (and integer (cl-spec/specs::range -1 1))

@@ -668,6 +668,21 @@ instance-of
 `cons-of` はMVPでは実装しない。§52のMVP対応リストにも含まれておらず、§7のIRクラス階層にも
 対応ノードが無い。post-MVPとして扱い、`(tuple ...)` または `(list-of ...)` で代替する。
 
+`list-of`と`vector-of`は要素specに続けて`:min-length`・`:max-length`・`:unique`を
+keyword引数として受け取る。`:max-length`は`*`で無制限を表し、省略時は無制限、
+`:min-length`の省略時は0、`:unique`の省略時はNILである。値は登録前に検査し、
+`:min-length`が`:max-length`を超える場合や未知のoptionを拒否する。
+
+`:unique`は要素をEQLで比較する。長さ違反は`:too-short`・`:too-long`、重複は
+`:duplicate-element`として説明し、`:too-short`/`:too-long`は`:minimum-length`または
+`:maximum-length`と`:actual-length`を、重複は2個目の要素の`:path`と最初の出現位置
+`:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
+`:min-length`を下回らない。`:unique`の生成は要素specが有限に列挙できる場合
+（`member`、`boolean`/`null`、有限な整数`range`、`nullable`、およびこれらの`or`）に
+重複なしで抽選し、列挙できない場合は`generator-unavailable`を通知する。
+無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
+ノードだけが`:min-length`/`:max-length`/`:unique`を持つ）。
+
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
 ただしCommon Lisp type languageと完全互換にすることは目標としない。
@@ -3584,6 +3599,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
 | `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
 | DSL網羅 | MEMBER/VECTOR-OF/PLISTの真理条件、field errorのpath、surface macroの不正宣言拒否 |
+| コレクション制約 | LIST-OF/VECTOR-OFの長さ・一意性の真理条件と`:too-short`/`:too-long`/`:duplicate-element` |
 | runner再利用 | seedからのreplay一致、artifactのserialize/deserialize往復 |
 | instrumentation | status形状、`instrumented-function-p`/`uninstrument-function`、install/uninstall往復と未契約拒否 |
 
@@ -3602,7 +3618,7 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-27関数契約と21 Propertyをseed 1・42・2026、各50試行で実行する。
+27関数契約と22 Propertyをseed 1・42・2026、各50試行で実行する。
 任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
 install/uninstall往復・未契約拒否の2 Property)は別途登録し、専用テストで実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
@@ -4153,6 +4169,8 @@ optional/key/rest、多値、warning・非errorや正常復帰との選択を許
 generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
+`list-of`/`vector-of`の長さ・一意性制約は実装済み（§9、§68.1）。alist/hash-tableの
+フィールド仕様とタグ付きunionは、field-specと`definition-constraints`を土台にした次の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 

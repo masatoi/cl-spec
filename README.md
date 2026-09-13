@@ -248,6 +248,32 @@ Cross-field constraints use ordinary `and` / `satisfies`. Their automatic
 generation retains the existing AND limitations below. Field metadata is
 independent of storage format; alist and hash-table DSLs are not implemented yet.
 
+## Collection length and uniqueness
+
+`list-of` and `vector-of` accept length and uniqueness options:
+
+```lisp
+(cl-spec:defspec small-batch
+  (list-of integer :min-length 1 :max-length 100))
+
+(cl-spec:defspec distinct-ids
+  (vector-of (range integer 0 1000) :min-length 2 :unique t))
+```
+
+`:min-length` defaults to 0, `:max-length` defaults to unbounded and accepts `*`
+as the unbounded marker, and `:unique` defaults to NIL. `:unique` compares
+elements with `EQL`. Length violations explain as `:too-short` / `:too-long`
+with `:minimum-length` / `:maximum-length` and `:actual-length`; a repeat
+explains as `:duplicate-element` at the later element's `:path`, with
+`:first-index` naming the earlier occurrence.
+
+The constraints reach generation and shrinking: lengths are drawn inside the
+declared range, and a shrink never removes past `:min-length`. `:unique`
+generation draws distinct elements from a finite element domain (`member`,
+`boolean`/`null`, a bounded integer `range`, `nullable`, or an `or` of those);
+a `:unique` collection whose element spec has no finite enumeration signals
+`generator-unavailable` rather than retrying collisions forever.
+
 ## Generate related arguments together
 
 Use `:args-generator` when independently generated arguments would mostly be

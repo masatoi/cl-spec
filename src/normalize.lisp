@@ -145,6 +145,61 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
     (apply #'make-instance 'plist-spec :fields (nreverse fields) :closed-p closed-p
            (spec-initargs form name source-location generator))))
 
+(defun normalize-collection-options (options form)
+  "Return (values MIN-LENGTH MAX-LENGTH UNIQUE) for a collection's OPTIONS.
+
+OPTIONS is the tail after the element spec.  Values are checked here so a
+malformed declaration is refused before an IR object exists, exactly as the
+other compound heads do."
+  (unless (evenp (length options))
+    (error 'invalid-spec-form :form form :reason "collection options are keyword/value pairs"))
+  (let ((min-length 0)
+        (max-length :unbounded)
+        (unique nil)
+        (seen nil))
+    (loop for (key value) on options by #'cddr
+          do (when (member key seen)
+               (error 'invalid-spec-form :form form
+                                         :reason (format nil "~S appears more than once" key)))
+             (push key seen)
+             (case key
+               (:min-length
+                (unless (and (integerp value) (not (minusp value)))
+                  (error 'invalid-spec-form :form form
+                                            :reason ":min-length must be a nonnegative integer"))
+                (setf min-length value))
+               (:max-length
+                (cond ((unbounded-marker-p value) (setf max-length :unbounded))
+                      ((and (integerp value) (not (minusp value))) (setf max-length value))
+                      (t (error 'invalid-spec-form
+                                :form form
+                                :reason ":max-length must be a nonnegative integer or *"))))
+               (:unique
+                (unless (member value '(nil t))
+                  (error 'invalid-spec-form :form form :reason ":unique must be boolean"))
+                (setf unique value))
+               (otherwise
+                (error 'invalid-spec-form :form form
+                                          :reason (format nil "~S is not a collection option; ~
+                                                               the options are :min-length, ~
+                                                               :max-length and :unique"
+                                                          key)))))
+    (when (and (integerp max-length) (> min-length max-length))
+      (error 'invalid-spec-form :form form
+                                :reason ":min-length must not exceed :max-length"))
+    (values min-length max-length unique)))
+
+(defun normalize-collection (args form name source-location generator class)
+  "Normalize the arguments of a LIST-OF or VECTOR-OF form into CLASS."
+  (unless args
+    (error 'invalid-spec-form :form form :reason "expected an element spec"))
+  (multiple-value-bind (min-length max-length unique)
+      (normalize-collection-options (rest args) form)
+    (apply #'make-instance class
+           :element-spec (normalize-spec-form (first args))
+           :min-length min-length :max-length max-length :unique unique
+           (spec-initargs form name source-location generator))))
+
 (defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
   (unless (finite-list-p form)
@@ -194,13 +249,9 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
                 :inner-spec (normalize-spec-form (first (require-arity args 1 form)))
                 (spec-initargs form name source-location generator)))
         ((string= head-name "LIST-OF")
-         (apply #'make-instance 'list-of-spec
-                :element-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location generator)))
+         (normalize-collection args form name source-location generator 'list-of-spec))
         ((string= head-name "VECTOR-OF")
-         (apply #'make-instance 'vector-of-spec
-                :element-spec (normalize-spec-form (first (require-arity args 1 form)))
-                (spec-initargs form name source-location generator)))
+         (normalize-collection args form name source-location generator 'vector-of-spec))
         ((string= head-name "TUPLE")
          (apply #'make-instance 'tuple-spec
                 :element-specs (mapcar #'normalize-spec-form args)

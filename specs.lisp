@@ -33,7 +33,7 @@
 (defun draw-form ()
   "Draw a finite DSL example spanning scalar and composite specs."
   (let ((bound (1+ (random 20))))
-    (case (random 13)
+    (case (random 14)
       (0 'integer) (1 'string) (2 `(range integer ,(- bound) ,bound))
       (3 `(and integer (range ,(- bound) ,bound)))
       (4 '(or integer string)) (5 '(not integer))
@@ -43,7 +43,8 @@
       (10 '(vector-of integer))
       (11 '(plist (:required (:id integer)) (:closed t)))
       (12 '(plist (:required (:id integer))
-                  (:optional (:nickname (nullable string))))))))
+                  (:optional (:nickname (nullable string)))))
+      (13 '(list-of integer :min-length 1 :max-length 3)))))
 
 (defparameter *sampled-dsl-forms*
   (append '(integer string (or integer string) (not integer) (nullable integer)
@@ -51,7 +52,8 @@
             (member 1 "two" :three) (vector-of integer)
             (plist (:required (:id integer)) (:closed t))
             (plist (:required (:id integer))
-                   (:optional (:nickname (nullable string)))))
+                   (:optional (:nickname (nullable string))))
+            (list-of integer :min-length 1 :max-length 3))
           (loop for bound from 1 to 20
                 append (list `(range integer ,(- bound) ,bound)
                              `(and integer (range ,(- bound) ,bound)))))
@@ -128,7 +130,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
     collection-validation-is-elementwise plist-error-paths-identify-the-field
     malformed-declarations-are-refused
     run-property-is-reproducible-from-its-seed
-    failure-identities-match-reflexively counterexample-artifacts-round-trip))
+    failure-identities-match-reflexively counterexample-artifacts-round-trip
+    collection-constraints-are-enforced))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -981,6 +984,22 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
            (restored (cl-spec:deserialize-counterexample-artifact wire)))
       (equal (cl-spec:counterexample-artifact-data artifact)
              (cl-spec:counterexample-artifact-data restored))))
+  (defproperty collection-constraints-are-enforced ()
+    "LIST-OF length and uniqueness constraints are enforced as declared (§9)."
+    (:about validp explain-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 10 :normal 50))
+    (let ((bounded (normalize-spec-form '(list-of integer :min-length 2 :max-length 3)))
+          (distinct (normalize-spec-form '(list-of integer :unique t))))
+      (and (not (validp bounded '(1)))
+           (validp bounded '(1 2))
+           (validp bounded '(1 2 3))
+           (not (validp bounded '(1 2 3 4)))
+           (not (validp distinct '(1 1)))
+           (validp distinct '(1 2))
+           (eq :too-short (getf (first (getf (explain-data bounded '(1)) :errors)) :kind))
+           (eq :duplicate-element
+               (getf (first (getf (explain-data distinct '(1 1)) :errors)) :kind)))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

@@ -7,7 +7,9 @@
 
 (defpackage #:cl-spec/src/ir
   (:use #:cl)
-  (:import-from #:cl-spec/src/definition-validation #:definition-validation-slots)
+  (:import-from #:cl-spec/src/definition-validation
+                #:definition-validation-slots #:validate-definition)
+  (:import-from #:cl-spec/src/conditions #:invalid-spec-form)
   (:export #:spec
            #:spec-name
            #:spec-description
@@ -37,6 +39,11 @@
            #:range-spec-maximum
            #:collection-spec
            #:collection-spec-element-spec
+           #:bounded-collection-spec
+           #:collection-spec-min-length
+           #:collection-spec-max-length
+           #:collection-spec-unique-p
+           #:collection-constraint-plist
            #:list-of-spec
            #:vector-of-spec
            #:tuple-spec
@@ -212,14 +219,72 @@ slot a particular class stores its children in."))
   (let ((element (collection-spec-element-spec spec)))
     (and element (list element))))
 
-(defclass list-of-spec (collection-spec)
+(defclass bounded-collection-spec (collection-spec)
+  ((min-length :initarg :min-length
+               :initform 0
+               :reader collection-spec-min-length
+               :documentation "Smallest accepted element count, inclusive.")
+   (max-length :initarg :max-length
+               :initform :unbounded
+               :reader collection-spec-max-length
+               :documentation "Largest accepted element count, inclusive, or :UNBOUNDED.")
+   (unique-p :initarg :unique
+             :initform nil
+             :reader collection-spec-unique-p
+             :documentation "True when elements must be pairwise distinct under EQL."))
+  (:documentation "A homogeneous collection with a declared length range.
+
+The constraints feed validation and generation alike: MIN-LENGTH and MAX-LENGTH
+bound the count, and UNIQUE-P requires pairwise distinct elements under EQL."))
+
+(defmethod definition-validation-slots append ((spec bounded-collection-spec))
+  '(min-length max-length unique-p))
+
+(defun validate-collection-constraints (spec)
+  "Check SPEC's length range and uniqueness flag, returning SPEC.
+
+The DSL refuses the same shapes while normalizing; this covers direct
+construction and re-registration, which the registry validates."
+  (let ((minimum (collection-spec-min-length spec))
+        (maximum (collection-spec-max-length spec))
+        (unique (collection-spec-unique-p spec)))
+    (unless (and (integerp minimum) (not (minusp minimum)))
+      (error 'invalid-spec-form :form spec
+                                :reason "MIN-LENGTH must be a nonnegative integer"))
+    (unless (or (eq maximum :unbounded)
+                (and (integerp maximum) (not (minusp maximum))))
+      (error 'invalid-spec-form :form spec
+                                :reason "MAX-LENGTH must be a nonnegative integer or :UNBOUNDED"))
+    (when (and (integerp maximum) (> minimum maximum))
+      (error 'invalid-spec-form :form spec
+                                :reason "MIN-LENGTH must not exceed MAX-LENGTH"))
+    (unless (member unique '(nil t))
+      (error 'invalid-spec-form :form spec :reason "UNIQUE must be boolean"))
+    spec))
+
+(defmethod validate-definition ((spec bounded-collection-spec))
+  (validate-collection-constraints spec))
+
+(defun collection-constraint-plist (spec)
+  "Return SPEC's non-default length and uniqueness constraints as a plist.
+
+A node with no constraints returns NIL, so the constraints' existence does not
+change the digest or the introspection record of an unconstrained collection."
+  (append (unless (zerop (collection-spec-min-length spec))
+            (list :min-length (collection-spec-min-length spec)))
+          (unless (eq :unbounded (collection-spec-max-length spec))
+            (list :max-length (collection-spec-max-length spec)))
+          (when (collection-spec-unique-p spec)
+            (list :unique t))))
+
+(defclass list-of-spec (bounded-collection-spec)
   ()
   (:documentation "A list whose elements all satisfy one spec."))
 
 (defmethod spec-kind ((spec list-of-spec))
   :list-of)
 
-(defclass vector-of-spec (collection-spec)
+(defclass vector-of-spec (bounded-collection-spec)
   ()
   (:documentation "A vector whose elements all satisfy one spec."))
 

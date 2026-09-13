@@ -778,8 +778,10 @@ Return a plist describing the registered spec named by SPEC-DESIGNATOR.
    :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
-:CHILDREN is present only on nodes that have children. The root additionally has
-:SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
+:CHILDREN is present only on nodes that have children. A constrained LIST-OF or
+VECTOR-OF adds :MIN-LENGTH, :MAX-LENGTH and :UNIQUE for the constraints it
+declares; an unconstrained collection carries none of them. The root additionally
+has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES (see
 SCHEMA-INFO, specification §38.1). Children are plain IR projections.
 ```
