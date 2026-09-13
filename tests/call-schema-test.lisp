@@ -2,14 +2,16 @@
 
 (defpackage #:cl-spec/tests/call-schema-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/src/call-schema
+                #:call-arguments-spec #:call-arguments-spec-layout
                 #:make-call-layout #:call-layout-bindings
                 #:argument-binding-name #:argument-binding-spec #:argument-binding-kind
                 #:bind-call-arguments #:bound-call-arguments #:bound-call-values
                 #:bound-call-presence #:bound-call-bindings
                 #:make-return-schema #:return-schema-primary-spec
                 #:return-schema-mode #:return-schema-value)
+  (:import-from #:cl-spec/src/ir #:spec-children)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form))
 
 (in-package #:cl-spec/tests/call-schema-test)
@@ -86,3 +88,17 @@
   (ok (make-return-schema))
   (ok (handler-case (progn (make-return-schema :primary-spec 'integer) nil)
         (type-error () t))))
+
+(deftest invalid-layout-store-value-repairs-the-slot
+  (testing "the STORE-VALUE restart writes the repaired layout into the object"
+    ;; CHECK-TYPE's restart repairs its place.  When that place was a lexical,
+    ;; the object kept the invalid layout and later accessors failed on it.
+    (let* ((declarations (list (list 'value (normalize-spec-form 'integer))))
+           (layout (make-call-layout declarations))
+           (object nil))
+      (handler-bind ((type-error (lambda (condition)
+                                   (declare (ignore condition))
+                                   (invoke-restart 'store-value layout))))
+        (setf object (make-instance 'call-arguments-spec :layout :not-a-layout)))
+      (ok (eq layout (call-arguments-spec-layout object)))
+      (ok (= 1 (length (spec-children object)))))))
