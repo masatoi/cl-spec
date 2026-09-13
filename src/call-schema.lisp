@@ -279,7 +279,11 @@
   :call-arguments)
 
 (defmethod initialize-instance :after ((object call-arguments-spec) &key)
-  (check-type (call-arguments-spec-layout object) call-layout))
+  ;; CHECK-TYPE takes a place, and its STORE-VALUE restart writes the place
+  ;; back.  The slot has no writer, so the reader is not a usable place; the
+  ;; SLOT-VALUE place is, which keeps the restart meaningful rather than
+  ;; repairing a lexical the object never sees.
+  (check-type (slot-value object 'layout) call-layout))
 
 (defun make-return-schema (&key primary-spec)
   "Describe a normalized primary-value or fixed-values declaration."

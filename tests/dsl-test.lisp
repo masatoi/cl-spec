@@ -126,14 +126,24 @@
                    (cl-spec/src/registry:properties-for '+)))))))
 
 (deftest defproperty-stops-consuming-options-at-the-first-non-option
-  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
-    (eval '(cl-spec/src/dsl:defproperty stops-at-the-body ((x integer))
-             (:kind :invariant)
-             (integerp x)
-             (:not-an-option-keyword x)))
-    (testing "forms after the first non option stay in the body"
-      (ok (= 2 (length (cl-spec/src/property:property-body
-                        (cl-spec/src/registry:find-property 'stops-at-the-body))))))))
+  (testing "a keyword-headed form after the first predicate is body, not an option"
+    ;; The parser is exercised directly: compiling the body would call the
+    ;; keyword, which the compiler reports as an undefined function.  The
+    ;; parser is what decides whether a form is an option.
+    (multiple-value-bind (documentation options forms)
+        (cl-spec/src/dsl::parse-property-body
+         '((:kind :invariant) (integerp x) (:not-an-option-keyword x)))
+      (declare (ignore documentation))
+      (ok (equal '((:kind :invariant)) options))
+      (ok (equal '((integerp x) (:not-an-option-keyword x)) forms))))
+  (testing "the registered property keeps only the forms before the boundary"
+    (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+      (eval '(cl-spec/src/dsl:defproperty stops-at-the-body ((x integer))
+               (:kind :invariant)
+               (integerp x)))
+      (let ((property (cl-spec/src/registry:find-property 'stops-at-the-body)))
+        (ok (equal :invariant (cl-spec/src/property:property-kind property)))
+        (ok (equal '((integerp x)) (cl-spec/src/property:property-body property)))))))
 
 (deftest defproperty-validates-its-trials-clause
   (testing "(:trials 25), a plausible mis-write for a flat trial count, is rejected"

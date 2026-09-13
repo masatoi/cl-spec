@@ -208,7 +208,7 @@
     ;; CHECK-IT:*LIST-SIZE* or *BIAS-SENSITIVITY* generated different arguments
     ;; from the same seed -- and a replay disagreeing with the result it was
     ;; handed is what §72.3 forbids (§73.4 #7).
-    (let ((*registry* (make-hash-table-registry)))
+    (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
       (defspec small-list (list-of (range integer 0 100)))
       (defspec-function demo-returns-one
         (:args (xs small-list))
@@ -229,14 +229,14 @@
     ;; GENERATE-VALUE read *SIZE* from whatever was ambient and only raised it to
     ;; the generator's own requirement, so a SAMPLE taken in a tuned image showed
     ;; a distribution no run draws (§73.4 #6).  It binds what a run binds now.
-    (let ((*registry* (make-hash-table-registry)))
+    (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
       (defspec wide-integer (type integer))
       (let ((at-default (sample 'wide-integer :count 20 :seed 11))
             (at-tuned (let ((check-it:*size* 5000))
                         (sample 'wide-integer :count 20 :seed 11))))
         (ok (equal at-default at-tuned)))))
   (testing "and neither does an ambient CHECK-IT:*LIST-SIZE*"
-    (let ((*registry* (make-hash-table-registry)))
+    (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
       (defspec small-list (list-of (range integer 0 100)))
       (let ((at-default (sample 'small-list :count 20 :seed 11))
             (at-tuned (let ((check-it:*list-size* 1)

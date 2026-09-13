@@ -84,6 +84,11 @@ is data the author meant literally."))
 A postcondition reading it means this variable.  Binding it as the return value
 instead turned a claim that is false for every input into a tautology.")
 
+;; Defining the name keeps the contract's quoted TYPE position warning-free
+;; while the symbol stays data of the stash package, never the return-value
+;; binding.  DEFTYPE takes no docstring, so the reason lives in this comment.
+(deftype cl-spec/tests/function-spec-test/stash:result () t)
+
 (in-package #:cl-spec/tests/function-spec-test)
 
 (deftest function-spec-slots-round-trip
