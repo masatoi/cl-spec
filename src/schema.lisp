@@ -33,7 +33,7 @@
   (:export #:schema-info #:definition-digest #:definition-metadata #:definition-graph
            #:definition-description #:definition-entity-kind #:definition-generation-schema
            #:resolve-definition #:definition-shrink-enabled-p
-           #:definition-constraints
+           #:definition-constraints #:definition-description-complete-p
            #:definition-instrumentation-capability))
 
 (in-package #:cl-spec/src/schema)
@@ -89,7 +89,9 @@
 DEFINITION-DESCRIPTION places the result under :FIELDS.  A new SPEC subclass
 extends the digest by adding a method here rather than editing
 DEFINITION-DESCRIPTION; because the result is digest input, changing a method
-changes every digest that covers the node."))
+changes every digest that covers the node.  A subclass that adds fields must
+also add a DEFINITION-DESCRIPTION-COMPLETE-P method saying the description is
+now complete; until it does, its digest stays incomplete rather than trusted."))
 
 (defmethod definition-constraints ((definition t))
   (declare (ignore definition))
@@ -138,6 +140,33 @@ Do not invoke user code. Source locations and capabilities are excluded."))
   (declare (ignore definition))
   (values nil nil nil nil))
 
+(defgeneric definition-description-complete-p (definition)
+  (:documentation "Return true when DEFINITION's class is fully described by DEFINITION-DESCRIPTION.
+
+This is the completeness half of the extension point DEFINITION-CONSTRAINTS opens:
+a new SPEC subclass adds a DEFINITION-CONSTRAINTS method for its fields and a
+method here saying those fields are all of them.  The default is NIL, so an
+unknown subclass yields an incomplete digest rather than a trusted partial one."))
+
+(defmethod definition-description-complete-p ((definition t))
+  (declare (ignore definition))
+  nil)
+
+(defmethod definition-description-complete-p ((definition spec))
+  (not (null (member (class-name (class-of definition))
+                     '(type-spec reference-spec predicate-spec member-spec range-spec
+                       instance-of-spec and-spec or-spec not-spec nullable-spec
+                       list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec
+                       return-values-spec)))))
+
+(defmethod definition-description-complete-p ((definition property))
+  (and (eq (class-name (class-of definition)) 'property)
+       (not (null (property-source-form definition)))))
+
+(defmethod definition-description-complete-p ((definition custom-generator))
+  (and (eq (class-name (class-of definition)) 'custom-generator)
+       (not (null (custom-generator-source-form definition)))))
+
 (defmethod definition-description ((definition spec))
   (values
    (list :entity-kind :spec :name (spec-name definition) :kind (spec-kind definition)
@@ -150,11 +179,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
              (list (cons :spec (reference-spec-target definition))))
            (when (spec-generator-name definition)
              (list (cons :generator (spec-generator-name definition)))))
-   (not (null (member (class-name (class-of definition))
-                       '(type-spec reference-spec predicate-spec member-spec range-spec
-                         instance-of-spec and-spec or-spec not-spec nullable-spec
-                         list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec
-                          return-values-spec))))))
+   (definition-description-complete-p definition)))
 
 (defmethod definition-description ((definition property))
   (values
@@ -165,16 +190,14 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :kind (property-kind definition) :targets (property-targets definition)
          :trials (property-trials definition) :metadata (property-metadata definition))
    (list (property-argument-schema definition)) nil
-   (and (eq (class-name (class-of definition)) 'property)
-         (not (null (property-source-form definition))))))
+   (definition-description-complete-p definition)))
 
 (defmethod definition-description ((definition custom-generator))
   (values (append (list :entity-kind :generator :name (custom-generator-name definition)
                         :documentation (custom-generator-documentation definition)
                         :source (custom-generator-source-form definition))
                   (when (custom-generator-shrinker definition) (list :shrinker t)))
-          nil nil (and (eq (class-name (class-of definition)) 'custom-generator)
-                        (not (null (custom-generator-source-form definition))))))
+          nil nil (definition-description-complete-p definition)))
 
 (defgeneric definition-generation-schema (definition)
   (:documentation "Return the schema used to generate this definition's inputs or values."))

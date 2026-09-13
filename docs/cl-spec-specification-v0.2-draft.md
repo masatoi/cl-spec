@@ -677,9 +677,11 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:duplicate-element`として説明し、`:too-short`/`:too-long`は`:minimum-length`または
 `:maximum-length`と`:actual-length`を、重複は2個目の要素の`:path`と最初の出現位置
 `:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
-`:min-length`を下回らない。`:unique`の生成は要素specが有限に列挙できる場合
-（`member`、`boolean`/`null`、有限な整数`range`、`nullable`、およびこれらの`or`）に
-重複なしで抽選し、列挙できない場合は`generator-unavailable`を通知する。
+`:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
+有限な整数`range`は列挙せず直接samplingするため幅の上限はない。`member`、
+`boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限る。
+列挙できない要素、またはカスタムgeneratorが分布を持つ要素には`generator-unavailable`を
+通知する。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
 無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
 ノードだけが`:min-length`/`:max-length`/`:unique`を持つ）。
 

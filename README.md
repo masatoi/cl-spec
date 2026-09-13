@@ -269,10 +269,13 @@ explains as `:duplicate-element` at the later element's `:path`, with
 
 The constraints reach generation and shrinking: lengths are drawn inside the
 declared range, and a shrink never removes past `:min-length`. `:unique`
-generation draws distinct elements from a finite element domain (`member`,
-`boolean`/`null`, a bounded integer `range`, `nullable`, or an `or` of those);
-a `:unique` collection whose element spec has no finite enumeration signals
-`generator-unavailable` rather than retrying collisions forever.
+generation draws distinct elements from a finite element domain. A finite
+integer `range` is sampled directly, so any width works; `member`,
+`boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
+1000 values. A `:unique` element spec with no finite enumeration, or one whose
+custom generator owns its distribution, signals `generator-unavailable` rather
+than retrying collisions forever. A collection whose `:max-length` is 0 generates
+the empty collection without compiling its element spec.
 
 ## Generate related arguments together
 

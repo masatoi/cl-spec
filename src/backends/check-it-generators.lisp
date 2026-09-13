@@ -69,7 +69,7 @@
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
            #:bounded-collection-generator #:bounded-generator-min-length
            #:bounded-generator-max-length #:bounded-generator-enumerated
-           #:bounded-generator-element-probe
+           #:bounded-generator-distinct-range #:bounded-generator-element-probe
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -407,6 +407,33 @@ generation even though the target is one of the enumerable domains."
       (unless (spec-generator-name resolved)
         (enumerable-values resolved context)))))
 
+(defgeneric finite-integer-range (spec context)
+  (:documentation "Return (values MINIMUM MAXIMUM) when SPEC admits a finite integer interval.")
+  (:method ((spec spec) context)
+    (declare (ignore context))
+    nil))
+
+(defmethod finite-integer-range ((spec range-spec) context)
+  (declare (ignore context))
+  (let ((minimum (range-spec-minimum spec))
+        (maximum (range-spec-maximum spec)))
+    (when (and (eq (range-spec-base-type spec) 'integer)
+               (integerp minimum) (integerp maximum)
+               (<= minimum maximum))
+      (values minimum maximum))))
+
+(defmethod finite-integer-range ((spec reference-spec) context)
+  (let ((target (reference-spec-target spec))
+        (registry (context-registry context)))
+    (when (member target *reference-trail*)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "recursive specs have no finite integer range"))
+    (let ((resolved (resolve-spec target registry))
+          (*reference-trail* (cons target *reference-trail*)))
+      (unless (spec-generator-name resolved)
+        (finite-integer-range resolved context)))))
+
 (defun shuffle-list (list)
   "Return a fresh copy of LIST in random order (Fisher-Yates)."
   (let ((copy (coerce list 'vector)))
@@ -414,6 +441,22 @@ generation even though the target is one of the enumerable domains."
           for other = (random (1+ index))
           do (rotatef (aref copy index) (aref copy other)))
     (coerce copy 'list)))
+
+(defun sample-distinct-integers (minimum maximum count)
+  "Return COUNT distinct integers from the inclusive interval [MINIMUM, MAXIMUM].
+
+Floyd's selection samples without materializing the interval, so a finite range
+wider than *ENUMERATION-LIMIT* still supports UNIQUE generation."
+  (let* ((width (1+ (- maximum minimum)))
+         (take (min count width))
+         (swaps (make-hash-table :test #'eql))
+         (result nil))
+    (loop for index from (- width take) below width
+          for candidate = (random (1+ index))
+          for chosen = (gethash candidate swaps candidate)
+          do (push (+ minimum chosen) result)
+             (setf (gethash candidate swaps) (gethash index swaps index)))
+    result))
 
 (defun eql-duplicates-p (items)
   "Return true when ITEMS contains two EQL values."
@@ -443,6 +486,10 @@ report whether element-wise shrinking is possible.")
    (vector-p :initarg :vector-p :reader bounded-generator-vector-p)
    (enumerated :initarg :enumerated :initform nil :reader bounded-generator-enumerated
                :documentation "Finite element domain when UNIQUE-P, else NIL.")
+   (distinct-range :initarg :distinct-range :initform nil
+                   :reader bounded-generator-distinct-range
+                   :documentation "Inclusive integer bounds when UNIQUE-P samples a range
+too wide to materialize, else NIL.")
    (children :initform nil :accessor bounded-generator-children
              :documentation "Element generators of the current draw, for element-wise shrinking."))
   (:documentation "Generate a bounded, optionally UNIQUE collection and shrink within the range."))
@@ -461,21 +508,31 @@ report whether element-wise shrinking is possible.")
          (count (if (>= upper minimum)
                     (+ minimum (random (1+ (- upper minimum))))
                     minimum))
-         (enumerated (bounded-generator-enumerated generator)))
-    (if enumerated
-        (let* ((pool (shuffle-list (copy-list enumerated)))
-               (items (subseq pool 0 (min count (length pool)))))
-          (setf (bounded-generator-children generator) nil
-                (cached-value generator) (bounded-candidate generator items)))
-        (let ((children nil)
-              (items nil))
-          (loop repeat count
-                do (let ((child (funcall (bounded-generator-element-generator generator))))
-                     (push child children)
-                     (push (generate child) items)))
-          (setf (bounded-generator-children generator) (nreverse children)
-                (cached-value generator)
-                (bounded-candidate generator (nreverse items)))))))
+         (enumerated (bounded-generator-enumerated generator))
+         (distinct-range (bounded-generator-distinct-range generator)))
+    (cond
+      (distinct-range
+       (setf (bounded-generator-children generator) nil
+             (cached-value generator)
+             (bounded-candidate generator
+                                (sample-distinct-integers (car distinct-range)
+                                                          (cdr distinct-range)
+                                                          count))))
+      (enumerated
+       (let* ((pool (shuffle-list (copy-list enumerated)))
+              (items (subseq pool 0 (min count (length pool)))))
+         (setf (bounded-generator-children generator) nil
+               (cached-value generator) (bounded-candidate generator items))))
+      (t
+       (let ((children nil)
+             (items nil))
+         (loop repeat count
+               do (let ((child (funcall (bounded-generator-element-generator generator))))
+                    (push child children)
+                    (push (generate child) items)))
+         (setf (bounded-generator-children generator) (nreverse children)
+               (cached-value generator)
+               (bounded-candidate generator (nreverse items))))))))
 
 (defmethod shrink ((generator bounded-collection-generator) test)
   "Shrink length-wise while MIN-LENGTH holds, then element-wise within the constraints."
@@ -536,32 +593,64 @@ whose values it would otherwise have to enumerate instead."
   "Compile a generator for the bounded collection SPEC."
   (let* ((element (collection-spec-element-spec spec))
          (minimum (collection-spec-min-length spec))
+         (maximum (collection-spec-max-length spec))
          (unique (collection-spec-unique-p spec)))
+    (when (eql maximum 0)
+      ;; No element can be drawn, so the element spec need not compile or
+      ;; enumerate: the empty collection is the only admissible value.
+      (return-from compile-collection-generator
+        (make-instance 'bounded-collection-generator
+                       :element-generator (lambda () nil)
+                       :element-validator nil
+                       :element-probe nil
+                       :min-length 0
+                       :max-length 0
+                       :unique-p unique
+                       :vector-p vector-p
+                       :enumerated nil
+                       :distinct-range nil)))
     (when (and unique (effective-generator-name element context))
       (error 'generator-unavailable
              :spec spec
              :reason "UNIQUE cannot enumerate a spec whose custom generator owns its distribution"))
     (let ((probe (spec-generator element context))
-          (enumerated (and unique (enumerable-values element context))))
-      (when (and unique (null enumerated))
-        (error 'generator-unavailable
-               :spec spec
-               :reason "UNIQUE needs a finite element domain to draw distinct values"))
-      (when (and unique (< (length enumerated) minimum))
-        (error 'generator-unavailable
-               :spec spec
-               :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
-                               (length enumerated) minimum)))
+          (enumerated nil)
+          (distinct-range nil))
+      (when unique
+        (multiple-value-bind (range-minimum range-maximum)
+            (finite-integer-range element context)
+          (if range-minimum
+              ;; A finite integer range samples without materializing, so its
+              ;; width is not capped by *ENUMERATION-LIMIT*.
+              (let ((width (1+ (- range-maximum range-minimum))))
+                (when (< width minimum)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
+                                         width minimum)))
+                (setf distinct-range (cons range-minimum range-maximum)))
+              (progn
+                (setf enumerated (enumerable-values element context))
+                (when (null enumerated)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason "UNIQUE needs a finite element domain to draw distinct values"))
+                (when (< (length enumerated) minimum)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
+                                         (length enumerated) minimum)))))))
       (setf *required-size* (max *required-size* minimum))
       (make-instance 'bounded-collection-generator
                      :element-generator (lambda () (spec-generator element context))
                      :element-probe probe
                      :element-validator (compile-validator element :context context)
                      :min-length minimum
-                     :max-length (collection-spec-max-length spec)
+                     :max-length maximum
                      :unique-p unique
                      :vector-p vector-p
-                     :enumerated enumerated))))
+                     :enumerated enumerated
+                     :distinct-range distinct-range))))
 
 (defmethod spec-generator ((spec list-of-spec) context)
   (if (collection-constrained-p spec)

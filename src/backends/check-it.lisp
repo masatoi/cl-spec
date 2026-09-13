@@ -27,7 +27,7 @@
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children
                 #:bounded-collection-generator #:bounded-generator-min-length
                 #:bounded-generator-max-length #:bounded-generator-enumerated
-                #:bounded-generator-element-probe)
+                #:bounded-generator-distinct-range #:bounded-generator-element-probe)
   (:import-from #:cl-spec/src/field-spec #:field-required-p)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
@@ -379,7 +379,8 @@ Lists can shrink in length even when their element generator cannot shrink."
                        (> maximum (bounded-generator-min-length generator))))))
        ;; UNIQUE draws from a fixed pool and keeps no element generators, so
        ;; only removal can shrink it; a fixed-length one has no strategy at all.
-       (if (bounded-generator-enumerated generator)
+       (if (or (bounded-generator-enumerated generator)
+               (bounded-generator-distinct-range generator))
            room
            (or room
                (let ((probe (bounded-generator-element-probe generator)))

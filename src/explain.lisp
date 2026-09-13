@@ -279,18 +279,24 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
   "Return a :duplicate-element datum for every repeated element of VALUE, or NIL.
 
 Elements are compared with EQL, which is what the declaration promises; a keyed
-identity is future work, not a hidden reinterpretation of EQL."
+identity is future work, not a hidden reinterpretation of EQL.  A list is walked
+with DOLIST rather than indexed access, so a long unique list stays linear."
   (when (collection-spec-unique-p spec)
     (let ((seen (make-hash-table :test #'eql))
-          (errors nil))
-      (loop for index from 0 below (length value)
-            for item = (elt value index)
-            do (multiple-value-bind (first-index present-p) (gethash item seen)
+          (errors nil)
+          (index 0))
+      (flet ((examine (item)
+               (multiple-value-bind (first-index present-p) (gethash item seen)
                  (if present-p
                      (push (error-datum :duplicate-element (cons index path) item
                                         :expected expected :first-index first-index)
                            errors)
-                     (setf (gethash item seen) index))))
+                     (setf (gethash item seen) index)))
+               (incf index)))
+        (if (listp value)
+            (dolist (item value) (examine item))
+            (loop for position from 0 below (length value)
+                  do (examine (aref value position)))))
       (nreverse errors))))
 
 (defmethod compile-node ((spec list-of-spec) context)

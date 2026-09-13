@@ -178,3 +178,31 @@
       (ok (eq :none (getf (getf (spec-data 'fixed-distinct) :capabilities) :shrinking))))
     (testing "one with length room still shrinks"
       (ok (eq :available (getf (getf (spec-data 'roomy-distinct) :capabilities) :shrinking))))))
+
+(deftest zero-length-collections-need-no-element-generator
+  (testing "an empty-only collection generates even when its element spec cannot"
+    (let ((lists (sample (normalize-spec-form
+                          '(list-of (satisfies no-such-predicate) :max-length 0))
+                         :count 3 :seed 1))
+          (vectors (sample (normalize-spec-form
+                            '(vector-of (satisfies no-such-predicate) :max-length 0))
+                           :count 3 :seed 1)))
+      (ok (equal '(nil nil nil) lists))
+      (ok (every #'zerop (mapcar #'length vectors))))))
+
+(deftest unique-samples-wide-integer-ranges
+  (testing "a finite range wider than the materialization cap still supports UNIQUE"
+    (let ((spec (normalize-spec-form
+                 '(list-of (range integer 0 1001) :min-length 2 :max-length 2 :unique t))))
+      (let ((samples (sample spec :count 20 :seed 1)))
+        (ok (every (lambda (items)
+                     (and (= 2 (length items))
+                          (every (lambda (value) (<= 0 value 1001)) items)
+                          (= 2 (length (remove-duplicates items :test #'eql)))))
+                   samples))))))
+
+(deftest unique-validation-walks-long-lists
+  (testing "a long unique list validates without quadratic indexed access"
+    (let ((spec (normalize-spec-form '(list-of integer :unique t))))
+      (ok (validp spec (loop for value below 20000 collect value)))
+      (ok (not (validp spec (append (loop for value below 19999 collect value) '(0))))))))

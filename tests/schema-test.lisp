@@ -151,6 +151,28 @@
       (ok (null digest))
       (ok (null complete)))))
 
+(defclass described-extension (cl-spec/src/ir:spec)
+  ((extra :initarg :extra :reader described-extension-extra))
+  (:documentation "An extension that declares its fields and its completeness."))
+
+(defmethod cl-spec/src/ir:spec-kind ((spec described-extension))
+  :described-extension)
+
+(defmethod cl-spec/src/schema:definition-constraints ((definition described-extension))
+  (list :extra (described-extension-extra definition)))
+
+(defmethod cl-spec/src/schema:definition-description-complete-p
+    ((definition described-extension))
+  t)
+
+(deftest extension-methods-produce-complete-digests
+  (testing "a subclass that declares both halves gets a real digest"
+    (let ((first (make-instance 'described-extension :extra 1))
+          (second (make-instance 'described-extension :extra 2)))
+      (ok (stringp (definition-digest first)))
+      (ok (nth-value 1 (definition-digest first)))
+      (ok (not (equal (definition-digest first) (definition-digest second)))))))
+
 (deftest definition-constraints-feed-the-digest-fields
   (testing "node-specific attributes project through DEFINITION-CONSTRAINTS"
     (let ((range (normalize-spec-form '(range integer 0 10)))
