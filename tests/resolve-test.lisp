@@ -34,7 +34,7 @@
       (ok (signals (resolve-spec 'absent registry) 'unknown-spec)))))
 
 (deftest resolving-a-property-designator
-  (let* ((registry (make-hash-table-registry))
+  (let ((registry (make-hash-table-registry))
          (property (make-instance 'property :name 'p :function (constantly t))))
     (registry-register-property registry 'p property)
     (testing "a symbol resolves through the registry"

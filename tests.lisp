@@ -38,6 +38,8 @@
   (:import-from #:cl-spec/tests/backends/check-it-test)
   (:import-from #:cl-spec/tests/backends/plist-generator-test)
   (:import-from #:cl-spec/tests/instrument-test)
+  (:import-from #:cl-spec/tests/instrument-status-test)
+  (:import-from #:cl-spec/tests/instrument-status-integration-test)
   (:import-from #:cl-spec/tests/self-specs-test)
   (:import-from #:cl-spec/tests/self-properties-test))
 

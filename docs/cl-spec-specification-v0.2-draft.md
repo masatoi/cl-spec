@@ -4135,3 +4135,23 @@ Registered target/tag index changes remain explicit re-registration operations.
 A source-less callable definition remains valid but cannot have a complete
 source-based digest. The executable self-spec covers identity preservation of
 valid programmatic definition validation.
+
+
+### Instrumentation freshness implementation addendum (issue #12)
+
+`cl-spec/instrument:instrumentation-status` is a read-only structured query;
+`instrumented-function-p` retains its existing boolean/cleanup semantics.
+An installation captures registry and contract identity, scopes, its local
+unresolved declaration graph, pre/post predicate identities and full dependency
+digest. Queries distinguish absent/current/stale/indeterminate and report reasons,
+installed/current digests, and dependency status. Named references resolve during
+calls, so a dependency-only change is not itself a stale captured check. Opaque
+or incomplete declarations cannot establish freshness. Closure state is not
+checkpointed. No digest is recomputed in the hot wrapper call path.
+
+`refresh-instrumentation` requires an active installation and defaults to its
+stored registry/scopes. Compilation and metadata capture precede replacement;
+failure preserves the installed wrapper, and external function redefinitions are
+refused rather than overwritten. Target invocation counts and multiple values
+remain unchanged. The module is still separate from core; no new dependency on
+instrumentation is introduced in `cl-spec` or `cl-spec/specs`.

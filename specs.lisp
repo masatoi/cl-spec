@@ -24,7 +24,7 @@
                 #:spec-violation-value
                 #:validate
                 #:validp)
-  (:export #:register-specifications #:contract-names #:property-names))
+  (:export #:register-instrumentation-specifications #:register-specifications #:contract-names #:property-names))
 
 (in-package #:cl-spec/specs)
 
@@ -84,6 +84,26 @@ Malformed lists must not enter a law that promises normalization succeeds."
     validation-and-explanation-agree compiled-validation-agrees
     validation-preserves-values-or-explains-refusal boolean-composition
     introspection-preserves-spec-semantics))
+
+(defun register-instrumentation-specifications ()
+  "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
+Return its name. This bundle never loads the instrumentation system itself."
+  (let* ((package (find-package "CL-SPEC/INSTRUMENT"))
+         (name (and package (find-symbol "INSTRUMENTATION-STATUS" package))))
+    (unless (and name (fboundp name))
+      (error "Load CL-SPEC/INSTRUMENT before registering its specifications."))
+    (cl-spec:register-function-spec
+     (make-instance
+      'cl-spec:function-spec :name name
+      :argument-specs '((name (member uninstalled-self-target)))
+      :return-spec
+      '(plist (:required
+                (:status (member :not-installed :current :stale :indeterminate))
+                (:reasons (list-of keyword))
+                (:dependency-status (member :unchanged :changed :indeterminate))))
+      :source-form '(instrumentation-status-shape)
+      :documentation "Instrumentation status always identifies freshness and comparison limits."))
+    name))
 
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.

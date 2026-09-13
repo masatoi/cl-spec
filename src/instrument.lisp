@@ -15,7 +15,9 @@
   (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
-  (:import-from #:cl-spec/src/schema #:definition-instrumentation-capability)
+  (:import-from #:cl-spec/src/schema
+                #:definition-instrumentation-capability #:definition-description #:definition-digest)
+  (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
                 #:function-spec-signal-spec
@@ -26,6 +28,7 @@
            #:unsupported-instrumentation-target-reason
            #:*instrumented-functions* #:instrumented-function-p
            #:instrument-function #:uninstrument-function
+           #:instrumentation-status #:refresh-instrumentation
            #:instrumentation-violation #:instrumentation-violation-function
            #:instrumentation-violation-scope #:instrumentation-violation-reason))
 
@@ -62,9 +65,13 @@ return or postcondition check."))
   (:documentation
    "A defined target is not an ordinary writable function supported by this module."))
 
-(defstruct (installation (:constructor make-installation (original wrapper)))
-  "Original definition and the wrapper installed in its place."
-  original wrapper)
+(defstruct (installation
+            (:constructor make-installation
+                (original wrapper &key registry contract scopes declaration declaration-available-p
+                                  precondition postcondition digest digest-complete-p)))
+  "Original definition, active wrapper, and installation-time declaration evidence."
+  original wrapper registry contract scopes declaration declaration-available-p
+  precondition postcondition digest digest-complete-p)
 
 (defun unsupported-target-reason (name)
   "Return the reason NAME cannot be wrapped, or NIL for a supported definition."
@@ -164,8 +171,32 @@ return or postcondition check."))
                   (values-list results)))
             (apply original values))))))
 
+(defun local-declaration-snapshot (contract)
+  "Snapshot declaration children and link names without resolving registry dependencies.
+Function objects remain identity-bearing leaves. Return availability as a second value."
+  (let ((seen (make-hash-table :test #'eq))
+        (pending nil) (records nil) (count 0))
+    (labels ((reference (object)
+               (multiple-value-bind (id found) (gethash object seen)
+                 (if found id
+                     (let ((id (incf count)))
+                       (when (> count 10000)
+                         (return-from local-declaration-snapshot (values nil nil)))
+                       (setf (gethash object seen) id)
+                       (push object pending)
+                       id)))))
+      (reference contract)
+      (loop while pending
+            for object = (pop pending)
+            do (multiple-value-bind (data children links complete) (definition-description object)
+                 (push (list (gethash object seen) (class-name (class-of object))
+                             data (mapcar #'reference children) links complete)
+                       records)))
+      (values (snapshot-value (nreverse records)) t))))
+
 (defun install-contract (name &key (registry *registry*) (scopes '(:input :output :post)))
-  "Install enabled checks using REGISTRY, retaining the original definition for restoration."
+  "Install enabled checks using REGISTRY, retaining the original definition for restoration.
+Build the new wrapper and all metadata before replacing the active installation."
   (check-type name symbol)
   (check-type scopes (satisfies valid-scopes-p))
   (let* ((registry (or registry *registry*))
@@ -179,10 +210,82 @@ return or postcondition check."))
     (let* ((active-p (instrumented-function-p name))
            (entry (gethash name *instrumented-functions*))
            (original (if active-p (installation-original entry) (fdefinition name)))
-           (wrapper (make-contract-wrapper name original contract registry scopes)))
-      (setf (fdefinition name) wrapper
-            (gethash name *instrumented-functions*) (make-installation original wrapper))
+           (captured-scopes (copy-list scopes))
+           (wrapper (make-contract-wrapper name original contract registry captured-scopes)))
+      (multiple-value-bind (declaration available) (local-declaration-snapshot contract)
+        (multiple-value-bind (digest complete) (definition-digest contract :registry registry)
+          (let ((new-entry
+                  (make-installation
+                   original wrapper :registry registry :contract contract :scopes captured-scopes
+                   :declaration declaration :declaration-available-p available
+                   :precondition (function-spec-precondition-function contract)
+                   :postcondition (function-spec-postcondition-function contract)
+                   :digest digest :digest-complete-p complete)))
+            (setf (fdefinition name) wrapper
+                  (gethash name *instrumented-functions*) new-entry))))
       name)))
+
+(defun instrumentation-status (name &key (registry *registry*))
+  "Describe installed checks without changing the function or installation table.
+Local declaration changes are stale. Named dependencies resolve dynamically, so
+their changes are reported separately. Incomplete evidence is indeterminate."
+  (check-type name symbol)
+  (let ((entry (gethash name *instrumented-functions*))
+        (reasons nil) (stale nil) (current-digest nil) (current-complete nil)
+        (local-available nil))
+    (labels ((report-status (status dependency-status)
+               (snapshot-value
+                (list :name name :status status :reasons (nreverse reasons)
+                      :dependency-status dependency-status
+                      :installed-digest (when entry (installation-digest entry))
+                      :installed-digest-complete (when entry (installation-digest-complete-p entry))
+                      :current-digest current-digest :current-digest-complete current-complete
+                      :scopes (when entry (installation-scopes entry)))))
+             (mark-stale (reason) (setf stale t) (push reason reasons)))
+      (unless (typep entry 'installation)
+        (setf entry nil reasons '(:not-installed))
+        (return-from instrumentation-status (report-status :not-installed :indeterminate)))
+      (unless (and (fboundp name) (eq (fdefinition name) (installation-wrapper entry)))
+        (mark-stale :external-redefinition))
+      (unless (eq registry (installation-registry entry)) (mark-stale :registry-changed))
+      (handler-case
+          (let ((contract (registry-find-function-spec registry name)))
+            (cond
+              ((null contract) (mark-stale :definition-missing))
+              (t
+               (unless (eq contract (installation-contract entry))
+                 (mark-stale :definition-replaced))
+               (unless (eq (function-spec-precondition-function contract)
+                           (installation-precondition entry))
+                 (mark-stale :precondition-changed))
+               (unless (eq (function-spec-postcondition-function contract)
+                           (installation-postcondition entry))
+                 (mark-stale :postcondition-changed))
+               (multiple-value-bind (declaration available) (local-declaration-snapshot contract)
+                 (setf local-available (and available (installation-declaration-available-p entry)))
+                 (when (and local-available
+                            (not (same-value-p declaration (installation-declaration entry))))
+                   (mark-stale :declaration-changed)))
+               (multiple-value-setq (current-digest current-complete)
+                 (definition-digest contract :registry registry)))))
+        (error ()
+          (setf current-complete nil)
+          (push :inspection-error reasons)))
+      (let* ((complete (and (installation-digest-complete-p entry) current-complete))
+             (dependency-status
+               ;; A full digest includes the local declaration. Attribute its
+               ;; difference to dependencies only when that declaration is equal.
+               (if (and complete local-available
+                        (not (member :declaration-changed reasons))
+                        (not (member :registry-changed reasons)))
+                   (if (equal current-digest (installation-digest entry)) :unchanged :changed)
+                   :indeterminate)))
+        (unless (and complete local-available)
+          (push :incomplete-definition reasons))
+        (report-status (cond (stale :stale)
+                             ((and complete local-available) :current)
+                             (t :indeterminate))
+                       dependency-status)))))
 
 (defun instrumented-function-p (name)
   "Return true while NAME's fdefinition is our wrapper; forget stale installation state."
@@ -210,6 +313,20 @@ captured function objects, lexical and inlined calls are not intercepted."
   (if (and options (not (keywordp (first options))))
       (apply #'install-contract name :registry (first options) (rest options))
       (apply #'install-contract name options)))
+
+(defun refresh-instrumentation (name &key (registry nil registry-p) (scopes nil scopes-p))
+  "Rebuild an active installation against its original target without stacking wrappers.
+Omitted REGISTRY and SCOPES retain the installation's settings. Refuse external
+redefinitions and missing installations, preserving the function and table."
+  (check-type name symbol)
+  (let ((entry (gethash name *instrumented-functions*)))
+    (unless (typep entry 'installation)
+      (error 'unsupported-instrumentation-target :name name :reason :not-installed))
+    (unless (and (fboundp name) (eq (fdefinition name) (installation-wrapper entry)))
+      (error 'unsupported-instrumentation-target :name name :reason :external-redefinition))
+    (install-contract name
+                      :registry (if registry-p registry (installation-registry entry))
+                      :scopes (if scopes-p scopes (installation-scopes entry)))))
 
 (defun uninstrument-function (name)
   "Restore NAME's original function only if its installed wrapper is still current.
