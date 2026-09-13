@@ -40,8 +40,8 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for fourteen public
-functions and nine semantic Properties. The definitions live in
+Load the optional specification bundle to register contracts for twenty-seven
+public functions and twenty-one semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
 
@@ -63,13 +63,23 @@ instrument functions. After clearing or replacing the registry, call
 do not load the bundle. Generation is needed only to execute the checks.
 
 The contracts cover normal operation of `validp`, `validate`, `explain-data`,
-`compile-validator`, `compile-explainer`, `spec-data`, `semantic-data`, and
-`custom-generator-shrinker`, using
-their required arguments and default keyword options. A required-error contract
-covers `normalize-spec-form` on a finite malformed-DSL corpus. A Property checks
-the relation between `validate`'s refusal and `explain-data`; each function name
-currently has one registered function contract. Generators exercise a finite scalar/composite
-DSL subset; this is not exhaustive API coverage. Custom generators preserve
+`compile-validator`, `compile-explainer`, `spec-data`, `semantic-data`,
+`definition-digest`, `find-spec`, `custom-generator-shrinker`,
+`trial-observation-outcome`, `schema-info`, `make-hash-table-registry`,
+`function-spec-data`, `property-data`, `definition-description`, the
+property/function argument-schema and raw-call projection APIs, `result-data`,
+`observation-failure-p`, `make-counterexample-artifact` and
+`recheck-counterexample`, using their required arguments and default or declared
+keyword options. A required-error contract covers `normalize-spec-form` on a
+finite malformed-DSL corpus, and malformed surface declarations are refused at
+macroexpansion. Properties check the relations between validation and
+explanation (structured, compiled and rendered), registry round trips and reverse
+indexes, collection and plist semantics, runner seed replay, artifact round trips
+and failure-identity reflexivity. Loading `cl-spec/instrument` and calling
+`cl-spec/specs:register-instrumentation-specifications` adds the optional
+instrumentation contracts and two install/uninstall laws. Generators exercise a
+finite scalar/composite DSL subset, including `MEMBER`, `VECTOR-OF` and `PLIST`;
+this is not exhaustive API coverage. Custom generators preserve
 original counterexamples; whole-argument generators can supply a shrinker. See specification
 §68.1 for the coverage and remaining work.
 

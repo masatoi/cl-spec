@@ -3574,6 +3574,18 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
 | 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
+| `schema-info` / `make-hash-table-registry` | v1 schema metadataの必須keyと、新規registryが空であること |
+| `function-spec-data` / `property-data` / `definition-description` | v1 envelopeと宣言projectionの必須key |
+| `property-call-arguments-p` / `property-named-arguments` | 生の呼出し形と束縛へのprojection |
+| `property-argument-schema` / `function-spec-argument-schema` | 引数schemaがSemantic IRのspecオブジェクトであること |
+| `result-data` | v1 result envelopeの必須keyとstatus |
+| `make-counterexample-artifact` / `recheck-counterexample` | 失敗resultからartifactを作り、recheck recordを返す |
+| `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
+| registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
+| `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
+| DSL網羅 | MEMBER/VECTOR-OF/PLISTの真理条件、field errorのpath、surface macroの不正宣言拒否 |
+| runner再利用 | seedからのreplay一致、artifactのserialize/deserialize往復 |
+| instrumentation | status形状、`instrumented-function-p`/`uninstrument-function`、install/uninstall往復と未契約拒否 |
 
 `cl-spec/specs:contract-names`と`property-names`が対象名を返す。
 `function-spec-data`・`property-data`・`properties-for`を通して、cl-mcp等からも
@@ -3590,14 +3602,17 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-14関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
-任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
+27関数契約と21 Propertyをseed 1・42・2026、各50試行で実行する。
+任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
+install/uninstall往復・未契約拒否の2 Property)は別途登録し、専用テストで実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
-残る記述範囲は、keyword optionを指定した呼出し、任意の拡張specやregistry/backend実装、
-不正DSL全般、runnerのfailure evidenceとinstrumentationの全protocolである。
-不正DSLの有限例は`:signals`によるFunction Specで表現する。`validate`の正常系契約は維持し、
-拒否とexplain-dataの関係は引き続きPropertyで記述する。
+keyword optionを指定した呼出し(`:registry`、`:state-policy`)、組み込み`hash-table-registry`、
+result/artifactの基本envelope、instrumentationの基本protocolは取り込み済みである。
+残る記述範囲は、すべてのkeyword option組合せ、独自のregistry/backend実装、`defspec`自身の不正form、
+shrink候補生成の全過程、未実装の`describe-*`である。
+不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
+`validate`の正常系契約は維持し、拒否とexplain-dataの関係は引き続きPropertyで記述する。
 追加APIの仕様を実装する際は、このbundleへ契約またはPropertyを追加し、対象名一覧と検査を更新する。
 
 ---
