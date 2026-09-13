@@ -73,7 +73,9 @@ running from the root value down to the failing part."
   (:documentation "Return a small plist saying what SPEC admits.
 
 This is the shape EXPLAIN renders as a checklist line and the shape an agent
-reads to learn what a value should have been."))
+reads to learn what a value should have been. Composite built-in nodes include
+their child descriptors. Extensions with additional constraints should specialize
+this generic; the default only identifies the node kind."))
 
 (defmethod expected-descriptor ((spec spec))
   (list :kind (spec-kind spec)))
@@ -104,6 +106,15 @@ reads to learn what a value should have been."))
 
 (defmethod expected-descriptor ((spec tuple-spec))
   (list* :tuple (mapcar #'expected-descriptor (tuple-spec-element-specs spec))))
+
+(defmethod expected-descriptor ((spec and-spec))
+  (list* :and (mapcar #'expected-descriptor (and-spec-children spec))))
+
+(defmethod expected-descriptor ((spec or-spec))
+  (list* :or (mapcar #'expected-descriptor (or-spec-children spec))))
+
+(defmethod expected-descriptor ((spec nullable-spec))
+  (list :nullable (expected-descriptor (nullable-spec-inner-spec spec))))
 
 (defmethod expected-descriptor ((spec not-spec))
   (list :not (expected-descriptor (not-spec-inner-spec spec))))

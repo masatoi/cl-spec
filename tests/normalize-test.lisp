@@ -19,6 +19,13 @@
 
 (in-package #:cl-spec/tests/normalize-test)
 
+(deftest malformed-compound-spines-signal-invalid-spec-form
+  (dolist (form '((tuple . integer) (and integer . string) (member . integer)
+                  (type integer . extra)))
+    (ok (handler-case (progn (normalize-spec-form form) nil)
+          (invalid-spec-form () t)
+          (type-error () nil)))))
+
 (deftest mvp-primitives-are-declared
   (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
     (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"

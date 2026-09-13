@@ -7,7 +7,9 @@
 explain, spec introspection, the check-it generator backend, `defproperty` and
 the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
-their §73.1 D1 range: required positional arguments and one return value.
+their §73.1 D1 range: required positional arguments and either one return value
+or a required error outcome via `:signals`. Expected-error contracts are not
+supported by runtime instrumentation.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
 Field-aware keyword plist specs support required/optional keys, closed records,

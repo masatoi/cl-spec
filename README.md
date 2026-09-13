@@ -7,7 +7,8 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required positional arguments and one return value, including custom generators
+required positional arguments and either one return value or a required error outcome,
+including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
 output and postcondition scopes through the optional `cl-spec/instrument` system.
@@ -35,7 +36,7 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for seven public
+Load the optional specification bundle to register contracts for eight public
 functions and seven semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
@@ -59,12 +60,58 @@ do not load the bundle. Generation is needed only to execute the checks.
 
 The contracts cover normal operation of `validp`, `validate`, `explain-data`,
 `compile-validator`, `compile-explainer`, `spec-data`, and `semantic-data`, using
-their required arguments and default keyword options. A Property specifies
-`validate`'s refusal behavior, which the current Function Spec syntax cannot
-express as an expected condition. Generators exercise a finite scalar/composite
+their required arguments and default keyword options. A required-error contract
+covers `normalize-spec-form` on a finite malformed-DSL corpus. A Property checks
+the relation between `validate`'s refusal and `explain-data`; each function name
+currently has one registered function contract. Generators exercise a finite scalar/composite
 DSL subset; this is not exhaustive API coverage. Custom generators preserve
 original counterexamples but provide no automatic shrinking. See specification
 §68.1 for the coverage and remaining work.
+
+## Required error contracts
+
+`:signals` requires an error escaping the target to satisfy an existing spec:
+
+```lisp
+(defun checked-integer (value)
+  (cl-spec:validate (cl-spec:normalize-spec-form 'integer) value))
+
+(cl-spec:defspec-function checked-integer
+  (:args (value string))
+  (:signals (type cl-spec:spec-violation)))
+
+(cl-spec:check-function 'checked-integer :trials 50 :seed 42) ; => passed
+```
+
+Use `(and (type my-error) (satisfies my-error-details-p))` to check condition
+slots, or reference a named spec. Custom condition class names require explicit
+`type` or `instance-of`; a bare user symbol names a registered spec.
+
+Normal return produces `:failed / :missing-condition`; an error that does not
+match produces `:error / :condition-spec`, retaining its condition object and
+structured explanation. Status distinguishes normal return from an error outcome;
+use `failure-reason` to distinguish a contract mismatch from `:contract-error`.
+Preconditions still gate invocation. Warnings and
+non-error signals retain their ordinary behavior and do not satisfy the contract.
+Internally handled errors do not satisfy it either. `program-error` and
+`undefined-function`, including subclasses, always remain `:error / :condition`;
+even an explicit spec accepting these classes cannot certify a broken invocation.
+Predicate errors follow
+the existing explainer rules; they cannot become expected target errors.
+
+`:signals` takes one non-NIL spec and cannot coexist with `:returns` or `:post`.
+`function-spec-signal-spec` returns normalized IR, and `function-spec-data`
+includes its `:signals` projection. Declaration digests include the expected
+condition spec and named dependencies. Shrinking preserves mismatch class and
+spec-derived failure shape, and cannot cross between missing and mismatching errors.
+
+Runtime instrumentation of `:signals` contracts is unavailable.
+`instrument-function` refuses them with `unsupported-instrumentation-target`
+and reason `:expected-condition-contract`, before changing the function.
+This applies even to input-only or empty scopes. If an already instrumented
+function's contract is changed to `:signals`, explicitly call `uninstrument-function`:
+contract edits do not refresh captured checks, and a refused reinstall leaves
+the existing wrapper intact.
 
 ## Example
 

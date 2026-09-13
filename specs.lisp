@@ -12,6 +12,7 @@
                 #:explain-data
                 #:find-spec
                 #:normalize-spec-form
+                #:invalid-spec-form #:invalid-spec-form-reason
                 #:properties-for
                 #:semantic-data
                 #:spec
@@ -66,10 +67,15 @@ Malformed lists must not enter a law that promises normalization succeeds."
   "Check the relation between validity and errors after field validation."
   (eq (getf value :valid) (null (getf value :errors))))
 
+(defun invalid-form-condition-p (condition)
+  "Require a nonempty diagnostic reason for a malformed DSL form."
+  (let ((reason (invalid-spec-form-reason condition)))
+    (and (stringp reason) (plusp (length reason)))))
+
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
-    compile-explainer spec-data semantic-data))
+    compile-explainer spec-data semantic-data normalize-spec-form))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -82,7 +88,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
 Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
-Generators exercise a finite subset; the API contracts accept broader domains."
+Generators exercise finite subsets. Most API contracts accept broader domains;
+the malformed-normalization contract explicitly names its finite input corpus."
   (defgenerator form-generator () (draw-form))
   (defgenerator value-generator () (draw-value))
   (defgenerator spec-generator () (normalize-spec-form (draw-form)))
@@ -99,6 +106,12 @@ Generators exercise a finite subset; the API contracts accept broader domains."
                    (vector '(vector-of integer))
                    (t 'boolean))))
       (list (normalize-spec-form form) value)))
+  (defspec malformed-form
+    (member 42 "not-a-spec" (range) (tuple . integer) (unknown-primitive)))
+  (defspec-function normalize-spec-form
+    "Malformed DSL forms are refused with an explanatory invalid-spec-form error."
+    (:args (form malformed-form))
+    (:signals (and (type invalid-spec-form) (satisfies invalid-form-condition-p))))
   (defspec generated-form (satisfies sampled-dsl-form-p) (:generator form-generator))
   (defspec arbitrary-value t (:generator value-generator))
   (defspec spec-object (instance-of spec) (:generator spec-generator))

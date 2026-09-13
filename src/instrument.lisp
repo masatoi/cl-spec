@@ -18,6 +18,7 @@
   (:import-from #:cl-spec/src/schema #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
+                #:function-spec-signal-spec
                 #:function-spec-return-spec #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
                 #:precondition-refuses-p)
@@ -75,12 +76,14 @@ return or postcondition check."))
     ((eq (symbol-package name) (find-package :cl)) :common-lisp-symbol)
     ((typep (fdefinition name) 'generic-function) :generic-function)))
 
-(defun ordinary-target-p (name)
-  "Return true for a supported, defined target."
-  (null (unsupported-target-reason name)))
+(defun unsupported-contract-reason (name contract)
+  "Return the shared installation/capability refusal reason for NAME and CONTRACT."
+  (or (unsupported-target-reason name)
+      (when (function-spec-signal-spec contract) :expected-condition-contract)))
 
 (defmethod definition-instrumentation-capability ((contract function-spec))
-  (if (ordinary-target-p (function-spec-name contract)) :available :unavailable))
+  (if (unsupported-contract-reason (function-spec-name contract) contract)
+      :unavailable :available))
 
 (defun valid-scopes-p (scopes)
   "Recognize a finite list containing only supported scope keywords."
@@ -168,7 +171,7 @@ return or postcondition check."))
   (let* ((registry (or registry *registry*))
          (contract (or (registry-find-function-spec registry name)
                        (error 'unknown-function-spec :name name)))
-         (reason (unsupported-target-reason name)))
+         (reason (unsupported-contract-reason name contract)))
     (when reason
       (if (eq reason :unbound)
           (error 'unbound-target :name name)

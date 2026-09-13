@@ -113,13 +113,8 @@ explicitly; the backend never silently ignores a conjunct's generator."
                                          :generator ',generator
                                          :source-location ',location))))
 
-(defparameter *function-spec-clause-keywords* '(:args :args-generator :pre :returns :post)
-  "Clause heads DEFSPEC-FUNCTION accepts in the MVP (specification §17, §73.1 D1).
-
-:SIGNALS is deliberately absent.  §17 lists it as something a function spec
-should eventually describe, and the checker cannot honour it yet, so a form
-using it is refused rather than accepted with that half of the contract
-silently dropped.")
+(defparameter *function-spec-clause-keywords* '(:args :args-generator :pre :returns :post :signals)
+  "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
 
 (defun function-spec-error (form reason)
   "Signal INVALID-FUNCTION-SPEC-FORM for FORM with REASON."
@@ -180,7 +175,7 @@ input compiled into a tautology."
     (and home (find-symbol "RESULT" home))))
 
 (defun parse-function-spec-clauses (name clauses)
-  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST ARGUMENT-GENERATOR).
+  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST ARGUMENT-GENERATOR SIGNALS).
 
 Every clause is checked here rather than at check time, so a contract the
 checker could not honour never reaches the registry.  A NIL RETURNS therefore
@@ -196,6 +191,7 @@ cannot be confused."
         (pre nil)
         (returns nil)
         (post nil)
+        (signals nil)
         (argument-generator nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
@@ -230,6 +226,10 @@ cannot be confused."
            (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
           (:post (setf post (rest clause)))
+          (:signals
+           (unless (and (= 2 (length clause)) (second clause))
+             (function-spec-error clause ":signals takes exactly one non-NIL spec form"))
+           (setf signals (second clause)))
           (:returns
            (unless (= 2 (length clause))
              (function-spec-error clause ":returns takes exactly one spec form"))
@@ -249,7 +249,9 @@ cannot be confused."
                 clause
                 "nothing satisfies the empty type NIL; write NULL instead"))
              (setf returns form))))))
-    (values documentation args pre returns post argument-generator)))
+    (when (and signals (or (member :returns seen) (member :post seen)))
+      (function-spec-error clauses ":signals cannot coexist with :returns or :post"))
+    (values documentation args pre returns post argument-generator signals)))
 
 (defun parse-function-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -312,7 +314,7 @@ tagged secondary values consumed by the function checker; no form runs twice."
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
 and :POST forms have to be compiled into real functions: §60 forbids runtime
 EVAL, so a contract kept only as a list could be read but never checked."
-  (multiple-value-bind (documentation args pre returns post argument-generator)
+  (multiple-value-bind (documentation args pre returns post argument-generator signals)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (mapcar #'first args))
@@ -369,6 +371,7 @@ return value"
                                      collect `(list ',variable
                                                     (normalize-spec-form ',form))))
                        :argument-generator ',argument-generator
+                       :signal-spec ,(when signals `(normalize-spec-form ',signals))
                        :return-spec ,(when returns `(normalize-spec-form ',returns))
                        :preconditions ',pre
                        :postconditions ',post
@@ -390,16 +393,22 @@ return value"
   "Attach a contract to the existing function NAME without redefining it.
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC) and (:POST FORM ...),
+(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC), (:POST FORM ...),
+or (:SIGNALS SPEC),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
 argument list. Its output is validated before :PRE and the target; it has no
 automatic shrink strategy.  :PRE
 sees the parameters, :POST sees them and RESULT, the value the call returned.
 
-The MVP checks required positional parameters and one return value.  Anything
-else -- a lambda list keyword, (:returns (values ...)), an unknown clause such
-as (:signals ...) -- signals INVALID-FUNCTION-SPEC-FORM rather than registering
-a contract whose unchecked half would still be reported as verified
+:SIGNALS requires an error escaping the target to satisfy SPEC. Normal return
+fails; :SIGNALS cannot coexist with :RETURNS or :POST. Warnings and non-error
+signals keep their ordinary behavior and do not satisfy this clause.
+PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
+:CONDITION failures, even if SPEC would accept them.
+
+Required positional parameters and one return value are supported. Lambda list
+keywords, (:returns (values ...)) and unknown clauses signal
+INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
   (defspec-function ranged-random
