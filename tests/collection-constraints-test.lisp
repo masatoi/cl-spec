@@ -206,3 +206,13 @@
     (let ((spec (normalize-spec-form '(list-of integer :unique t))))
       (ok (validp spec (loop for value below 20000 collect value)))
       (ok (not (validp spec (append (loop for value below 19999 collect value) '(0))))))))
+
+(deftest unique-sampling-never-repeats
+  (testing "a two-value range yields both values, in either order"
+    (let ((spec (normalize-spec-form
+                 '(list-of (range integer 0 1) :min-length 2 :max-length 2 :unique t))))
+      (let ((samples (sample spec :count 40 :seed 9)))
+        (ok (every (lambda (items)
+                     (and (= 2 (length items))
+                          (equal '(0 1) (sort (copy-list items) #'<))))
+                   samples))))))

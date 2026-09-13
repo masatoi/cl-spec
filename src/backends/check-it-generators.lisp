@@ -445,17 +445,20 @@ generation even though the target is one of the enumerable domains."
 (defun sample-distinct-integers (minimum maximum count)
   "Return COUNT distinct integers from the inclusive interval [MINIMUM, MAXIMUM].
 
-Floyd's selection samples without materializing the interval, so a finite range
-wider than *ENUMERATION-LIMIT* still supports UNIQUE generation."
+Partial Fisher-Yates over a sparse swap map: only COUNT entries are touched, so
+a range wider than *ENUMERATION-LIMIT* is sampled without materializing it, and
+each draw removes the chosen value from the remaining pool."
   (let* ((width (1+ (- maximum minimum)))
          (take (min count width))
          (swaps (make-hash-table :test #'eql))
          (result nil))
-    (loop for index from (- width take) below width
-          for candidate = (random (1+ index))
+    (loop for index from 0 below take
+          for candidate = (+ index (random (- width index)))
           for chosen = (gethash candidate swaps candidate)
+          for current = (gethash index swaps index)
           do (push (+ minimum chosen) result)
-             (setf (gethash candidate swaps) (gethash index swaps index)))
+             (setf (gethash index swaps) chosen
+                   (gethash candidate swaps) current))
     result))
 
 (defun eql-duplicates-p (items)

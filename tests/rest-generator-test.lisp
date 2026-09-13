@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/tests/rest-generator-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/main)
   (:import-from #:cl-spec/src/backends/check-it))
 
@@ -153,3 +153,25 @@
       (ok shrunk)
       (when shrunk
         (ok (equal '(10 :limit 30) (cl-spec:trial-observation-arguments shrunk)))))))
+
+(deftest constrained-universal-rest-is-not-the-keyword-shortcut
+  (testing "a length or uniqueness constraint keeps the rest list out of the shortcut"
+    (ok (cl-spec/src/backends/call-generators::unconstrained-rest-list-p
+         (cl-spec:normalize-spec-form '(list-of t))))
+    (ok (not (cl-spec/src/backends/call-generators::unconstrained-rest-list-p
+              (cl-spec:normalize-spec-form '(list-of t :min-length 4)))))
+    (ok (not (cl-spec/src/backends/call-generators::unconstrained-rest-list-p
+              (cl-spec:normalize-spec-form '(list-of t :max-length 3)))))
+    (ok (not (cl-spec/src/backends/call-generators::unconstrained-rest-list-p
+              (cl-spec:normalize-spec-form '(list-of t :unique t))))))
+  (testing "the constrained rest child is generated instead of omitted"
+    (let* ((contract (make-instance 'cl-spec:function-spec
+                                    :name 'constrained-rest-probe
+                                    :argument-specs
+                                    '(&rest (raw (list-of integer :min-length 4))
+                                      &key ((:limit limit) integer supplied))))
+           (schema (cl-spec:function-spec-argument-schema contract))
+           (generator (cl-spec/src/backends/check-it-generators:spec-generator
+                       schema (list :registry cl-spec:*registry*))))
+      (ok (typep generator 'cl-spec/src/backends/call-generators:call-arguments-generator))
+      (ok (cl-spec/src/backends/call-generators:call-generator-rest-driven-p generator)))))

@@ -11,6 +11,7 @@
                 #:argument-binding-spec #:argument-binding-kind #:argument-binding-keyword)
   (:import-from #:cl-spec/src/ir
                 #:spec-generator-name #:list-of-spec #:collection-spec-element-spec
+                #:collection-constraint-plist
                 #:type-spec #:type-spec-type-specifier)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/conditions #:generator-unavailable)
@@ -126,9 +127,13 @@
   (cached-value generator))
 
 (defun unconstrained-rest-list-p (spec)
-  "Recognize an unannotated universal list without bypassing extension generators."
+  "Recognize an unannotated universal list without bypassing extension generators.
+
+A length or uniqueness constraint makes the list something the keyword generator
+cannot satisfy, so the rest child must be generated rather than omitted."
   (and (eq (class-of spec) (find-class 'list-of-spec))
        (null (spec-generator-name spec))
+       (null (collection-constraint-plist spec))
        (let ((element (collection-spec-element-spec spec)))
          (and (eq (class-of element) (find-class 'type-spec))
               (null (spec-generator-name element))
