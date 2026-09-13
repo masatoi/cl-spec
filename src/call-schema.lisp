@@ -279,7 +279,11 @@
   :call-arguments)
 
 (defmethod initialize-instance :after ((object call-arguments-spec) &key)
-  (check-type (call-arguments-spec-layout object) call-layout))
+  ;; CHECK-TYPE takes a place, and its STORE-VALUE restart writes the place
+  ;; back; the slot has no writer, so the place form asked for a SETF function
+  ;; that does not exist.  Check the value through a variable instead.
+  (let ((layout (call-arguments-spec-layout object)))
+    (check-type layout call-layout)))
 
 (defun make-return-schema (&key primary-spec)
   "Describe a normalized primary-value or fixed-values declaration."
