@@ -294,6 +294,8 @@ may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be
 all tuple elements lack a shrink strategy. Empty plists and plists containing only
 required constant/custom fields also have no shrink strategy; optional field
 removal is a strategy even when field values cannot shrink.
+Legacy non-plist constants retain the backend's coarse `:available` shrinking
+report; the plist-specific check excludes constant children from its strategy.
 Construction availability does not promise a valid draw or an accepted reduction.
 No trials, targets or custom generator bodies run during built-in introspection.
 Runs reuse capabilities captured from the actual compiled generator; older

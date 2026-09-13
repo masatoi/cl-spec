@@ -441,7 +441,8 @@ embeds the value).  Each varies with the input, so two instances of one failure
 compared unequal and a legitimate reduction was thrown away.  A key derived from
 the spec is safe to compare; a new EXPLAIN-DATA key is treated as value-derived
 until someone classifies it here, and EVERY-EXPLAINED-ERROR-KEY-IS-CLASSIFIED
-fails until they do.")
+fails until they do. :FIELD-PATH contains only declared parent/field keys;
+unknown and duplicate input key names remain solely in the discarded :PATH.")
 
 (defparameter *failure-shape-containers* '(:errors :branches :conjuncts)
   "EXPLAIN-DATA error keys whose value is a list of error-shaped plists to walk.
@@ -459,7 +460,7 @@ shrink of it by construction, so every key derived from one -- :ACTUAL,
 :ACTUAL-LENGTH, a :PATH into the value, a condition's :CONDITION-REPORT -- stays
 out of the shape, and every key derived from the spec -- :KIND, the :EXPECTED
 descriptor, :EXPECTED-LENGTH, :VIOLATED-BOUND, :PREDICATE, :CONDITION-TYPE, a
-conjunct's :STATUS and fixed :TUPLE-PATH -- stays in. See *FAILURE-SHAPE-KEYS*
+conjunct's :STATUS, fixed :TUPLE-PATH and declared :FIELD-PATH -- stays in. See *FAILURE-SHAPE-KEYS*
 for why that is a whitelist rather than a list of keys to strip."
   (loop for (key value) on error-datum by #'cddr
         when (member key *failure-shape-containers*)

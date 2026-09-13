@@ -11,16 +11,24 @@ from absent fields. Input ordering is immaterial. Improper, cyclic, odd-length,
 non-keyword-key and duplicate-key inputs are rejected before child predicates run.
 
 A representation-independent field definition stores a key, child IR, and required
-flag. A field-spec base holds ordered fields and a closed flag. The concrete
-plist-spec enforces keyword keys, uniqueness, finite field lists and boolean
-closed flags at initialization and reinitialization, before changing instance state. No alist/hash-table implementation or public
+flag. A field-spec base holds ordered fields and a closed flag. The base
+field-spec enforces finite field lists and boolean closed flags; plist-spec adds
+keyword key and uniqueness constraints. Both validate initialization and
+reinitialization before changing instance state. No alist/hash-table implementation or public
 representation-conversion API is introduced. Field metadata and child IR remain
 separate so future representations can choose their own key equality semantics.
 
 The explainer emits key paths, missing/duplicate/unknown-key and malformed-structure
 errors. A field path also contributes to failure identity so shrinking cannot move
 a return-value failure between distinct fields with the same value spec. Ordinary
-collection element indices must remain absent from that identity.
+collection element indices must remain absent from that identity. Unknown and
+duplicate input keys belong only in diagnostic paths; their names do not select a
+declared field and therefore never enter field-path. Declared parent fields still
+contribute their paths for nested structural errors.
+
+Plist expected descriptors include closedness and each field's key, required flag
+and child descriptor. Structural diagnostics remain visible inside conjunctions.
+The explainer reuses its checked key index instead of rescanning each field.
 
 Introspection publishes ordered field descriptors with key, required flag, and child
 index plus the closed flag. Declaration digests include these fields and traverse

@@ -13,7 +13,8 @@
                 #:range-spec #:instance-of-spec #:and-spec #:or-spec #:not-spec
                 #:list-of-spec #:vector-of-spec #:tuple-spec #:nullable-spec)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:make-field-definition #:finite-proper-list-p)
+                #:plist-spec #:make-field-definition)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
 
@@ -117,10 +118,10 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
         (closed-p nil))
     (flet ((refuse (reason)
              (error 'invalid-spec-form :form form :reason reason)))
-      (unless (finite-proper-list-p form)
+      (unless (finite-list-p form)
         (refuse "PLIST must be a finite proper list"))
       (dolist (clause (rest form))
-        (unless (and (consp clause) (finite-proper-list-p clause)
+        (unless (and (consp clause) (finite-list-p clause)
                      (member (first clause) '(:required :optional :closed)))
           (refuse "PLIST clauses are :required, :optional or :closed"))
         (when (member (first clause) seen-clauses)
@@ -132,7 +133,7 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
                 (refuse ":closed takes exactly one boolean"))
               (setf closed-p (second clause)))
             (dolist (entry (rest clause))
-              (unless (and (finite-proper-list-p entry) (= 2 (length entry))
+              (unless (and (finite-list-p entry) (= 2 (length entry))
                            (keywordp (first entry)))
                 (refuse "PLIST fields must be (:keyword spec) pairs"))
               (when (member (first entry) seen-keys)

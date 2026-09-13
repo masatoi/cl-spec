@@ -8,6 +8,7 @@
 
 (defpackage #:cl-spec/src/generator
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:no-generator-backend
                 #:invalid-backend-result)
@@ -80,14 +81,8 @@ Backends must use OBSERVE-TRIAL, preserve original evidence, and never label an
 untested shrink return value as a counterexample. :PASSED consumes the full budget."))
 
 (defun proper-list-p (value)
-  "Recognize a finite proper list without traversing its elements."
-  (let ((seen (make-hash-table :test #'eq)))
-    (loop for tail = value then (cdr tail)
-          while tail
-          do (unless (and (consp tail) (not (gethash tail seen)))
-               (return-from proper-list-p nil))
-             (setf (gethash tail seen) t))
-    t))
+  "Use the shared cycle-safe proper-list check."
+  (finite-list-p value))
 
 (defun finite-signature-p (value)
   "Require a proper signature spine and acyclic nested constants before comparison."

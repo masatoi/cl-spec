@@ -747,14 +747,24 @@ Tでは拒否する。不正宣言は`invalid-spec-form`とし、登録前に拒
 `plist-spec`がkeywordキーとplistの構造を扱う。子IRの列挙は宣言順である。
 内部フィールドのkey表現をkeywordに限定せず、将来のalist/hash-tableが独自の
 キー比較規則を持てる境界とする。これらのDSLと共通変換APIは未実装。
+共通のfinite field list・field-definition要素・boolean closed flagはfield-specで検査し、
+plist-specはkeywordと重複キーの制約を加える。初期化・再初期化の変更前に拒否する。
 
 構造検査は子specの述語より前に行う。explainerのエラーkindは構造不正が
 `:not-a-plist`、重複が`:duplicate-key`、必須キー欠落が`:missing-key`、
 closedなspecの未宣言キーが`:unknown-key`。値の型違反等は既存のkindを使用する。
 フィールドの`:path`はキーを含み、例の`:id`なら`(:id)`となる。
 欠落時の`:actual NIL`は値NILの違反とはkindで区別する。
-追加の`:field-path`は制約を選択するキー列であり、Function Specのfailure identityに
-含める。通常のlist/vector要素indexはidentityに加えず、別フィールドへの縮小移動を防ぐ。
+追加の`:field-path`は宣言されたフィールドを選択するキー列であり、Function Specの
+failure identityに含める。未知キー・重複キーのエラー位置は入力由来の`:path`だけに置き、
+そのキー自身を`:field-path`に含めない。これらが宣言フィールド内の入れ子で起きた場合は、
+宣言された親キーだけをidentityに残す。通常のlist/vector要素indexもidentityに加えず、
+別の宣言フィールドへの移動と、同じ構造違反を保った入力の縮小を区別する。
+
+plistのexpected descriptorは`:kind`・`:closed`・`:fields`を含む。`:fields`の各要素は
+`:key`・`:required`・子の`:expected`を持ち、ORの枝やANDのチェック項目でも
+フィールド契約を識別できる。構造違反はANDのdescriptor重複除去で省略せず、kindとpathを表示する。
+入力構造の検査で作った索引をフィールド照合と未知キー検出にも再利用する。
 
 `spec-data`は`:closed`と`:fields`を返す。`:fields`の各要素は
 `(:key KEY :required BOOLEAN :child-index INDEX)`で、`:children`の子IRを指す。

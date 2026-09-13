@@ -6,6 +6,7 @@
                 #:plist-spec #:field-spec #:field-spec-fields #:field-spec-closed-p
                 #:field-key #:make-field-definition)
   (:import-from #:cl-spec/src/function-spec #:failure-signature)
+  (:import-from #:cl-spec/src/explain #:expected-descriptor #:print-explain-error)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/main
                 #:normalize-spec-form #:validp #:explain-data #:spec-data
@@ -171,6 +172,22 @@
                  (first (field-spec-fields
                          (make-instance 'field-spec :fields (list foreign)))))))))
 
+(deftest field-layout-validates-common-invariants
+  (let* ((field (make-field-definition :key "arbitrary" :value-spec (normalize-spec-form 'integer)))
+         (fields (list field)))
+    (dolist (bad (list (cons field :tail) (list :not-a-field)))
+      (let ((spec (make-instance 'field-spec :fields fields)))
+        (ok (handler-case (progn (make-instance 'field-spec :fields bad) nil)
+              (invalid-spec-form () t)))
+        (ok (handler-case (progn (reinitialize-instance spec :fields bad) nil)
+              (invalid-spec-form () t)))
+        (ok (eq fields (field-spec-fields spec)))))
+    (let ((spec (make-instance 'field-spec :fields fields)))
+      (ok (handler-case (progn (reinitialize-instance spec :closed-p :yes) nil)
+            (invalid-spec-form () t)))
+      (ok (null (field-spec-closed-p spec)))
+      (ok (equal "arbitrary" (field-key (first (field-spec-fields spec))))))))
+
 (deftest plist-failure-identity-distinguishes-fields
   (let ((spec (normalize-spec-form
                '(plist (:required (:left integer) (:right integer))))))
@@ -184,3 +201,51 @@
          (failure-signature :return-spec (explain-data spec '((:id "bad"))) nil)
          (failure-signature :return-spec
                             (explain-data spec '((:id 1) (:id "bad"))) nil)))))
+
+(deftest plist-descriptors-expose-field-contracts
+  (let* ((spec (normalize-spec-form
+                '(plist (:required (:id integer)) (:optional (:label string)) (:closed t))))
+         (descriptor (expected-descriptor spec)))
+    (ok (equal '(:kind :plist :closed t
+                 :fields ((:key :id :required t :expected (:type integer))
+                          (:key :label :required nil :expected (:type string))))
+               descriptor))
+    (dolist (other '((plist (:required (:other integer)) (:closed t))
+                     (plist (:optional (:id integer)) (:closed t))
+                     (plist (:required (:id string)) (:closed t))
+                     (plist (:required (:id integer)) (:closed nil))))
+      (ok (not (equal descriptor (expected-descriptor (normalize-spec-form other))))))))
+
+(deftest plist-structural-errors-remain-visible-in-conjunctions
+  (let ((spec (normalize-spec-form
+               '(and (plist (:required (:id integer)) (:closed t)) (satisfies identity)))))
+    (dolist (entry '(((:id 1 :extra t) "unknown key" "(:EXTRA)")
+                     ((:id 1 :id 2) "duplicate key" "(:ID)")
+                     (() "missing key" "(:ID)")
+                     (42 "not a plist" nil)))
+      (let* ((datum (first (getf (explain-data spec (first entry)) :errors)))
+             (printed (with-output-to-string (out) (print-explain-error datum out 0))))
+        (ok (search (second entry) printed :test #'char-equal))
+        (when (third entry)
+          (ok (search (third entry) printed :test #'char-equal)))))))
+
+(deftest plist-structural-failure-identity-ignores-input-keys
+  (let ((spec (normalize-spec-form '(plist (:closed t)))))
+    (dolist (pair '(((:long-key 1) (:x 1))
+                    ((:long-key 1 :long-key 2) (:x 1 :x 2))))
+      (ok (equal
+           (failure-signature :return-spec (explain-data spec (first pair)) nil)
+           (failure-signature :return-spec (explain-data spec (second pair)) nil)))))
+  (let* ((child '(plist (:closed t)))
+         (form (list 'plist (list :required (list :left child) (list :right child))))
+         (spec (normalize-spec-form form)))
+    (ok (equal
+         (failure-signature :return-spec
+                            (explain-data spec '(:left (:long 1) :right nil)) nil)
+         (failure-signature :return-spec
+                            (explain-data spec '(:left (:x 1) :right nil)) nil)))
+    (ok (not (equal
+              (failure-signature :return-spec
+                                 (explain-data spec '(:left (:x 1) :right nil)) nil)
+              (failure-signature :return-spec
+                                 (explain-data spec '(:left nil :right (:x 1))) nil))))))

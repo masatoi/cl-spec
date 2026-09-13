@@ -47,6 +47,17 @@
     (ok (= 7 (length (cl-spec:list-function-specs))))
     (ok (= 7 (length (cl-spec:list-properties))))))
 
+(deftest executable-specifications-use-the-current-registry
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (original-validp (fdefinition 'cl-spec:validp)))
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec/specs:register-specifications)
+      (ok (= 7 (length (cl-spec:list-function-specs))))
+      (ok (= 7 (length (cl-spec:list-properties))))
+      (ok (eq original-validp (fdefinition 'cl-spec:validp))))
+    (ok (null (cl-spec:list-function-specs)))
+    (ok (null (cl-spec:list-properties)))))
+
 (deftest normalization-laws-declare-their-finite-domain
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
@@ -59,6 +70,31 @@
       (ok (cl-spec:validp
            (second (first (cl-spec:function-spec-argument-specs contract)))
            (cl-spec:normalize-spec-form '(member :outside :the :sample)))))))
+
+(deftest sampled-dsl-domain-boundaries
+  (dolist (form '(integer string (or integer string) (not integer)
+                 (cl-spec/specs::nullable integer)
+                 (cl-spec/specs::list-of integer)
+                 (cl-spec/specs::tuple integer string)
+                 (cl-spec/specs::range integer -1 1)
+                 (cl-spec/specs::range integer -20 20)
+                 (and integer (cl-spec/specs::range -1 1))
+                 (and integer (cl-spec/specs::range -20 20))))
+    (ok (cl-spec/specs::sampled-dsl-form-p form)))
+  (dolist (form '(nil 42 "integer" :integer (integer) (cl-spec/specs::range)
+                 (cl-spec/specs::range integer 0 0)
+                 (cl-spec/specs::range integer -21 21)
+                 (cl-spec/specs::range integer -1 2)
+                 (cl-spec/specs::range integer -1.0 1.0)
+                 (cl-spec/specs::range integer -1 1 extra)
+                 (cl-spec/specs::range integer -1 . 1)
+                 (and integer (cl-spec/specs::range -21 21))
+                 (and integer (cl-spec/specs::range -1 . 1))
+                 (or string integer) (cl-spec/specs::tuple integer string extra)))
+    (ok (not (cl-spec/specs::sampled-dsl-form-p form))))
+  (let ((circular (list 'cl-spec/specs::range 'integer -1 1)))
+    (setf (cdr (last circular)) circular)
+    (ok (not (cl-spec/specs::sampled-dsl-form-p circular)))))
 
 (deftest executable-data-specs-refuse-inconsistent-evidence
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))

@@ -10,6 +10,7 @@
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form
                 #:invalid-property-form
@@ -17,7 +18,6 @@
                 #:invalid-function-spec-form-form
                 #:invalid-function-spec-form-reason
                 #:invalid-generator-form)
-  (:import-from #:cl-spec/src/explain)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -40,9 +40,9 @@
 
 (in-package #:cl-spec/src/dsl)
 
-(defun proper-list-p (object)
-  "Use the shared cycle-safe list check before walking declaration structure."
-  (cl-spec/src/explain:proper-list-p object))
+(defun proper-list-p (value)
+  "Use the shared cycle-safe proper-list check."
+  (finite-list-p value))
 
 (defparameter *spec-option-keywords* '(:generator)
   "Keywords that may head an option clause in a DEFSPEC form.

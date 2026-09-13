@@ -2,13 +2,13 @@
 
 (defpackage #:cl-spec/src/field-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir #:spec #:spec-kind #:spec-children)
   (:export #:field-definition #:make-field-definition
            #:field-key #:field-value-spec #:field-required-p
            #:field-spec #:field-spec-fields #:field-spec-closed-p
-           #:plist-spec #:plist-structure-error #:plist-field-value
-           #:finite-proper-list-p #:field-descriptions))
+           #:plist-spec #:plist-structure-error #:field-descriptions))
 
 (in-package #:cl-spec/src/field-spec)
 
@@ -37,38 +37,32 @@
 (defmethod spec-kind ((spec plist-spec))
   :plist)
 
-(defun finite-proper-list-p (value)
-  "Recognize proper lists, including NIL, without looping on circular lists."
-  (handler-case (not (null (list-length value)))
-    (type-error () nil)))
+(defgeneric validate-field-layout (spec fields closed-p)
+  (:documentation "Check common field layout and representation-specific invariants."))
 
-(defun validate-plist-fields (fields closed-p)
-  "Refuse malformed programmatic plist declarations before changing an instance."
-  (flet ((refuse (reason)
-           (error 'invalid-spec-form :form (list :fields fields :closed-p closed-p)
-                  :reason reason)))
-    (unless (typep closed-p 'boolean)
-      (refuse "A plist closed flag must be T or NIL."))
-    (unless (finite-proper-list-p fields)
-      (refuse "Plist fields must be a finite proper list."))
-    (let ((seen (make-hash-table :test #'eq)))
-      (dolist (field fields)
-        (unless (typep field 'field-definition)
-          (refuse "Every plist field must be a field definition."))
-        (unless (and (keywordp (field-key field))
-                     (typep (field-value-spec field) 'spec)
-                     (typep (field-required-p field) 'boolean))
-          (refuse "A plist field requires a keyword key, child IR and boolean required flag."))
-        (when (gethash (field-key field) seen)
-          (refuse "Plist field keys must be unique."))
-        (setf (gethash (field-key field) seen) t)))))
+(defmethod validate-field-layout ((spec field-spec) fields closed-p)
+  (unless (and (typep closed-p 'boolean)
+               (finite-list-p fields)
+               (every (lambda (field) (typep field 'field-definition)) fields))
+    (error 'invalid-spec-form :form (list :fields fields :closed-p closed-p)
+           :reason "Fields must be a finite list of field definitions; closed-p must be boolean.")))
+
+(defmethod validate-field-layout ((spec plist-spec) fields closed-p)
+  (call-next-method)
+  (let ((seen (make-hash-table :test #'eq)))
+    (dolist (field fields)
+      (unless (and (keywordp (field-key field)) (not (gethash (field-key field) seen)))
+        (error 'invalid-spec-form :form (list :fields fields :closed-p closed-p)
+               :reason "Plist field keys must be unique keywords."))
+      (setf (gethash (field-key field) seen) t))))
 
 (defmethod shared-initialize :around
-    ((spec plist-spec) slot-names &rest initargs
-     &key (fields nil fields-p) (closed-p nil closed-p-p) &allow-other-keys)
-  "Validate proposed field semantics before initialization or reinitialization mutates SPEC."
+    ((spec field-spec) slot-names &rest initargs
+     &key (fields nil fields-p) (closed-p nil closed-p-p))
+  "Validate common and concrete field semantics before changing SPEC."
   (declare (ignore slot-names initargs))
-  (validate-plist-fields
+  (validate-field-layout
+   spec
    (if fields-p fields
        (when (slot-boundp spec 'fields) (field-spec-fields spec)))
    (if closed-p-p closed-p
@@ -76,23 +70,22 @@
   (call-next-method))
 
 (defun plist-structure-error (value)
-  "Return (values KIND KEY) for malformed plist structure, or NIL.
-KEY is relevant only for :DUPLICATE-KEY; values are never mistaken for keys."
-  (unless (and (finite-proper-list-p value) (evenp (length value)))
+  "Return (values KIND KEY INDEX KEYS) after checking a keyword plist.
+KIND and KEY describe malformed structure. On success INDEX maps keys to values
+and KEYS retains their input order. Callers can reuse the checked index."
+  (unless (finite-list-p value)
     (return-from plist-structure-error :not-a-plist))
-  (let ((seen (make-hash-table :test #'eq)))
-    (loop for (key) on value by #'cddr
-          do (unless (keywordp key)
+  (let ((index (make-hash-table :test #'eq))
+        (keys nil))
+    (loop for tail on value by #'cddr
+          for key = (car tail)
+          do (unless (and (cdr tail) (keywordp key))
                (return-from plist-structure-error :not-a-plist))
-             (when (gethash key seen)
+             (when (nth-value 1 (gethash key index))
                (return-from plist-structure-error (values :duplicate-key key)))
-             (setf (gethash key seen) t))))
-
-(defun plist-field-value (value key)
-  "Return (values VALUE PRESENT-P) for KEY in an already checked keyword plist."
-  (loop for (entry-key entry-value) on value by #'cddr
-        when (eq key entry-key) do (return (values entry-value t))
-        finally (return (values nil nil))))
+             (setf (gethash key index) (second tail))
+             (push key keys))
+    (values nil nil index (nreverse keys))))
 
 (defun field-descriptions (spec)
   "Describe field-to-child associations without duplicating the child IR."
