@@ -13,7 +13,7 @@ P2 #19/#20 are outside this task. Commit each issue after targeted/full validati
 - [x] #15: optional arguments with explicit presence, without evaluating target defaults.
 - [x] #16: keyword calls preserving original argument order and CL binding semantics.
 - [x] #17: rest calls preserving raw tail, bounded generation and shrinking.
-- [ ] #18: explicit fixed multiple-value contracts, keeping old primary-only contracts.
+- [x] #18: explicit fixed multiple-value contracts, keeping old primary-only contracts.
 
 Each checkpoint: tests first, suite registration, executable self-specs, README/spec
 decisions, review, full run-tests, clean-process rove, changed-file mallet, forced core
@@ -155,3 +155,21 @@ Full target values are captured once, raw values validated, frozen evidence reta
 Fixed count and value-position failures are distinguishable in failure identity.
 Instrumentation validates the same projection and returns all raw values unchanged.
 Result/artifact schema stays additive v1; old primary-only digests remain stable.
+
+## #18 validation checkpoint
+
+Complete: 551 tests in a fresh REPL; clean-process 61 suites via `rove cl-spec.asd`;
+changed-file Mallet, forced core compilation, and diff checks pass. Tests cover
+zero/one-NIL/multiple values, missing/extra count and nested positions, explicit
+post bindings, untagged post identity, fixed-only DSL rejection at macro expansion,
+CLOS rollback, legacy primary-return digest and error conditions, wrapper scopes,
+object identity and active restarts, failure-preserving shrinking, artifact roundtrip
+and direct recheck without generation. Self-specifications enforce find-spec's two
+values and definition-digest's three values and their relations.
+
+Review fixes preserve ordinary invalid-spec-form conditions, refuse variable-arity
+markers inside fixed return declarations, and classify new artifact failure identities.
+Returned objects stay diagnostic evidence; no persistence requirement is added to them.
+
+All seven P1 issues (#11, #13, #14, #15, #16, #17, #18) are implemented on
+p1-verification, with one validated commit per issue. No PR has been published.

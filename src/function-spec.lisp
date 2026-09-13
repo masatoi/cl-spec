@@ -24,10 +24,11 @@
   (:import-from #:cl-spec/src/schema
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
                 #:resolve-definition #:definition-instrumentation-capability)
-  (:import-from #:cl-spec/src/ir #:tuple-spec)
+  (:import-from #:cl-spec/src/ir #:tuple-spec #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/call-schema
                 #:make-call-layout #:bind-call-arguments #:bound-call-values
-                #:make-return-schema #:return-schema-value
+                #:make-return-schema #:return-schema-value #:return-schema-mode
+                #:normalize-return-declaration #:return-values-spec #:call-declaration-variables
                 #:normalize-call-declarations #:call-layout-required-only-p
                 #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
                 #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
@@ -74,7 +75,8 @@
            #:function-spec-return-spec
            #:function-spec-signal-spec
            #:function-spec-preconditions
-           #:function-spec-postconditions
+           #:function-spec-postconditions #:function-spec-post-value-variables
+            #:validate-post-value-variables
            #:function-spec-precondition-function
            #:function-spec-postcondition-function
            #:function-spec-documentation
@@ -144,6 +146,11 @@ true when every :PRE form holds, or NIL when the contract has no :PRE.
 
 Compiled at macroexpansion time rather than interpreted at check time, because
 §60 forbids runtime EVAL and a stored form cannot otherwise be run.")
+   (post-value-variables :initarg :post-value-variables
+                        :initform :primary
+                        :reader function-spec-post-value-variables
+                        :documentation "Use :PRIMARY for legacy post predicates, or an explicit
+list of return names. Explicit predicates receive the full values list first.")
    (postcondition-function :initarg :postcondition-function
                            :initform nil
                            :reader function-spec-postcondition-function
@@ -179,7 +186,7 @@ function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
   '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
-    precondition-function postcondition-function documentation-string
+    precondition-function postcondition-function post-value-variables documentation-string
     source-form source-location metadata)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
@@ -190,6 +197,13 @@ function at a time (specification §3.2)."))
   "Validate paired clauses and restore all participating slots on refusal."
   (flet ((supplied (key)
            (loop for (k) on initargs by #'cddr thereis (eq k key))))
+    (when (and (supplied :post-value-variables)
+               (slot-boundp contract 'post-value-variables)
+               (not (equal (getf initargs :post-value-variables)
+                           (function-spec-post-value-variables contract)))
+               (not (and (supplied :postconditions) (supplied :postcondition-function))))
+      (error 'invalid-function-spec-form :form initargs
+             :reason "Post-value binding changes require new forms and a compiled predicate."))
     (dolist (pair '((:preconditions :precondition-function)
                     (:postconditions :postcondition-function)))
       (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
@@ -197,6 +211,21 @@ function at a time (specification §3.2)."))
                :reason "clause forms and compiled function must change together"))))
   (call-with-definition-rollback
    contract (lambda () (apply #'call-next-method contract slot-names initargs))))
+
+(defun validate-post-value-variables (names count arguments)
+  "Require COUNT unique bindable value names distinct from ARGUMENTS and RESULT."
+  (unless (and (finite-list-p names) (= (length names) count)
+               (every (lambda (name)
+                        (and name (symbolp name) (not (constantp name))
+                             (not (and (plusp (length (symbol-name name)))
+                                       (char= #\& (char (symbol-name name) 0))))
+                             (not (string-equal "RESULT" (symbol-name name)))
+                             (not (member name arguments))))
+                      names)
+               (= (length names) (length (remove-duplicates names :test #'eq))))
+    (error 'invalid-function-spec-form :form names
+           :reason "Post-value names must match fixed returns and be unique, bindable variables."))
+  names)
 
 (defmethod validate-definition ((contract function-spec))
   "Refuse a contract that could not be honoured, and normalize what can be.
@@ -296,7 +325,17 @@ would run while introspection reported no such clause"
       (when signals
         (setf (slot-value contract 'signal-spec) (normalize-spec-form signals)))
       (when returns
-        (setf (slot-value contract 'return-spec) (normalize-spec-form returns)))))
+        (setf (slot-value contract 'return-spec) (normalize-return-declaration returns)))))
+  (unless (eq :primary (function-spec-post-value-variables contract))
+    (unless (and (typep (function-spec-return-spec contract) 'return-values-spec)
+                 (function-spec-postconditions contract)
+                 (function-spec-postcondition-function contract))
+      (error 'invalid-function-spec-form :form (function-spec-post-value-variables contract)
+             :reason "Explicit post-value bindings require fixed returns and a post predicate."))
+    (validate-post-value-variables
+     (function-spec-post-value-variables contract)
+     (length (tuple-spec-element-specs (function-spec-return-spec contract)))
+     (call-declaration-variables (function-spec-argument-specs contract))))
   contract)
 
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)
@@ -565,13 +604,21 @@ as its reduction.  The shapes come from the nested errors instead."
   (let* ((contract (checked-contract property))
          (registry (getf context :registry))
          (returns (function-spec-return-spec contract))
+         (return-schema (function-spec-return-schema contract))
+         (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
          (signals (function-spec-signal-spec contract))
          (pre (function-spec-precondition-function contract))
          (post (function-spec-postcondition-function contract))
          (outcome nil))
     (flet ((failure (reason detail condition &optional value)
              (values (if condition :error :failed) reason
-                     (failure-signature reason detail condition) detail condition value outcome)))
+                     (let ((signature (failure-signature reason detail condition)))
+                       (if (or (and (eq reason :return-spec)
+                                    (eq :values (return-schema-mode return-schema)))
+                               (and (eq reason :postcondition) values-post-p))
+                           (cons :return-values (cdr signature))
+                           signature))
+                      detail condition value outcome)))
       (handler-case
           (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                  (values (bound-call-values bound)))
@@ -580,8 +627,9 @@ as its reduction.  The shapes come from the nested errors instead."
                 (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
                        (condition (when (eq :signaled (call-outcome-kind raw-outcome))
                                     (call-outcome-condition raw-outcome)))
-                       (value (return-schema-value (function-spec-return-schema contract)
-                                                   (call-outcome-values raw-outcome))))
+                       (value (first (call-outcome-values raw-outcome)))
+                       (projected (return-schema-value return-schema
+                                                       (call-outcome-values raw-outcome))))
                   ;; Freeze invocation evidence before contract predicates can mutate returns.
                   (setf outcome
                         (make-call-outcome
@@ -603,13 +651,14 @@ as its reduction.  The shapes come from the nested errors instead."
                     (condition (failure :condition nil condition))
                     (t
                      (let ((explanation (when returns
-                                          (explain-data returns value :registry registry))))
+                                          (explain-data returns projected :registry registry))))
                        (cond
                          ((and explanation (not (getf explanation :valid)))
                           (failure :return-spec explanation nil value))
                          (post
                           (multiple-value-bind (holds index tag)
-                              (apply post value values)
+                              (apply post (if values-post-p (call-outcome-values raw-outcome) value)
+                                      values)
                             (if holds
                                 (values :passed nil nil nil nil value outcome)
                                 (failure :postcondition
@@ -641,20 +690,23 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod definition-description ((contract function-spec))
   "Describe the contract declaration, not the target implementation."
   (values
-   (list :entity-kind :function-spec :name (function-spec-name contract)
-         :variables (loop for entry in (function-spec-argument-specs contract)
+   (append
+    (unless (eq :primary (function-spec-post-value-variables contract))
+      (list :post-value-variables (function-spec-post-value-variables contract)))
+    (list :entity-kind :function-spec :name (function-spec-name contract)
+          :variables (loop for entry in (function-spec-argument-specs contract)
                            collect (if (consp entry)
                                        (if (third entry)
                                            (list (first entry) :supplied (third entry))
                                            (first entry))
                                        entry))
-         :documentation (function-spec-documentation contract)
-         :source (function-spec-source-form contract)
-         :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
-         :returns (not (null (function-spec-return-spec contract)))
-         :signals (not (null (function-spec-signal-spec contract)))
-         :generator (function-spec-argument-generator contract)
-         :metadata (function-spec-metadata contract))
+          :documentation (function-spec-documentation contract)
+          :source (function-spec-source-form contract)
+          :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
+          :returns (not (null (function-spec-return-spec contract)))
+          :signals (not (null (function-spec-signal-spec contract)))
+          :generator (function-spec-argument-generator contract)
+          :metadata (function-spec-metadata contract)))
    (append (loop for entry in (function-spec-argument-specs contract)
                  when (consp entry) collect (second entry))
            (when (function-spec-return-spec contract)

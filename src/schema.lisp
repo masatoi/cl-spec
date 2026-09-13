@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
-                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
+                #:return-values-spec #:call-arguments-spec #:call-arguments-spec-layout
+                #:call-layout-data
                 #:call-layout-key-p #:call-layout-allow-other-keys-p)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:field-spec #:field-spec-closed-p #:field-descriptions)
@@ -117,7 +118,8 @@ Do not invoke user code. Source locations and capabilities are excluded."))
    (not (null (member (class-name (class-of definition))
                        '(type-spec reference-spec predicate-spec member-spec range-spec
                          instance-of-spec and-spec or-spec not-spec nullable-spec
-                         list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec))))))
+                         list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec
+                          return-values-spec))))))
 
 (defmethod definition-description ((definition property))
   (values

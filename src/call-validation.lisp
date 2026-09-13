@@ -3,15 +3,33 @@
 (defpackage #:cl-spec/src/call-validation
  (:use #:cl)
  (:import-from #:cl-spec/src/call-schema
- #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-bindings
+ #:return-values-spec #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-bindings
  #:call-layout-data #:call-layout-required-count
  #:argument-binding-name #:argument-binding-spec #:argument-binding-kind
  #:argument-binding-keyword #:bind-call-arguments #:bound-call-bindings #:bound-call-presence
- #:call-layout-rest-binding #:call-layout-shape-error #:call-layout-key-p #:call-layout-allow-other-keys-p)
+ #:call-layout-rest-binding #:call-layout-shape-error #:call-layout-key-p
+ #:call-layout-allow-other-keys-p)
  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
  (:import-from #:cl-spec/src/explain #:compile-node #:expected-descriptor #:error-datum))
 
 (in-package #:cl-spec/src/call-validation)
+
+(defmethod compile-node ((spec return-values-spec) context)
+ (let ((tuple-check (call-next-method))
+       (arity (length (cl-spec/src/ir:tuple-spec-element-specs spec)))
+       (expected (expected-descriptor spec)))
+   (lambda (value path)
+     (cond
+       ((not (finite-list-p value))
+        (list (error-datum :not-a-list path value :expected expected)))
+       ((/= (length value) arity)
+        (list (error-datum (if (< (length value) arity) :missing-values :extra-values)
+                           path value :expected expected :expected-length arity
+                           :actual-length (length value))))
+       (t (funcall tuple-check value path))))))
+
+(defmethod expected-descriptor ((spec return-values-spec))
+ (cons :values (mapcar #'expected-descriptor (cl-spec/src/ir:tuple-spec-element-specs spec))))
 
 (defmethod compile-node ((spec call-arguments-spec) context)
  (let* ((layout (call-arguments-spec-layout spec))

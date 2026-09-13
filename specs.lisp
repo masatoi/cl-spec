@@ -237,14 +237,20 @@ the malformed-normalization contract explicitly names its finite input corpus."
   (defspec-function cl-spec:definition-digest
     "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
     (:args (definition digest-definition) &key ((:registry registry) registry-object supplied))
-    (:returns (nullable string)))
+    (:returns (values (nullable string) boolean (list-of digest-omission-data)))
+    (:post-values (digest complete omissions)
+      (if complete
+          (and (stringp digest) (null omissions))
+          (and (null digest) (consp omissions)))))
   (defspec-function cl-spec:find-spec
     "Omitted registry uses the current registry; supplied registry is used explicitly."
     (:args (name arbitrary-symbol) &optional (registry registry-object supplied))
-    (:returns (nullable (instance-of spec)))
-    (:post (eq result
-               (cl-spec/src/registry:registry-find-spec
-                (if supplied registry cl-spec:*registry*) name))))
+    (:returns (values (nullable (instance-of spec)) boolean))
+    (:post-values (found-spec found-p)
+      (multiple-value-bind (expected present)
+          (cl-spec/src/registry:registry-find-spec
+           (if supplied registry cl-spec:*registry*) name)
+        (and (eq found-spec expected) (eq found-p present)))))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
     (:args (contract-spec resolved-designator) (value arbitrary-value))

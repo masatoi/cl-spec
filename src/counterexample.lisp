@@ -83,7 +83,8 @@
              (case reason
                ((:return-spec :postcondition)
                 (and (eq status :failed) (= (length signature) 3)
-                     (eq (first signature) :return-value) (eq (second signature) reason)))
+                     (member (first signature) '(:return-value :return-values))
+                      (eq (second signature) reason)))
                (:missing-condition
                 (and (eq status :failed) (equal signature '(:missing-condition))))
                (:condition-spec

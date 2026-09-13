@@ -186,7 +186,7 @@
                 #:function-spec-return-spec
                 #:function-spec-signal-spec
                 #:function-spec-preconditions
-                #:function-spec-postconditions
+                #:function-spec-postconditions #:function-spec-post-value-variables
                 #:function-spec-precondition-function
                 #:function-spec-postcondition-function
                 #:function-spec-documentation
@@ -387,7 +387,7 @@
            #:function-spec-return-spec
            #:function-spec-signal-spec
            #:function-spec-preconditions
-           #:function-spec-postconditions
+           #:function-spec-postconditions #:function-spec-post-value-variables
            #:function-spec-precondition-function
            #:function-spec-postcondition-function
            #:function-spec-documentation

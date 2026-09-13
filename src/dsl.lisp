@@ -20,7 +20,8 @@
                 #:invalid-function-spec-form-reason
                 #:invalid-generator-form)
   (:import-from #:cl-spec/src/call-schema
-                #:validate-call-declarations #:call-declaration-variables)
+                #:validate-call-declarations #:call-declaration-variables
+                #:normalize-return-declaration)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -30,7 +31,7 @@
                 #:register-property)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
-                #:register-function-spec)
+                #:register-function-spec #:validate-post-value-variables)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator
                 #:register-generator)
@@ -116,7 +117,8 @@ explicitly; the backend never silently ignores a conjunct's generator."
                                          :generator ',generator
                                          :source-location ',location))))
 
-(defparameter *function-spec-clause-keywords* '(:args :args-generator :pre :returns :post :signals)
+(defparameter *function-spec-clause-keywords*
+  '(:args :args-generator :pre :returns :post :post-values :signals)
   "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
 
 (defun function-spec-error (form reason)
@@ -178,7 +180,7 @@ input compiled into a tautology."
     (and home (find-symbol "RESULT" home))))
 
 (defun parse-function-spec-clauses (name clauses)
-  "Split CLAUSES into (values DOCUMENTATION ARGS PRE RETURNS POST ARGUMENT-GENERATOR SIGNALS).
+  "Split clauses into documentation, arguments, pre/returns/post, generator, signals and post names.
 
 Every clause is checked here rather than at check time, so a contract the
 checker could not honour never reaches the registry.  A NIL RETURNS therefore
@@ -194,6 +196,7 @@ cannot be confused."
         (pre nil)
         (returns nil)
         (post nil)
+        (post-values :primary)
         (signals nil)
         (argument-generator nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
@@ -229,6 +232,10 @@ cannot be confused."
            (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
           (:post (setf post (rest clause)))
+          (:post-values
+           (unless (and (>= (length clause) 3) (proper-list-p (second clause)))
+             (function-spec-error clause ":post-values requires a names list and predicate forms"))
+           (setf post-values (second clause) post (cddr clause)))
           (:signals
            (unless (and (= 2 (length clause)) (second clause))
              (function-spec-error clause ":signals takes exactly one non-NIL spec form"))
@@ -237,10 +244,9 @@ cannot be confused."
            (unless (= 2 (length clause))
              (function-spec-error clause ":returns takes exactly one spec form"))
            (let ((form (second clause)))
-             (when (and (consp form) (eq 'values (first form)))
-               (function-spec-error
-                clause
-                "multiple values are not supported; :returns describes one value"))
+              (when (and (consp form) (symbolp (first form))
+                         (string= "VALUES" (symbol-name (first form))))
+                (normalize-return-declaration form))
              (when (null form)
                ;; NIL as a type specifier is the type with no members, so this
                ;; contract reports every return value as a violation --
@@ -252,9 +258,18 @@ cannot be confused."
                 clause
                 "nothing satisfies the empty type NIL; write NULL instead"))
              (setf returns form))))))
-    (when (and signals (or (member :returns seen) (member :post seen)))
-      (function-spec-error clauses ":signals cannot coexist with :returns or :post"))
-    (values documentation args pre returns post argument-generator signals)))
+    (when (and (member :post seen) (member :post-values seen))
+      (function-spec-error clauses ":post and :post-values are exclusive"))
+    (when (and signals (or (member :returns seen) (member :post seen) (member :post-values seen)))
+      (function-spec-error clauses ":signals cannot coexist with returns or postconditions"))
+    (unless (eq post-values :primary)
+      (unless (and (proper-list-p returns) (symbolp (first returns))
+                    (string= "VALUES" (symbol-name (first returns))))
+        (function-spec-error
+         clauses ":post-values requires a fixed (values ...) return declaration"))
+      (validate-post-value-variables post-values (length (rest returns))
+                                     (call-declaration-variables args)))
+    (values documentation args pre returns post argument-generator signals post-values)))
 
 (defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -321,7 +336,7 @@ tagged secondary values consumed by the function checker; no form runs twice."
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
 and :POST forms have to be compiled into real functions: §60 forbids runtime
 EVAL, so a contract kept only as a list could be read but never checked."
-  (multiple-value-bind (documentation args pre returns post argument-generator signals)
+  (multiple-value-bind (documentation args pre returns post argument-generator signals post-values)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (call-declaration-variables args))
@@ -377,7 +392,8 @@ return value"
                        ',args
                        :argument-generator ',argument-generator
                        :signal-spec ,(when signals `(normalize-spec-form ',signals))
-                       :return-spec ,(when returns `(normalize-spec-form ',returns))
+                       :return-spec ',returns
+                       :post-value-variables ',post-values
                        :preconditions ',pre
                        :postconditions ',post
                        :precondition-function
@@ -387,9 +403,18 @@ return value"
                              (and ,@pre)))
                        :postcondition-function
                        ,(when post
-                          `(lambda (,result ,@variables)
-                             (declare (ignorable ,result ,@variables))
-                             ,(expand-postcondition-forms post)))
+                          (if (eq post-values :primary)
+                              `(lambda (,result ,@variables)
+                                 (declare (ignorable ,result ,@variables))
+                                 ,(expand-postcondition-forms post))
+                              (let ((returned (gensym "RETURNED")))
+                                `(lambda (,returned ,@variables)
+                                   (declare (ignorable ,@variables))
+                                   (let ((,result (first ,returned))
+                                         ,@(loop for name in post-values for index from 0
+                                                 collect `(,name (nth ,index ,returned))))
+                                     (declare (ignorable ,result ,@post-values))
+                                     ,(expand-postcondition-forms post))))))
                        :documentation ,documentation
                        :source-form ',whole
                        :source-location ',source-location)))))
@@ -399,11 +424,15 @@ return value"
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
 (:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC), (:POST FORM ...),
-or (:SIGNALS SPEC),
+(:POST-VALUES (NAME ...) FORM ...), or (:SIGNALS SPEC),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
 argument list. Its output is validated before :PRE and the target; it has no
 automatic shrink strategy.  :PRE
-sees the parameters, :POST sees them and RESULT, the value the call returned.
+sees the parameters. :POST sees them and RESULT, the primary returned value.
+(:RETURNS (VALUES SPEC ...)) checks an exact return count, including zero.
+:POST-VALUES is exclusive with :POST and requires one unique name per fixed return.
+It binds the returned values and keeps RESULT as the primary value. Missing values
+bind to NIL if a consumer runs the post predicate without return validation.
 
 :SIGNALS requires an error escaping the target to satisfy SPEC. Normal return
 fails; :SIGNALS cannot coexist with :RETURNS or :POST. Warnings and non-error
@@ -411,15 +440,15 @@ signals keep their ordinary behavior and do not satisfy this clause.
 PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
 :CONDITION failures, even if SPEC would accept them.
 
-Required and optional positional parameters, explicit keyword parameters, and one
-return value are supported. &OPTIONAL permits (PARAMETER SPEC [SUPPLIED-P]);
+Required, optional, rest and explicit keyword parameters are supported.
+&OPTIONAL permits (PARAMETER SPEC [SUPPLIED-P]);
 &REST takes one (PARAMETER WHOLE-LIST-SPEC) before any &KEY declarations.
 Its predicate variable holds the raw remaining tail, including keyword pairs.
 &KEY permits ((:KEY PARAMETER) SPEC [SUPPLIED-P]). A terminal &ALLOW-OTHER-KEYS
 permits undeclared keywords. Predicates see NIL for omitted values and a boolean
 supplied flag when declared. The first duplicate keyword value wins. Target
-defaults are evaluated only by the target. Other lambda list keywords,
-(:returns (values ...)) and unknown clauses signal
+defaults are evaluated only by the target. Other lambda list keywords
+and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 

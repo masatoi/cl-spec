@@ -338,11 +338,6 @@ instead turned a claim that is false for every input into a tautology.")
     ;; refusal names it.
     (ok (signals (macroexpand-1 '(defspec-function f (:returns nil)))
                  'invalid-function-spec-form)))
-  (testing "multiple values are refused, because :RETURNS checks one value"
-    (ok (signals (macroexpand-1 '(defspec-function f
-                                  (:args (a integer))
-                                  (:returns (values integer integer))))
-                 'invalid-function-spec-form)))
   (testing "a repeated clause is refused rather than silently taking one of them"
     (ok (signals (macroexpand-1 '(defspec-function f
                                   (:args (a integer))
@@ -1434,6 +1429,12 @@ macro expansions would need the lint exemption that file carries."
                                   :argument-specs
                                   '((head integer) &rest (tail (list-of string)))))))
         (dolist (value '(nil (1 2) (1 "valid" 3)))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-return-spec
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :return-spec '(values integer string)))))
+        (dolist (value '(nil (1) (1 "valid" :extra) ("bad" "valid")))
           (dolist (datum (getf (explain-data spec value) :errors))
             (setf seen (explained-error-keys datum seen)))))
       (testing "the audit itself saw the keys it is meant to check"

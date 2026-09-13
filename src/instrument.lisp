@@ -34,6 +34,7 @@
                 #:function-spec-signal-spec
                 #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
+                #:function-spec-post-value-variables
                 #:precondition-refuses-p)
   (:export #:unsupported-instrumentation-target #:unsupported-instrumentation-target-name
            #:unsupported-instrumentation-target-reason
@@ -145,6 +146,7 @@ return or postcondition check."))
          (output (when (and (member :output scopes) returns)
                    (compile-explainer returns :context context)))
          (post (when (member :post scopes) (function-spec-postcondition-function contract)))
+         (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
          (post-spec (when post
                       (make-instance 'predicate-spec
                                      :predicate (lambda (value-and-args)
@@ -185,19 +187,21 @@ return or postcondition check."))
           (apply original values)
           (multiple-value-call
               (lambda (&rest results)
-                (let ((value (return-schema-value return-schema results)))
+                (let ((value (return-schema-value return-schema results))
+                      (post-value (if values-post-p results (first results))))
                   (when output
                     (let ((errors (funcall output value '(:returns))))
                       (when errors
                         (contract-failure name :output :return-spec returns value errors))))
                   (when post
                     (multiple-value-bind (holds index tag)
-                         (apply post value (bound-call-values (bind-call-arguments layout values)))
+                         (apply post post-value
+                                 (bound-call-values (bind-call-arguments layout values)))
                       (unless holds
                         (let ((path (if (and (eq tag :cl-spec-post-form-failure)
                                              (integerp index) (<= 0 index) (< index post-count))
                                         (list index :post) '(:post)))
-                              (value-and-args (cons value values)))
+                              (value-and-args (cons post-value values)))
                           (contract-failure
                            name :post :postcondition post-spec value-and-args
                            (list (error-datum :predicate-failed path value-and-args

@@ -106,10 +106,10 @@ return-value class; within each clause, spec shapes or post-form indices must ag
 An unknown post-form identity never establishes a match, including clause crossings."
   (and original candidate
        (eq (first original) (first candidate))
-       (not (and (eq (first original) :return-value)
+       (not (and (member (first original) '(:return-value :return-values))
                  (eq (second original) :postcondition)
                  (null (third original))))
-       (not (and (eq (first candidate) :return-value)
+       (not (and (member (first candidate) '(:return-value :return-values))
                  (eq (second candidate) :postcondition)
                  (null (third candidate))))
        (if (eq (first original) :return-value)

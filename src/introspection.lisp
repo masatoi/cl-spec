@@ -55,7 +55,7 @@
                 #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec #:function-spec-signal-spec
                 #:function-spec-preconditions
-                #:function-spec-postconditions
+                #:function-spec-postconditions #:function-spec-post-value-variables
                 #:function-spec-documentation
                 #:function-spec-source-form
                 #:function-spec-source-location
@@ -230,9 +230,13 @@ they hold runs CHECK-FUNCTION rather than inspecting them.
 The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
 :DEFINITION-DIGEST, :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and
 :CAPABILITIES (SCHEMA-INFO, §38.1). These envelope keys are always present.
-Argument, return, signals and argument-schema nodes are plain IR projections."
+Argument, return, signals and argument-schema nodes are plain IR projections.
+Fixed return declarations use :KIND :VALUES with ordered children. Explicit
+:POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (append (definition-metadata contract :registry registry)
+            (unless (eq :primary (function-spec-post-value-variables contract))
+              (list :post-value-variables (function-spec-post-value-variables contract)))
             (list :name (function-spec-name contract)
                   ;; KIND is retained for compatibility; ENTITY-KIND routes records.
                   :kind :function-spec

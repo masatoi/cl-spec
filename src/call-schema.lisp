@@ -2,12 +2,15 @@
 
 (defpackage #:cl-spec/src/call-schema
  (:use #:cl)
- (:import-from #:cl-spec/src/ir #:spec #:spec-kind #:spec-children)
+ (:import-from #:cl-spec/src/ir #:spec #:spec-kind #:spec-children
+                #:tuple-spec #:tuple-spec-element-specs)
  (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
  (:import-from #:cl-spec/src/conditions #:invalid-function-spec-form)
- (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
+ (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p
+                #:validate-definition #:definition-validation-slots #:call-with-definition-rollback)
  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
- (:export #:call-layout-rest-binding #:argument-binding-keyword #:call-layout-key-p
+ (:export #:return-values-spec #:normalize-return-declaration #:call-layout-rest-binding
+ #:argument-binding-keyword #:call-layout-key-p
  #:call-layout-allow-other-keys-p #:call-layout-positional-count #:call-layout-shape-error
  #:validate-call-declarations #:normalize-call-declarations #:call-declaration-variables
  #:argument-binding-supplied-name #:call-layout-required-count #:call-layout-data
@@ -208,10 +211,57 @@
          (push (cons (argument-binding-supplied-name binding) present-p) bindings))))
    (%make-bound-call raw-arguments (nreverse values) (nreverse presence) (nreverse bindings))))
 
-(defstruct (return-schema (:constructor %make-return-schema (primary-spec)) (:copier nil))
-  "The legacy primary-value contract, distinct from a future fixed values contract."
+(defclass return-values-spec (tuple-spec) ()
+ (:documentation "An exact ordered list of returned values, including zero values."))
+
+(defmethod spec-kind ((object return-values-spec)) :values)
+
+(defmethod definition-validation-slots append ((object return-values-spec))
+ '(cl-spec/src/ir::element-specs))
+
+(defmethod validate-definition ((object return-values-spec))
+ (let ((elements (tuple-spec-element-specs object)))
+   (unless (and (finite-list-p elements) (every (lambda (element) (typep element 'spec)) elements))
+     (error 'invalid-function-spec-form :form elements
+            :reason "Return value elements must be a finite proper list of normalized specs.")))
+ object)
+
+(defmethod shared-initialize :around ((object return-values-spec) slot-names &rest initargs)
+ (declare (ignore slot-names initargs))
+ (call-with-definition-rollback object (lambda () (call-next-method))))
+
+(defmethod shared-initialize :after ((object return-values-spec) slot-names &key)
+ (declare (ignore slot-names))
+ (validate-definition object))
+
+(defun normalize-return-declaration (form)
+ "Normalize function-only VALUES syntax while preserving ordinary spec error conditions."
+ (unless (finite-definition-form-p form)
+   (error 'invalid-function-spec-form :form form :reason "Return declaration must be finite."))
+ (cond
+   ((typep form 'return-values-spec) (validate-definition form))
+   ((and (consp form) (symbolp (car form)) (string= "VALUES" (symbol-name (car form))))
+    (unless (finite-list-p form)
+      (error 'invalid-function-spec-form :form form :reason "VALUES must be a proper list."))
+    (when (some (lambda (child)
+                  (and (symbolp child) (plusp (length (symbol-name child)))
+                       (char= #\& (char (symbol-name child) 0))))
+                (cdr form))
+      (error 'invalid-function-spec-form :form form
+             :reason "VALUES requires fixed spec positions, without lambda-list markers."))
+    (handler-case
+        (make-instance 'return-values-spec :source-form form
+                       :element-specs (mapcar #'normalize-spec-form (cdr form)))
+      (invalid-function-spec-form (condition) (error condition))
+      (error ()
+        (error 'invalid-function-spec-form :form form
+               :reason "Invalid return value specification."))))
+   (t (normalize-spec-form form))))
+
+(defstruct (return-schema (:constructor %make-return-schema (primary-spec mode)) (:copier nil))
+  "A primary-value or exact fixed-values return declaration."
   (primary-spec nil :type (or null spec) :read-only t)
-  (mode :primary :type (member :primary) :read-only t))
+  (mode :primary :type (member :primary :values) :read-only t))
 
 (defclass call-arguments-spec (spec)
  ((layout :initarg :layout :reader call-arguments-spec-layout))
@@ -227,13 +277,14 @@
  (check-type (call-arguments-spec-layout object) call-layout))
 
 (defun make-return-schema (&key primary-spec)
-  "Describe an optional normalized primary-value spec without changing return arity."
+  "Describe a normalized primary-value or fixed-values declaration."
   (check-type primary-spec (or null spec))
-  (%make-return-schema primary-spec))
+  (when (typep primary-spec 'return-values-spec) (validate-definition primary-spec))
+  (%make-return-schema primary-spec (if (typep primary-spec 'return-values-spec) :values :primary)))
 
 (defun return-schema-value (schema returned-values)
-  "Project the primary value; zero values and one NIL both project to NIL.
-The original outcome retains their distinct return counts."
+  "Project the full list for fixed values, otherwise the first value or NIL.
+The original outcome always retains its distinct return count."
   (check-type schema return-schema)
   (unless (finite-list-p returned-values) (error 'program-error))
-  (first returned-values))
+  (if (eq :values (return-schema-mode schema)) returned-values (first returned-values)))

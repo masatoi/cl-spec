@@ -7,6 +7,10 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/return-values-schema-test)
+  (:import-from #:cl-spec/tests/multiple-values-function-test)
+  (:import-from #:cl-spec/tests/multiple-values-instrument-test)
+  (:import-from #:cl-spec/tests/multiple-values-evidence-test)
   (:import-from #:cl-spec/tests/rest-call-schema-test)
   (:import-from #:cl-spec/tests/rest-function-test)
   (:import-from #:cl-spec/tests/rest-generator-test)

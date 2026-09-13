@@ -55,6 +55,18 @@
             (property-result-status
              (check-function 'cl-spec:find-spec :trials 50 :seed 42))))))
 
+(deftest multiple-values-are-covered-by-self-specifications
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (entry '((cl-spec:find-spec 2) (cl-spec:definition-digest 3)))
+      (let* ((contract (find-function-spec (first entry)))
+             (schema (cl-spec:function-spec-return-spec contract)))
+        (ok (eq :values (cl-spec:spec-kind schema)))
+        (ok (= (second entry) (length (cl-spec:spec-children schema))))
+        (ok (= (second entry) (length (cl-spec:function-spec-post-value-variables contract))))
+        (ok (eq :passed (property-result-status
+                         (check-function contract :trials 50 :seed 42))))))))
+
 (deftest target-outcome-has-an-executable-data-contract
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

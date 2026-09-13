@@ -71,7 +71,7 @@
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional引数と主値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
@@ -1171,10 +1171,10 @@ D1（対応範囲）の決定：
 
 | 項目 | MVPの扱い |
 |---|---|
-| lambda list | 必須引数と`&optional`を受け付ける。`&key`にも対応する。`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| lambda list | 必須引数と`&optional`・`&key`・`&rest`を受け付ける。その他のlambda-list keywordは拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
 | 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
 | clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
-| 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
+| 多値 | `(:returns (values SPEC...))`で固定個数と各値を検査する。通常の`:returns SPEC`は主返り値のみ（0値ならNIL）。`:post-values (NAME...)`で各値を明示束縛する |
 | `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
 | pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
 | 全引数generator | `(:args-generator NAME)`で登録済み`defgenerator`を指定可能。引数順のproper listを一回で生成し、個数と各specを検証した後に`:pre`を適用する |
@@ -1496,17 +1496,18 @@ coreのみのloadでは関数定義を書き換えるmoduleもgenerator backend�
 | scope | 検査内容 | 実行時点 |
 |---|---|---|
 | `:input` | 引数個数、各引数spec、`:pre` | target実行前 |
-| `:output` | 主返り値のspec | targetが正常に返った後 |
-| `:post` | 主返り値と引数の事後条件 | output検査の後 |
+| `:output` | 主返り値または固定多値のspecと個数 | targetが正常に返った後 |
+| `:post` | 主返り値または明示束縛した各値と引数の事後条件 | output検査の後 |
 
 `:args`はtargetのlambda listのprefixではなく、許容する全引数を定義する。
 `(:args (a integer))`なら、targetが`&optional`・`&rest`・`&key`を持っていても
-契約が許すのは1引数の呼び出しだけである。追加引数の契約は未対応であり、未検査で通過させない。
+契約が許すのは1引数の呼び出しだけである。追加引数を許す場合はoptional/key/rest宣言を指定する。
 
 既定は全scope。部分集合・空listを指定できる。不明なscope・proper list以外は
 `type-error`で拒否し、既存の関数定義を変更しない。無効scopeの検査はコンパイルも実行もしない。
 targetは一度だけ実行し、正常時は全multiple valuesをそのまま返す。
-契約が検査するのは主返り値のみ（返り値0個の場合はNIL）。target自身のconditionはそのまま伝播する。
+通常の返り値契約は主値のみ（0値ならNIL）、明示多値契約は全値と個数を検査する。
+target自身のconditionはそのまま伝播する。
 pre predicateの`spec-violation`は`check-function`と同じ入力refusalとして扱い、
 `:input / :precondition`の`instrumentation-violation`へ変換する。
 preのその他のerror、およびpostのerrorはそのconditionを伝播する。
@@ -1517,7 +1518,8 @@ preのその他のerror、およびpostのerrorはそのconditionを伝播する
 reasonは`:arity`、`:argument-spec`、`:precondition`、`:return-spec`、`:postcondition`。
 既存の`spec-violation-spec/value/path/errors`も利用できる。
 `:spec`は実際の引数・戻り値のIR、arityでは引数tuple、pre/postでは合成したpredicate spec。
-preの`:value`は引数list、postの`:value`は`(primary-value . arguments)`とし、
+preの`:value`は引数list、postの`:value`は通常`(primary-value . arguments)`、
+`:post-values`では`(returned-values-list . arguments)`とし、
 それぞれのpredicate specの入力と一致させる。関数名は専用のfunction readerに保持する。
 errorsには`error-datum`を使い、値は`:actual`、kindは`:wrong-length`や`:predicate-failed`など
 既存explainerの語彙で表す。scope・reasonはconditionの専用readerで区別する。
@@ -3852,7 +3854,7 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 | ID | 決定・実装済み | 残る判断・受け入れ条件 | 関連節 |
 |---|---|---|---|
-| D1 | required引数・主返り値・pre/post、必須errorのsignals契約、全引数generator、runtime scope | optional/key/rest・多値・signalsの非error／選択的outcome・実行前状態・明示post束縛は拡張時に決める | §17〜21 |
+| D1 | required/optional/key/rest引数・主返り値/固定多値・pre/post/post-values、必須errorのsignals契約、全引数generator、runtime scope | signalsの非error／選択的outcome・実行前状態・optional/rest返り値は拡張時に決める | §17〜21 |
 | D2 | statusとreason、必須trials、budget・棄却数、0件／全件棄却のskip、adapterの検証不足集計 | 実行環境・入力coverageの未知情報、fixture／timeout等の結果との統合 | §14・19・47、LLM-01 |
 | D3 | seed/profile replay、宣言digest、観測した元／縮小反例の保持 | 保存入力の直接再検査API、可逆artifact、options・環境・fixture復元条件 | §15・57、LLM-03 |
 | D4 | 入力domain/pre検査、failure identity、未知post identity拒否、縮小採否の表示、mutation検知 | 中断・時間／回数予算切れ・完了を分ける結果、任意状態の復元。大域最小性は保証しない | §14・16、LLM-04 |
@@ -4331,3 +4333,33 @@ restとkeyの共存では、注釈なしの正確な(list-of t)だけをkeyword 
 explain経路には宣言rest名を用い、introspection/digestは:kind :restとwhole-list specを保持する。
 自己仕様のrest-projection-agrees-with-targetはcheck-functionを通じ、CL:LISTの実際の戻り値と
 postconditionのrest束縛が一致する法則を生成検査する。
+
+
+## Fixed multiple-value return contracts implementation addendum (issue #18)
+
+`(:returns (values SPEC...))`は固定個数の返り値を要求する。0個、1個のNIL、
+複数個を区別し、不足・余剰をそれぞれ`:missing-values`・`:extra-values`で報告する。
+通常の`:returns SPEC`と`:post`のRESULTは従来どおり主値で、0値ならNIL。
+VALUESはFunction Specの戻り値宣言だけで認識し、一般データDSLへ追加しない。
+内部`return-values-spec`は順序付き子specを持ち、派生return-schemaは`:values` modeとなる。
+
+`(:post-values (NAME...) FORM...)`は固定値数と同数の変数を明示束縛する。
+変数は相互に一意かつ束縛可能で、引数・suppliedness変数・RESULT名との衝突を拒否する。
+空の変数listは0値契約に対応する。bodyは必要。`:post`・`:signals`と併用不可。
+RESULTの暗黙束縛は主値のまま。CLOSの`:post-value-variables`は通常`:primary`、
+明示多値では変数listで、対応するcompiled post predicateの第一引数は全値listとなる。
+同readerを公開し、再初期化も他のpost slotと整合しなければrollbackする。
+
+返り値を取得するためにtargetを再実行しない。1回の実行で全値を取得し、predicate前に
+証拠をsnapshotする。固定多値のfailure identityは`:return-values`、位置は既存の
+`:tuple-path`へ保持し、異なる位置・個数違反・post違反への縮小を採用しない。
+postの失敗form位置が不明の場合は同一失敗と認めない。
+
+instrumentationはoutput scopeで同じ値射影を検査し、正常時は元の全値を同順・同個数で返す。
+post scopeだけを有効にした場合、明示束縛はmultiple-value-bind同様、不足位置をNILとし
+余剰値を束縛しない。個数の契約はoutput scopeが担当する。targetのcondition/restartは保持する。
+
+definition/result schema v1へ`:values` nodeと`:post-value-variables`を加算する。
+古いprimary-only宣言のdigestは変更しない。artifact v1は新しいfailure identityを認識し、
+従来どおり入力と失敗の同一性を保存する。返り値の保存可能性を反例保存の条件にしない。
+自己仕様はfind-specの2値、definition-digestの3値とその相互関係を検査する。

@@ -7,7 +7,8 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required/optional positional, keyword and rest arguments, with either one return value or a required error outcome,
+required/optional positional, keyword and rest arguments, primary or fixed multiple
+return values, or a required error outcome,
 including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
@@ -286,6 +287,41 @@ arrays are captured before contract predicates can change them. The existing
 Artifact v1 still persists concrete arguments and failure identity, so opaque
 returned objects do not prevent direct rechecking.
 
+### Fixed multiple return values
+
+```lisp
+(defun divide-with-remainder (numerator denominator)
+  (floor numerator denominator))
+(cl-spec:defspec-function divide-with-remainder
+  (:args (numerator integer) (denominator (range integer 1 20)))
+  (:returns (values integer integer))
+  (:post-values (quotient remainder)
+    (= numerator (+ (* quotient denominator) remainder))
+    (<= 0 remainder (1- denominator))))
+```
+
+`(:returns (values SPEC...))` checks the exact count and each value in order.
+`(:returns (values))` accepts zero values, while `(values null)` requires one NIL.
+Ordinary `(:returns SPEC)` still checks only the primary value, treating zero
+values as NIL. The `values` declaration is specific to Function Spec returns.
+
+`:post-values` explicitly names every return and cannot coexist with `:post` or
+`:signals`. It requires a fixed return declaration, a body, and distinct bindable
+names that do not collide with arguments, suppliedness variables, or `RESULT`.
+`RESULT` still means the primary value in either post clause. Existing `:post`
+also works with a fixed return declaration. CLOS construction accepts
+`:return-spec '(values ...)` and `:post-value-variables '(...)`; its compiled
+post predicate receives the full value list before the bound arguments.
+`function-spec-post-value-variables` returns `:primary` for an ordinary post.
+
+Count failures distinguish `:missing-values` and `:extra-values`; per-value
+errors retain their zero-based position in `:tuple-path`. Shrinking preserves
+that position and does not cross a fixed return violation into a post violation.
+Results retain primary `:value` and all frozen values in `:outcome`. Artifact v1
+persists the new `:return-values` failure identity for direct recheck; it still
+requires only the concrete inputs to be serializable. Definition/result schema
+v1 gains the `:values` IR kind and explicit `:post-value-variables` metadata.
+
 ### Optional positional arguments
 
 ```lisp
@@ -335,11 +371,11 @@ Generation includes declared key pairs; shrinking can remove whole pairs.
 ### Rest arguments
 
 ```lisp
-(defun total (&rest values) (reduce #'+ values :initial-value 0))
+(defun total (&rest items) (reduce #'+ items :initial-value 0))
 (cl-spec:defspec-function total
-  (:args &rest (values (list-of integer)))
+  (:args &rest (items (list-of integer)))
   (:returns integer)
-  (:post (= result (reduce #'+ values :initial-value 0))))
+  (:post (= result (reduce #'+ items :initial-value 0))))
 ```
 
 `&rest (NAME WHOLE-LIST-SPEC)` declares exactly one parameter without a suppliedness
@@ -422,7 +458,7 @@ Load the optional system, then select the checks to enforce at call sites:
 ```
 
 All three scopes are enabled by default. `:input` checks arity, argument specs and
-`:pre`; `:output` checks the primary return value; `:post` checks postconditions.
+`:pre`; `:output` checks the primary or fixed multiple-value return contract; `:post` checks postconditions.
 Checks use no generator. Violations are `cl-spec/instrument:instrumentation-violation`
 conditions, a subtype of `cl-spec:spec-violation`, with function, scope and reason
 readers in the instrumentation package. Existing spec-violation readers expose
@@ -481,7 +517,10 @@ the target accepts optional extras. Optional contracts preserve omission; rest c
 
 Violation specs are the actual argument/return IR, an argument tuple for arity, or
 a predicate spec for pre/post. Precondition values are the argument list; postcondition
-values are `(primary-value . arguments)`. Error records use the usual `:actual`,
+values are `(primary-value . arguments)` for `:post` and
+`(returned-values-list . arguments)` for `:post-values`. With only `:post` scope
+enabled, explicit value bindings use NIL for absent values and ignore extra values;
+return count enforcement belongs to `:output`. Error records use the usual `:actual`,
 `:expected`, and explainer `:kind` vocabulary.
 
 Serialize installation/removal
