@@ -136,3 +136,24 @@
       (ok (eq :used (property-result-shrunk-outcome result)))
       (ok (>= (length shrunk) 2))
       (ok (= (length shrunk) (length (remove-duplicates shrunk :test #'eql)))))))
+
+(deftest unique-nullable-domains-are-deduplicated
+  (let ((spec (normalize-spec-form '(list-of (nullable boolean) :min-length 2 :unique t)))
+        (too-large (normalize-spec-form
+                    '(list-of (nullable boolean) :min-length 3 :unique t))))
+    (let ((samples (sample spec :count 20 :seed 5)))
+      (ok (every (lambda (items)
+                   (= (length items) (length (remove-duplicates items :test #'eql))))
+                 samples)))
+    (testing "NIL is one value of the nullable-boolean domain, not two"
+      (ok (signals (sample too-large :count 1) 'generator-unavailable)))))
+
+(deftest unique-resolves-named-finite-domains
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (defspec finite-id (member 1 2 3))
+    (defspec named-distinct (list-of finite-id :min-length 2 :max-length 3 :unique t))
+    (let ((samples (sample 'named-distinct :count 20 :seed 5)))
+      (ok (every (lambda (items)
+                   (and (<= 2 (length items) 3)
+                        (= (length items) (length (remove-duplicates items :test #'eql)))))
+                 samples)))))

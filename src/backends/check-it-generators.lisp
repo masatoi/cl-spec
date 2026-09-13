@@ -363,7 +363,10 @@ check-it's guard generator, which recurses with no depth limit.")
 
 (defmethod enumerable-values ((spec nullable-spec) context)
   (let ((inner (enumerable-values (nullable-spec-inner-spec spec) context)))
-    (when inner (cons nil inner))))
+    ;; ADJOIN rather than CONS: a boolean or member inner domain already holds
+    ;; NIL, and an EQL-duplicated domain would overstate the finite size and let
+    ;; UNIQUE draw a repeated NIL.
+    (when inner (adjoin nil (copy-list inner) :test #'eql))))
 
 (defmethod enumerable-values ((spec range-spec) context)
   (declare (ignore context))
@@ -382,6 +385,21 @@ check-it's guard generator, which recurses with no depth limit.")
         (unless child-values (return-from enumerable-values nil))
         (setf values (union values child-values :test #'eql))))
     values))
+
+(defmethod enumerable-values ((spec reference-spec) context)
+  "Resolve a named spec so a finite domain reached by name stays enumerable.
+
+Without this, (list-of id :unique t) for (defspec id (member 1 2 3)) refused
+generation even though the target is one of the enumerable domains."
+  (let ((target (reference-spec-target spec))
+        (registry (context-registry context)))
+    (when (member target *reference-trail*)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "recursive specs have no finite element enumeration"))
+    (let ((resolved (resolve-spec target registry))
+          (*reference-trail* (cons target *reference-trail*)))
+      (enumerable-values resolved context))))
 
 (defun shuffle-list (list)
   "Return a fresh copy of LIST in random order (Fisher-Yates)."
