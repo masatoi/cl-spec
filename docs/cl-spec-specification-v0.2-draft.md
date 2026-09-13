@@ -3564,6 +3564,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| `trial-observation-outcome` | 未収集、returned全値、signaled条件診断を表すdata |
 | `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
 | digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
@@ -3585,7 +3586,7 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-11関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+12関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
 任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
@@ -4233,3 +4234,31 @@ supply them separately from a property's slots. Invalid index diagnostics preser
 the offending value and describe the finite symbol-list constraint. Runtime version
 provenance uses a release version variable, checked against the ASDF system by tests,
 without importing ASDF into the property-runner module.
+
+
+### Call schema / observed outcome implementation addendum (issue #14)
+
+`src/call-schema.lisp`は内部の`call-layout`、`argument-binding`、`bound-call`、
+`return-schema`を定義する。実呼出し引数、述語の束縛値、名前付きbinding、suppliednessを分離し、
+対象関数のdefault式や述語を実行しない。現段階のlayoutは必須位置引数のみを表す。
+`function-spec-call-layout`と`function-spec-return-schema`は現在のslotから導出するため、
+reinitialize後に古いschemaを参照しない。公開`function-spec-argument-schema`は従来のtupleを返し、
+reader、generator指定、宣言digestの既存値を維持する。
+
+`src/call-outcome.lisp`の`invoke-target-once`はtargetを一度だけ呼び、
+returnedの全値list、またはsignaledの元のerror instanceを保持する。
+`:returns`は従来どおり主値だけを検査し、0値ならNILへ射影する。
+`evaluate-trial`の先頭6戻り値は互換とし、省略可能な第7値でtarget outcomeを渡す。
+条件判定と戻り値述語の前に、全戻り値のcons/配列をsnapshotする。
+PROGRAM-ERROR/UNDEFINED-FUNCTION予約、`:signals`の排他・必須error、既存の失敗署名は変わらない。
+
+`trial-observation-outcome`とresult v1のfailure内`:outcome`は
+`(:kind :returned :values LIST)`または
+`(:kind :signaled :condition-type TYPE :condition-report STRING-OR-NIL)`を返す。
+旧6値拡張の欠落は`:not-collected`。既存`:value`は主値のまま。
+artifact v1は実引数と失敗同一性を保持し、targetの返した任意オブジェクトを永続化する要件は加えない。
+旧artifactの読込とgeneratorなしの再検証は維持する。
+
+instrumentationは同じbinding/return射影を使うが、targetをcatchして再signalするhelperは使わない。
+既存のmultiple-value-callを保ち、callerからtargetのrestartを利用できる。
+optional/key/restおよび明示的な多値DSLは後続issueで追加する。

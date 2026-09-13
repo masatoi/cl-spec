@@ -3,10 +3,12 @@
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
+  (:import-from #:cl-spec/src/call-outcome
+                #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property #:property #:property-function)
   (:export #:*trial-observations* #:trial-observation #:make-trial-observation
            #:trial-observation-arguments #:trial-observation-arguments-mutated-p
-           #:trial-observation-status
+           #:trial-observation-outcome #:trial-observation-status
            #:trial-observation-reason #:trial-observation-signature
            #:trial-observation-explanation #:trial-observation-condition
            #:trial-observation-condition-report #:trial-observation-value
@@ -29,6 +31,7 @@ text at observation time."
   (explanation nil :read-only t)
   (condition nil :read-only t)
   (condition-report nil :read-only t)
+  (outcome :not-collected :read-only t)
   (value nil :read-only t))
 
 (defun snapshot-value (value)
@@ -155,11 +158,25 @@ Specializations must classify during this invocation, never by rerunning it."))
        (eq *trial-observations* (trial-observation-run observation))
        (eq property (trial-observation-property observation))))
 
+(defun observed-outcome-data (outcome)
+  "Freeze target observations separately from contract classification."
+  (cond
+    ((null outcome) :not-collected)
+    ((not (typep outcome 'call-outcome))
+     (error 'invalid-backend-result :reason "evaluate-trial returned an invalid target outcome"))
+    ((eq :returned (call-outcome-kind outcome))
+     (list :kind :returned :values (snapshot-value (call-outcome-values outcome))))
+    ((eq :signaled (call-outcome-kind outcome))
+     (let ((condition (call-outcome-condition outcome)))
+       (list :kind :signaled :condition-type (type-of condition)
+             :condition-report (render-condition-report condition))))
+    (t (error 'invalid-backend-result :reason "unknown target outcome kind"))))
+
 (defun observe-trial (property arguments &key context)
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.
 Mutations of conses and arrays, including changed sharing, stop backend shrinking."
   (let ((snapshot (snapshot-value arguments)))
-    (multiple-value-bind (status reason signature explanation condition value)
+    (multiple-value-bind (status reason signature explanation condition value outcome)
         (evaluate-trial property arguments :context context)
       (unless (and (member status '(:passed :rejected :failed :error))
                    (if (member status '(:failed :error))
@@ -179,4 +196,5 @@ Mutations of conses and arrays, including changed sharing, stop backend shrinkin
        :explanation (snapshot-value explanation)
        :condition condition
        :condition-report (render-condition-report condition)
-       :value (snapshot-value value)))))
+       :outcome (observed-outcome-data outcome)
+        :value (snapshot-value value)))))

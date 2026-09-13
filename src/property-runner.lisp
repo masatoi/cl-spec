@@ -14,7 +14,7 @@
                 #:property-trials)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/execution
-                #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
+                #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
                 #:trial-observation-status
                 #:trial-observation-arguments #:trial-observation-condition
                 #:trial-observation-reason #:trial-observation-signature
@@ -183,6 +183,7 @@ and the shrunk counterexample are what make a failure actionable."))
           :reason (trial-observation-reason observation)
           :signature (trial-observation-signature observation)
           :explanation (trial-observation-explanation observation)
+          :outcome (trial-observation-outcome observation)
           :value (trial-observation-value observation)
           :condition-report (trial-observation-condition-report observation))))
 

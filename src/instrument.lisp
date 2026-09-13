@@ -8,6 +8,11 @@
 
 (defpackage #:cl-spec/src/instrument
   (:use #:cl)
+  (:import-from #:cl-spec/src/call-schema
+                #:call-layout-bindings #:bind-call-arguments #:bound-call-values
+                #:return-schema-primary-spec #:return-schema-value)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec-call-layout #:function-spec-return-schema)
   (:nicknames #:cl-spec/instrument)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
@@ -22,7 +27,7 @@
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
                 #:function-spec-signal-spec
-                #:function-spec-return-spec #:function-spec-precondition-function
+                #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
                 #:precondition-refuses-p)
   (:export #:unsupported-instrumentation-target #:unsupported-instrumentation-target-name
@@ -108,7 +113,8 @@ return or postcondition check."))
 (defun make-contract-wrapper (name original contract registry scopes)
   "Compile enabled checks and capture their predicates around ORIGINAL."
   (let* ((arguments (function-spec-argument-specs contract))
-         (arity (length arguments))
+         (layout (function-spec-call-layout contract))
+         (arity (length (call-layout-bindings layout)))
          (context (list :registry registry))
          (input-p (member :input scopes))
          (argument-schema (when input-p
@@ -123,7 +129,8 @@ return or postcondition check."))
          (pre-test (when pre
                      (lambda (values) (not (precondition-refuses-p pre values)))))
          (pre-spec (when pre (make-instance 'predicate-spec :predicate pre-test)))
-         (returns (function-spec-return-spec contract))
+         (return-schema (function-spec-return-schema contract))
+         (returns (return-schema-primary-spec return-schema))
          (output (when (and (member :output scopes) returns)
                    (compile-explainer returns :context context)))
          (post (when (member :post scopes) (function-spec-postcondition-function contract)))
@@ -144,7 +151,9 @@ return or postcondition check."))
               for value in values
               for errors = (funcall explainer value path)
               when errors do (contract-failure name :input :argument-spec spec value errors))
-        (when (precondition-refuses-p pre values)
+        (when (and pre
+                    (precondition-refuses-p
+                     pre (bound-call-values (bind-call-arguments layout values))))
           (contract-failure name :input :precondition pre-spec values
                             (list (error-datum :predicate-failed '(:pre) values
                                                :predicate pre-test
@@ -153,13 +162,14 @@ return or postcondition check."))
           (apply original values)
           (multiple-value-call
               (lambda (&rest results)
-                (let ((value (first results)))
+                (let ((value (return-schema-value return-schema results)))
                   (when output
                     (let ((errors (funcall output value '(:returns))))
                       (when errors
                         (contract-failure name :output :return-spec returns value errors))))
                   (when post
-                    (multiple-value-bind (holds index tag) (apply post value values)
+                    (multiple-value-bind (holds index tag)
+                         (apply post value (bound-call-values (bind-call-arguments layout values)))
                       (unless holds
                         (let ((path (if (and (eq tag :cl-spec-post-form-failure)
                                              (integerp index) (<= 0 index) (< index post-count))

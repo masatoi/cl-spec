@@ -7,6 +7,11 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/observed-outcome-test)
+  (:import-from #:cl-spec/tests/call-schema-test)
+  (:import-from #:cl-spec/tests/call-outcome-test)
+  (:import-from #:cl-spec/tests/function-outcome-test)
+  (:import-from #:cl-spec/tests/instrument-outcome-test)
   (:import-from #:cl-spec/tests/shrink-report-test)
   (:import-from #:cl-spec/tests/custom-shrinker-definition-test)
   (:import-from #:cl-spec/tests/custom-shrinker-test)

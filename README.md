@@ -276,6 +276,16 @@ shrinker, custom argument tuples retain their original observation.
 The CLOS equivalent is `:argument-generator`; `function-spec-data` includes
 `:argument-generator` and the derived tuple `:argument-schema`.
 
+Function checks record the target outcome separately from the contract verdict.
+`trial-observation-outcome` and each `result-data` failure expose either
+`(:kind :returned :values (...))` or
+`(:kind :signaled :condition-type ... :condition-report ...)`. Returned conses and
+arrays are captured before contract predicates can change them. The existing
+`:value` remains the primary value; zero values and one `NIL` stay distinct in
+`:outcome`. Older six-value evaluator extensions report `:not-collected`.
+Artifact v1 still persists concrete arguments and failure identity, so opaque
+returned objects do not prevent direct rechecking.
+
 ### Shrinking correlated arguments
 
 A leading `:shrink` clause receives the current argument list and returns a proper

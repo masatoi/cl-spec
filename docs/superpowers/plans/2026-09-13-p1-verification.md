@@ -70,3 +70,32 @@ CLOS rollback, finite whole-call list validation, candidates rejected by domain,
 preconditions and failure identity, duplicates, mutation, errors and budgets.
 Reports are additive optional artifact v1 metadata. Built-in shrinking does not
 claim the custom search budget/report.
+
+## #14 compatibility decisions
+
+- Neutral call-layout/bound-call descriptors separate raw arguments, predicate
+  values, named bindings and suppliedness. Required positional syntax remains
+  the only syntax in this checkpoint. Derived adapters read current contract
+  slots; no second authoritative cache is stored.
+- The existing argument-schema API still returns the same tuple, preserving
+  generator annotation and complete declaration digest bytes. Return-schema
+  projects the legacy primary value, including NIL for zero values.
+- Target invocation captures one tagged outcome and all returned values. Existing
+  six evaluate-trial return values stay unchanged; an optional seventh carries
+  the target outcome. Legacy specializations remain valid.
+- Trial evidence adds frozen :outcome data: :returned/:values or
+  :signaled/:condition-type/:condition-report. :value stays the primary value.
+  Snapshot target values before contract predicates can change them.
+- Instrumentation shares binding and primary-return projection, preserves
+  multiple-value-call delivery, and does not catch/re-signal target errors,
+  retaining active restart contexts.
+- Result schema v1 is additive. Artifact v1 keeps its concrete call arguments
+  and failure identity; diagnostic returned objects need not be persistable.
+  Old artifacts and six-value evaluators remain readable/executable.
+
+## #14 validation checkpoint
+
+Complete: 467 Rove tests; clean-process full suite; changed-file Mallet; forced
+core compilation; diff checks. Tests compare legacy digest, classifications,
+pre/post order, fresh derived schemas, full-value snapshots, zero values versus
+one NIL, error identity and active target restarts under instrumentation.

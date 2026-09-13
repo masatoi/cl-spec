@@ -141,7 +141,7 @@
                 #:make-trial-observation
                 #:trial-observation-arguments
                 #:trial-observation-arguments-mutated-p
-                #:trial-observation-status
+                #:trial-observation-status #:trial-observation-outcome
                 #:trial-observation-reason
                 #:trial-observation-signature
                 #:trial-observation-explanation
@@ -344,7 +344,7 @@
            #:make-trial-observation
            #:trial-observation-arguments-mutated-p
            #:trial-observation-arguments
-           #:trial-observation-status
+           #:trial-observation-status #:trial-observation-outcome
            #:trial-observation-reason
            #:trial-observation-signature
            #:trial-observation-explanation

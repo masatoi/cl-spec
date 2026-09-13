@@ -25,6 +25,12 @@
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
                 #:resolve-definition #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
+  (:import-from #:cl-spec/src/call-schema
+                #:make-call-layout #:bind-call-arguments #:bound-call-values
+                #:make-return-schema #:return-schema-value)
+  (:import-from #:cl-spec/src/call-outcome
+                #:invoke-target-once #:make-call-outcome
+                #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
                 #:property-source-form)
@@ -58,6 +64,7 @@
            #:function-spec-name
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema
+           #:function-spec-call-layout #:function-spec-return-schema
            #:function-spec-return-spec
            #:function-spec-signal-spec
            #:function-spec-preconditions
@@ -309,6 +316,14 @@ would run while introspection reported no such clause"
                  :element-specs (mapcar #'second (function-spec-argument-specs contract))
                  :generator (function-spec-argument-generator contract)))
 
+(defun function-spec-call-layout (contract)
+  "Derive the call layout from CONTRACT\'s current argument declarations."
+  (make-call-layout (function-spec-argument-specs contract)))
+
+(defun function-spec-return-schema (contract)
+  "Derive the return schema from CONTRACT\'s current primary return declaration."
+  (make-return-schema :primary-spec (function-spec-return-spec contract)))
+
 (defun register-function-spec (function-spec &optional (registry *registry*))
   "Register FUNCTION-SPEC in REGISTRY under its own name and return it."
   (registry-register-function-spec registry
@@ -546,51 +561,61 @@ as its reduction.  The shapes come from the nested errors instead."
          (returns (function-spec-return-spec contract))
          (signals (function-spec-signal-spec contract))
          (pre (function-spec-precondition-function contract))
-         (post (function-spec-postcondition-function contract)))
+         (post (function-spec-postcondition-function contract))
+         (outcome nil))
     (flet ((failure (reason detail condition &optional value)
              (values (if condition :error :failed) reason
-                     (failure-signature reason detail condition) detail condition value)))
+                     (failure-signature reason detail condition) detail condition value outcome)))
       (handler-case
-          (if (precondition-refuses-p pre arguments)
-              (values :rejected nil nil nil nil nil)
-              (multiple-value-bind (value condition)
-                  (handler-case (values (apply (checked-target property) arguments) nil)
-                    (error (condition) (values nil condition)))
-                (cond
-                  ;; A broad expected-error spec must not certify a broken call.
-                  ;; Preserve target evidence, as for contracts without :SIGNALS.
-                  ((typep condition '(or program-error undefined-function))
-                   (failure :condition nil condition))
-                  (signals
-                   (if condition
-                       (let ((explanation (explain-data signals condition :registry registry)))
-                         (if (getf explanation :valid)
-                             (values :passed nil nil nil nil nil)
-                             (failure :condition-spec explanation condition)))
-                       (failure :missing-condition
-                                (list :expected (expected-descriptor signals)) nil value)))
-                  (condition (failure :condition nil condition))
-                  (t
-                   (let ((explanation (when returns
-                                        (explain-data returns value :registry registry))))
-                     (cond
-                       ((and explanation (not (getf explanation :valid)))
-                        (failure :return-spec explanation nil value))
-                       (post
-                        (multiple-value-bind (holds index tag)
-                            (apply post value arguments)
-                          (if holds
-                              (values :passed nil nil nil nil value)
-                              (failure :postcondition
-                                       (when (and (eq tag :cl-spec-post-form-failure)
-                                                  (integerp index)
-                                                  (<= 0 index)
-                                                  (< index
-                                                     (length
-                                                      (function-spec-postconditions contract))))
-                                         (list :post-form index))
-                                       nil value))))
-                       (t (values :passed nil nil nil nil value))))))))
+          (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
+                 (values (bound-call-values bound)))
+            (if (precondition-refuses-p pre values)
+                (values :rejected nil nil nil nil nil nil)
+                (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
+                       (condition (when (eq :signaled (call-outcome-kind raw-outcome))
+                                    (call-outcome-condition raw-outcome)))
+                       (value (return-schema-value (function-spec-return-schema contract)
+                                                   (call-outcome-values raw-outcome))))
+                  ;; Freeze invocation evidence before contract predicates can mutate returns.
+                  (setf outcome
+                        (make-call-outcome
+                         :kind (call-outcome-kind raw-outcome)
+                         :values (snapshot-value (call-outcome-values raw-outcome))
+                         :condition condition))
+                  (cond
+                    ;; Broad expected-error contracts must not certify a broken call.
+                    ((typep condition '(or program-error undefined-function))
+                     (failure :condition nil condition))
+                    (signals
+                     (if condition
+                         (let ((explanation (explain-data signals condition :registry registry)))
+                           (if (getf explanation :valid)
+                               (values :passed nil nil nil nil nil outcome)
+                               (failure :condition-spec explanation condition)))
+                         (failure :missing-condition
+                                  (list :expected (expected-descriptor signals)) nil value)))
+                    (condition (failure :condition nil condition))
+                    (t
+                     (let ((explanation (when returns
+                                          (explain-data returns value :registry registry))))
+                       (cond
+                         ((and explanation (not (getf explanation :valid)))
+                          (failure :return-spec explanation nil value))
+                         (post
+                          (multiple-value-bind (holds index tag)
+                              (apply post value values)
+                            (if holds
+                                (values :passed nil nil nil nil value outcome)
+                                (failure :postcondition
+                                         (when (and (eq tag :cl-spec-post-form-failure)
+                                                    (integerp index)
+                                                    (<= 0 index)
+                                                    (< index
+                                                       (length
+                                                        (function-spec-postconditions contract))))
+                                           (list :post-form index))
+                                         nil value))))
+                         (t (values :passed nil nil nil nil value outcome)))))))))
         ;; Structural errors in the contract itself still abort an initial trial.
         ;; The backend rejects these if encountered only during shrinking.
         ((and error (not undefined-function) (not program-error)) (condition)

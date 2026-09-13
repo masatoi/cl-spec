@@ -84,7 +84,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
-     cl-spec:custom-generator-shrinker))
+     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -126,6 +126,24 @@ the malformed-normalization contract explicitly names its finite input corpus."
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
     (:signals (type cl-spec:invalid-counterexample-artifact)))
+  (defspec target-outcome-data
+    (or (member :not-collected)
+        (plist (:required (:kind (member :returned)) (:values (list-of t))))
+        (plist (:required (:kind (member :signaled))
+                          (:condition-type t) (:condition-report (nullable string))))))
+  (defgenerator observation-generator ()
+    (cl-spec:make-trial-observation
+     :outcome (case (random 3)
+                (0 :not-collected)
+                (1 (list :kind :returned :values (list (draw-value))))
+                (t (list :kind :signaled :condition-type 'simple-error
+                         :condition-report "sample")))))
+  (defspec observed-trial (instance-of cl-spec:trial-observation)
+    (:generator observation-generator))
+  (defspec-function cl-spec:trial-observation-outcome
+    "Observed target data is distinct from the contract classification."
+    (:args (observation observed-trial))
+    (:returns target-outcome-data))
   (defgenerator custom-generator-definition-generator ()
     (make-instance 'cl-spec:custom-generator :name 'generated-custom-generator
                    :function (lambda () 4)
