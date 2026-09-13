@@ -33,7 +33,9 @@
 (in-package #:cl-spec/src/counterexample)
 
 (define-condition invalid-counterexample-artifact (error)
-  ((reason :initarg :reason :reader invalid-counterexample-artifact-reason))
+  ((reason :initarg :reason
+           :reader invalid-counterexample-artifact-reason
+           :documentation "Why the serialized artifact cannot be accepted."))
   (:documentation "Malformed, unsupported or excessive persisted counterexample data.")
   (:report (lambda (condition stream)
              (format stream "Invalid counterexample artifact: ~A"
