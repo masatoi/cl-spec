@@ -31,6 +31,14 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest custom-shrinker-reader-has-an-executable-contract
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:custom-generator-shrinker))
+    (ok (eq :passed
+            (property-result-status
+             (check-function 'cl-spec:custom-generator-shrinker :trials 20 :seed 42))))))
+
 (deftest malformed-dsl-has-an-executable-error-contract
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
@@ -56,7 +64,7 @@
           (ok (member name (cl-spec:properties-for target))))))
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
-    (ok (= 10 (length (cl-spec:list-function-specs))))
+    (ok (= 11 (length (cl-spec:list-function-specs))))
     (ok (= 8 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
@@ -64,7 +72,7 @@
         (original-validp (fdefinition 'cl-spec:validp)))
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
-      (ok (= 10 (length (cl-spec:list-function-specs))))
+      (ok (= 11 (length (cl-spec:list-function-specs))))
       (ok (= 8 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))

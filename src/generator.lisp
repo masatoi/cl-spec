@@ -108,6 +108,18 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
        (member (getf report :generation) '(:available :unavailable :unknown))
        (member (getf report :shrinking) '(:available :unavailable :unknown :none))))
 
+(defun shrink-report-p (report)
+  "Recognize a bounded count report independently of backend-specific termination keywords."
+  (or (null report)
+      (and (proper-list-p report) (= 6 (length report))
+           (let ((keys (loop for key in report by #'cddr collect key)))
+             (and (= 3 (length (remove-duplicates keys)))
+                  (every (lambda (key) (member key '(:candidates :budget :termination))) keys)))
+           (typep (getf report :budget) '(integer 0 100000))
+           (typep (getf report :candidates) '(integer 0 *))
+           (<= (getf report :candidates) (getf report :budget))
+           (keywordp (getf report :termination)))))
+
 (defun validate-backend-outcome (outcome property budget)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
@@ -122,6 +134,8 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                (setf (gethash tail cells) t)
                (push (car tail) seen)
                (setf tail (cddr tail))))
+    (unless (shrink-report-p (getf outcome :shrink-report))
+      (refuse ":shrink-report requires bounded candidate counts and a termination keyword"))
     (when (and (getf outcome :capabilities)
                (not (capability-report-p (getf outcome :capabilities))))
       (refuse ":capabilities must report valid generation and shrinking states"))

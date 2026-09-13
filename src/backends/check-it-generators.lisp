@@ -54,13 +54,13 @@
   (:import-from #:cl-spec/src/registry
                 #:registry-find-generator)
   (:import-from #:cl-spec/src/generator-definition
-                #:custom-generator-function)
+                #:custom-generator-function #:custom-generator-shrinker)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
-  (:export #:custom-value-generator #:spec-generator
+  (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
            #:compile-spec-generator))
 
@@ -97,7 +97,9 @@ check-it's GENERATE treats a non-generator as a constant."))
 (defclass custom-value-generator (generator)
   ((function :initarg :function
              :reader custom-value-generator-function
-             :documentation "Function of no arguments returning one value."))
+             :documentation "Function of no arguments returning one value.")
+   (shrinker :initarg :shrinker :initform nil :reader custom-value-generator-shrinker
+             :documentation "Optional copied-value to finite candidate-list function."))
   (:documentation "A generator that calls a user function once per draw.
 
 Its own class rather than the MAPPED-GENERATOR over a constant this first was.
@@ -113,12 +115,9 @@ shrink path only, which is why a sample and a passing run hid it (PR review)."))
     value))
 
 (defmethod shrink ((generator custom-value-generator) test)
-  "Return the cached value unchanged: this backend did not build it.
-
-A smaller value would have to come from the user's function, and calling it again
-would put a fresh draw forward as the reduction of a value it has nothing to do
-with.  Returning the value itself keeps the run's own counterexample, and the
-result says through FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME that nothing was reduced."
+  "Keep nested custom values unchanged.
+The backend invokes an explicit shrinker only for a whole argument generator,
+where it can validate and observe the complete correlated candidate."
   (declare (ignore test))
   (cached-value generator))
 
@@ -192,7 +191,8 @@ FOLD-AND-CHILDREN. A generator on the whole AND overrides folding explicitly."
              :spec spec
              :reason (format nil "the custom generator ~S is not registered" name)))
     (make-instance 'custom-value-generator
-                   :function (custom-generator-function entry))))
+                   :function (custom-generator-function entry)
+                   :shrinker (custom-generator-shrinker entry))))
 
 (defmethod spec-generator :around ((spec spec) context)
   "Prefer the custom generator SPEC names over the one its node type would build.

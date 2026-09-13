@@ -30,7 +30,7 @@
   (:import-from #:cl-spec/src/utils/random
                 #:make-seed
                 #:seed->random-state)
-  (:export #:property-result-options #:property-result-provenance
+  (:export #:property-result-shrink-report #:property-result-options #:property-result-provenance
            #:result-data #:property-result-schema-metadata #:property-result-budget
            #:property-result-entity-kind
            #:property-result-failure-evidence #:property-result-shrunk-evidence
@@ -54,7 +54,10 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((options :initarg :options :initform nil :reader property-result-options
+  ((shrink-report :initarg :shrink-report :initform :not-collected
+                  :reader property-result-shrink-report
+                  :documentation "Candidate count, budget and termination captured by the backend.")
+   (options :initarg :options :initform nil :reader property-result-options
             :documentation "Caller options captured before backend execution.")
    (provenance :initarg :provenance
                :initform (list :backend :unknown :lisp-implementation-type :unknown
@@ -214,6 +217,7 @@ results without captured metadata have an explicitly incomplete digest."
                    :counterexample (property-result-counterexample result)
                    :shrunk-counterexample (property-result-shrunk-counterexample result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
+                    :shrink-report (property-result-shrink-report result)
                    :failure (observation-data (property-result-failure-evidence result))
                    :shrunk-failure (observation-data (property-result-shrunk-evidence result))
                    :elapsed (property-result-elapsed result))))))
@@ -337,6 +341,8 @@ backend."
                    :profile effective-profile
                    :failure-evidence original :shrunk-evidence shrunk
                    :shrunk-outcome (getf outcome :shrunk-outcome)
+                    :shrink-report (snapshot-value (or (getf outcome :shrink-report)
+                                                      :not-collected))
                    :rejected (getf outcome :rejected 0)
                    :counterexample (when original
                                      (name-arguments property

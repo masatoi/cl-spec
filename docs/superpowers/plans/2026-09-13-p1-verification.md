@@ -60,3 +60,13 @@ forced core compilation and git diff check passed. Existing digest golden values
 are stable, old artifacts recheck successfully, resource-limit diagnostics use
 lazy array traversal. Review corrections cover old captured metadata and bounded
 pending scanner allocation.
+
+## #13 validation checkpoint
+
+Complete: 444 Rove tests, clean-process full suite, changed-file Mallet, forced
+core compilation and diff checks passed. Accepted custom shrinks persist and
+directly recheck without another draw. Regression checks cover malformed DSL,
+CLOS rollback, finite whole-call list validation, candidates rejected by domain,
+preconditions and failure identity, duplicates, mutation, errors and budgets.
+Reports are additive optional artifact v1 metadata. Built-in shrinking does not
+claim the custom search budget/report.

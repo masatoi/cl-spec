@@ -43,7 +43,7 @@
                 #:property-result-elapsed
                 #:run-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
-                #:property-result-shrunk-outcome #:property-result-rejected
+                #:property-result-shrunk-outcome #:property-result-shrink-report #:property-result-rejected
                 #:property-result-failure-reason #:property-result-explanation
                 #:property-result-entity-kind)
   (:import-from #:cl-spec/src/generator
@@ -686,6 +686,7 @@ are accepted. A run with no admitted trials is :SKIPPED."
                    :failure-evidence (property-result-failure-evidence result)
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
+                    :shrink-report (property-result-shrink-report result)
                    :condition (property-result-condition result)
                    :elapsed (property-result-elapsed result)
                    :rejected (property-result-rejected result)

@@ -11,6 +11,7 @@
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form
                 #:invalid-property-form
@@ -555,6 +556,26 @@ After the first non-option form, remaining forms are ordinary Lisp code.
     (> (+ x y) x))"
   (expand-property-definition whole name arguments body (current-source-location)))
 
+(defun parse-generator-body (body)
+  "Split optional documentation and a leading shrink clause from generator draw forms."
+  (unless (and (finite-list-p body) (finite-definition-form-p body))
+    (error 'invalid-generator-form :form nil :reason :invalid-body))
+  (let ((documentation (when (and (stringp (first body)) (rest body)) (pop body)))
+        (shrinker nil))
+    (when (and (consp (first body)) (eq (caar body) :shrink))
+      (let ((clause (pop body)))
+        (unless (and (finite-list-p clause) (>= (length clause) 3))
+          (error 'invalid-generator-form :form clause :reason :invalid-shrink-clause))
+        (let ((binding (second clause)))
+          (unless (and (finite-list-p binding) (= (length binding) 1)
+                       (first binding) (symbolp (first binding)) (not (constantp (first binding)))
+                       (not (lambda-list-keyword-name-p (first binding))))
+            (error 'invalid-generator-form :form clause :reason :invalid-shrink-clause))
+          (setf shrinker `(lambda ,binding ,@(cddr clause))))))
+    (when (and (consp (first body)) (eq (caar body) :shrink))
+      (error 'invalid-generator-form :form (first body) :reason :duplicate-shrink-clause))
+    (values documentation shrinker body)))
+
 (defmacro defgenerator (&whole whole name lambda-list &body body)
   "Define a custom generator named NAME (specification §11).
 
@@ -579,6 +600,8 @@ refuses, which is a true statement about the generator rather than a silent pass
 a guard that retried until a draw conformed would recurse with no depth limit,
 which SRC/BACKENDS/CHECK-IT-GENERATORS.LISP refuses to build elsewhere.
 
+An optional leading (:SHRINK (VALUE) BODY...) clause after documentation supplies
+an ordered finite list of candidate values. Its one binding must be a valid variable.
 A leading string in BODY is documentation when anything follows it, and the
 generated value when the string is the whole body -- the rule DEFPROPERTY uses.
 BODY is called for a value, so a body that returns a check-it generator produces
@@ -593,12 +616,13 @@ that object as the value rather than drawing from it."
            :form whole
            :reason (format nil "LAMBDA-LIST must be empty, but ~S was given"
                            lambda-list)))
-  (let ((location (current-source-location)))
-    `(register-generator
-      (make-instance 'custom-generator
-                     :name ',name
-                     :function (lambda ,lambda-list ,@body)
-                     :documentation ,(when (and (stringp (first body)) (rest body))
-                                       (first body))
-                     :source-form ',whole
-                     :source-location ',location))))
+  (multiple-value-bind (documentation shrinker draw-forms) (parse-generator-body body)
+    (let ((location (current-source-location)))
+      `(register-generator
+        (make-instance 'custom-generator
+                       :name ',name
+                       :function (lambda ,lambda-list ,@draw-forms)
+                       :shrinker ,shrinker
+                       :documentation ,documentation
+                       :source-form ',whole
+                       :source-location ',location)))))

@@ -26,12 +26,15 @@
       (let ((data (counterexample-artifact-data (make-counterexample-artifact result))))
         (remf data :digest-omissions)
         (remf data :digest-exclusions)
+        (remf data :shrink-report)
         (let* ((wire (cl-spec/src/utils/artifact-values:serialize-artifact-value data))
                (artifact (deserialize-counterexample-artifact wire)))
           (ok (eq :not-collected
                   (getf (counterexample-artifact-data artifact) :digest-omissions)))
           (ok (eq :not-collected
                   (getf (counterexample-artifact-data artifact) :digest-exclusions)))
+          (ok (eq :not-collected
+                  (getf (counterexample-artifact-data artifact) :shrink-report)))
           (ok (eq :same-failure
                   (getf (recheck-counterexample artifact :registry registry
                                                :state-policy :stateless) :status))))))))

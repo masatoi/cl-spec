@@ -1443,8 +1443,28 @@ generator自身のerrorは伝播し、有効な値が出るまで再試行する
 
 有効な引数でも`:pre`を満たさなければ棄却し、その件数を結果に載せる。
 seedは通常の実行と同じrandom stateに適用されるため、generatorがそのstateを使い、
-外部状態に依存しなければ入力列を再現できる。custom tupleに縮小方法は定義しない。
-失敗時は元の観測を保持して`:shrunk-outcome :none`とし、独立生成用shrinkerへ置き換えない。
+外部状態に依存しなければ入力列を再現できる。`defgenerator`は省略可能な先頭節
+`(:shrink (arguments) body...)`をdocstringの後、draw bodyの前に受け付ける。
+CLOSでは`:shrinker`に一引数関数またはNILを指定し、`custom-generator-shrinker`で読む。
+既存の引数なしdraw bodyは変わらない。sourceがある定義のshrinker更新は、sourceとdraw関数を
+同時に更新する。shrinkerの有無とsourceをdigestに反映し、省略した既存定義のdigestは維持する。
+
+shrinkerはコピーされた現在の全引数listを受け、優先順の有限proper listとして候補を返す。
+候補は全引数schema、`:pre`、targetの順に調べ、入力変更がなく元の失敗署名に一致する候補だけを
+採用する。採用候補から探索を再開する。訪問済み入力を再実行せず、引数ごとの独立縮小を併用しない。
+省略時は元の観測を保持して`:shrunk-outcome :none`となる。
+
+custom全引数縮小では`:options '(:shrink-budget N)`で候補予算を指定する（既定100、整数0〜100000）。
+生成前に予算を検証する。候補batch全体のproper-list検査も残予算内で行い、超過batchは実行しない。
+候補数には重複・schema不適合・pre棄却も含む。生成試行数`:trials`と区別し、
+`property-result-shrink-report` / `result-data`の`:shrink-report`へ
+`(:candidates N :budget B :termination KEYWORD)`を保存する。
+artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠落は`:not-collected`と解釈する。
+縮小を観測しない旧backendにも同じ値を用いる。
+
+候補列の不正、shrinker error、検出したcons/配列変更は探索を停止し、元の証拠とそれ以前の採用証拠を
+保持する。任意のユーザーコード自体の停止・外部状態復元・大域的最小性は保証しない。
+再現には決定的候補順序が必要。nested custom value generatorの縮小は従来のno-opを維持する。
 
 上記3変数の比較テスト（100生成、seed 42）では、独立生成は80棄却・20回の関数検査、
 全引数generatorは0棄却・100回の関数検査となった。これはこの生成分布での実測であり、
@@ -2310,7 +2330,7 @@ backend無しは`:generation :unavailable :shrinking :unavailable`、query未実
 として返す。値を生成せず、custom generator・対象関数・SATISFIES述語を実行しない。
 生成成功や契約を満たすdrawの存在を保証するqueryではない。
 
-縮小を無効化したproperty、空tuple、rootがcustom generator（参照経由を含む）、tuple/mappingの
+縮小を無効化したproperty、空tuple、rootがshrinkerを持たないcustom generator（参照経由を含む）、tuple/mappingの
 全要素に縮小戦略が無い場合は`:shrinking :none`。listは要素がcustomでも長さを縮小できる。
 他の`:available`は縮小戦略の存在だけを意味し、要素ごとの縮小可能性や
 必ず有効な縮小候補が得られることを保証しない。`:instrumentation`はcoreのみでは`:unavailable`。
@@ -3544,6 +3564,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
 | digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
 | 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
@@ -3558,13 +3579,13 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
 狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
 正規化成功まで主張しない。`validate`の正常系は引数集合generatorで構築し、rejectに予算を費やさない。
-custom generatorには縮小戦略がないので、この範囲の失敗は元の反例を保持する。
+この自己仕様のcustom generatorにはshrinkerを指定していないため、失敗は元の反例を保持する。
 explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
 introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-10関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+11関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
 任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 

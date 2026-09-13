@@ -7,6 +7,9 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/shrink-report-test)
+  (:import-from #:cl-spec/tests/custom-shrinker-definition-test)
+  (:import-from #:cl-spec/tests/custom-shrinker-test)
   (:import-from #:cl-spec/tests/digest-details-test)
   (:import-from #:cl-spec/tests/instrument-digest-details-test)
   (:import-from #:cl-spec/tests/function-invariants-test)

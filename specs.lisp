@@ -83,7 +83,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
-    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition))
+    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
+     cl-spec:custom-generator-shrinker))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -125,6 +126,18 @@ the malformed-normalization contract explicitly names its finite input corpus."
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
     (:signals (type cl-spec:invalid-counterexample-artifact)))
+  (defgenerator custom-generator-definition-generator ()
+    (make-instance 'cl-spec:custom-generator :name 'generated-custom-generator
+                   :function (lambda () 4)
+                   :shrinker (when (zerop (random 2))
+                               (lambda (value) (if (zerop value) nil (list 0))))))
+  (defspec custom-generator-definition
+    (instance-of cl-spec:custom-generator)
+    (:generator custom-generator-definition-generator))
+  (defspec-function cl-spec:custom-generator-shrinker
+    "A custom generator exposes an optional callable shrink strategy."
+    (:args (generator custom-generator-definition))
+    (:returns (nullable function)))
   (defgenerator definition-generator ()
     (make-instance 'cl-spec:property :name 'generated-definition
                                     :arguments '((x integer)) :function #'identity))

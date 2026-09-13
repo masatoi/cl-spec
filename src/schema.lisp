@@ -23,7 +23,7 @@
                 #:property-metadata #:property-argument-schema)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator #:custom-generator-name #:custom-generator-source-form
-                #:custom-generator-documentation)
+                #:custom-generator-documentation #:custom-generator-shrinker)
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:backend-capabilities)
   (:export #:schema-info #:definition-digest #:definition-metadata #:definition-graph
            #:definition-description #:definition-entity-kind #:definition-generation-schema
@@ -123,9 +123,10 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          (not (null (property-source-form definition))))))
 
 (defmethod definition-description ((definition custom-generator))
-  (values (list :entity-kind :generator :name (custom-generator-name definition)
-                :documentation (custom-generator-documentation definition)
-                :source (custom-generator-source-form definition))
+  (values (append (list :entity-kind :generator :name (custom-generator-name definition)
+                        :documentation (custom-generator-documentation definition)
+                        :source (custom-generator-source-form definition))
+                  (when (custom-generator-shrinker definition) (list :shrinker t)))
           nil nil (and (eq (class-name (class-of definition)) 'custom-generator)
                         (not (null (custom-generator-source-form definition))))))
 

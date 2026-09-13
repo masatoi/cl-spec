@@ -159,7 +159,7 @@
                 #:property-result-entity-kind
                 #:property-result-failure-evidence
                 #:property-result-shrunk-evidence
-                #:property-result-shrunk-outcome
+                #:property-result-shrunk-outcome #:property-result-shrink-report
                 #:property-result-rejected
                 #:property-result-failure-reason
                 #:property-result-failure-signature
@@ -205,7 +205,7 @@
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator
                 #:custom-generator-name
-                #:custom-generator-function
+                #:custom-generator-function #:custom-generator-shrinker
                 #:custom-generator-documentation
                 #:custom-generator-source-form
                 #:custom-generator-source-location
@@ -358,7 +358,7 @@
            #:property-result-entity-kind
            #:property-result-failure-evidence
            #:property-result-shrunk-evidence
-           #:property-result-shrunk-outcome
+           #:property-result-shrunk-outcome #:property-result-shrink-report
            #:property-result-rejected
            #:property-result-failure-reason
            #:property-result-failure-signature
@@ -405,7 +405,7 @@
            ;; Custom generators
            #:custom-generator
            #:custom-generator-name
-           #:custom-generator-function
+           #:custom-generator-function #:custom-generator-shrinker
            #:custom-generator-documentation
            #:custom-generator-source-form
            #:custom-generator-source-location

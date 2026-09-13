@@ -20,7 +20,7 @@
                 #:tuple-generator #:mapped-generator #:guard-generator
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
-                #:compile-spec-generator #:custom-value-generator
+                #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children)
   (:import-from #:cl-spec/src/field-spec #:field-required-p)
   (:import-from #:cl-spec/src/generator
@@ -36,6 +36,7 @@
                 #:trial-observation-status
                 #:trial-observation-signature)
   (:import-from #:cl-spec/src/conditions #:invalid-generated-arguments)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/property
@@ -172,57 +173,121 @@ distribution no run draws (§73.4 #6)."
            (setf arguments (cdr arguments)))
   (null arguments))
 
-(defun validate-generated-arguments (name validators arguments)
-  "Reject malformed or out-of-domain custom draws before evaluating a contract."
-  (let ((tail arguments))
-    (dolist (validator validators)
-      (declare (ignore validator))
-      (unless (consp tail)
-        (error 'invalid-generated-arguments :generator name
-               :value (snapshot-value arguments) :reason "expected a proper list of the arity"))
-      (setf tail (cdr tail)))
-    (when tail
-      (error 'invalid-generated-arguments :generator name
-             :value (snapshot-value arguments) :reason "expected a proper list of the arity")))
+(defun validate-generated-arguments (name validator arguments)
+  "Reject invalid whole argument sets before evaluating a contract."
   (let ((before (snapshot-value arguments)))
-    (unless (admitted-arguments-p validators arguments)
+    (unless (and (finite-list-p arguments) (funcall validator arguments))
       (error 'invalid-generated-arguments :generator name
-             :value before :reason "an argument does not satisfy its spec"))
+             :value before :reason "the argument set does not satisfy its schema"))
     (unless (same-value-p before arguments)
       (error 'invalid-generated-arguments :generator name
              :value before :reason "validation mutated the generated argument set")))
   arguments)
+
+(defun bounded-candidate-list (candidates limit)
+  "Return a refusal keyword and inspected count, or NIL for a finite admissible batch.
+Over-budget batches are refused before any candidate can invoke user predicates."
+  (let ((seen (make-hash-table :test #'eq)) (count 0) (tail candidates))
+    (loop
+      (when (null tail) (return (values nil count)))
+      (unless (and (consp tail) (not (gethash tail seen)))
+        (return (values :invalid-candidates count)))
+      (when (= count limit) (return (values :budget-exhausted count)))
+      (setf (gethash tail seen) t tail (cdr tail))
+      (incf count))))
+
+(defun shrink-custom-arguments (generator property original validator context budget)
+  "Search correlated candidate argument sets while retaining original failure identity.
+Return accepted observation, whether another failure occurred, and a bounded report."
+  (let ((accepted nil) (different nil) (count 0)
+        (current (trial-observation-arguments original))
+        (visited (list (snapshot-value (trial-observation-arguments original)))))
+    (labels ((finish (reason)
+               (return-from shrink-custom-arguments
+                 (values accepted different
+                         (list :candidates count :budget budget :termination reason)))))
+      (loop
+        (when (= count budget) (finish :budget-exhausted))
+        (let* ((input (snapshot-value current))
+               (candidates
+                 (handler-case (funcall (custom-value-generator-shrinker generator) input)
+                   (error () (finish :shrinker-error)))))
+          (unless (same-value-p input current) (finish :mutation))
+          (multiple-value-bind (reason inspected) (bounded-candidate-list candidates (- budget count))
+            (when reason (incf count inspected) (finish reason)))
+          (let ((improved nil))
+            (dolist (candidate candidates)
+              (incf count)
+              (unless (some (lambda (prior) (same-value-p prior candidate)) visited)
+                (let* ((arguments (snapshot-value candidate))
+                       (before (snapshot-value arguments)))
+                  (push before visited)
+                  (let ((admitted
+                          (handler-case (and (finite-list-p arguments) (funcall validator arguments))
+                            (error () (finish :validation-error)))))
+                    (unless (same-value-p before arguments) (finish :mutation))
+                    (when admitted
+                      (let ((observation
+                              (handler-case (observe-trial property arguments :context context)
+                                (error () (finish :execution-error)))))
+                        (when (trial-observation-arguments-mutated-p observation) (finish :mutation))
+                        (when (observation-failure-p observation)
+                          (if (failure-identities-match-p
+                               (trial-observation-signature original)
+                               (trial-observation-signature observation))
+                              (progn
+                                (setf accepted observation
+                                      current (trial-observation-arguments observation)
+                                      improved t)
+                                (return))
+                              (setf different t)))))))))
+            (unless improved (finish :exhausted))))))))
 
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
   "Generate trials and retain only admitted, observed reductions of the original failure.
 The shrinker's return value is not evidence: some generators transform it after
 the last callback. Reject internal representations and domain violations before
 calling user code, and keep existing evidence if shrinking itself fails."
-  (let* ((context (list :registry (getf options :registry)))
+  (let* ((shrink-budget (getf options :shrink-budget 100))
+         (context (list :registry (getf options :registry)))
          (trials (getf options :trials))
          (shrink-p (getf (property-metadata property) :shrink t))
          (schema (property-argument-schema property))
          (custom-name (spec-generator-name schema))
+         (whole-validator (compile-validator schema :context context))
          (compiled (compile-generator backend schema :context context))
          (capabilities (compiled-capabilities compiled shrink-p))
          (validators (loop for (nil spec) in (property-arguments property)
                            collect (compile-validator spec :context context)))
          (generator (compiled-generator-generator compiled))
          (rejected 0))
+    (check-type shrink-budget (integer 0 100000))
     (with-generation-environment
         ((max *base-size* (compiled-generator-size compiled))
          :trials trials)
       (loop for trial from 1 to trials
             do (generate generator)
                (when custom-name
-                 (validate-generated-arguments custom-name validators (cached-value generator)))
+                 (validate-generated-arguments custom-name whole-validator (cached-value generator)))
                (let ((original (observe-trial property (cached-value generator)
                                               :context context)))
                  (when (eq :rejected (trial-observation-status original))
                    (incf rejected))
                  (when (observation-failure-p original)
-                   (let ((accepted nil) (different nil))
-                     (when (and shrink-p (property-arguments property)
+                   (let ((accepted nil) (different nil) (report nil))
+                     (when (typep generator 'custom-value-generator)
+                       (let ((reason (cond ((not shrink-p) :disabled)
+                                           ((trial-observation-arguments-mutated-p original) :mutation)
+                                           ((null (custom-value-generator-shrinker generator))
+                                            :no-shrinker))))
+                         (if reason
+                             (setf report (list :candidates 0 :budget shrink-budget
+                                                :termination reason))
+                             (multiple-value-setq (accepted different report)
+                               (shrink-custom-arguments generator property original whole-validator
+                                                        context shrink-budget)))))
+                     (when (and (not (typep generator 'custom-value-generator))
+                                shrink-p (property-arguments property)
                                 (not (trial-observation-arguments-mutated-p original)))
                        (handler-case
                            (block shrink-search
@@ -257,7 +322,7 @@ calling user code, and keep existing evidence if shrinking itself fails."
                      (return
                        (list :status (trial-observation-status (or accepted original))
                              :trials trial :rejected rejected :capabilities capabilities
-                             :failure original :shrunk-failure accepted
+                             :failure original :shrunk-failure accepted :shrink-report report
                              :shrunk-outcome (cond (accepted :used)
                                                    (different :different-failure)
                                                    (t :none)))))))
@@ -284,11 +349,14 @@ Lists can shrink in length even when their element generator cannot shrink."
     (t t)))
 
 (defun compiled-capabilities (compiled &optional (shrink-p t))
-  "Describe the generator actually constructed, without compiling or drawing again."
-  (list :generation :available
-        :shrinking (if (and shrink-p
-                            (generator-shrink-strategy-p (compiled-generator-generator compiled)))
-                       :available :none)))
+  "Describe actual strategies; custom candidate search is supported only at the root."
+  (let ((generator (compiled-generator-generator compiled)))
+    (list :generation :available
+          :shrinking (if (and shrink-p
+                              (if (typep generator 'custom-value-generator)
+                                  (custom-value-generator-shrinker generator)
+                                  (generator-shrink-strategy-p generator)))
+                         :available :none))))
 
 (defmethod backend-capabilities ((backend check-it-backend) spec &key registry)
   "Probe generator construction only; availability does not guarantee valid draws."

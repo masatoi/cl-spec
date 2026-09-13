@@ -59,13 +59,14 @@ instrument functions. After clearing or replacing the registry, call
 do not load the bundle. Generation is needed only to execute the checks.
 
 The contracts cover normal operation of `validp`, `validate`, `explain-data`,
-`compile-validator`, `compile-explainer`, `spec-data`, and `semantic-data`, using
+`compile-validator`, `compile-explainer`, `spec-data`, `semantic-data`, and
+`custom-generator-shrinker`, using
 their required arguments and default keyword options. A required-error contract
 covers `normalize-spec-form` on a finite malformed-DSL corpus. A Property checks
 the relation between `validate`'s refusal and `explain-data`; each function name
 currently has one registered function contract. Generators exercise a finite scalar/composite
 DSL subset; this is not exhaustive API coverage. Custom generators preserve
-original counterexamples but provide no automatic shrinking. See specification
+original counterexamples; whole-argument generators can supply a shrinker. See specification
 §68.1 for the coverage and remaining work.
 
 ### Persisting and directly rechecking a counterexample
@@ -270,10 +271,48 @@ list of the declared arity and satisfy every argument spec before `:pre` or the
 target runs. Invalid output signals `invalid-generated-arguments`, without retries.
 `:pre` still rejects valid tuples that fail its additional constraints.
 
-Use the run's random state, as above, for seeded replay. Custom argument tuples
-have no automatic shrink strategy; failures retain their original observation.
+Use the run's random state, as above, for seeded replay. Without an explicit
+shrinker, custom argument tuples retain their original observation.
 The CLOS equivalent is `:argument-generator`; `function-spec-data` includes
 `:argument-generator` and the derived tuple `:argument-schema`.
+
+### Shrinking correlated arguments
+
+A leading `:shrink` clause receives the current argument list and returns a proper
+list of candidate argument lists, in preference order:
+
+```lisp
+(cl-spec:defgenerator interval-arguments ()
+  (:shrink (arguments)
+    (unless (equal arguments '(0 2 1))
+      (list '(0 2 1))))
+  (list 10000 20000 15001))
+```
+
+Use it through `(:args-generator interval-arguments)`. The runner checks each
+candidate against the argument schema, then the precondition, then calls the
+target. It accepts only a changed input with the original failure identity and
+restarts from that input. It does not independently shrink fields. Visited inputs
+are skipped, and the original observation is retained throughout.
+
+For custom whole-argument shrinking, `check-function` and `run-property` accept
+`:options '(:shrink-budget 100)`; the
+default is 100 and the supported range is 0–100000. Candidate batches must be
+finite proper lists within the remaining budget. An oversized batch stops the
+search before invoking its candidates. Duplicates and rejected candidates consume
+budget. `property-result-shrink-report` and `result-data` expose `:candidates`,
+`:budget`, and `:termination`, separately from generated `:trials`; artifacts retain
+this report. Built-in shrinking and older backends/artifacts use `:not-collected` when they
+do not collect this report.
+
+Malformed candidate lists, shrinker errors, and detected cons/array mutation stop
+the search while preserving previous evidence. User shrinker code must terminate;
+cl-spec does not interrupt arbitrary code or restore external state. Deterministic
+candidate order is needed for replay, and the result is not a global minimum.
+The CLOS equivalent is `:shrinker`, read by `custom-generator-shrinker`; changing
+it on a source-backed generator requires matching source and draw-function updates.
+The source declaration participates in the definition digest. Nested custom value
+generators currently retain their no-op shrink behavior.
 
 ## Runtime instrumentation
 
