@@ -29,8 +29,9 @@ Return the executable semantic laws in this specification bundle.
 
 *Function*
 
-Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
-Return its name. This bundle never loads the instrumentation system itself.
+Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
+Return the INSTRUMENTATION-STATUS name. This bundle never loads the instrumentation
+system itself, so every instrumentation symbol is resolved here by name.
 
 <a name="register-specifications"></a>
 ### register-specifications
