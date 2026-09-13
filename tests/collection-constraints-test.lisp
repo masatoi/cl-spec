@@ -12,7 +12,7 @@
   (:import-from #:cl-spec/main
                 #:normalize-spec-form #:validp #:explain-data #:spec-data #:sample
                 #:definition-digest #:invalid-spec-form #:generator-unavailable
-                #:defspec #:defproperty #:run-property
+                #:defspec #:defgenerator #:defproperty #:run-property
                 #:property-result-status #:property-result-shrunk-outcome
                 #:property-result-shrunk-counterexample))
 
@@ -157,3 +157,24 @@
                    (and (<= 2 (length items) 3)
                         (= (length items) (length (remove-duplicates items :test #'eql)))))
                  samples)))))
+
+(deftest unique-refuses-to-bypass-a-custom-generator
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (defgenerator only-id () 1)
+    (defspec custom-id (member 1 2 3) (:generator only-id))
+    (defspec custom-distinct (list-of custom-id :min-length 2 :unique t))
+    (defspec custom-nullable-distinct
+        (list-of (nullable custom-id) :min-length 2 :unique t))
+    (testing "a named custom generator is not replaced by its underlying domain"
+      (ok (signals (sample 'custom-distinct :count 1) 'generator-unavailable)))
+    (testing "the refusal reaches a reference nested in another node"
+      (ok (signals (sample 'custom-nullable-distinct :count 1) 'generator-unavailable)))))
+
+(deftest shrink-capability-reflects-fixed-unique-collections
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (defspec fixed-distinct (list-of (member 1 2) :min-length 2 :max-length 2 :unique t))
+    (defspec roomy-distinct (list-of (member 1 2 3) :min-length 2 :max-length 3 :unique t))
+    (testing "a fixed-length unique collection has no reduction to offer"
+      (ok (eq :none (getf (getf (spec-data 'fixed-distinct) :capabilities) :shrinking))))
+    (testing "one with length room still shrinks"
+      (ok (eq :available (getf (getf (spec-data 'roomy-distinct) :capabilities) :shrinking))))))

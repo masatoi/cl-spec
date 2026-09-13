@@ -67,6 +67,9 @@
                 #:compile-validator)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
+           #:bounded-collection-generator #:bounded-generator-min-length
+           #:bounded-generator-max-length #:bounded-generator-enumerated
+           #:bounded-generator-element-probe
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -399,7 +402,10 @@ generation even though the target is one of the enumerable domains."
              :reason "recursive specs have no finite element enumeration"))
     (let ((resolved (resolve-spec target registry))
           (*reference-trail* (cons target *reference-trail*)))
-      (enumerable-values resolved context))))
+      ;; A custom generator owns the distribution; enumerating the target's
+      ;; underlying node would silently replace it.
+      (unless (spec-generator-name resolved)
+        (enumerable-values resolved context)))))
 
 (defun shuffle-list (list)
   "Return a fresh copy of LIST in random order (Fisher-Yates)."
@@ -426,6 +432,11 @@ fresh element generator.")
    (element-validator :initarg :element-validator
                       :reader bounded-generator-element-validator
                       :documentation "Predicate each element must satisfy.")
+   (element-probe :initarg :element-probe
+                  :initform nil
+                  :reader bounded-generator-element-probe
+                  :documentation "Eagerly compiled element generator, kept only to
+report whether element-wise shrinking is possible.")
    (min-length :initarg :min-length :reader bounded-generator-min-length)
    (max-length :initarg :max-length :reader bounded-generator-max-length)
    (unique-p :initarg :unique-p :reader bounded-generator-unique-p)
@@ -508,32 +519,49 @@ fresh element generator.")
             ((and (> (length (items)) minimum) (remove-wise)) (shrink generator test))
             (t (element-wise))))))
 
+(defun effective-generator-name (spec context)
+  "Return the custom generator SPEC names, following references, or NIL.
+
+A custom generator owns how its values are drawn, so UNIQUE refuses a domain
+whose values it would otherwise have to enumerate instead."
+  (or (spec-generator-name spec)
+      (when (typep spec 'reference-spec)
+        (let ((target (reference-spec-target spec)))
+          (unless (member target *reference-trail*)
+            (let ((*reference-trail* (cons target *reference-trail*)))
+              (effective-generator-name (resolve-spec target (context-registry context))
+                                        context)))))))
+
 (defun compile-collection-generator (spec context vector-p)
   "Compile a generator for the bounded collection SPEC."
   (let* ((element (collection-spec-element-spec spec))
          (minimum (collection-spec-min-length spec))
-         (unique (collection-spec-unique-p spec))
-         (enumerated (and unique (enumerable-values element context))))
-    ;; Compile the element once so its bounds reach *REQUIRED-SIZE*.
-    (spec-generator element context)
-    (when (and unique (null enumerated))
+         (unique (collection-spec-unique-p spec)))
+    (when (and unique (effective-generator-name element context))
       (error 'generator-unavailable
              :spec spec
-             :reason "UNIQUE needs a finite element domain to draw distinct values"))
-    (when (and unique (< (length enumerated) minimum))
-      (error 'generator-unavailable
-             :spec spec
-             :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
-                             (length enumerated) minimum)))
-    (setf *required-size* (max *required-size* minimum))
-    (make-instance 'bounded-collection-generator
-                   :element-generator (lambda () (spec-generator element context))
-                   :element-validator (compile-validator element :context context)
-                   :min-length minimum
-                   :max-length (collection-spec-max-length spec)
-                   :unique-p unique
-                   :vector-p vector-p
-                   :enumerated enumerated)))
+             :reason "UNIQUE cannot enumerate a spec whose custom generator owns its distribution"))
+    (let ((probe (spec-generator element context))
+          (enumerated (and unique (enumerable-values element context))))
+      (when (and unique (null enumerated))
+        (error 'generator-unavailable
+               :spec spec
+               :reason "UNIQUE needs a finite element domain to draw distinct values"))
+      (when (and unique (< (length enumerated) minimum))
+        (error 'generator-unavailable
+               :spec spec
+               :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
+                               (length enumerated) minimum)))
+      (setf *required-size* (max *required-size* minimum))
+      (make-instance 'bounded-collection-generator
+                     :element-generator (lambda () (spec-generator element context))
+                     :element-probe probe
+                     :element-validator (compile-validator element :context context)
+                     :min-length minimum
+                     :max-length (collection-spec-max-length spec)
+                     :unique-p unique
+                     :vector-p vector-p
+                     :enumerated enumerated))))
 
 (defmethod spec-generator ((spec list-of-spec) context)
   (if (collection-constrained-p spec)
