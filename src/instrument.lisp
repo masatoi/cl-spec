@@ -18,6 +18,7 @@
   (:import-from #:cl-spec/src/schema #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
+                #:function-spec-signal-spec
                 #:function-spec-return-spec #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
                 #:precondition-refuses-p)
@@ -80,7 +81,9 @@ return or postcondition check."))
   (null (unsupported-target-reason name)))
 
 (defmethod definition-instrumentation-capability ((contract function-spec))
-  (if (ordinary-target-p (function-spec-name contract)) :available :unavailable))
+  (if (and (not (function-spec-signal-spec contract))
+           (ordinary-target-p (function-spec-name contract)))
+      :available :unavailable))
 
 (defun valid-scopes-p (scopes)
   "Recognize a finite list containing only supported scope keywords."
@@ -173,6 +176,9 @@ return or postcondition check."))
       (if (eq reason :unbound)
           (error 'unbound-target :name name)
           (error 'unsupported-instrumentation-target :name name :reason reason)))
+    (when (function-spec-signal-spec contract)
+      (error 'unsupported-instrumentation-target
+             :name name :reason :expected-condition-contract))
     (let* ((active-p (instrumented-function-p name))
            (entry (gethash name *instrumented-functions*))
            (original (if active-p (installation-original entry) (fdefinition name)))

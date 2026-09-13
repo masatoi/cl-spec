@@ -967,7 +967,7 @@ NIL
 NILによる失敗から例外への移動、および異なるcondition型への移動は拒否する。
 通常のproperty本体の内部でどの式が偽になったかまでは判別しない。
 warning・通常のsignal・期待するconditionまで一律に失敗とする意味ではない。
-Function Specの`:signals`、condition分類、restartを含む詳細規則は§73のD1・D4で確定する。
+Function Specの必須error契約`:signals`は§17に従う。restartを含む拡張規則は未対応。
 
 ---
 
@@ -1180,7 +1180,7 @@ D1（対応範囲）の決定：
 | 全引数generator | `(:args-generator NAME)`で登録済み`defgenerator`を指定可能。引数順のproper listを一回で生成し、個数と各specを検証した後に`:pre`を適用する |
 | `result`の束縛 | 契約自身のpackageで`RESULT`が指すsymbolを、`:post`に現れかつ引数名でない場合に束縛する。`:post`に現れる`RESULT`という名前のsymbolがそれと一致しない場合は拒否する。マクロは`:post`の文面が読まれたpackageを見られないので、この解決は代理であり、外した場合に黙って別の契約をコンパイルするより拒否する。`:pre`が戻り値の名前に触れる形式も拒否する（引数名である場合を除く） |
 | 実行前の可変値の参照 | pre-stateを参照するDSLは未提供。観測には実行前のcons・配列のコピーを保存するが、任意の状態の復元は行わない |
-| signals | 対応しない。`(:signals ...)`を含む未知のclauseは拒否する |
+| signals | `(:signals SPEC)`で、targetから外へ送出されるerrorがSPECを満たすことを要求する。正常復帰は失敗。`:returns`・`:post`とは併用不可 |
 | 節の重複 | 拒否する |
 
 対応しない形式は黙って無視せず、`invalid-function-spec-form`を送出して拒否する。
@@ -1234,6 +1234,38 @@ D1（対応範囲）の決定：
 Clojure specの `fdef` がargs、return、args/return間の関係を仕様として扱い、その仕様からgenerative testingを行う設計を参考にする。
 
 ---
+
+## 17.1 必須expected-condition契約
+
+`(:signals SPEC)`は一つの非NIL specを取り、targetから外へ送出されるerror conditionを
+既存DSLで検査する。例えば`(:signals (and (type spec-violation) (satisfies detailed-error-p)))`。
+ユーザー定義condition型は`type`または`instance-of`で明示し、裸のsymbolは登録specへの参照となる。
+conditionのslot検査には名前付きの`satisfies`述語を用いる。
+
+- `:pre`が入力を拒否した場合はtargetを呼ばず、従来どおりrejectedとして扱う。
+- 期待specを満たすerrorなら試行成功。成功を失敗conditionとして保存しない。
+- 正常復帰は`:failed / :missing-condition`。explanationには`:expected`を保存する。
+- 不一致のerrorは`:error / :condition-spec`。実際のconditionと`explain-data`を保存する。
+- `:signals`が無い契約でのtarget errorは従来どおり`:error / :condition`。
+- warning・非errorのsignalは通常のCLの動作を保ち、この契約を満たさない。
+  target内部で処理されて外へ出ないerrorも対象外。
+- specの解決・検査はtarget捕捉境界の外で行う。述語のerrorは既存explainerの
+  `:predicate-errored`診断となり、不一致として扱う。未定義述語や引数個数の誤りは
+  従来どおり伝播し、期待errorとして成功扱いしない。
+
+`:returns`と`:post`（空節も含む）との併用、重複、空の`:signals`、明示NILは
+`invalid-function-spec-form`で拒否する。`function-spec`の`:signal-spec`は正規化して保持し、
+`function-spec-signal-spec`で読み出す。直接構築・再初期化でもreturn/postとの排他を検査し、
+拒否した再初期化は元の状態へ戻す。`:signal-spec nil`は通常の返り値契約を表す。
+
+`function-spec-data`は`:signals`にspec-dataまたはNILを投影する。
+宣言digestは期待specと登録された参照先を含む。縮小では、正常復帰による欠落、
+condition不一致、従来の返り値違反を別の失敗として扱う。不一致同士でもcondition型と
+入力値由来の部分を除いたexplanation形状が一致する場合だけ縮小を採用する。
+
+runtime instrumentationはこの契約に未対応。`instrument-function`は
+`unsupported-instrumentation-target`（reason `:expected-condition-contract`）で拒否し、
+fdefinitionを変更しない。capabilityのinstrumentationは`:unavailable`となる。
 
 # 18. 自動generative function test
 
@@ -3484,7 +3516,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelopeとspecのkind・source-formの保持 |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
-| 正規化 | IR再正規化の同一性、source-formの保持 |
+| 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
 
 `cl-spec/specs:contract-names`と`property-names`が対象名を返す。
@@ -3502,12 +3534,13 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-7関数契約と7 Propertyをseed 1・42・2026、各50試行で実行する。
+8関数契約と7 Propertyをseed 1・42・2026、各50試行で実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
 残る記述範囲は、keyword optionを指定した呼出し、任意の拡張specやregistry/backend実装、
 不正DSL全般、runnerのfailure evidenceとinstrumentationの全protocolである。
-期待conditionはFunction Specの対象外のため、当面Propertyと既存Roveテストで表現する。
+不正DSLの有限例は`:signals`によるFunction Specで表現する。`validate`の正常系契約は維持し、
+拒否とexplain-dataの関係は引き続きPropertyで記述する。
 追加APIの仕様を実装する際は、このbundleへ契約またはPropertyを追加し、対象名一覧と検査を更新する。
 
 ---
@@ -3764,7 +3797,7 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 | ID | 決定・実装済み | 残る判断・受け入れ条件 | 関連節 |
 |---|---|---|---|
-| D1 | required引数・主返り値・pre/postの最小範囲、全引数generator、runtime scope | optional/key/rest・多値・signals・実行前状態・明示post束縛は拡張時に決める | §17〜21 |
+| D1 | required引数・主返り値・pre/post、必須errorのsignals契約、全引数generator、runtime scope | optional/key/rest・多値・signalsの非error／選択的outcome・実行前状態・明示post束縛は拡張時に決める | §17〜21 |
 | D2 | statusとreason、必須trials、budget・棄却数、0件／全件棄却のskip、adapterの検証不足集計 | 実行環境・入力coverageの未知情報、fixture／timeout等の結果との統合 | §14・19・47、LLM-01 |
 | D3 | seed/profile replay、宣言digest、観測した元／縮小反例の保持 | 保存入力の直接再検査API、可逆artifact、options・環境・fixture復元条件 | §15・57、LLM-03 |
 | D4 | 入力domain/pre検査、failure identity、未知post identity拒否、縮小採否の表示、mutation検知 | 中断・時間／回数予算切れ・完了を分ける結果、任意状態の復元。大域最小性は保証しない | §14・16、LLM-04 |
@@ -4044,7 +4077,8 @@ instrumentationの捕捉契約との関係、並行時のseed取得。
 
 ### E. その後の表現力拡張
 
-optional/key/rest、多値、expected conditions/signals、generic function instrumentationは、
+optional/key/rest、多値、warning・非errorや正常復帰との選択を許すsignals契約、
+generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。

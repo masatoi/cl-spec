@@ -21,6 +21,7 @@
   (:import-from #:cl-spec/tests/property-test)
   (:import-from #:cl-spec/tests/property-runner-test)
   (:import-from #:cl-spec/tests/function-spec-test)
+  (:import-from #:cl-spec/tests/signals-test)
   (:import-from #:cl-spec/tests/verification-evidence-test)
   (:import-from #:cl-spec/tests/argument-generator-test)
   (:import-from #:cl-spec/tests/introspection-test)

@@ -329,12 +329,10 @@ instead turned a claim that is false for every input into a tautology.")
     (ok (signals (macroexpand-1 '(defspec-function f (:args (a integer) &rest more)))
                  'invalid-function-spec-form)))
   (testing "an unsupported clause is refused rather than ignored"
-    ;; §17 lists SIGNALS as part of a function spec, and the MVP checker cannot
-    ;; honour it; accepting the clause would report a verified result for a
-    ;; claim nothing checked.
+    ;; Unsupported clauses must never register unchecked claims.
     (ok (signals (macroexpand-1 '(defspec-function f
                                   (:args (a integer))
-                                  (:signals division-by-zero)))
+                                  (:restarts continue)))
                  'invalid-function-spec-form)))
   (testing "(:returns nil) is refused, because nothing satisfies the empty type"
     ;; NIL as a type specifier is the type with no members, so a contract

@@ -149,6 +149,8 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
 
 (defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
+  (unless (finite-list-p form)
+    (error 'invalid-spec-form :form form :reason "a spec form must be a finite proper list"))
   (let ((head (first form))
         (args (rest form)))
     (unless (symbolp head)

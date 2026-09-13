@@ -48,7 +48,7 @@
                 #:function-spec-name
                 #:function-spec-argument-specs
                 #:function-spec-argument-generator #:function-spec-argument-schema
-                #:function-spec-return-spec
+                #:function-spec-return-spec #:function-spec-signal-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
                 #:function-spec-documentation
@@ -202,12 +202,13 @@ The body is the author's source rather than the compiled function (§39)."
    :arguments ((:variable <symbol> :spec <spec-data plist>) ...)
    :argument-generator <symbol-or-nil> :argument-schema <tuple spec-data>
    :preconditions (<form> ...) :returns <spec-data plist or NIL>
+   :signals <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
    :source-location (:file <string> :package <string>) :metadata <plist>)
 
 This is the projection that answers the two questions a caller asks before
 editing a function: which inputs it accepts, and which output it must return
-(§28).  :ARGUMENTS and :RETURNS carry normalized IR rather than the designators
+(§28).  :ARGUMENTS, :RETURNS and :SIGNALS carry normalized IR rather than the designators
 as written, so a consumer reads one shape whether the contract named a spec or
 inlined it.
 
@@ -218,7 +219,7 @@ they hold runs CHECK-FUNCTION rather than inspecting them.
 The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
 :DEFINITION-DIGEST, :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and
 :CAPABILITIES (SCHEMA-INFO, §38.1). These envelope keys are always present.
-Argument, return and argument-schema nodes are plain IR projections."
+Argument, return, signals and argument-schema nodes are plain IR projections."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (append (definition-metadata contract :registry registry)
             (list :name (function-spec-name contract)
@@ -232,6 +233,8 @@ Argument, return and argument-schema nodes are plain IR projections."
                   :argument-schema (spec->data (function-spec-argument-schema contract) registry)
                   :preconditions (function-spec-preconditions contract)
                   :returns (let ((spec (function-spec-return-spec contract)))
+                             (when spec (spec->data spec registry)))
+                  :signals (let ((spec (function-spec-signal-spec contract)))
                              (when spec (spec->data spec registry)))
                   :postconditions (function-spec-postconditions contract)
                   :source-form (function-spec-source-form contract)

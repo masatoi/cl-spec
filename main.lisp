@@ -168,6 +168,7 @@
                 #:function-spec-argument-specs
                 #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec
+                #:function-spec-signal-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
                 #:function-spec-precondition-function
@@ -367,6 +368,7 @@
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema
            #:function-spec-return-spec
+           #:function-spec-signal-spec
            #:function-spec-preconditions
            #:function-spec-postconditions
            #:function-spec-precondition-function

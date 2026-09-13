@@ -153,7 +153,8 @@ and the shrunk counterexample are what make a failure actionable."))
 (defun property-result-explanation (result)
   "Return the selected failure explanation; internal post-form tags are excluded."
   (let ((evidence (selected-evidence result)))
-    (when (and evidence (eq :return-spec (trial-observation-reason evidence)))
+    (when (and evidence (member (trial-observation-reason evidence)
+                                '(:return-spec :condition-spec :missing-condition)))
       (trial-observation-explanation evidence))))
 
 (defun observation-data (observation)

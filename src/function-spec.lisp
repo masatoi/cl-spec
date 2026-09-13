@@ -46,13 +46,14 @@
   (:import-from #:cl-spec/src/execution
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
-                #:explain-data)
+                #:explain-data #:expected-descriptor)
   (:export #:precondition-refuses-p
            #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema
            #:function-spec-return-spec
+           #:function-spec-signal-spec
            #:function-spec-preconditions
            #:function-spec-postconditions
            #:function-spec-precondition-function
@@ -92,6 +93,12 @@ PARAMETER is named once.")
                        :documentation "Name of a registered no-argument generator returning
 the entire positional argument list, or NIL for independent argument generation.
 Each draw is checked against the argument specs before preconditions or the target.")
+   (signal-spec :initarg :signal-spec
+                :initform nil
+                :reader function-spec-signal-spec
+                :documentation "Normalized spec required of an error escaping the target,
+or NIL for an ordinary return contract. Normal return violates a signal contract.
+Mutually exclusive with return-spec and postconditions.")
    (return-spec :initarg :return-spec
                 :initform nil
                 :reader function-spec-return-spec
@@ -149,7 +156,7 @@ The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
-  '(name argument-specs argument-generator return-spec preconditions postconditions
+  '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function documentation-string
     source-form source-location metadata)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
@@ -282,7 +289,13 @@ would run while introspection reported no such clause"
       (unless (or (null generator)
                   (and (symbolp generator) (not (keywordp generator))))
         (refuse generator ":argument-generator must be NIL or a registered generator name")))
-    (let ((returns (function-spec-return-spec contract)))
+    (let ((signals (function-spec-signal-spec contract))
+          (returns (function-spec-return-spec contract)))
+      (when (and signals (or returns (function-spec-postconditions contract)
+                             (function-spec-postcondition-function contract)))
+        (refuse signals ":signal-spec cannot coexist with return-spec or postconditions"))
+      (when signals
+        (setf (slot-value contract 'signal-spec) (normalize-spec-form signals)))
       (when returns
         (setf (slot-value contract 'return-spec) (normalize-spec-form returns))))))
 
@@ -338,7 +351,8 @@ Classification itself makes no additional call. This counts generated trials.")
                    :initform nil
                    :reader function-check-result-failure-reason
                    :documentation "Which half of the contract broke:
-:RETURN-SPEC, :POSTCONDITION, :CONDITION, :CONTRACT-ERROR, or NIL.
+:RETURN-SPEC, :POSTCONDITION, :MISSING-CONDITION, :CONDITION-SPEC,
+:CONDITION, :CONTRACT-ERROR, or NIL.
 
 :CONTRACT-ERROR is not a half breaking: the contract's own predicate or spec
 signalled on the value the function returned, so the fault may be either
@@ -355,10 +369,9 @@ invocation, including for a function that would not answer the same way twice.")
    (explanation :initarg :explanation
                 :initform nil
                 :reader function-check-result-explanation
-                :documentation "EXPLAIN-DATA for a :RETURN-SPEC failure, else NIL.
-
-\"The return value is wrong\" is not actionable on its own; this says which
-part of the return spec the value missed.")
+                :documentation "EXPLAIN-DATA for :RETURN-SPEC or :CONDITION-SPEC failures.
+For :MISSING-CONDITION, a plist with the :EXPECTED descriptor. Otherwise NIL.
+The data explains which part of the declared outcome the invocation missed.")
    (shrunk-outcome :initarg :shrunk-outcome
                    :initform nil
                    :reader function-check-result-shrunk-outcome
@@ -489,6 +502,10 @@ as its reduction.  The shapes come from the nested errors instead."
      (list :return-value :return-spec
            (mapcar #'failure-shape (getf explanation :errors))))
     (:postcondition (list :return-value :postcondition explanation))
+    (:missing-condition (list :missing-condition))
+    (:condition-spec
+     (list :condition-spec (type-of condition)
+           (mapcar #'failure-shape (getf explanation :errors))))
     (:condition (list :target-signal (type-of condition)))
     (:contract-error (list :contract-error (type-of condition)))
     (t nil)))
@@ -514,6 +531,7 @@ as its reduction.  The shapes come from the nested errors instead."
   (let* ((contract (checked-contract property))
          (registry (getf context :registry))
          (returns (function-spec-return-spec contract))
+         (signals (function-spec-signal-spec contract))
          (pre (function-spec-precondition-function contract))
          (post (function-spec-postcondition-function contract)))
     (flet ((failure (reason detail condition &optional value)
@@ -525,28 +543,37 @@ as its reduction.  The shapes come from the nested errors instead."
               (multiple-value-bind (value condition)
                   (handler-case (values (apply (checked-target property) arguments) nil)
                     (error (condition) (values nil condition)))
-                (if condition
-                    (failure :condition nil condition)
-                    (let ((explanation (when returns
-                                         (explain-data returns value :registry registry))))
-                      (cond
-                        ((and explanation (not (getf explanation :valid)))
-                         (failure :return-spec explanation nil value))
-                        (post
-                         (multiple-value-bind (holds index tag)
-                             (apply post value arguments)
-                           (if holds
-                               (values :passed nil nil nil nil value)
-                               (failure :postcondition
-                                        (when (and (eq tag :cl-spec-post-form-failure)
-                                                   (integerp index)
-                                                   (<= 0 index)
-                                                   (< index
-                                                      (length
-                                                       (function-spec-postconditions contract))))
-                                          (list :post-form index))
-                                        nil value))))
-                        (t (values :passed nil nil nil nil value)))))))
+                (cond
+                  (signals
+                   (if condition
+                       (let ((explanation (explain-data signals condition :registry registry)))
+                         (if (getf explanation :valid)
+                             (values :passed nil nil nil nil nil)
+                             (failure :condition-spec explanation condition)))
+                       (failure :missing-condition
+                                (list :expected (expected-descriptor signals)) nil value)))
+                  (condition (failure :condition nil condition))
+                  (t
+                   (let ((explanation (when returns
+                                        (explain-data returns value :registry registry))))
+                     (cond
+                       ((and explanation (not (getf explanation :valid)))
+                        (failure :return-spec explanation nil value))
+                       (post
+                        (multiple-value-bind (holds index tag)
+                            (apply post value arguments)
+                          (if holds
+                              (values :passed nil nil nil nil value)
+                              (failure :postcondition
+                                       (when (and (eq tag :cl-spec-post-form-failure)
+                                                  (integerp index)
+                                                  (<= 0 index)
+                                                  (< index
+                                                     (length
+                                                      (function-spec-postconditions contract))))
+                                         (list :post-form index))
+                                       nil value))))
+                       (t (values :passed nil nil nil nil value))))))))
         ;; Structural errors in the contract itself still abort an initial trial.
         ;; The backend rejects these if encountered only during shrinking.
         ((and error (not undefined-function) (not program-error)) (condition)
@@ -572,11 +599,14 @@ as its reduction.  The shapes come from the nested errors instead."
          :source (function-spec-source-form contract)
          :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
          :returns (not (null (function-spec-return-spec contract)))
+         :signals (not (null (function-spec-signal-spec contract)))
          :generator (function-spec-argument-generator contract)
          :metadata (function-spec-metadata contract))
    (append (mapcar #'second (function-spec-argument-specs contract))
            (when (function-spec-return-spec contract)
-             (list (function-spec-return-spec contract))))
+             (list (function-spec-return-spec contract)))
+           (when (function-spec-signal-spec contract)
+             (list (function-spec-signal-spec contract))))
    (when (function-spec-argument-generator contract)
      (list (cons :generator (function-spec-argument-generator contract))))
    (and (eq (class-name (class-of contract)) 'function-spec)
