@@ -62,6 +62,7 @@
   (:import-from #:cl-spec/tests/schema-test)
   (:import-from #:cl-spec/tests/dsl-test)
   (:import-from #:cl-spec/tests/main-test)
+  (:import-from #:cl-spec/tests/api-docs-test)
   (:import-from #:cl-spec/tests/backends/check-it-test)
   (:import-from #:cl-spec/tests/backends/plist-generator-test)
   (:import-from #:cl-spec/tests/instrument-test)
