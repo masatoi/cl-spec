@@ -12,6 +12,7 @@
   (:import-from #:cl-spec/src/function-spec #:function-spec #:register-function-spec)
   (:import-from #:cl-spec/src/instrument
                 #:*instrumented-functions* #:instrument-function #:uninstrument-function
+                #:instrumented-function-p
                 #:instrumentation-status #:refresh-instrumentation
                 #:instrumentation-violation))
 (in-package #:cl-spec/tests/instrument-status-integration-test)
@@ -122,3 +123,22 @@
     (let* ((name (cl-spec/specs:register-instrumentation-specifications))
            (result (cl-spec:check-function name :trials 5 :seed 42)))
       (ok (eq :passed (cl-spec:property-result-status result))))))
+
+(deftest executable-instrumentation-laws
+  (let ((*registry* (make-hash-table-registry))
+        (*instrumented-functions* (make-hash-table :test #'eq)))
+    (cl-spec/specs:register-specifications)
+    (cl-spec/specs:register-instrumentation-specifications)
+    (unwind-protect
+         (progn
+           (dolist (name (list 'instrumented-function-p 'uninstrument-function))
+             (ok (find-function-spec name))
+             (ok (eq :passed
+                     (cl-spec:property-result-status
+                      (cl-spec:check-function name :trials 5 :seed 42)))))
+           (dolist (name '(cl-spec/specs::instrumentation-round-trips
+                           cl-spec/specs::instrumentation-refuses-uncontracted-targets))
+             (let ((result (cl-spec:run-property name :seed 42)))
+               (ok (eq :passed (cl-spec:property-result-status result))
+                   (prin1-to-string (cl-spec:result-data result))))))
+      (uninstrument-function 'cl-spec/specs::self-instrumentation-target))))
