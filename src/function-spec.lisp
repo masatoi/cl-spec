@@ -27,12 +27,18 @@
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/call-schema
                 #:make-call-layout #:bind-call-arguments #:bound-call-values
-                #:make-return-schema #:return-schema-value)
+                #:make-return-schema #:return-schema-value
+                #:normalize-call-declarations #:call-layout-required-only-p
+                #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
+                #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
+                #:call-arguments-spec)
+  (:import-from #:cl-spec/src/call-validation)
   (:import-from #:cl-spec/src/call-outcome
                 #:invoke-target-once #:make-call-outcome
                 #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
+                #:property-call-arguments-p #:property-named-arguments
                 #:property-source-form)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
@@ -96,10 +102,10 @@
    (argument-specs :initarg :argument-specs
                    :initform nil
                    :reader function-spec-argument-specs
-                   :documentation "List of (PARAMETER SPEC) pairs in lambda list
-order, from :ARGS.  SPEC is always a Semantic IR object: a designator handed to
-the constructor is normalized in place, so every reader sees one shape.  Each
-PARAMETER is named once.")
+                   :documentation "Required (PARAMETER SPEC) pairs followed optionally by
+&OPTIONAL and (PARAMETER SPEC [SUPPLIED-P]) declarations. SPEC is normalized to
+Semantic IR. Parameter and supplied-variable names are unique; omitted optional
+values bind to NIL in predicates without evaluating target defaults.")
    (argument-generator :initarg :argument-generator
                        :initform nil
                        :reader function-spec-argument-generator
@@ -274,23 +280,8 @@ would run while introspection reported no such clause"
         (refuse (or (function-spec-postconditions contract)
                     (function-spec-postcondition-function contract))
                 post)))
-    (let ((seen '()))
-      (setf (slot-value contract 'argument-specs)
-            (loop for entry in (function-spec-argument-specs contract)
-                  do (unless (and (finite-list-p entry)
-                                  (= 2 (length entry))
-                                  (first entry)
-                                  (symbolp (first entry))
-                                  (not (keywordp (first entry)))
-                                  (not (constantp (first entry)))
-                                  (not (member (first entry) lambda-list-keywords)))
-                       ;; Not merely malformed: (amount integer extra) would
-                       ;; otherwise pass through with EXTRA silently dropped.
-                       (refuse entry "expected (parameter spec)"))
-                     (when (member (first entry) seen)
-                       (refuse entry "the same parameter is named twice"))
-                     (push (first entry) seen)
-                  collect (list (first entry) (normalize-spec-form (second entry))))))
+    (setf (slot-value contract 'argument-specs)
+          (normalize-call-declarations (function-spec-argument-specs contract)))
     (let ((generator (function-spec-argument-generator contract)))
       (unless (or (null generator)
                   (and (symbolp generator) (not (keywordp generator))))
@@ -311,13 +302,17 @@ would run while introspection reported no such clause"
   (validate-definition contract))
 
 (defun function-spec-argument-schema (contract)
-  "Derive the whole argument tuple schema from CONTRACT's current declarations."
-  (make-instance 'tuple-spec
-                 :element-specs (mapcar #'second (function-spec-argument-specs contract))
-                 :generator (function-spec-argument-generator contract)))
+  "Derive the raw argument schema from CONTRACT's current declarations."
+  (let ((layout (function-spec-call-layout contract)))
+    (if (call-layout-required-only-p layout)
+        (make-instance 'tuple-spec
+                       :element-specs (mapcar #'argument-binding-spec (call-layout-bindings layout))
+                       :generator (function-spec-argument-generator contract))
+        (make-instance 'call-arguments-spec :layout layout
+                       :generator (function-spec-argument-generator contract)))))
 
 (defun function-spec-call-layout (contract)
-  "Derive the call layout from CONTRACT\'s current argument declarations."
+  "Derive the call layout from CONTRACT's current argument declarations."
   (make-call-layout (function-spec-argument-specs contract)))
 
 (defun function-spec-return-schema (contract)
@@ -463,7 +458,7 @@ a finding exactly as it was."
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
-    :status :tuple-path :field-path)
+    :minimum-length :maximum-length :status :tuple-path :field-path)
   "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
 
 A whitelist, not a list of keys to strip.  Stripping by name failed three times in
@@ -554,6 +549,15 @@ as its reduction.  The shapes come from the nested errors instead."
   "Use the function's whole argument schema, including its custom generator."
   (function-spec-argument-schema (checked-contract property)))
 
+(defmethod property-call-arguments-p ((property function-check-property) arguments)
+  (call-layout-accepts-p (function-spec-call-layout (checked-contract property)) arguments))
+
+(defmethod property-named-arguments ((property function-check-property) arguments)
+  (loop for (name . value) in
+        (bound-call-bindings
+         (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
+        append (list name value)))
+
 (defmethod evaluate-trial ((property function-check-property) arguments &key context)
   "Call the target once and classify that invocation before returning its evidence."
   (let* ((contract (checked-contract property))
@@ -636,7 +640,12 @@ as its reduction.  The shapes come from the nested errors instead."
   "Describe the contract declaration, not the target implementation."
   (values
    (list :entity-kind :function-spec :name (function-spec-name contract)
-         :variables (mapcar #'first (function-spec-argument-specs contract))
+         :variables (loop for entry in (function-spec-argument-specs contract)
+                           collect (if (consp entry)
+                                       (if (third entry)
+                                           (list (first entry) :supplied (third entry))
+                                           (first entry))
+                                       entry))
          :documentation (function-spec-documentation contract)
          :source (function-spec-source-form contract)
          :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
@@ -644,7 +653,8 @@ as its reduction.  The shapes come from the nested errors instead."
          :signals (not (null (function-spec-signal-spec contract)))
          :generator (function-spec-argument-generator contract)
          :metadata (function-spec-metadata contract))
-   (append (mapcar #'second (function-spec-argument-specs contract))
+   (append (loop for entry in (function-spec-argument-specs contract)
+                 when (consp entry) collect (second entry))
            (when (function-spec-return-spec contract)
              (list (function-spec-return-spec contract)))
            (when (function-spec-signal-spec contract)
@@ -661,6 +671,15 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defmethod definition-entity-kind ((property function-check-property)) :function-spec)
 
+(defun function-check-bindings (contract)
+  "Build required property bindings for the flattened predicate arguments."
+  (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+        append (append (list (list (argument-binding-name binding)
+                                   (argument-binding-spec binding)))
+                       (when (argument-binding-supplied-name binding)
+                         (list (list (argument-binding-supplied-name binding)
+                                     (normalize-spec-form 'boolean)))))))
+
 (defun make-function-check-property (contract &key (budget 0))
   "Adapt CONTRACT to trial execution without requiring a generator backend."
   (unless (typep budget '(integer 0 *))
@@ -668,7 +687,7 @@ as its reduction.  The shapes come from the nested errors instead."
   (let ((name (function-spec-name contract)))
     (make-instance 'function-check-property
                    :contract contract :target (function-spec-target contract)
-                   :name name :arguments (function-spec-argument-specs contract)
+                   :name name :arguments (function-check-bindings contract)
                    :targets (list name) :kind :function-spec
                    :documentation (function-spec-documentation contract)
                    :trials (list :normal budget)

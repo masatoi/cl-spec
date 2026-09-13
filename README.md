@@ -7,7 +7,7 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required positional arguments and either one return value or a required error outcome,
+required and optional positional arguments and either one return value or a required error outcome,
 including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
@@ -36,7 +36,7 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for ten public
+Load the optional specification bundle to register contracts for thirteen public
 functions and seven semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
@@ -286,6 +286,29 @@ arrays are captured before contract predicates can change them. The existing
 Artifact v1 still persists concrete arguments and failure identity, so opaque
 returned objects do not prevent direct rechecking.
 
+### Optional positional arguments
+
+```lisp
+(defun optional-value (&optional (value 42)) value)
+(cl-spec:defspec-function optional-value
+  (:args &optional (value (nullable integer) supplied))
+  (:returns (nullable integer))
+  (:post (if supplied (eql result value) (= result 42))))
+```
+
+After `&optional`, each declaration is `(NAME SPEC)` or `(NAME SPEC SUPPLIED-P)`.
+Contract predicates receive `NIL` for an omitted value and false suppliedness;
+explicit `NIL` has true suppliedness and must satisfy its spec. The target's
+default forms run only in the actual call. There are no contract default forms.
+Multiple optional parameters are positional: supplying a later one also supplies
+every preceding one. Required parameters precede the single `&optional` marker.
+
+The generator chooses an optional prefix, and shrinking can remove its suffix.
+Saved evidence retains the raw call list, while named counterexamples include
+contract values and declared suppliedness flags. Function introspection adds
+`:kind :optional` and `:supplied-p` to optional entries. `defproperty` bindings
+remain required pairs; `&key` and `&rest` are introduced in subsequent changes.
+
 ### Shrinking correlated arguments
 
 A leading `:shrink` clause receives the current argument list and returns a proper
@@ -403,7 +426,7 @@ status detects the stale contract and explicit uninstrumentation remains require
 
 The argument contract describes the whole call, not just a prefix of the target's
 lambda list. For example, `(:args (a integer))` admits exactly one argument even if
-the target accepts optional extras. Optional/rest/key contract semantics remain deferred.
+the target accepts optional extras. Optional contracts preserve omission; rest/key semantics remain deferred.
 
 Violation specs are the actual argument/return IR, an argument tuple for arity, or
 a predicate spec for pre/post. Precondition values are the argument list; postcondition

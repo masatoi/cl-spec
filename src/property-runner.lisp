@@ -10,7 +10,7 @@
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
-                #:property-arguments
+                #:property-named-arguments
                 #:property-trials)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/execution
@@ -233,14 +233,8 @@ the profile in effect falls back to the backend's own default."
         (backend-default-trials backend))))
 
 (defun name-arguments (property values)
-  "Return VALUES as a plist keyed by PROPERTY's argument variables.
-
-The backend reports counterexamples positionally; this is where they become the
-{name: value} shape section 14 shows."
-  (when values
-    (loop for (variable nil) in (property-arguments property)
-          for value in values
-          append (list variable value))))
+  "Project raw counterexamples through the property's binding protocol."
+  (property-named-arguments property values))
 
 (defparameter *cl-spec-version* "0.1.0"
   "Implementation version recorded in provenance; keep in sync with cl-spec.asd.")

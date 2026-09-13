@@ -19,6 +19,8 @@
                 #:invalid-function-spec-form-form
                 #:invalid-function-spec-form-reason
                 #:invalid-generator-form)
+  (:import-from #:cl-spec/src/call-schema
+                #:validate-call-declarations #:call-declaration-variables)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -254,7 +256,7 @@ cannot be confused."
       (function-spec-error clauses ":signals cannot coexist with :returns or :post"))
     (values documentation args pre returns post argument-generator signals)))
 
-(defun parse-function-spec-arguments (args)
+(defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
 
 The MVP checks required positional parameters only.  A lambda list keyword is
@@ -297,6 +299,10 @@ lambda list is a compiler error about a form the author never wrote."
         (push name variables)))
     args))
 
+(defun parse-function-spec-arguments (args)
+  "Validate required and optional argument declarations before macro expansion."
+  (validate-call-declarations args))
+
 (defun expand-postcondition-forms (forms &optional (index 0))
   "Compile short-circuiting FORMS with an internal failure index.
 The primary value remains the predicate result. Only a false result carries the
@@ -318,7 +324,7 @@ EVAL, so a contract kept only as a list could be read but never checked."
   (multiple-value-bind (documentation args pre returns post argument-generator signals)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
-    (let* ((variables (mapcar #'first args))
+    (let* ((variables (call-declaration-variables args))
            (candidate (return-value-symbol variables))
            (parameterp (and candidate (member candidate variables) t))
            (in-post (and candidate (symbol-occurs-p candidate post)))
@@ -368,9 +374,7 @@ return value"
         (make-instance 'function-spec
                        :name ',name
                        :argument-specs
-                       (list ,@(loop for (variable form) in args
-                                     collect `(list ',variable
-                                                    (normalize-spec-form ',form))))
+                       ',args
                        :argument-generator ',argument-generator
                        :signal-spec ,(when signals `(normalize-spec-form ',signals))
                        :return-spec ,(when returns `(normalize-spec-form ',returns))
@@ -407,8 +411,11 @@ signals keep their ordinary behavior and do not satisfy this clause.
 PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
 :CONDITION failures, even if SPEC would accept them.
 
-Required positional parameters and one return value are supported. Lambda list
-keywords, (:returns (values ...)) and unknown clauses signal
+Required and optional positional parameters and one return value are supported.
+An &OPTIONAL marker permits (PARAMETER SPEC [SUPPLIED-P]) declarations. Predicates
+see NIL for omitted optional values and a boolean supplied flag when declared;
+target defaults are evaluated only by the target. Other lambda list keywords,
+(:returns (values ...)) and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
@@ -430,7 +437,7 @@ INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
   "Validate the same required bindings accepted by function contracts.
 Translate only declaration refusals, preserving the offending fragment and the
 specific explanation for constants, lambda-list keywords, and malformed pairs."
-  (handler-case (parse-function-spec-arguments arguments)
+  (handler-case (parse-required-spec-arguments arguments)
     (invalid-function-spec-form (condition)
       (property-form-error (invalid-function-spec-form-form condition)
                            (invalid-function-spec-form-reason condition)))))

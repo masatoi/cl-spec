@@ -7,6 +7,10 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/call-schema
+                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
+                #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
+                #:argument-binding-kind #:argument-binding-supplied-name)
   (:import-from #:cl-spec/src/field-spec
                 #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
@@ -46,7 +50,7 @@
   (:import-from #:cl-spec/src/function-spec
                 #:resolve-function-spec
                 #:function-spec-name
-                #:function-spec-argument-specs
+                #:function-spec-call-layout
                 #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec #:function-spec-signal-spec
                 #:function-spec-preconditions
@@ -96,6 +100,9 @@ list, so a key added to the base method reaches every node type.  A method that
 replaces the base one drops it silently on the kinds that have a method of their
 own -- which is how :GENERATOR went missing from six node kinds before it moved to
 SPEC->DATA, where the definition-level attributes live (PR review)."))
+
+(defmethod node-attributes ((spec call-arguments-spec))
+  (list :bindings (call-layout-data (call-arguments-spec-layout spec))))
 
 (defmethod node-attributes ((spec spec))
   nil)
@@ -227,8 +234,13 @@ Argument, return, signals and argument-schema nodes are plain IR projections."
                   :kind :function-spec
                   :documentation (function-spec-documentation contract)
                   :arguments
-                  (loop for (variable spec) in (function-spec-argument-specs contract)
-                        collect (list :variable variable :spec (spec->data spec registry)))
+                  (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+                        collect
+                        (append (list :variable (argument-binding-name binding)
+                                      :spec (spec->data (argument-binding-spec binding) registry))
+                                (unless (eq :required (argument-binding-kind binding))
+                                  (list :kind (argument-binding-kind binding)
+                                        :supplied-p (argument-binding-supplied-name binding)))))
                   :argument-generator (function-spec-argument-generator contract)
                   :argument-schema (spec->data (function-spec-argument-schema contract) registry)
                   :preconditions (function-spec-preconditions contract)

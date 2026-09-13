@@ -71,7 +71,7 @@
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional引数と主値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
@@ -1152,7 +1152,7 @@ identity不明、縮小時のerrorにより一致を確認できず、採用し�
 
 # 17. Function Spec
 
-> **位置付け:** 実装済み（最小範囲）。必須引数と単一の戻り値を検査する。
+> **位置付け:** 実装済み（最小範囲）。必須・optional引数と主返り値を検査する。
 > 対応範囲は§73.1のD1として確定した。
 
 関数仕様は少なくとも、
@@ -1171,7 +1171,7 @@ D1（対応範囲）の決定：
 
 | 項目 | MVPの扱い |
 |---|---|
-| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| lambda list | 必須引数と`&optional`を受け付ける。`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
 | 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
 | clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
 | 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
@@ -1474,7 +1474,7 @@ artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠�
 
 # 20. Runtime validation
 
-> **位置付け:** 実装済み。required positional argumentsと主返り値の契約を対象とする。
+> **位置付け:** 実装済み。required/optional positional argumentsと主返り値の契約を対象とする。
 
 `validp`はboolean、`validate`は有効な値または構造化`spec-violation`を返す。
 関数の呼び出し時検査は独立system `cl-spec/instrument`を明示的にloadして有効化する。
@@ -3564,6 +3564,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| `find-spec` | optional registryの省略時は現在のregistry、指定時はそのregistryから検索 |
 | `trial-observation-outcome` | 未収集、returned全値、signaled条件診断を表すdata |
 | `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
 | digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
@@ -3586,7 +3587,7 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-12関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+13関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
 任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
@@ -4240,7 +4241,7 @@ without importing ASDF into the property-runner module.
 
 `src/call-schema.lisp`は内部の`call-layout`、`argument-binding`、`bound-call`、
 `return-schema`を定義する。実呼出し引数、述語の束縛値、名前付きbinding、suppliednessを分離し、
-対象関数のdefault式や述語を実行しない。現段階のlayoutは必須位置引数のみを表す。
+対象関数のdefault式や述語を実行しない。このIR導入時点では必須位置引数のみを表した。optional対応は後述の#15で追加する。
 `function-spec-call-layout`と`function-spec-return-schema`は現在のslotから導出するため、
 reinitialize後に古いschemaを参照しない。公開`function-spec-argument-schema`は従来のtupleを返し、
 reader、generator指定、宣言digestの既存値を維持する。
@@ -4261,4 +4262,30 @@ artifact v1は実引数と失敗同一性を保持し、targetの返した任意
 
 instrumentationは同じbinding/return射影を使うが、targetをcatchして再signalするhelperは使わない。
 既存のmultiple-value-callを保ち、callerからtargetのrestartを利用できる。
-optional/key/restおよび明示的な多値DSLは後続issueで追加する。
+optional対応は#15、key/restおよび明示的な多値DSLは後続issueで追加する。
+
+
+### Optional call declarations implementation addendum (issue #15)
+
+`(:args (a SPEC) &optional (b SPEC supplied-p) (c SPEC))`を受け付ける。
+optional宣言は2要素または3要素、3番目は省略可能なsuppliedness変数。
+必須・optional値・suppliednessを含め全変数名は一意で、定数やlambda-list markerを変数にしない。
+`&optional`は一回のみ、必須宣言の後に置く。`&key`/`&rest`等はまだ拒否する。
+`defproperty`は従来どおり必須pairのみとし、この構文拡張を暗黙に適用しない。
+CLOSの`:argument-specs`も同じmarker/宣言列を受け、spec位置のみを正規化する。
+
+省略された値の契約内束縛はNIL、suppliednessはNIL。明示NILはsuppliedness T。
+省略時は値specを評価しない。targetのdefault値を予測・複製せず、default式はtargetで一度だけ評価する。
+pre/postはvalueと任意のsuppliednessの順のflat bindingを受け取る。
+複数optionalは位置引数なので、後方だけの指定はできない。
+
+必須だけのschemaは既存tupleとdigestを維持する。拡張呼出しには内部`:call-arguments` specを使い、
+子spec、required/optional区分、名前、suppliednessをintrospection・digest・explainへ反映する。
+`property-call-arguments-p`は述語を再実行せず観測したraw callの形を検査し、
+`property-named-arguments`は契約の名前付き束縛へ射影する。artifactには元のraw listを保存する。
+
+生成器はoptional prefixの長さを0〜個数から選び、指定した値だけを生成する。
+縮小はoptional suffixの除去、その後の指定値縮小を試みる。schema/pre/失敗同一性/変更検出を通過した
+観測だけを採用する。custom引数generatorも同じcall schemaで検査する。
+instrumentationはmin/max arityと指定値を検証し、default、多値、targetのconditionを維持する。
+自己仕様では`find-spec`のoptional registryを通常生成と省略の両方で検査する。

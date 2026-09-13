@@ -12,7 +12,7 @@
   (:import-from #:cl-spec/src/conditions
                 #:no-generator-backend
                 #:invalid-backend-result)
-  (:import-from #:cl-spec/src/property #:property-arguments)
+  (:import-from #:cl-spec/src/property #:property-call-arguments-p)
   (:import-from #:cl-spec/src/execution
                 #:*trial-observations* #:observation-from-current-run-p #:trial-observation-status
                 #:trial-observation-arguments #:trial-observation-signature
@@ -169,8 +169,8 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                         (finite-signature-p (trial-observation-signature observation))
                         (proper-list-p (trial-observation-arguments observation))
                         (observation-from-current-run-p observation property)
-                        (= (length (trial-observation-arguments observation))
-                           (length (property-arguments property)))
+                        (property-call-arguments-p property
+                                                   (trial-observation-arguments observation))
                         (if (eq :error (trial-observation-status observation))
                             (typep (trial-observation-condition observation) 'error)
                             (null (trial-observation-condition observation))))

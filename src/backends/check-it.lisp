@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/backends/call-generators)
   (:import-from #:check-it
                 #:*num-trials*
                 #:generate
@@ -165,14 +166,6 @@ distribution no run draws (§73.4 #6)."
   (declare (ignore backend))
   *num-trials*)
 
-(defun admitted-arguments-p (validators arguments)
-  "Check each candidate against its argument spec before invoking the property."
-  (loop for validator in validators
-        do (unless (and (consp arguments) (funcall validator (car arguments)))
-             (return-from admitted-arguments-p nil))
-           (setf arguments (cdr arguments)))
-  (null arguments))
-
 (defun validate-generated-arguments (name validator arguments)
   "Reject invalid whole argument sets before evaluating a contract."
   (let ((before (snapshot-value arguments)))
@@ -257,8 +250,6 @@ calling user code, and keep existing evidence if shrinking itself fails."
          (whole-validator (compile-validator schema :context context))
          (compiled (compile-generator backend schema :context context))
          (capabilities (compiled-capabilities compiled shrink-p))
-         (validators (loop for (nil spec) in (property-arguments property)
-                           collect (compile-validator spec :context context)))
          (generator (compiled-generator-generator compiled))
          (rejected 0))
     (check-type shrink-budget (integer 0 100000))
@@ -296,7 +287,8 @@ calling user code, and keep existing evidence if shrinking itself fails."
                               (lambda (arguments)
                                 (handler-case
                                     (let ((before (snapshot-value arguments))
-                                           (admitted (admitted-arguments-p validators arguments)))
+                                           (admitted (and (finite-list-p arguments)
+                                                           (funcall whole-validator arguments))))
                                       (unless (same-value-p before arguments)
                                         (return-from shrink-search nil))
                                       (if (not admitted)

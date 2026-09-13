@@ -10,13 +10,15 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
                 #:call-layout-bindings #:bind-call-arguments #:bound-call-values
+                #:call-layout-accepts-p #:call-layout-required-count
+                #:argument-binding-spec #:argument-binding-name
                 #:return-schema-primary-spec #:return-schema-value)
   (:import-from #:cl-spec/src/function-spec
-                #:function-spec-call-layout #:function-spec-return-schema)
+                #:function-spec-call-layout #:function-spec-return-schema #:function-spec-argument-schema)
   (:nicknames #:cl-spec/instrument)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
-  (:import-from #:cl-spec/src/ir #:tuple-spec #:predicate-spec #:predicate-spec-predicate)
+  (:import-from #:cl-spec/src/ir #:predicate-spec #:predicate-spec-predicate)
   (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
@@ -25,7 +27,7 @@
                 #:schema-info)
   (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
-                #:function-spec #:function-spec-name #:function-spec-argument-specs
+                #:function-spec #:function-spec-name
                 #:function-spec-signal-spec
                 #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
@@ -112,22 +114,25 @@ return or postcondition check."))
 
 (defun make-contract-wrapper (name original contract registry scopes)
   "Compile enabled checks and capture their predicates around ORIGINAL."
-  (let* ((arguments (function-spec-argument-specs contract))
-         (layout (function-spec-call-layout contract))
+  (let* ((layout (function-spec-call-layout contract))
+         (arguments (call-layout-bindings layout))
          (arity (length (call-layout-bindings layout)))
          (context (list :registry registry))
          (input-p (member :input scopes))
          (argument-schema (when input-p
-                            (make-instance 'tuple-spec :element-specs (mapcar #'second arguments))))
+                            (function-spec-argument-schema contract)))
          (inputs (when input-p
                    (mapcar (lambda (argument)
-                             (list (second argument)
-                                   (list (first argument) :args)
-                                   (compile-explainer (second argument) :context context)))
+                             (list (argument-binding-spec argument)
+                                   (list (argument-binding-name argument) :args)
+                                   (compile-explainer (argument-binding-spec argument)
+                                                      :context context)))
                            arguments)))
          (pre (when input-p (function-spec-precondition-function contract)))
          (pre-test (when pre
-                     (lambda (values) (not (precondition-refuses-p pre values)))))
+                     (lambda (values)
+                       (not (precondition-refuses-p
+                             pre (bound-call-values (bind-call-arguments layout values)))))))
          (pre-spec (when pre (make-instance 'predicate-spec :predicate pre-test)))
          (return-schema (function-spec-return-schema contract))
          (returns (return-schema-primary-spec return-schema))
@@ -137,16 +142,22 @@ return or postcondition check."))
          (post-spec (when post
                       (make-instance 'predicate-spec
                                      :predicate (lambda (value-and-args)
-                                                  (apply post value-and-args)))))
+                                                  (apply post (first value-and-args)
+                                                          (bound-call-values
+                                                           (bind-call-arguments
+                                                            layout (rest value-and-args))))))))
          (post-count (length (function-spec-postconditions contract))))
     (lambda (&rest values)
       (when input-p
-        (unless (= arity (length values))
+        (unless (call-layout-accepts-p layout values)
           (contract-failure
            name :input :arity argument-schema values
            (list (error-datum :wrong-length '(:args) values
                               :expected (expected-descriptor argument-schema)
-                              :expected-length arity :actual-length (length values)))))
+                              :expected-length (if (= arity (call-layout-required-count layout))
+                                                    arity
+                                                    (list (call-layout-required-count layout) arity))
+                               :actual-length (length values)))))
         (loop for (spec path explainer) in inputs
               for value in values
               for errors = (funcall explainer value path)

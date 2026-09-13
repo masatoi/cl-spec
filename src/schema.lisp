@@ -2,6 +2,8 @@
 
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
+  (:import-from #:cl-spec/src/call-schema
+                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
@@ -90,6 +92,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :generator (spec-generator-name definition)
          :fields
          (typecase definition
+            (call-arguments-spec (call-layout-data (call-arguments-spec-layout definition)))
             (field-spec (list :closed (field-spec-closed-p definition)
                               :fields (field-descriptions definition)))
            (type-spec (list :type (type-spec-type-specifier definition)))
@@ -108,7 +111,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
    (not (null (member (class-name (class-of definition))
                        '(type-spec reference-spec predicate-spec member-spec range-spec
                          instance-of-spec and-spec or-spec not-spec nullable-spec
-                         list-of-spec vector-of-spec tuple-spec plist-spec))))))
+                         list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec))))))
 
 (defmethod definition-description ((definition property))
   (values

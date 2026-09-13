@@ -7,6 +7,10 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/optional-call-schema-test)
+  (:import-from #:cl-spec/tests/optional-function-test)
+  (:import-from #:cl-spec/tests/optional-generator-test)
+  (:import-from #:cl-spec/tests/optional-instrument-test)
   (:import-from #:cl-spec/tests/observed-outcome-test)
   (:import-from #:cl-spec/tests/call-schema-test)
   (:import-from #:cl-spec/tests/call-outcome-test)

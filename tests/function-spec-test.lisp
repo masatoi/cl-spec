@@ -49,7 +49,7 @@
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
                 #:function-spec-name
-                #:function-spec-argument-specs
+                #:function-spec-argument-specs #:function-spec-argument-schema
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
@@ -320,9 +320,6 @@ instead turned a claim that is false for every input into a tautology.")
 
 (deftest defspec-function-refuses-what-the-checker-cannot-honour
   (testing "a lambda list keyword in :ARGS is named in the refusal, not dropped"
-    (ok (signals (macroexpand-1 '(defspec-function f
-                                  (:args (a integer) &optional (b integer))))
-                 'invalid-function-spec-form))
     (ok (signals (macroexpand-1 '(defspec-function f
                                   (:args (a integer) &key (b integer))))
                  'invalid-function-spec-form))
@@ -1420,9 +1417,17 @@ macro expansions would need the lint exemption that file carries."
                               '(:a (:b "bad"))))
             (dolist (datum (getf (explain-data spec value) :errors))
               (setf seen (explained-error-keys datum seen))))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '((a integer) &optional (b string b-p))))))
+        (dolist (value '(nil (1 "valid" :extra) (1 2)))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
       (testing "the audit itself saw the keys it is meant to check"
         (ok (member :kind seen))
         (ok (member :actual seen))
-        (ok (member :field-path seen)))
+        (ok (member :field-path seen))
+        (ok (member :minimum-length seen))
+        (ok (member :maximum-length seen)))
       (testing "and every key it saw is either kept or known to be value-derived"
         (ok (null (set-difference seen (append kept value-derived))))))))

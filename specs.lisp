@@ -84,7 +84,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
-     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome))
+     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome cl-spec:find-spec))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -231,6 +231,16 @@ the malformed-normalization contract explicitly names its finite input corpus."
                      (:shrinking (member :available :unavailable :unknown :none))
                      (:instrumentation (member :available :unavailable :unknown :none)))))))
       (satisfies digest-details-consistent-p)))
+  (defgenerator registry-generator () (cl-spec:make-hash-table-registry))
+  (defspec registry-object (instance-of cl-spec/src/registry:hash-table-registry)
+    (:generator registry-generator))
+  (defspec-function cl-spec:find-spec
+    "Omitted registry uses the current registry; supplied registry is used explicitly."
+    (:args (name arbitrary-symbol) &optional (registry registry-object supplied))
+    (:returns (nullable (instance-of spec)))
+    (:post (eq result
+               (cl-spec/src/registry:registry-find-spec
+                (if supplied registry cl-spec:*registry*) name))))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
     (:args (contract-spec resolved-designator) (value arbitrary-value))

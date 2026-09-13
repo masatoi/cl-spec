@@ -99,3 +99,17 @@ Complete: 467 Rove tests; clean-process full suite; changed-file Mallet; forced
 core compilation; diff checks. Tests compare legacy digest, classifications,
 pre/post order, fresh derived schemas, full-value snapshots, zero values versus
 one NIL, error identity and active target restarts under instrumentation.
+
+## #15 decisions and validation
+
+Syntax `(NAME SPEC [SUPPLIED-P])` after &optional; omitted predicate value NIL,
+false suppliedness, no target-default evaluation. Provided NIL is validated.
+Raw arguments remain evidence; named projection uses binding protocol.
+Built-in generation chooses an optional prefix, shrinking removes its suffix.
+Shared internal call spec carries declaration metadata; required-only digest
+bytes remain stable. Self-spec find-spec exercises optional registry behavior.
+486 Rove tests pass at integration checkpoint, including review regression for
+captured precondition specs and new failure-shape key classification.
+
+#15 final verification: clean-process 49 suites, changed-file Mallet, forced core
+compilation and diff checks passed.

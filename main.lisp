@@ -125,6 +125,7 @@
                 #:property-name
                 #:property-arguments
                 #:property-argument-schema
+                #:property-call-arguments-p #:property-named-arguments
                 #:property-targets
                 #:property-kind
                 #:property-tags
@@ -328,6 +329,7 @@
            #:property-name
            #:property-arguments
            #:property-argument-schema
+           #:property-call-arguments-p #:property-named-arguments
            #:property-targets
            #:property-kind
            #:property-tags
