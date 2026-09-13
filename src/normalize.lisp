@@ -12,6 +12,9 @@
                 #:spec #:type-spec #:reference-spec #:predicate-spec #:member-spec
                 #:range-spec #:instance-of-spec #:and-spec #:or-spec #:not-spec
                 #:list-of-spec #:vector-of-spec #:tuple-spec #:nullable-spec)
+  (:import-from #:cl-spec/src/field-spec
+                #:plist-spec #:make-field-definition)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
 
@@ -19,7 +22,7 @@
 
 (defparameter *spec-primitives*
   '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
-    "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE"
+    "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST"
     "INSTANCE-OF")
   "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
 
@@ -107,6 +110,43 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
              :maximum (bound maximum)
              (spec-initargs form name source-location generator)))))
 
+(defun normalize-plist (form name source-location generator)
+  "Normalize strict required/optional field clauses without assuming list well-formedness."
+  (let ((seen-clauses nil)
+        (seen-keys nil)
+        (fields nil)
+        (closed-p nil))
+    (flet ((refuse (reason)
+             (error 'invalid-spec-form :form form :reason reason)))
+      (unless (finite-list-p form)
+        (refuse "PLIST must be a finite proper list"))
+      (dolist (clause (rest form))
+        (unless (and (consp clause) (finite-list-p clause)
+                     (member (first clause) '(:required :optional :closed)))
+          (refuse "PLIST clauses are :required, :optional or :closed"))
+        (when (member (first clause) seen-clauses)
+          (refuse "PLIST clauses must not repeat"))
+        (push (first clause) seen-clauses)
+        (if (eq (first clause) :closed)
+            (progn
+              (unless (and (= 2 (length clause)) (typep (second clause) 'boolean))
+                (refuse ":closed takes exactly one boolean"))
+              (setf closed-p (second clause)))
+            (dolist (entry (rest clause))
+              (unless (and (finite-list-p entry) (= 2 (length entry))
+                           (keywordp (first entry)))
+                (refuse "PLIST fields must be (:keyword spec) pairs"))
+              (when (member (first entry) seen-keys)
+                (refuse "PLIST field keys must be unique across required and optional"))
+              (push (first entry) seen-keys)
+              (push (make-field-definition
+                     :key (first entry)
+                     :value-spec (normalize-spec-form (second entry))
+                     :required-p (eq (first clause) :required))
+                    fields)))))
+    (apply #'make-instance 'plist-spec :fields (nreverse fields) :closed-p closed-p
+           (spec-initargs form name source-location generator))))
+
 (defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
   (let ((head (first form))
@@ -116,6 +156,8 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
                                 :reason "the head of a spec form must be a symbol"))
     (let ((head-name (symbol-name head)))
       (cond
+        ((string= head-name "PLIST")
+         (normalize-plist form name source-location generator))
         ((string= head-name "TYPE")
          (apply #'make-instance 'type-spec
                 :type-specifier (first (require-arity args 1 form))

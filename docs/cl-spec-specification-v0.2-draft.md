@@ -509,6 +509,8 @@ SPEC
 │   ├── LIST-OF-SPEC
 │   ├── VECTOR-OF-SPEC
 │   └── TUPLE-SPEC
+├── FIELD-SPEC
+│   └── PLIST-SPEC
 ├── NULLABLE-SPEC
 ├── INSTANCE-OF-SPEC
 └── CUSTOM-SPEC
@@ -658,6 +660,7 @@ vector-of
 cons-of
 tuple
 nullable
+plist
 instance-of
 
 ```
@@ -715,6 +718,67 @@ compile方式の目的は以下である。
 - 同一IRから複数の実行・表示形式を生成可能にする
 
 MVPでは単純なrecursive interpretationから開始してもよいが、public architectureはcompiler abstractionを前提とする。
+
+---
+
+# 9.2 フィールド付きplist spec
+
+実装済みの記法：
+
+```lisp
+(defspec user-record
+  (plist
+    (:required (:id integer))
+    (:optional (:nickname (nullable string)))
+    (:closed t)))
+```
+
+`:required`・`:optional`・`:closed`はそれぞれ省略可能で、重複は拒否する。
+フィールドは`(:keyword spec)`の2要素で、必須・任意をまたいでキーを重複できない。
+`:closed`は明示的なbooleanを1つ取る。既定値NILでは未宣言キーを許可し、
+Tでは拒否する。不正宣言は`invalid-spec-form`とし、登録前に拒否する。
+
+値は有限のproper listで、keywordと値の組からなる。同一キーの重複、奇数長、
+非keywordキー、dotted/circular listを拒否する。値がNILであることと欠落は区別し、
+順序は問わない。`(plist)`は構造が正しいkeyword plistすべてを受理する。
+
+`src/field-spec.lisp`に格納形式非依存の`field-definition`
+（key・value-spec・required-p）と`field-spec`（fields・closed-p）を置く。
+`plist-spec`がkeywordキーとplistの構造を扱う。子IRの列挙は宣言順である。
+内部フィールドのkey表現をkeywordに限定せず、将来のalist/hash-tableが独自の
+キー比較規則を持てる境界とする。これらのDSLと共通変換APIは未実装。
+共通のfinite field list・field-definition要素・boolean closed flagはfield-specで検査し、
+plist-specはkeywordと重複キーの制約を加える。初期化・再初期化の変更前に拒否する。
+
+構造検査は子specの述語より前に行う。explainerのエラーkindは構造不正が
+`:not-a-plist`、重複が`:duplicate-key`、必須キー欠落が`:missing-key`、
+closedなspecの未宣言キーが`:unknown-key`。値の型違反等は既存のkindを使用する。
+フィールドの`:path`はキーを含み、例の`:id`なら`(:id)`となる。
+欠落時の`:actual NIL`は値NILの違反とはkindで区別する。
+追加の`:field-path`は宣言されたフィールドを選択するキー列であり、Function Specの
+failure identityに含める。未知キー・重複キーのエラー位置は入力由来の`:path`だけに置き、
+そのキー自身を`:field-path`に含めない。これらが宣言フィールド内の入れ子で起きた場合は、
+宣言された親キーだけをidentityに残す。通常のlist/vector要素indexもidentityに加えず、
+別の宣言フィールドへの移動と、同じ構造違反を保った入力の縮小を区別する。
+
+plistのexpected descriptorは`:kind`・`:closed`・`:fields`を含む。`:fields`の各要素は
+`:key`・`:required`・子の`:expected`を持ち、ORの枝やANDのチェック項目でも
+フィールド契約を識別できる。構造違反はANDのdescriptor重複除去で省略せず、kindとpathを表示する。
+入力構造の検査で作った索引をフィールド照合と未知キー検出にも再利用する。
+
+`spec-data`は`:closed`と`:fields`を返す。`:fields`の各要素は
+`(:key KEY :required BOOLEAN :child-index INDEX)`で、`:children`の子IRを指す。
+digestはsource-formだけでなく、この関連付け・closed flagと子specを含む。
+
+check-it backendは必須キーを常に生成し、任意キーは各drawで独立に含めるか決める。
+未知キーはopenなspecでも生成しない。縮小では任意キーの削除と値の縮小を行い、
+必須キーを保持する。定数値・NILも扱う。任意フィールドを含め、全子specの生成器が
+必要であり、未対応の子は`generator-unavailable`となる。空plist、必須フィールドが
+定数またはcustom generatorのみのplistの縮小capabilityは`:none`。
+任意キーの削除が可能なら`:available`とする。これは縮小成功の保証ではない。
+
+フィールド間制約は既存の`and`・`satisfies`で表現する。
+制約solverやAND生成の一般化は導入しない。
 
 ---
 
@@ -3403,6 +3467,48 @@ spec composition obeys boolean semantics
 などをpropertyとして記述する。
 
 自身が提供する仕組みを自身の品質保証に使う。
+
+## 68.1 実行可能な自己仕様
+
+`cl-spec/specs`を読み込むと、`specs.lisp`の`defspec`・`defspec-function`・
+`defproperty`・`defgenerator`が現在のregistryへ登録される。
+通常のcore読み込みからは分離し、Rove・check-it・instrumentationには依存しない。
+生成検査の実行時だけbackendを別途読み込む。関数の自動instrumentationは行わない。
+registryを消去・交換した場合は`cl-spec/specs:register-specifications`で再登録できる。
+
+| 記述対象 | 実行可能な保証 |
+|---|---|
+| `validp` | 解決可能なspecと値からbooleanを返す |
+| `validate` | 正常入力で同一の値を返す。拒否時の条件・errorsの一致はPropertyで検査 |
+| `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
+| `compile-validator` / `compile-explainer` | spec IRから関数を返す |
+| `spec-data` | v1 definition envelopeとspecのkind・source-formの保持 |
+| `semantic-data` | 対象symbolと関連Propertyの保持 |
+| 正規化 | IR再正規化の同一性、source-formの保持 |
+| 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
+
+`cl-spec/specs:contract-names`と`property-names`が対象名を返す。
+`function-spec-data`・`property-data`・`properties-for`を通して、cl-mcp等からも
+人間向け文書の解析なしに参照できる。Propertyには`:cl-spec-self` tagを付ける。
+これは本文の設計意図・非機能要件を置き換えるものではなく、検査可能な部分の一次記述である。
+
+生成器は整数・文字列・NIL・T・list・vectorの値と、type・range・AND・OR・NOT・
+nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
+狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
+正規化成功まで主張しない。`validate`の正常系は引数集合generatorで構築し、rejectに予算を費やさない。
+custom generatorには縮小戦略がないので、この範囲の失敗は元の反例を保持する。
+explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
+introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
+
+通常profileは各Property 50試行、smokeは10試行。
+`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
+7関数契約と7 Propertyをseed 1・42・2026、各50試行で実行する。
+既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
+
+残る記述範囲は、keyword optionを指定した呼出し、任意の拡張specやregistry/backend実装、
+不正DSL全般、runnerのfailure evidenceとinstrumentationの全protocolである。
+期待conditionはFunction Specの対象外のため、当面Propertyと既存Roveテストで表現する。
+追加APIの仕様を実装する際は、このbundleへ契約またはPropertyを追加し、対象名一覧と検査を更新する。
 
 ---
 

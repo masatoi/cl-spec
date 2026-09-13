@@ -2,6 +2,8 @@
 
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
+  (:import-from #:cl-spec/src/field-spec
+                #:plist-spec #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
   (:import-from #:cl-spec/src/ir
                 #:spec #:spec-name #:spec-description #:spec-kind #:spec-source-form #:spec-metadata
@@ -85,6 +87,8 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :generator (spec-generator-name definition)
          :fields
          (typecase definition
+            (field-spec (list :closed (field-spec-closed-p definition)
+                              :fields (field-descriptions definition)))
            (type-spec (list :type (type-spec-type-specifier definition)))
            (reference-spec (list :target (reference-spec-target definition)))
            (predicate-spec (list :predicate (predicate-spec-predicate definition)))
@@ -101,7 +105,7 @@ Do not invoke user code. Source locations and capabilities are excluded."))
    (not (null (member (class-name (class-of definition))
                        '(type-spec reference-spec predicate-spec member-spec range-spec
                          instance-of-spec and-spec or-spec not-spec nullable-spec
-                         list-of-spec vector-of-spec tuple-spec))))))
+                         list-of-spec vector-of-spec tuple-spec plist-spec))))))
 
 (defmethod definition-description ((definition property))
   (values

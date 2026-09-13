@@ -21,6 +21,9 @@
                 #:or-generator
                 #:guard-generator
                 #:mapped-generator)
+  (:import-from #:cl-spec/src/field-spec
+                #:plist-spec #:field-spec-fields
+                #:field-key #:field-value-spec #:field-required-p)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable)
   (:import-from #:cl-spec/src/ir
@@ -58,6 +61,7 @@
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
   (:export #:custom-value-generator #:spec-generator
+           #:plist-value-generator #:plist-generator-fields #:plist-generator-children
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -117,6 +121,60 @@ with.  Returning the value itself keeps the run's own counterexample, and the
 result says through FUNCTION-CHECK-RESULT-SHRUNK-OUTCOME that nothing was reduced."
   (declare (ignore test))
   (cached-value generator))
+
+(defclass plist-value-generator (generator)
+  ((fields :initarg :fields :reader plist-generator-fields)
+   (children :initarg :children :reader plist-generator-children)
+   (validators :initarg :validators :reader plist-generator-validators))
+  (:documentation "Generate declared plist fields and shrink their values without losing keys."))
+
+(defmethod generate ((generator plist-value-generator))
+  "Draw required fields and independently choose whether each optional field is present."
+  (setf (cached-value generator)
+        (loop for field in (plist-generator-fields generator)
+              for child in (plist-generator-children generator)
+              when (or (field-required-p field) (zerop (random 2)))
+                append (list (field-key field) (generate child)))))
+
+(defmethod shrink ((generator plist-value-generator) test)
+  "Remove optional fields and retain only tested, valid reductions of field values."
+  (loop for field in (plist-generator-fields generator)
+        for child in (plist-generator-children generator)
+        for validator in (plist-generator-validators generator)
+        for key = (field-key field)
+        do (unless (field-required-p field)
+             (let ((candidate (copy-list (cached-value generator))))
+               (when (and (remf candidate key) (not (funcall test candidate)))
+                 (setf (cached-value generator) candidate))))
+           (when (and (typep child 'generator)
+                      (loop for tail on (cached-value generator) by #'cddr
+                            thereis (eq key (car tail))))
+             ;; Some check-it shrinkers return an untested transformed value.
+             ;; Only a value observed by the callback can replace this field.
+             (shrink child
+                     (lambda (value)
+                       (if (not (funcall validator value))
+                           t
+                           (let ((candidate (copy-list (cached-value generator))))
+                             (setf (getf candidate key) value)
+                             (if (funcall test candidate)
+                                 t
+                                 (progn
+                                   (setf (cached-value generator) candidate)
+                                   nil))))))))
+  (cached-value generator))
+
+(defmethod spec-generator ((spec plist-spec) context)
+  (let ((fields (field-spec-fields spec)))
+    (make-instance 'plist-value-generator
+                   :fields fields
+                   :children (mapcar (lambda (field)
+                                       (spec-generator (field-value-spec field) context))
+                                     fields)
+                   :validators (mapcar (lambda (field)
+                                         (compile-validator (field-value-spec field)
+                                                            :context context))
+                                       fields))))
 
 (defun custom-spec-generator (name spec context)
   "Return a generator drawing from the custom generator NAME names.

@@ -22,6 +22,9 @@ function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their §73.1 D1 range: required positional arguments and one return value.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
+Field-aware keyword plist specs support required/optional keys, closed records,
+structured errors, introspection and check-it generation/shrinking. Field metadata
+is separated from storage representation in `src/field-spec.lisp`.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Development With cl-mcp
@@ -41,10 +44,17 @@ This project is developed with cl-mcp's tools:
 | `cl-spec` | Semantic IR, registry, validation, explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
+| `cl-spec/specs` | optional executable API contracts and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 
 The core system must never load `check-it`. The generator backend is injected
 at load time into `cl-spec:*generator-backend*` by `cl-spec/check-it`.
+
+The core does not load `cl-spec/specs`. Loading that optional bundle registers its
+contracts, generators and laws in the currently bound `cl-spec:*registry*` without
+instrumenting functions. Call `cl-spec/specs:register-specifications` to register
+again after clearing a registry or binding a fresh one. Executing the generated
+checks requires `cl-spec/check-it`.
 
 ## Package Naming
 
@@ -55,6 +65,7 @@ ASDF `package-inferred-system`: the package name equals the file path.
 | `src/ir.lisp` | `cl-spec/src/ir` |
 | `src/backends/check-it.lisp` | `cl-spec/src/backends/check-it` |
 | `tests/ir-test.lisp` | `cl-spec/tests/ir-test` |
+| `specs.lisp` | `cl-spec/specs` |
 | `main.lisp` | `cl-spec/main`, nickname `cl-spec` |
 
 Adding a file requires no `.asd` change; dependencies are inferred from
@@ -112,6 +123,7 @@ implemented. Extended argument contracts remain deferred.
 
 ```
 main.lisp         Public API re-export (no logic)
+specs.lisp        Optional executable self-specification bundle
 tests.lisp        Aggregate test system and rove runner
 src/              Implementation, one responsibility per file
 tests/            Rove suites, mirrored naming (*-test.lisp)

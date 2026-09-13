@@ -22,7 +22,7 @@
 (deftest mvp-primitives-are-declared
   (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
     (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
-                 "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "INSTANCE-OF")
+                 "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "INSTANCE-OF")
                *spec-primitives*)))
   (testing "CONS-OF is gone, matching the MVP spec list in section 52"
     (ok (not (member "CONS-OF" *spec-primitives* :test #'string=)))))

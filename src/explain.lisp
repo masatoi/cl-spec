@@ -6,6 +6,7 @@
 
 (defpackage #:cl-spec/src/explain
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
@@ -39,6 +40,10 @@
                 #:vector-of-spec
                 #:tuple-spec
                 #:tuple-spec-element-specs)
+  (:import-from #:cl-spec/src/field-spec
+                #:plist-spec #:field-spec-fields #:field-spec-closed-p
+                #:field-key #:field-value-spec #:field-required-p
+                #:plist-structure-error)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -102,6 +107,13 @@ reads to learn what a value should have been."))
 
 (defmethod expected-descriptor ((spec not-spec))
   (list :not (expected-descriptor (not-spec-inner-spec spec))))
+
+(defmethod expected-descriptor ((spec plist-spec))
+  (list :kind :plist :closed (field-spec-closed-p spec)
+        :fields (loop for field in (field-spec-fields spec)
+                      collect (list :key (field-key field)
+                                    :required (field-required-p field)
+                                    :expected (expected-descriptor (field-value-spec field))))))
 
 (defgeneric compile-node (spec context)
   (:documentation "Compile SPEC into a function of (VALUE PATH).
@@ -179,20 +191,9 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
         (unless (and class (typep value class))
           (list (error-datum :not-an-instance path value :expected expected)))))))
 
-(defun proper-list-p (object)
-  "Recognize a finite proper list before collection explainers iterate it.
-Two cursors detect cycles using constant auxiliary space."
-  (let ((slow object)
-        (fast object))
-    (loop
-      (when (null fast) (return t))
-      (unless (consp fast) (return nil))
-      (setf fast (cdr fast))
-      (when (null fast) (return t))
-      (unless (consp fast) (return nil))
-      (setf fast (cdr fast)
-            slow (cdr slow))
-      (when (eq slow fast) (return nil)))))
+(defun proper-list-p (value)
+  "Use the shared cycle-safe proper-list check."
+  (finite-list-p value))
 
 (defmethod compile-node ((spec and-spec) context)
   (let* ((children (and-spec-children spec))
@@ -298,6 +299,45 @@ Two cursors detect cycles using constant auxiliary space."
       (let ((resolved (resolve-spec target registry)))
         (funcall (compile-node resolved (list :registry registry)) value path)))))
 
+(defmethod compile-node ((spec plist-spec) context)
+  (let* ((fields (field-spec-fields spec))
+         (compiled (mapcar (lambda (field) (compile-node (field-value-spec field) context))
+                           fields))
+         (declared-keys (make-hash-table :test #'eq))
+         (closed-p (field-spec-closed-p spec))
+         (expected (expected-descriptor spec)))
+    (dolist (field fields)
+      (setf (gethash (field-key field) declared-keys) t))
+    (lambda (value path)
+      (multiple-value-bind (kind key index keys) (plist-structure-error value)
+        (if kind
+            (list (error-datum kind (if (eq kind :duplicate-key) (cons key path) path)
+                               value :expected expected))
+            (append
+             (loop for field in fields
+                   for function in compiled
+                   for key = (field-key field)
+                   append
+                   (multiple-value-bind (item present-p) (gethash key index)
+                     (let ((errors
+                             (cond
+                               (present-p (funcall function item (cons key path)))
+                               ((field-required-p field)
+                                (list (error-datum :missing-key (cons key path) nil
+                                                   :expected
+                                                   (expected-descriptor
+                                                    (field-value-spec field))))))))
+                       (loop for datum in errors
+                             collect (let ((copy (copy-list datum)))
+                                       (setf (getf copy :field-path)
+                                             (cons key (getf datum :field-path)))
+                                       copy)))))
+             (when closed-p
+               (loop for key in keys
+                     unless (gethash key declared-keys)
+                       collect (error-datum :unknown-key (cons key path) (gethash key index)
+                                            :expected expected)))))))))
+
 (defun compile-explainer (spec &key context)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
@@ -341,6 +381,16 @@ descriptor, which is why the common cases are unwrapped here."
 (defun print-explain-error (datum stream indent)
   "Print one structured error DATUM to STREAM, indented to column INDENT."
   (case (getf datum :kind)
+    ((:not-a-plist :duplicate-key :missing-key :unknown-key)
+     (format stream "~vT✗ ~A~@[ at ~S~]; expected ~A~%"
+             indent
+             (case (getf datum :kind)
+               (:not-a-plist "not a plist")
+               (:duplicate-key "duplicate key")
+               (:missing-key "missing key")
+               (:unknown-key "unknown key"))
+             (getf datum :path)
+             (format-expected (getf datum :expected))))
     (:conjunct-failed
      (dolist (conjunct (getf datum :conjuncts))
        (format stream "~vT~A ~A~%"
@@ -358,7 +408,9 @@ descriptor, which is why the common cases are unwrapped here."
                                    :key (lambda (c) (getf c :status))))
             (failed-expected (getf failed-conjunct :expected)))
        (dolist (child (getf datum :errors))
-         (unless (equal (getf child :expected) failed-expected)
+         (unless (and (equal (getf child :expected) failed-expected)
+                       (not (member (getf child :kind)
+                                    '(:not-a-plist :duplicate-key :missing-key :unknown-key))))
            (print-explain-error child stream (+ indent 2))))))
     (:no-branch-matched
      (format stream "~vTno branch matched~%" indent)

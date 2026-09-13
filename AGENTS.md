@@ -10,6 +10,9 @@ function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their §73.1 D1 range: required positional arguments and one return value.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
+Field-aware keyword plist specs support required/optional keys, closed records,
+structured errors, introspection and check-it generation/shrinking. Field metadata
+is separated from storage representation in `src/field-spec.lisp`.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Project Structure & Module Organization
@@ -22,9 +25,10 @@ re-exports the public API under the nickname `cl-spec` and contains no logic.
 Tests mirror the sources in `tests/` as `*-test.lisp` and **must** be listed in
 `tests.lisp` — an unlisted suite never runs.
 
-Three systems sit beside the core: `cl-spec/check-it` (generation and
-shrinking), `cl-spec/instrument` (runtime contract wrappers) and
-`cl-spec/tests`. The core system must never load `check-it` or cl-mcp.
+Four systems sit beside the core: `cl-spec/check-it` (generation and
+shrinking), `cl-spec/instrument` (runtime contract wrappers), `cl-spec/specs`
+(executable self-specifications) and `cl-spec/tests`.
+The core system must never load `check-it` or cl-mcp.
 
 ## Build, Test, and Development Commands
 
@@ -46,8 +50,11 @@ docstrings — stubs included. Avoid runtime `eval` and dynamic interning.
 Write Rove tests before implementations. Name suites after the unit under test.
 Remaining stubs are tested by asserting they signal `not-implemented` with the
 right operator; replace those assertions with behavioural tests as each module
-is implemented. The framework's own property tests (specification §68) live in
-`tests/self-properties-test.lisp` and run through `run-property` itself.
+is implemented. Executable public API contracts and semantic laws (specification
+§68.1) live in `specs.lisp`, loaded through `cl-spec/specs` and checked by
+`tests/self-specs-test.lisp`. Extend these when adding covered APIs.
+`tests/self-properties-test.lisp` additionally checks generation and replay
+through `run-property` itself.
 
 ## Commit & Pull Request Guidelines
 

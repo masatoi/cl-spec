@@ -20,7 +20,9 @@
                 #:tuple-generator #:mapped-generator #:guard-generator
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
-                #:compile-spec-generator #:custom-value-generator)
+                #:compile-spec-generator #:custom-value-generator
+                #:plist-value-generator #:plist-generator-fields #:plist-generator-children)
+  (:import-from #:cl-spec/src/field-spec #:field-required-p)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:compile-generator
@@ -263,13 +265,22 @@ calling user code, and keep existing evidence if shrinking itself fails."
                                    :capabilities capabilities))))))
 
 (defun generator-shrink-strategy-p (generator)
-  "Return false when the compiled tree can only return its cached arguments.
+  "Report known shrinking strategies, preserving legacy non-plist capability reporting.
+Plists distinguish constant fields from generators; optional fields can be removed.
 Lists can shrink in length even when their element generator cannot shrink."
   (typecase generator
     (custom-value-generator nil)
+    (plist-value-generator
+     (or (some (lambda (field) (not (field-required-p field)))
+               (plist-generator-fields generator))
+         (some (lambda (child)
+                  (and (typep child 'check-it:generator)
+                       (generator-shrink-strategy-p child)))
+                (plist-generator-children generator))))
     ((or tuple-generator mapped-generator)
      (some #'generator-shrink-strategy-p (sub-generators generator)))
     (guard-generator (generator-shrink-strategy-p (sub-generator generator)))
+    ;; Preserve capability reporting for existing non-plist constant specs.
     (t t)))
 
 (defun compiled-capabilities (compiled &optional (shrink-p t))
