@@ -9,7 +9,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
                 #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
-                #:call-layout-key-p #:call-layout-allow-other-keys-p
+                #:call-layout-policy-data
                 #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
                 #:argument-binding-kind #:argument-binding-supplied-name #:argument-binding-keyword)
   (:import-from #:cl-spec/src/field-spec
@@ -105,8 +105,7 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 (defmethod node-attributes ((spec call-arguments-spec))
   (let ((layout (call-arguments-spec-layout spec)))
     (append (list :bindings (call-layout-data layout))
-            (when (call-layout-key-p layout)
-              (list :key-arguments t :allow-other-keys (call-layout-allow-other-keys-p layout))))))
+            (call-layout-policy-data layout))))
 
 (defmethod node-attributes ((spec spec))
   nil)

@@ -12,6 +12,13 @@
 
 (defvar *draws* 0)
 
+(defvar *validations* 0)
+
+(defun counted-rest-p (value)
+  (declare (ignore value))
+  (incf *validations*)
+  t)
+
 (defun summed-rest (&rest items)
   (push (copy-list items) *seen*)
   (reduce #'+ items :initial-value 0))
@@ -28,6 +35,21 @@
       (ok (member nil *seen*))
       (ok (some (lambda (items) (> (length items) 1)) *seen*))
       (ok (every (lambda (items) (<= (length items) 20)) *seen*)))))
+
+(deftest rest-driven-calls-validate-only-once
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*seen* nil) (*validations* 0))
+    (cl-spec:defgenerator fixed-rest () (list 1))
+    (cl-spec:defspec counted-rest
+      (and (list-of integer) (satisfies counted-rest-p))
+      (:generator fixed-rest))
+    (cl-spec:defspec-function summed-rest
+      (:args &rest (items counted-rest))
+      (:returns integer))
+    (let ((result (cl-spec:check-function 'summed-rest :trials 1 :seed 42)))
+      (ok (eq :passed (cl-spec:property-result-status result)))
+      (ok (= 1 *validations*))
+      (ok (equal '((1)) *seen*)))))
 
 (defun failed-rest (&rest items)
   (declare (ignore items))

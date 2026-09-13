@@ -612,8 +612,10 @@ After the first non-option form, remaining forms are ordinary Lisp code.
                        (not (lambda-list-keyword-name-p (first binding))))
             (error 'invalid-generator-form :form clause :reason :invalid-shrink-clause))
           (setf shrinker `(lambda ,binding ,@(cddr clause))))))
-    (when (and (consp (first body)) (eq (caar body) :shrink))
-      (error 'invalid-generator-form :form (first body) :reason :duplicate-shrink-clause))
+    (dolist (form body)
+      (when (and (consp form) (eq (car form) :shrink))
+        (error 'invalid-generator-form :form form
+               :reason (if shrinker :duplicate-shrink-clause :misplaced-shrink-clause))))
     (values documentation shrinker body)))
 
 (defmacro defgenerator (&whole whole name lambda-list &body body)

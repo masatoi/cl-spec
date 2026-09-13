@@ -43,7 +43,7 @@
             (status (instrumentation-status 'target)))
         (ok (eq :indeterminate (getf status :status)))
         (ok (member :inspection-error (getf status :reasons)))
-        (ok (equal (list (list :kind :inspection-error :path nil :target 'target
+        (ok (equal (list (list :kind :opaque-definition :path nil :target 'target
                               :reason :inspection-error))
                    (getf status :current-digest-omissions)))
         (ok (null (getf status :installed-digest-omissions :absent)))
@@ -56,8 +56,8 @@
     (registry-clear *registry*)
     (let ((status (instrumentation-status 'target)))
       (ok (eq :stale (getf status :status)))
-      (ok (equal (list (list :kind :missing-definition :path nil :target 'target
-                            :reason :not-registered))
+      (ok (equal (list (list :kind :unresolved-reference :path nil :target 'target
+                            :reason :definition-missing))
                  (getf status :current-digest-omissions)))
       (ok (null (getf status :installed-digest-omissions :absent))))))
 
@@ -107,3 +107,18 @@
     (let ((status (instrumentation-status 'target)))
       (ok (eq :not-collected (getf status :installed-digest-omissions)))
       (ok (eq :not-collected (getf status :current-digest-omissions))))))
+
+(deftest status-omission-kinds-use-the-published-vocabulary
+  (with-target (contract diagnostic-contract :return-spec 'integer)
+    (declare (ignore contract))
+    (instrument-function 'target)
+    (let ((*inspection-fails* t)
+           (status (instrumentation-status 'target))
+           (kinds (getf (schema-info) :digest-omission-kinds)))
+      (ok (every (lambda (omission) (member (getf omission :kind) kinds))
+                 (getf status :current-digest-omissions))))
+    (registry-clear *registry*)
+    (let ((status (instrumentation-status 'target))
+          (kinds (getf (schema-info) :digest-omission-kinds)))
+      (ok (every (lambda (omission) (member (getf omission :kind) kinds))
+                 (getf status :current-digest-omissions))))))

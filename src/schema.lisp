@@ -5,7 +5,7 @@
   (:import-from #:cl-spec/src/call-schema
                 #:return-values-spec #:call-arguments-spec #:call-arguments-spec-layout
                 #:call-layout-data
-                #:call-layout-key-p #:call-layout-allow-other-keys-p)
+                #:call-layout-policy-data)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
@@ -36,6 +36,11 @@
 
 (in-package #:cl-spec/src/schema)
 
+(defun digest-exclusions ()
+  "Return a fresh list of the intentional version-one digest exclusions."
+  (list :target-implementation :helper-implementations :captured-state
+        :external-state :source-location :backend))
+
 (defun schema-info ()
   "Describe version 1 of the Lisp definition/result schema, independent of MCP JSON."
   (list :schema-version 1 :format :lisp-plist :unknown-keys :ignore
@@ -49,8 +54,7 @@
         :record-kinds '(:definition :result)
         :digest-algorithm :fnv1a64-v1
         :digest-covers :declaration-and-registered-dependencies
-        :digest-excludes '(:target-implementation :helper-implementations :captured-state
-                           :external-state :source-location :backend)
+        :digest-excludes (digest-exclusions)
         :capability-states '(:available :unavailable :unknown :none)))
 
 (defgeneric resolve-definition (designator entity-kind registry)
@@ -95,11 +99,11 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :fields
          (typecase definition
             (call-arguments-spec
-             (let ((layout (call-arguments-spec-layout definition)))
-               (append (call-layout-data layout)
-                       (when (call-layout-key-p layout)
-                         (list (list :key-arguments t
-                                     :allow-other-keys (call-layout-allow-other-keys-p layout)))))))
+             (let* ((layout (call-arguments-spec-layout definition))
+                    (policy (call-layout-policy-data layout)))
+               ;; V1 hashes a policy record after the bindings. Introspection
+               ;; flattens the same policy into its public display plist.
+               (append (call-layout-data layout) (when policy (list policy)))))
             (field-spec (list :closed (field-spec-closed-p definition)
                               :fields (field-descriptions definition)))
            (type-spec (list :type (type-spec-type-specifier definition)))
@@ -397,12 +401,13 @@ Extension programming errors propagate rather than becoming incompleteness."
                                               :definition-missing)))))
     (multiple-value-bind (records complete omissions)
         (collect-definition-graph root registry t)
-      (let* ((digest (canonical-digest records))
+      (let* ((digest (when complete (canonical-digest records)))
              (value-omissions
                (unless digest
                  (or (canonical-value-omissions records)
-                     (list (digest-omission :resource-limit '(:declarations) nil
-                                           :canonical-encoding-limit))))))
+                     (when complete
+                       (list (digest-omission :resource-limit '(:declarations) nil
+                                             :canonical-encoding-limit)))))))
         (values (when complete digest) (and complete (not (null digest)))
                 (append omissions value-omissions))))))
 
@@ -441,6 +446,5 @@ to avoid compiling a disposable generator before constructing the actual one."
             :definition-digest digest :definition-digest-complete complete
             :definition-digest-covers :declaration-and-registered-dependencies
             :digest-omissions omissions
-            :digest-exclusions (list :target-implementation :helper-implementations :captured-state
-                                     :external-state :source-location :backend)
+            :digest-exclusions (digest-exclusions)
             :capabilities capabilities))))

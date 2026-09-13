@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
+  (:import-from #:cl-spec/src/registry #:hash-table-registry #:registry-find-spec)
   (:import-from #:cl-spec/main
                 #:compile-explainer
                 #:compile-validator
@@ -84,14 +85,16 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
-     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome cl-spec:find-spec cl-spec:definition-digest))
+     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
+     cl-spec:find-spec cl-spec:definition-digest))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
   '(normalization-is-idempotent normalization-preserves-source
     validation-and-explanation-agree compiled-validation-agrees
     validation-preserves-values-or-explains-refusal boolean-composition
-    introspection-preserves-spec-semantics digest-details-agree-with-metadata rest-projection-agrees-with-target))
+    introspection-preserves-spec-semantics digest-details-agree-with-metadata
+    rest-projection-agrees-with-target))
 
 (defun register-instrumentation-specifications ()
   "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
@@ -232,7 +235,7 @@ the malformed-normalization contract explicitly names its finite input corpus."
                      (:instrumentation (member :available :unavailable :unknown :none)))))))
       (satisfies digest-details-consistent-p)))
   (defgenerator registry-generator () (cl-spec:make-hash-table-registry))
-  (defspec registry-object (instance-of cl-spec/src/registry:hash-table-registry)
+  (defspec registry-object (instance-of hash-table-registry)
     (:generator registry-generator))
   (defspec-function cl-spec:definition-digest
     "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
@@ -248,7 +251,7 @@ the malformed-normalization contract explicitly names its finite input corpus."
     (:returns (values (nullable (instance-of spec)) boolean))
     (:post-values (found-spec found-p)
       (multiple-value-bind (expected present)
-          (cl-spec/src/registry:registry-find-spec
+          (registry-find-spec
            (if supplied registry cl-spec:*registry*) name)
         (and (eq found-spec expected) (eq found-p present)))))
   (defspec-function validp

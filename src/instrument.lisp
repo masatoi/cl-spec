@@ -9,7 +9,7 @@
 (defpackage #:cl-spec/src/instrument
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
-                #:call-layout-bindings #:bind-call-arguments #:bound-call-values
+                #:make-call-layout #:call-layout-bindings #:bind-call-arguments #:bound-call-values
                 #:call-layout-accepts-p #:call-layout-required-count #:call-layout-key-p
                 #:call-layout-rest-binding
                 #:bound-call-presence #:bound-call-bindings
@@ -17,7 +17,8 @@
                 #:argument-binding-spec #:argument-binding-name
                 #:return-schema-primary-spec #:return-schema-value)
   (:import-from #:cl-spec/src/function-spec
-                #:function-spec-call-layout #:function-spec-return-schema #:function-spec-argument-schema)
+                #:function-spec-argument-specs #:function-spec-return-schema
+                #:function-spec-argument-schema)
   (:nicknames #:cl-spec/instrument)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
@@ -118,13 +119,13 @@ return or postcondition check."))
 
 (defun make-contract-wrapper (name original contract registry scopes)
   "Compile enabled checks and capture their predicates around ORIGINAL."
-  (let* ((layout (function-spec-call-layout contract))
+  (let* ((layout (make-call-layout (function-spec-argument-specs contract)))
          (arguments (call-layout-bindings layout))
          (arity (length (call-layout-bindings layout)))
          (context (list :registry registry))
          (input-p (member :input scopes))
          (argument-schema (when input-p
-                            (function-spec-argument-schema contract)))
+                            (function-spec-argument-schema contract layout)))
          (shape-explainer (when input-p (compile-explainer argument-schema :context context)))
          (inputs (when input-p
                    (mapcar (lambda (argument)
@@ -156,59 +157,76 @@ return or postcondition check."))
                                                             layout (rest value-and-args))))))))
          (post-count (length (function-spec-postconditions contract))))
     (lambda (&rest values)
-      (when input-p
-        (unless (call-layout-accepts-p layout values)
-          (contract-failure
-           name :input :arity argument-schema values
-           (if (or (call-layout-key-p layout) (call-layout-rest-binding layout))
-               (funcall shape-explainer values '(:args))
-               (list (error-datum :wrong-length '(:args) values
-                                  :expected (expected-descriptor argument-schema)
-                                  :expected-length
-                                  (if (= arity (call-layout-required-count layout))
-                                      arity (list (call-layout-required-count layout) arity))
-                                  :actual-length (length values))))))
-        (let ((bound (bind-call-arguments layout values)))
-          (loop for (spec path explainer) in inputs
-                for binding in arguments
-                for present in (bound-call-presence bound)
-                for value = (cdr (assoc (argument-binding-name binding)
-                                        (bound-call-bindings bound)))
-                for errors = (when present (funcall explainer value path))
-                when errors do (contract-failure name :input :argument-spec spec value errors)))
-        (when (and pre
-                    (precondition-refuses-p
-                     pre (bound-call-values (bind-call-arguments layout values))))
-          (contract-failure name :input :precondition pre-spec values
-                            (list (error-datum :predicate-failed '(:pre) values
-                                               :predicate pre-test
-                                               :expected (expected-descriptor pre-spec))))))
-      (if (not (or output post))
-          (apply original values)
-          (multiple-value-call
-              (lambda (&rest results)
-                (let ((value (return-schema-value return-schema results))
-                      (post-value (if values-post-p results (first results))))
-                  (when output
-                    (let ((errors (funcall output value '(:returns))))
-                      (when errors
-                        (contract-failure name :output :return-spec returns value errors))))
-                  (when post
-                    (multiple-value-bind (holds index tag)
-                         (apply post post-value
-                                 (bound-call-values (bind-call-arguments layout values)))
-                      (unless holds
-                        (let ((path (if (and (eq tag :cl-spec-post-form-failure)
-                                             (integerp index) (<= 0 index) (< index post-count))
-                                        (list index :post) '(:post)))
-                              (value-and-args (cons post-value values)))
-                          (contract-failure
-                           name :post :postcondition post-spec value-and-args
-                           (list (error-datum :predicate-failed path value-and-args
-                                              :predicate (predicate-spec-predicate post-spec)
-                                              :expected (expected-descriptor post-spec))))))))
-                  (values-list results)))
-            (apply original values))))))
+      (let ((cached nil) (spine nil))
+        (labels ((unchanged-p ()
+                   ;; Iterate the finite snapshot, never an untrusted mutated tail.
+                   (let ((tail values))
+                     (dolist (entry spine (null tail))
+                       (unless (and (eq tail (car entry))
+                                    (eq (car tail) (cdr entry)))
+                         (return nil))
+                       (setf tail (cdr tail)))))
+                 (current-bindings ()
+                   (unless (and cached (unchanged-p))
+                     (setf cached (bind-call-arguments layout values)
+                           spine (loop for tail on values
+                                       collect (cons tail (car tail)))))
+                   cached))
+          (when input-p
+            (unless (call-layout-accepts-p layout values)
+              (contract-failure
+               name :input :arity argument-schema values
+               (if (or (call-layout-key-p layout) (call-layout-rest-binding layout))
+                   (funcall shape-explainer values '(:args))
+                   (list (error-datum :wrong-length '(:args) values
+                                      :expected (expected-descriptor argument-schema)
+                                      :expected-length
+                                      (if (= arity (call-layout-required-count layout))
+                                          arity (list (call-layout-required-count layout) arity))
+                                      :actual-length (length values))))))
+            (let ((bound (current-bindings)))
+              (loop for (spec path explainer) in inputs
+                    for binding in arguments
+                    for present in (bound-call-presence bound)
+                    for value = (cdr (assoc (argument-binding-name binding)
+                                            (bound-call-bindings bound)))
+                    for errors = (when present (funcall explainer value path))
+                    when errors do (contract-failure name :input :argument-spec spec value errors)))
+            ;; APPLY may expose its argument spine to a user &REST parameter.
+            ;; Preserve the cache's scalar projection while sharing argument objects.
+            (when (and pre
+                       (precondition-refuses-p
+                         pre (copy-list (bound-call-values (current-bindings)))))
+              (contract-failure name :input :precondition pre-spec values
+                                (list (error-datum :predicate-failed '(:pre) values
+                                                   :predicate pre-test
+                                                   :expected (expected-descriptor pre-spec))))))
+          (if (not (or output post))
+              (apply original values)
+              (multiple-value-call
+                  (lambda (&rest results)
+                    (let ((value (return-schema-value return-schema results))
+                          (post-value (if values-post-p results (first results))))
+                      (when output
+                        (let ((errors (funcall output value '(:returns))))
+                          (when errors
+                            (contract-failure name :output :return-spec returns value errors))))
+                      (when post
+                        (multiple-value-bind (holds index tag)
+                             (apply post post-value
+                                     (bound-call-values (current-bindings)))
+                          (unless holds
+                            (let ((path (if (and (eq tag :cl-spec-post-form-failure)
+                                                 (integerp index) (<= 0 index) (< index post-count))
+                                            (list index :post) '(:post)))
+                                  (value-and-args (cons post-value values)))
+                              (contract-failure
+                               name :post :postcondition post-spec value-and-args
+                               (list (error-datum :predicate-failed path value-and-args
+                                                  :predicate (predicate-spec-predicate post-spec)
+                                                  :expected (expected-descriptor post-spec))))))))
+                      (values-list results)))
+                (apply original values))))))))
 
 (defun local-declaration-snapshot (contract)
   "Snapshot complete local declarations without resolving registry dependencies.
@@ -290,8 +308,8 @@ inspection from a known empty omission list."
               ((null contract)
                (mark-stale :definition-missing)
                (setf current-omissions
-                     (list (list :kind :missing-definition :path nil :target name
-                                 :reason :not-registered))))
+                     (list (list :kind :unresolved-reference :path nil :target name
+                                 :reason :definition-missing))))
               (t
                (unless (eq contract (installation-contract entry))
                  (mark-stale :definition-replaced))
@@ -311,7 +329,7 @@ inspection from a known empty omission list."
         (error ()
           (setf current-complete nil
                 current-omissions
-                (list (list :kind :inspection-error :path nil :target name
+                (list (list :kind :opaque-definition :path nil :target name
                             :reason :inspection-error)))
           (push :inspection-error reasons)))
       (let* ((complete (and (installation-digest-complete-p entry) current-complete))

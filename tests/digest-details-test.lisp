@@ -50,6 +50,30 @@
       (ok (getf metadata :definition-digest-complete)))
     (ok (member :digest-omissions (getf (schema-info) :optional-metadata)))))
 
+(deftest exclusion-metadata-is-consistent-and-fresh
+  (let* ((spec (normalize-spec-form 'integer))
+         (published (getf (schema-info) :digest-excludes))
+         (metadata (getf (definition-metadata spec :capabilities nil) :digest-exclusions))
+         (expected (copy-list published)))
+    (ok (equal published metadata))
+    (setf (car published) :changed (car metadata) :changed)
+    (ok (equal expected (getf (schema-info) :digest-excludes)))
+    (ok (equal expected
+               (getf (definition-metadata spec :capabilities nil) :digest-exclusions)))))
+
+(deftest call-layout-policy-keeps-canonical-and-display-shapes
+  (let* ((layout
+           (cl-spec/src/call-schema:make-call-layout
+            (cl-spec/src/call-schema:normalize-call-declarations
+             '(&key ((:x x) integer supplied) &allow-other-keys))))
+         (spec (make-instance 'cl-spec/src/call-schema:call-arguments-spec :layout layout))
+         (fields (getf (definition-description spec) :fields))
+         (attributes (cl-spec/src/introspection::node-attributes spec)))
+    (ok (equal "fnv1a64-v1:3ed76928338f73e3" (definition-digest spec)))
+    (ok (equal (butlast fields) (getf attributes :bindings)))
+    (ok (equal (car (last fields)) (cddr attributes)))
+    (ok (equal '(:key-arguments t :allow-other-keys t) (cddr attributes)))))
+
 (deftest opaque-description-has-a-reason
   (multiple-value-bind (digest complete omissions)
       (definition-digest (make-instance 'opaque-type :type-specifier 'integer))
@@ -57,6 +81,25 @@
     (ok (null complete))
     (ok (eq :opaque-definition (getf (first omissions) :kind)))
     (ok (listp (getf (first omissions) :path)))))
+
+(deftest incomplete-graphs-scan-values-without-hashing
+  (let ((original (symbol-function 'cl-spec/src/schema::canonical-digest))
+         (hash-calls 0)
+         (spec (make-instance 'opaque-type :type-specifier 'integer
+                              :metadata (list :opaque (lambda () t)))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'cl-spec/src/schema::canonical-digest)
+                 (lambda (value)
+                   (incf hash-calls)
+                   (funcall original value)))
+           (multiple-value-bind (digest complete omissions) (definition-digest spec)
+             (ok (null digest))
+             (ok (null complete))
+             (ok (equal '(:opaque-definition :opaque-value)
+                        (mapcar (lambda (item) (getf item :kind)) omissions)))
+             (ok (zerop hash-calls))))
+      (setf (symbol-function 'cl-spec/src/schema::canonical-digest) original))))
 
 (deftest independent-missing-dependencies-have-stable-paths
   (let ((registry (make-hash-table-registry))

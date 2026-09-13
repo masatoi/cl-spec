@@ -8,7 +8,8 @@
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
   (:import-from #:cl-spec/src/backends/call-generators
-                #:call-arguments-generator #:call-generator-children #:call-generator-removable-p)
+                #:call-arguments-generator #:call-generator-children #:call-generator-removable-p
+                #:call-generator-rest-driven-p)
   (:import-from #:check-it
                 #:*num-trials*
                 #:generate
@@ -190,12 +191,32 @@ Over-budget batches are refused before any candidate can invoke user predicates.
       (setf (gethash tail seen) t tail (cdr tail))
       (incf count))))
 
+(defun candidate-bucket-key (value)
+  "Hash a bounded graph prefix; SAME-VALUE-P remains the equality authority.
+Depth limits terminate cycles and bound work on large candidates. Sharing and
+unvisited contents may collide, but equivalent snapshots always share a bucket."
+  (labels ((prefix-hash (item depth)
+             (cond
+               ((zerop depth) 0)
+               ((consp item)
+                (sxhash (list :cons (prefix-hash (car item) (1- depth))
+                              (prefix-hash (cdr item) (1- depth)))))
+               ((arrayp item)
+                (sxhash
+                 (list :array (array-dimensions item) (array-element-type item)
+                       (when (array-has-fill-pointer-p item) (fill-pointer item))
+                       (loop for index below (min 4 (array-total-size item))
+                             collect (prefix-hash (row-major-aref item index) (1- depth))))))
+               (t (sxhash item)))))
+    (prefix-hash value 4)))
+
 (defun shrink-custom-arguments (generator property original validator context budget)
   "Search correlated candidate argument sets while retaining original failure identity.
 Return accepted observation, whether another failure occurred, and a bounded report."
   (let ((accepted nil) (different nil) (count 0)
         (current (trial-observation-arguments original))
-        (visited (list (snapshot-value (trial-observation-arguments original)))))
+        (visited (make-hash-table :test #'eql)))
+    (push (snapshot-value current) (gethash (candidate-bucket-key current) visited))
     (labels ((finish (reason)
                (return-from shrink-custom-arguments
                  (values accepted different
@@ -207,24 +228,28 @@ Return accepted observation, whether another failure occurred, and a bounded rep
                  (handler-case (funcall (custom-value-generator-shrinker generator) input)
                    (error () (finish :shrinker-error)))))
           (unless (same-value-p input current) (finish :mutation))
-          (multiple-value-bind (reason inspected) (bounded-candidate-list candidates (- budget count))
+          (multiple-value-bind (reason inspected)
+              (bounded-candidate-list candidates (- budget count))
             (when reason (incf count inspected) (finish reason)))
           (let ((improved nil))
             (dolist (candidate candidates)
               (incf count)
-              (unless (some (lambda (prior) (same-value-p prior candidate)) visited)
+              (unless (some (lambda (prior) (same-value-p prior candidate))
+                            (gethash (candidate-bucket-key candidate) visited))
                 (let* ((arguments (snapshot-value candidate))
                        (before (snapshot-value arguments)))
-                  (push before visited)
+                  (push before (gethash (candidate-bucket-key before) visited))
                   (let ((admitted
-                          (handler-case (and (finite-list-p arguments) (funcall validator arguments))
+                          (handler-case
+                              (and (finite-list-p arguments) (funcall validator arguments))
                             (error () (finish :validation-error)))))
                     (unless (same-value-p before arguments) (finish :mutation))
                     (when admitted
                       (let ((observation
                               (handler-case (observe-trial property arguments :context context)
                                 (error () (finish :execution-error)))))
-                        (when (trial-observation-arguments-mutated-p observation) (finish :mutation))
+                        (when (trial-observation-arguments-mutated-p observation)
+                          (finish :mutation))
                         (when (observation-failure-p observation)
                           (if (failure-identities-match-p
                                (trial-observation-signature original)
@@ -259,8 +284,11 @@ calling user code, and keep existing evidence if shrinking itself fails."
          :trials trials)
       (loop for trial from 1 to trials
             do (generate generator)
-               (when custom-name
-                 (validate-generated-arguments custom-name whole-validator (cached-value generator)))
+               (when (or custom-name
+                         (and (typep generator 'call-arguments-generator)
+                              (not (call-generator-rest-driven-p generator))))
+                 (validate-generated-arguments custom-name whole-validator
+                                               (cached-value generator)))
                (let ((original (observe-trial property (cached-value generator)
                                               :context context)))
                  (when (eq :rejected (trial-observation-status original))
@@ -269,7 +297,8 @@ calling user code, and keep existing evidence if shrinking itself fails."
                    (let ((accepted nil) (different nil) (report nil))
                      (when (typep generator 'custom-value-generator)
                        (let ((reason (cond ((not shrink-p) :disabled)
-                                           ((trial-observation-arguments-mutated-p original) :mutation)
+                                           ((trial-observation-arguments-mutated-p original)
+                                            :mutation)
                                            ((null (custom-value-generator-shrinker generator))
                                             :no-shrinker))))
                          (if reason
@@ -330,7 +359,10 @@ Lists can shrink in length even when their element generator cannot shrink."
     (custom-value-generator nil)
     (call-arguments-generator
      (or (call-generator-removable-p generator)
-         (some #'generator-shrink-strategy-p (call-generator-children generator))))
+         (some (lambda (child)
+                  (and (typep child 'check-it:generator)
+                       (generator-shrink-strategy-p child)))
+                (call-generator-children generator))))
     (plist-value-generator
      (or (some (lambda (field) (not (field-required-p field)))
                (plist-generator-fields generator))

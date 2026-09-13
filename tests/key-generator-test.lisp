@@ -61,3 +61,31 @@
                                  :argument-specs '(&key) :return-spec t)))
     (ok (eq :none
             (getf (getf (cl-spec:definition-metadata contract) :capabilities) :shrinking)))))
+
+(deftest suppressed-call-children-do-not-advertise-shrinking
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defgenerator empty-tail () nil)
+    (cl-spec:defspec tail-list (list-of t) (:generator empty-tail))
+    (dolist (arguments '((&rest (tail tail-list) &key ((:value value) integer))
+                        (&rest (tail (list-of t)) &key)))
+      (let ((contract (make-instance 'cl-spec:function-spec :name 'key-failure
+                                     :argument-specs arguments :return-spec t)))
+        (ok (eq :none
+                (getf (getf (cl-spec:definition-metadata contract) :capabilities)
+                      :shrinking)))))))
+
+(deftest invalid-custom-keyword-values-never-reach-target
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*seen* nil) (*defaults* 0) (draws 0))
+    (cl-spec:defgenerator invalid-limit () (incf draws) :invalid)
+    (cl-spec:defspec limit-spec integer (:generator invalid-limit))
+    (cl-spec:defspec-function keyed-target
+      (:args &optional (prefix (member 10))
+             &key ((:limit limit) limit-spec supplied))
+      (:returns integer))
+    (ok (handler-case
+            (progn (cl-spec:check-function 'keyed-target :trials 200 :seed 42) nil)
+          (cl-spec:invalid-generated-arguments () t)))
+    (ok (= 1 draws))
+    (ok (every (lambda (call) (equal call '(10 nil 42))) *seen*))
+    (ok (= *defaults* (length *seen*)))))

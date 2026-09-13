@@ -155,6 +155,43 @@
       (ok (null (getf result :shrunk-failure)))
       (ok (zerop shrinks)))))
 
+(deftest candidate-buckets-preserve-graph-equality
+  (let* ((cycle (list 1))
+         (shared (list 2))
+         (values (list '(1 2) '(1.0 2) (list shared shared)
+                       (list (list 2) (list 2)) #(1 2) "ab")))
+    (setf (cdr cycle) cycle)
+    (push cycle values)
+    (dolist (value values)
+      (ok (= (cl-spec/src/backends/check-it::candidate-bucket-key value)
+             (cl-spec/src/backends/check-it::candidate-bucket-key
+              (cl-spec/src/execution:snapshot-value value)))))
+    (ok (not (cl-spec/src/execution:same-value-p (third (rest values))
+                                                (fourth (rest values)))))))
+
+(defun graph-target (value)
+  (push value *calls*)
+  "wrong return")
+
+(deftest visited-candidates-retain-sharing-cycles-and-numeric-types
+  (let* ((*calls* nil)
+         (cycle (list 1))
+         (shared (list 2))
+         (values (list 1 1.0 (list shared shared) (list (list 2) (list 2))
+                       #(1 2) (make-array 2 :element-type 'bit :initial-contents '(1 0)))))
+    (setf (cdr cycle) cycle)
+    (push cycle values)
+    (let* ((candidates (mapcar #'list values))
+           (result (run-case
+                    (lambda () '(:initial))
+                    (lambda (current)
+                      (declare (ignore current))
+                      (append candidates (cl-spec/src/execution:snapshot-value candidates)))
+                    :target 'graph-target :arguments '((value t)) :pre nil :budget 200)))
+      (ok (= (1+ (length values)) (length *calls*)))
+      (ok (eq :exhausted (getf (getf result :shrink-report) :termination)))
+      (ok (getf result :shrunk-failure)))))
+
 (defun run-case (draw shrinker &key (budget 100) (seed 42)
                                 (target 'interval-target)
                                 (arguments '((lo (range integer 0 100000))

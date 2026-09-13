@@ -15,7 +15,8 @@
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/conditions #:generator-unavailable)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:export #:call-arguments-generator #:call-generator-children #:call-generator-removable-p))
+  (:export #:call-arguments-generator #:call-generator-children #:call-generator-removable-p
+           #:call-generator-rest-driven-p))
 
 (in-package #:cl-spec/src/backends/call-generators)
 
@@ -59,6 +60,9 @@
           for arguments = (append (loop for child in children for index from 0 below count
                                         collect (generate child))
                                   proper-tail)
+          ;; Rest-driven draws need filtering against overlapping keyword constraints.
+          ;; Generated-key draws retain invalid custom output for the backend's
+          ;; initial argument validation, which refuses it without calling the target.
           when (or (not rest-driven) (funcall (call-generator-validator generator) arguments))
             do (return-from generate (setf (cached-value generator) arguments)))
     (error 'generator-unavailable :spec (call-generator-spec generator)

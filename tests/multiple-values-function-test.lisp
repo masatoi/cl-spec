@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/tests/multiple-values-function-test
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok #:signals)
-  (:import-from #:cl-spec/src/function-spec #:function-spec #:make-function-check-property #:function-spec-post-value-variables
+  (:import-from #:cl-spec/src/function-spec #:function-spec #:make-function-check-property
+                #:function-spec-post-value-variables
                 #:function-spec-return-spec)
   (:import-from #:cl-spec/src/execution #:evaluate-trial #:failure-identities-match-p)
   (:import-from #:cl-spec/src/dsl #:defspec-function)
@@ -106,7 +107,8 @@
       (:returns (values integer string))
       (:post (= result 3)))
     (ok (eq :passed
-            (evaluate-trial (make-function-check-property (find-function-spec 'multiple-target)) nil)))
+            (evaluate-trial
+             (make-function-check-property (find-function-spec 'multiple-target)) nil)))
     (setf *returned* nil)
     (defspec-function multiple-target
       (:returns (values))
@@ -127,6 +129,24 @@
         (setf *returned* '(1 "bad"))
         (ok (not (equal (third first-position)
                         (third (classify '(values integer integer))))))))))
+
+(deftest fixed-return-and-post-failures-do-not-cross-during-shrinking
+  (let* ((*registry* (make-hash-table-registry))
+         (*returned* '("bad" t))
+         (contract (defspec-function multiple-target
+                     (:returns (values integer boolean))
+                     (:post-values (number flag) (and flag (plusp number)))))
+         (property (make-function-check-property contract))
+         (return-failure (multiple-value-list (evaluate-trial property nil))))
+    (setf *returned* '(-1 t))
+    (let ((post-failure (multiple-value-list (evaluate-trial property nil))))
+      (ok (eq :return-spec (second return-failure)))
+      (ok (eq :postcondition (second post-failure)))
+      (ok (not (failure-identities-match-p (third return-failure) (third post-failure))))
+      (ok (not (failure-identities-match-p (third post-failure) (third return-failure)))))
+    (ok (failure-identities-match-p
+         '(:return-value :return-spec ((:kind :type-failed :expected (:type integer))))
+         '(:return-value :postcondition (:post-form 0))))))
 
 (deftest explicit-post-values-see-all-values-and-implicit-result-remains-primary
   (let ((*registry* (make-hash-table-registry)) (*returned* '(3 "three")) (*calls* 0))

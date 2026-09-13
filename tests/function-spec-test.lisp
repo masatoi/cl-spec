@@ -48,7 +48,7 @@
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
-                #:function-spec-name
+                #:function-spec-name #:function-spec-call-layout
                 #:function-spec-argument-specs #:function-spec-argument-schema
                 #:function-spec-return-spec
                 #:function-spec-preconditions
@@ -1446,3 +1446,39 @@ macro expansions would need the lint exemption that file carries."
         (ok (member :key seen)))
       (testing "and every key it saw is either kept or known to be value-derived"
         (ok (null (set-difference seen (append kept value-derived))))))))
+
+(deftest call-layout-cache-tracks-current-declarations
+  (let* ((contract (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '((a integer))))
+         (first (function-spec-call-layout contract))
+         (spec (second (first (function-spec-argument-specs contract)))))
+    (ok (eq first (function-spec-call-layout contract)))
+    (reinitialize-instance contract)
+    (ok (not (eq first (function-spec-call-layout contract))))
+    (setf first (function-spec-call-layout contract))
+    (ok (eq spec (cl-spec/src/call-schema:argument-binding-spec
+                  (first (cl-spec/src/call-schema:call-layout-bindings first)))))
+    (setf (caar (function-spec-argument-specs contract)) 'renamed)
+    (let ((changed (function-spec-call-layout contract)))
+      (ok (not (eq first changed)))
+      (ok (eq 'renamed (cl-spec/src/call-schema:argument-binding-name
+                        (first (cl-spec/src/call-schema:call-layout-bindings changed)))))
+      (ok (eq changed (function-spec-call-layout contract)))
+      ;; The public layout reader also exposes mutable list storage.
+      (setf (car (cl-spec/src/call-schema:call-layout-bindings changed)) nil)
+      (ok (not (eq changed (function-spec-call-layout contract)))))
+    (reinitialize-instance contract :argument-specs '(&key ((:value b) string)))
+    (let ((updated (function-spec-call-layout contract)))
+      (ok (cl-spec/src/call-schema:call-layout-key-p updated))
+      (ok (eq updated (function-spec-call-layout contract)))
+      (ok (handler-case
+              (progn (reinitialize-instance contract :argument-specs '((t integer))) nil)
+            (invalid-function-spec-form () t)))
+      (ok (eq updated (function-spec-call-layout contract)))
+      (setf (caar (cdr (function-spec-argument-specs contract))) '(:other b))
+      (ok (cl-spec/src/call-schema:call-layout-accepts-p
+           (function-spec-call-layout contract) '(:other "value")))
+      (let ((declarations (function-spec-argument-specs contract)))
+        (setf (cdr (last declarations)) declarations)
+        (ok (handler-case (progn (function-spec-call-layout contract) nil)
+              (program-error () t)))))))

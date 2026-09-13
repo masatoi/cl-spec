@@ -47,6 +47,15 @@
              (defgenerator draw () (:shrink (value) . tail) 1)))
     (ok (invalid-generator-p (lambda () (macroexpand-1 form))))))
 
+(deftest misplaced-shrinker-clauses-are-refused
+  (dolist (form
+           '((defgenerator draw () 1 (:shrink (value) nil))
+             (defgenerator draw () "documentation" 1 (:shrink (value) nil))
+             (defgenerator draw () (:shrink (value) nil) 1 (:shrink (value) nil))
+             (defgenerator draw () (declare (optimize (speed 0)))
+               (:shrink (value) nil) 1)))
+    (ok (invalid-generator-p (lambda () (macroexpand-1 form))))))
+
 (deftest cyclic-shrink-clauses-are-refused
   (let ((clause (list :shrink '(value) nil)))
     (setf (cddr clause) clause)

@@ -101,8 +101,10 @@ Other objects retain identity; arbitrary application state is not checkpointed."
 (defun failure-identities-match-p (original candidate)
   "Compare observed failure signatures against the ORIGINAL trial.
 False property results and conditions have distinct classes, and conditions
-compare by type. Function return-spec/postcondition crossings retain their shared
-return-value class; within each clause, spec shapes or post-form indices must agree.
+compare by type. Legacy primary-value return-spec/postcondition crossings retain
+ their shared :RETURN-VALUE class; within each clause, shapes or indices must agree.
+Fixed :RETURN-VALUES failures require the same clause and shape or post-form index;
+this prevents a return-position violation from shrinking into a different post failure.
 An unknown post-form identity never establishes a match, including clause crossings."
   (and original candidate
        (eq (first original) (first candidate))

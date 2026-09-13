@@ -56,7 +56,8 @@
                 #:property-result-elapsed
                 #:run-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
-                #:property-result-shrunk-outcome #:property-result-shrink-report #:property-result-rejected
+                #:property-result-shrunk-outcome #:property-result-shrink-report
+                #:property-result-rejected
                 #:property-result-failure-reason #:property-result-explanation
                 #:property-result-entity-kind)
   (:import-from #:cl-spec/src/generator
@@ -97,7 +98,10 @@
 (in-package #:cl-spec/src/function-spec)
 
 (defclass function-spec ()
-  ((name :initarg :name
+  ((call-layout-cache :initform nil)
+   (call-layout-declarations :initform nil)
+   (call-layout-bindings-snapshot :initform nil)
+   (name :initarg :name
          :initform nil
          :reader function-spec-name
          :documentation "Package-qualified symbol naming the specified function.")
@@ -187,7 +191,8 @@ function at a time (specification §3.2)."))
 (defparameter *function-spec-slot-names*
   '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
-    source-form source-location metadata)
+    source-form source-location metadata
+    call-layout-cache call-layout-declarations call-layout-bindings-snapshot)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
 (defmethod definition-validation-slots append ((contract function-spec))
@@ -284,7 +289,8 @@ would run while introspection reported no such clause"
     (unless (every #'finite-definition-form-p
                    (list (function-spec-argument-specs contract)
                          (function-spec-return-spec contract) (function-spec-signal-spec contract)
-                         (function-spec-preconditions contract) (function-spec-postconditions contract)
+                         (function-spec-preconditions contract)
+                         (function-spec-postconditions contract)
                          (function-spec-source-form contract)))
       (refuse nil "definition forms must be acyclic"))
     (dolist (predicate (list (function-spec-precondition-function contract)
@@ -336,25 +342,45 @@ would run while introspection reported no such clause"
      (function-spec-post-value-variables contract)
      (length (tuple-spec-element-specs (function-spec-return-spec contract)))
      (call-declaration-variables (function-spec-argument-specs contract))))
+  (setf (slot-value contract 'call-layout-cache) nil
+        (slot-value contract 'call-layout-declarations) nil
+        (slot-value contract 'call-layout-bindings-snapshot) nil)
   contract)
 
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)
   (declare (ignore slot-names))
   (validate-definition contract))
 
-(defun function-spec-argument-schema (contract)
-  "Derive the raw argument schema from CONTRACT's current declarations."
-  (let ((layout (function-spec-call-layout contract)))
-    (if (call-layout-required-only-p layout)
-        (make-instance 'tuple-spec
-                       :element-specs (mapcar #'argument-binding-spec (call-layout-bindings layout))
-                       :generator (function-spec-argument-generator contract))
-        (make-instance 'call-arguments-spec :layout layout
-                       :generator (function-spec-argument-generator contract)))))
+(defun function-spec-argument-schema
+    (contract &optional (layout (make-call-layout (function-spec-argument-specs contract))))
+  "Derive a raw argument schema with a fresh layout, or the supplied LAYOUT.
+An installation may supply its private layout. Both paths isolate captured checks
+from the contract's exposed layout cache."
+  (if (call-layout-required-only-p layout)
+      (make-instance 'tuple-spec
+                     :element-specs (mapcar #'argument-binding-spec (call-layout-bindings layout))
+                     :generator (function-spec-argument-generator contract))
+      (make-instance 'call-arguments-spec :layout layout
+                     :generator (function-spec-argument-generator contract))))
 
 (defun function-spec-call-layout (contract)
-  "Derive the call layout from CONTRACT's current argument declarations."
-  (make-call-layout (function-spec-argument-specs contract)))
+  "Return a validated layout for CONTRACT's current argument declarations.
+Reuse descriptors while declaration containers and exposed binding storage match
+their snapshots. Spec objects retain their identity; their internals are not
+layout data. Comparing against finite snapshots also bounds malformed cycles."
+  (let ((declarations (function-spec-argument-specs contract))
+        (cached (slot-value contract 'call-layout-cache)))
+    (if (and cached
+             (equal declarations (slot-value contract 'call-layout-declarations))
+             (equal (call-layout-bindings cached)
+                    (slot-value contract 'call-layout-bindings-snapshot)))
+        cached
+        (let ((layout (make-call-layout declarations)))
+          (setf (slot-value contract 'call-layout-cache) layout
+                (slot-value contract 'call-layout-declarations) (copy-tree declarations)
+                (slot-value contract 'call-layout-bindings-snapshot)
+                (copy-list (call-layout-bindings layout)))
+          layout))))
 
 (defun function-spec-return-schema (contract)
   "Derive the return schema from CONTRACT\'s current primary return declaration."

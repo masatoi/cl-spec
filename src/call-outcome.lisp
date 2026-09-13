@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/src/call-outcome
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:export #:call-outcome #:make-call-outcome #:invoke-target-once #:call-outcome-kind #:call-outcome-values #:call-outcome-condition))
+  (:export #:call-outcome #:make-call-outcome #:invoke-target-once
+           #:call-outcome-kind #:call-outcome-values #:call-outcome-condition))
 
 (in-package #:cl-spec/src/call-outcome)
 
