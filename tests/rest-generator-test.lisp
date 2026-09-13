@@ -77,9 +77,18 @@
   (push (copy-list raw) *seen*)
   limit)
 
+;; The target's lambda list deliberately mixes &OPTIONAL, &REST and &KEY, which
+;; SBCL reports as a style warning.  That shape is what this file tests, so the
+;; warning is muffled for this one definition.
+#+sbcl
+(declaim (sb-ext:muffle-conditions sb-kernel:&optional-and-&key-in-lambda-list))
+
 (defun optional-rest-key (&optional option &rest raw &key limit)
   (push (list option (copy-list raw) limit) *seen*)
   nil)
+
+#+sbcl
+(declaim (sb-ext:unmuffle-conditions sb-kernel:&optional-and-&key-in-lambda-list))
 
 (deftest generation-combines-unconstrained-rest-and-declared-keys
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (*seen* nil))

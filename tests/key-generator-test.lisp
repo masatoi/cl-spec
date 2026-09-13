@@ -10,10 +10,19 @@
 
 (defvar *seen* nil)
 (defvar *defaults* 0)
+;; The target's lambda list deliberately mixes &OPTIONAL and &KEY, which SBCL
+;; reports as a style warning.  That shape is what this file tests, so the
+;; warning is muffled for this one definition.
+#+sbcl
+(declaim (sb-ext:muffle-conditions sb-kernel:&optional-and-&key-in-lambda-list))
+
 (defun keyed-target (&optional (prefix 10)
                      &key (limit (progn (incf *defaults*) 42) supplied))
   (push (list prefix supplied limit) *seen*)
   limit)
+
+#+sbcl
+(declaim (sb-ext:unmuffle-conditions sb-kernel:&optional-and-&key-in-lambda-list))
 
 (deftest generated-keys-preserve-prefix-and-defaults
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
