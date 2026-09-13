@@ -4,6 +4,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/artifact-values
                 #:serialize-artifact-value #:deserialize-artifact-value
+                #:encode-artifact-value #:decode-artifact-value
                 #:artifact-value-error #:artifact-value-error-reason)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result #:property-result-schema-metadata
@@ -19,10 +20,9 @@
                 #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/registry #:*registry*)
   (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest)
-  (:import-from #:cl-spec/src/property #:property-arguments)
-  (:import-from #:cl-spec/src/function-spec
-                #:function-spec-argument-specs #:make-function-check-property)
-  (:import-from #:cl-spec/src/ir #:tuple-spec)
+  (:import-from #:cl-spec/src/property #:property-argument-schema)
+  (:import-from #:cl-spec/src/function-spec #:make-function-check-property)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/validator #:validp)
   (:export #:make-counterexample-artifact #:counterexample-artifact-data
            #:serialize-counterexample-artifact #:deserialize-counterexample-artifact
@@ -51,16 +51,13 @@
     (artifact-value-error (condition)
       (reject-artifact (artifact-value-error-reason condition)))))
 
-(defun record-p (value keys)
-  ;; Values reaching this function have already passed the bounded tree codec.
-  (and (listp value)
-       (loop for tail = value then (cddr tail)
-             while tail
-             always (and (consp tail) (consp (cdr tail))
-                         (member (car tail) keys)
-                         (not (member (car tail) seen)))
-             collect (car tail) into seen
-             finally (return (= (length seen) (length keys))))))
+(defun record-p (value keys &optional optional-keys)
+  (and (finite-list-p value) (evenp (length value))
+       (loop for (key) on value by #'cddr
+             always (and (or (member key keys) (member key optional-keys))
+                         (not (member key seen)))
+             collect key into seen
+             finally (return (every (lambda (key) (member key seen)) keys)))))
 
 (defun evidence-data (observation)
   (when observation
@@ -71,16 +68,11 @@
           :signature (trial-observation-signature observation)
           :mutated-p (trial-observation-arguments-mutated-p observation))))
 
-(defun proper-list-p (value)
-  (loop for tail = value then (cdr tail)
-        while (consp tail)
-        finally (return (null tail))))
-
 (defun valid-signature-p (data kind)
   (let ((signature (getf data :signature))
         (reason (getf data :reason))
         (status (getf data :status)))
-    (and (proper-list-p signature)
+    (and (finite-list-p signature)
          (if (eq kind :property)
              (case reason
                (:predicate-false (and (eq status :failed) (equal signature '(:property-false))))
@@ -103,11 +95,11 @@
 
 (defun valid-evidence-p (data)
   (and (record-p data '(:arguments :status :reason :signature :mutated-p))
-       (proper-list-p (getf data :arguments))
+       (finite-list-p (getf data :arguments))
        (member (getf data :status) '(:failed :error))
        (keywordp (getf data :reason))
        (consp (getf data :signature))
-       (proper-list-p (getf data :signature))
+       (finite-list-p (getf data :signature))
        (member (getf data :mutated-p) '(nil t))))
 
 (defun validate-artifact-data (data)
@@ -115,7 +107,13 @@
       (and (record-p data '(:artifact-version :record-kind :entity-kind :name
                            :definition-digest :definition-digest-complete :capabilities
                            :original :shrunk :selection :seed :profile :budget
-                           :options :provenance))
+                           :options :provenance) '(:metadata-omissions))
+           (finite-list-p (getf data :metadata-omissions))
+           (every (lambda (omission)
+                    (and (record-p omission '(:field :reason))
+                         (member (getf omission :field) '(:options :provenance :capabilities))
+                         (keywordp (getf omission :reason))))
+                  (getf data :metadata-omissions))
            (eql (getf data :artifact-version) 1)
            (eq (getf data :record-kind) :counterexample)
            (member (getf data :entity-kind) '(:property :function-spec))
@@ -154,36 +152,69 @@
     (validate-artifact-data data)
     (%make-counterexample-artifact (checked-codec #'serialize-artifact-value data))))
 
-(defun bounded-copy (value)
-  (checked-codec #'deserialize-artifact-value
-                 (checked-codec #'serialize-artifact-value value)))
+(defun persistable-metadata (value field)
+  "Copy optional metadata through bounded tags, recording omissions explicitly."
+  (handler-case
+      (decode-artifact-value (encode-artifact-value value))
+    (artifact-value-error (condition)
+      (let ((reason (artifact-value-error-reason condition)))
+        (values (list :unavailable t :reason reason) (list :field field :reason reason))))))
+
+(defun artifact-record-wire (data)
+  "Encode once normally; omit optional metadata if its combined size exhausts the budget."
+  (handler-case (serialize-artifact-value data)
+    (artifact-value-error (condition)
+      (unless (member (artifact-value-error-reason condition)
+                      '(:structure-limit :character-limit :text-limit))
+        (reject-artifact (artifact-value-error-reason condition)))
+      (let ((omissions (getf data :metadata-omissions)))
+        (dolist (field '(:options :provenance :capabilities))
+          (when (getf data field)
+            (setf (getf data field) (list :unavailable t :reason :artifact-budget))
+            (setf omissions (remove field omissions :key (lambda (item) (getf item :field))))
+            (push (list :field field :reason :artifact-budget) omissions)))
+        (setf (getf data :metadata-omissions) omissions)
+        ;; Evidence still must fit: this retry never drops arguments or failure identity.
+        (checked-codec #'serialize-artifact-value data)))))
 
 (defun make-counterexample-artifact (result &key (selection :selected))
   "Freeze original and accepted shrunk evidence from RESULT.
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
-values, sharing and cycles signal INVALID-COUNTEREXAMPLE-ARTIFACT."
+evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
+is represented by an unavailable placeholder and :METADATA-OMISSIONS."
   (check-type result property-result)
+  (unless (member selection '(:selected :original :shrunk))
+    (reject-artifact :invalid-selection))
   (let* ((metadata (property-result-schema-metadata result))
          (original (property-result-failure-evidence result))
          (shrunk (property-result-shrunk-evidence result))
          (choice (if (eq selection :selected) (if shrunk :shrunk :original) selection))
-         (data
-           (list :artifact-version 1 :record-kind :counterexample
-                 :entity-kind (property-result-entity-kind result)
-                 :name (property-result-property result)
-                 :definition-digest (getf metadata :definition-digest)
-                 :definition-digest-complete (getf metadata :definition-digest-complete)
-                 :capabilities (bounded-copy (getf metadata :capabilities))
-                 :original (evidence-data original) :shrunk (evidence-data shrunk)
-                 :selection choice :seed (property-result-seed result)
-                 :profile (property-result-profile result) :budget (property-result-budget result)
-                 :options (bounded-copy (property-result-options result))
-                 :provenance (bounded-copy (property-result-provenance result))))
-         ;; Validate bounded decoded data, so malformed/cyclic manually built results
-         ;; cannot make the record validator loop indefinitely.
-         (wire (checked-codec #'serialize-artifact-value data)))
-    (validate-artifact-data (checked-codec #'deserialize-artifact-value wire))
-    (%make-counterexample-artifact wire)))
+         (omissions nil))
+    (unless (and (finite-list-p metadata) (evenp (length metadata)))
+      (reject-artifact :invalid-definition-metadata))
+    (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
+    (labels ((optional-metadata (value field)
+               (multiple-value-bind (copy omission) (persistable-metadata value field)
+                 (when omission (push omission omissions))
+                 copy)))
+      (let ((data
+              (list :artifact-version 1 :record-kind :counterexample
+                    :entity-kind (property-result-entity-kind result)
+                    :name (property-result-property result)
+                    :definition-digest (getf metadata :definition-digest)
+                    :definition-digest-complete (getf metadata :definition-digest-complete)
+                    :capabilities (optional-metadata (getf metadata :capabilities) :capabilities)
+                    :original (evidence-data original) :shrunk (evidence-data shrunk)
+                    :selection choice :seed (property-result-seed result)
+                    :profile (property-result-profile result)
+                    :budget (property-result-budget result)
+                    :options (optional-metadata (property-result-options result) :options)
+                    :provenance (optional-metadata (property-result-provenance result)
+                                                   :provenance))))
+        (when omissions (setf (getf data :metadata-omissions) (nreverse omissions)))
+        ;; Record checks are cycle-safe; the single wire encoding bounds all nested values.
+        (validate-artifact-data data)
+        (%make-counterexample-artifact (artifact-record-wire data))))))
 
 (defun recheck-counterexample (artifact &key (registry *registry*)
                                            (state-policy :unconfirmed)
@@ -217,17 +248,14 @@ Returns a :RECHECK record; never mutates the saved artifact or original result."
             (let* ((*registry* registry)
                    (arguments (getf saved :arguments))
                    (before-validation (snapshot-value arguments))
-                   (bindings (if (eq kind :property)
-                                 (property-arguments definition)
-                                 (function-spec-argument-specs definition)))
-                   (schema (make-instance 'tuple-spec :element-specs (mapcar #'second bindings))))
+                   (property (if (eq kind :property) definition
+                                 (make-function-check-property definition)))
+                   (schema (property-argument-schema property)))
               (unless (validp schema arguments :registry registry)
                 (return-from recheck-counterexample (outcome :input-invalid)))
               (unless (same-value-p before-validation arguments)
                 (return-from recheck-counterexample (outcome :unsupported :input-mutated)))
-              (let* ((property (if (eq kind :property) definition
-                                   (make-function-check-property definition)))
-                     (observation (observe-trial property arguments
+              (let ((observation (observe-trial property arguments
                                                  :context (list :registry registry))))
                 (cond
                   ((trial-observation-arguments-mutated-p observation)

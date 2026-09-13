@@ -32,6 +32,24 @@
 
 (in-package #:cl-spec/tests/registry-test)
 
+(deftest invalid-index-keys-report-the-offending-value
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-property registry 'sample :old :targets '(original) :tags '(:old))
+    (dolist (key '(:targets :tags))
+      (let* ((invalid (list 42))
+             (condition
+               (handler-case
+                   (apply #'registry-register-property registry 'sample :new
+                          (list key invalid))
+                 (type-error (condition) condition))))
+        (ok (typep condition 'type-error))
+        (when (typep condition 'type-error)
+          (ok (eq invalid (type-error-datum condition)))
+          (ok (not (typep invalid (type-error-expected-type condition))))))
+      (ok (eq :old (registry-find-property registry 'sample)))
+      (ok (equal '(sample) (registry-properties-for registry 'original)))
+      (ok (equal '(sample) (registry-properties-with-tag registry :old))))))
+
 (deftest spec-round-trip
   (testing "a registered spec is found again, unregistered names are not"
     (let ((registry (make-hash-table-registry)))

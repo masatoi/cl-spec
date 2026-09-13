@@ -24,7 +24,8 @@
                 #:spec-violation-value
                 #:validate
                 #:validp)
-  (:export #:register-instrumentation-specifications #:register-specifications #:contract-names #:property-names))
+  (:export #:register-instrumentation-specifications #:register-specifications
+           #:contract-names #:property-names))
 
 (in-package #:cl-spec/specs)
 

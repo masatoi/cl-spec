@@ -26,7 +26,8 @@
                 #:resolve-definition #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
-                #:property #:property-argument-schema #:validate-property-executable)
+                #:property #:property-argument-schema #:validate-property-executable
+                #:property-source-form)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
                 #:property-result-schema-metadata #:property-result-budget
@@ -668,8 +669,8 @@ are accepted. A run with no admitted trials is :SKIPPED."
          (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
-         (source (snapshot-value (function-spec-source-form contract)))
          (property (make-function-check-property contract :budget budget))
+         (source (property-source-form property))
          (result (run-property property :seed seed :options options :registry registry)))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)

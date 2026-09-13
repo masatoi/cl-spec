@@ -16,7 +16,7 @@
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
   (:import-from #:cl-spec/src/schema
-                #:definition-instrumentation-capability #:definition-description #:definition-digest)
+                #:definition-instrumentation-capability #:definition-graph #:definition-digest)
   (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
@@ -172,27 +172,14 @@ return or postcondition check."))
             (apply original values))))))
 
 (defun local-declaration-snapshot (contract)
-  "Snapshot declaration children and link names without resolving registry dependencies.
-Function objects remain identity-bearing leaves. Return availability as a second value."
-  (let ((seen (make-hash-table :test #'eq))
-        (pending nil) (records nil) (count 0))
-    (labels ((reference (object)
-               (multiple-value-bind (id found) (gethash object seen)
-                 (if found id
-                     (let ((id (incf count)))
-                       (when (> count 10000)
-                         (return-from local-declaration-snapshot (values nil nil)))
-                       (setf (gethash object seen) id)
-                       (push object pending)
-                       id)))))
-      (reference contract)
-      (loop while pending
-            for object = (pop pending)
-            do (multiple-value-bind (data children links complete) (definition-description object)
-                 (push (list (gethash object seen) (class-name (class-of object))
-                             data (mapcar #'reference children) links complete)
-                       records)))
-      (values (snapshot-value (nreverse records)) t))))
+  "Snapshot complete local declarations without resolving registry dependencies.
+Function objects remain identity-bearing leaves. Incomplete descriptions cannot
+establish a declaration comparison and return NIL/NIL."
+  (multiple-value-bind (records complete)
+      (definition-graph contract :resolve-links-p nil)
+    (if complete
+        (values (snapshot-value records) t)
+        (values nil nil))))
 
 (defun install-contract (name &key (registry *registry*) (scopes '(:input :output :post)))
   "Install enabled checks using REGISTRY, retaining the original definition for restoration.
@@ -235,7 +222,7 @@ their changes are reported separately. Incomplete evidence is indeterminate."
         (local-available nil))
     (labels ((report-status (status dependency-status)
                (snapshot-value
-                (list :name name :status status :reasons (nreverse reasons)
+                (list :name name :status status :reasons (reverse reasons)
                       :dependency-status dependency-status
                       :installed-digest (when entry (installation-digest entry))
                       :installed-digest-complete (when entry (installation-digest-complete-p entry))

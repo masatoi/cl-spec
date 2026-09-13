@@ -40,3 +40,22 @@ Baseline: 333 tests pass.
   guarantee; cost grows with declaration/dependency graphs. Wrapper calls perform
   no status/digest work. A local declaration change reports dependency comparison
   as indeterminate, since the full digest cannot isolate that change's contribution.
+
+
+## PR #22 review follow-up
+
+- Codec: typed nonfinite rejection; logical list depth; iterative bounded work.
+- Artifact: optional metadata omissions (including aggregate limits), early selection
+  diagnostics, shared finite-list predicate, one normal-path wire encoding.
+- Recheck: dispatch through the whole-argument schema generic; generator annotations
+  still do not execute a generator during validation.
+- Instrumentation: honor description completeness, share graph traversal with digest,
+  avoid destructive reversal of literal reason lists; golden digests preserved.
+- Registry: keep independent index-key validation and report truthful TYPE-ERROR data.
+- Provenance: remove runtime ASDF import; test release-version consistency.
+- Function checks: reuse the adapter's existing captured source form.
+- Style: wrap the overlong public export line in specs.lisp.
+
+Review validation: 405 tests passed, 35 clean-process suites passed; changed-file
+mallet and forced core compilation passed. Standalone core loading confirms no
+ASDF runtime module dependency and no check-it/instrumentation load.

@@ -66,6 +66,51 @@
   (ok (rejected-p (lambda () (encode-artifact-value '((1)) :max-depth 1))))
   (ok (rejected-p (lambda () (serialize-artifact-value "abcdef" :max-chars 3)))))
 
+(deftest nonfinite-floats-use-artifact-condition
+  #+sbcl
+  (dolist (bits '(#x7ff00000 -1048576 #x7ff80000 #x7f800000 -8388608 #x7fc00000))
+    (let ((value
+            (if (member bits '(#x7ff00000 -1048576 #x7ff80000))
+                (funcall (symbol-function 'sb-kernel:make-double-float) bits 0)
+                (funcall (symbol-function 'sb-kernel:make-single-float) bits))))
+      (ok (rejected-p (lambda () (encode-artifact-value value))))
+      (ok (rejected-p (lambda () (serialize-artifact-value value)))))))
+
+(deftest flat-lists-use-node-budget-instead-of-nesting-budget
+  (dolist (length '(500 4999 10000))
+    (let* ((value (loop for i below length collect i))
+           (budget (1+ (* 2 length)))
+           (data (encode-artifact-value value :max-nodes budget :max-depth 1))
+           (wire (serialize-artifact-value value :max-nodes budget :max-depth 1)))
+      (ok (equal value (decode-artifact-value data :max-nodes budget :max-depth 1)))
+      (ok (equal value (deserialize-artifact-value wire :max-nodes budget :max-depth 1)))
+      (ok (rejected-p (lambda () (encode-artifact-value value :max-nodes (1- budget)))))
+      (ok (rejected-p (lambda () (decode-artifact-value data :max-nodes (1- budget)))))
+      (ok (rejected-p (lambda () (deserialize-artifact-value wire :max-nodes (1- budget)))))))
+  (let ((value (loop for i below 500 collect i)))
+    (ok (equal value (deserialize-artifact-value (serialize-artifact-value value))))))
+
+(deftest dotted-spines-and-nested-values-keep-logical-depth
+  (let ((value (loop for i below 500 collect i)))
+    (setf (cdr (last value)) :tail)
+    (ok (equal value (deserialize-artifact-value
+                      (serialize-artifact-value value :max-depth 1) :max-depth 1))))
+  (let ((nested 1))
+    (dotimes (i 129) (setf nested (list nested)))
+    (ok (rejected-p (lambda () (encode-artifact-value nested))))
+    (let ((wire (serialize-artifact-value nested :max-depth 129)))
+      (ok (rejected-p (lambda () (deserialize-artifact-value wire))))
+      (ok (equal nested (deserialize-artifact-value wire :max-depth 129))))))
+
+(deftest malicious-wire-depth-is-bounded-before-reconstruction
+  (let ((wire (with-output-to-string (stream)
+                (write-string "AV1 " stream)
+                (dotimes (i 10000) (write-string "(8 " stream))
+                (write-string "(0)" stream)
+                (dotimes (i 10000) (write-string " (0))" stream)))))
+    (ok (rejected-p (lambda () (deserialize-artifact-value wire)))))
+  (ok (rejected-p (lambda () (deserialize-artifact-value "AV1 (((((((0)))))))")))))
+
 (defun rejected-p (thunk)
   (handler-case (progn (funcall thunk) nil)
     (artifact-value-error () t)))

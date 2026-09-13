@@ -2,6 +2,8 @@
 (defpackage #:cl-spec/tests/instrument-status-test
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
+  (:import-from #:cl-spec/src/ir #:type-spec)
+  (:import-from #:cl-spec/src/schema #:definition-description)
   (:import-from #:cl-spec/src/instrument
                 #:*instrumented-functions* #:instrument-function #:uninstrument-function
                 #:instrumented-function-p #:instrumentation-status #:refresh-instrumentation
@@ -29,6 +31,39 @@
   (handler-case (progn (funcall thunk) nil)
     (unsupported-instrumentation-target (condition)
       (unsupported-instrumentation-target-reason condition))))
+
+(defclass partial-status-spec (type-spec)
+  ((annotation :initarg :annotation :accessor partial-status-annotation))
+  (:documentation "A spec extension exposing only an incomplete diagnostic description."))
+
+(defmethod definition-description ((spec partial-status-spec))
+  (values (list :annotation (partial-status-annotation spec)) nil nil nil))
+
+(deftest partial-descriptions-do-not-prove-declaration-change
+  (let ((spec (make-instance 'partial-status-spec :type-specifier 'integer
+                                                :annotation :before)))
+    (with-target (contract :return-spec spec)
+      (declare (ignore contract))
+      (instrument-function 'target)
+      (setf (partial-status-annotation spec) :after)
+      (let ((status (instrumentation-status 'target)))
+        (ok (eq :indeterminate (getf status :status)))
+        (ok (eq :indeterminate (getf status :dependency-status)))
+        (ok (not (member :declaration-changed (getf status :reasons))))))))
+
+(deftest partial-descriptions-retain-known-predicate-changes
+  (let ((spec (make-instance 'partial-status-spec :type-specifier 'integer
+                                                :annotation :before)))
+    (with-target (contract :return-spec spec :source-form '(contract target)
+                          :preconditions '((plusp x)) :precondition-function #'plusp)
+      (instrument-function 'target)
+      (setf (partial-status-annotation spec) :after)
+      (reinitialize-instance contract :preconditions '((plusp x))
+                             :precondition-function (lambda (x) (> x 10)))
+      (let ((status (instrumentation-status 'target)))
+        (ok (eq :stale (getf status :status)))
+        (ok (member :precondition-changed (getf status :reasons)))
+        (ok (not (member :declaration-changed (getf status :reasons))))))))
 
 (deftest missing-named-dependency-is-indeterminate
   (with-target (contract :return-spec 'named-result)

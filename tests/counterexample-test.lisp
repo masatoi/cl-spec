@@ -6,11 +6,12 @@
   (:import-from #:cl-spec/src/counterexample
                 #:make-counterexample-artifact #:counterexample-artifact-data
                 #:serialize-counterexample-artifact #:deserialize-counterexample-artifact
-                #:recheck-counterexample #:invalid-counterexample-artifact)
-  (:import-from #:cl-spec/src/property #:property #:register-property)
+                #:recheck-counterexample #:invalid-counterexample-artifact
+                #:invalid-counterexample-artifact-reason)
+  (:import-from #:cl-spec/src/property #:property #:register-property #:property-argument-schema)
   (:import-from #:cl-spec/src/property-runner #:property-result)
   (:import-from #:cl-spec/src/execution #:observe-trial)
-  (:import-from #:cl-spec/src/schema #:definition-metadata)
+  (:import-from #:cl-spec/src/schema #:definition-metadata #:definition-description)
   (:import-from #:cl-spec/src/registry #:make-hash-table-registry)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form))
 
@@ -18,11 +19,84 @@
 
 (defun make-registry () (make-hash-table-registry))
 
+(deftest invalid-selection-is-specific
+  (multiple-value-bind (result property) (fixture (make-registry))
+    (declare (ignore property))
+    (ok (eq :invalid-selection
+            (handler-case (make-counterexample-artifact result :selection :typo)
+              (invalid-counterexample-artifact (condition)
+                (invalid-counterexample-artifact-reason condition)))))))
+
+(deftest opaque-metadata-does-not-discard-evidence
+  (let ((registry (make-registry)))
+    (multiple-value-bind (result property) (fixture registry)
+      (declare (ignore property))
+      (reinitialize-instance result :options (list :registry registry)
+                                    :provenance (list :extension (lambda () t)))
+      (let* ((artifact (make-counterexample-artifact result))
+             (data (counterexample-artifact-data artifact)))
+        (ok (getf (getf data :options) :unavailable))
+        (ok (getf (getf data :provenance) :unavailable))
+        (ok (find :options (getf data :metadata-omissions)
+                  :key (lambda (omission) (getf omission :field))))
+        (ok (eq :same-failure
+                (getf (recheck-counterexample artifact :registry registry
+                                             :state-policy :stateless) :status)))))))
+
+(deftest optional-metadata-cannot-exhaust-the-artifact-budget
+  (multiple-value-bind (result property) (fixture (make-registry))
+    (declare (ignore property))
+    (reinitialize-instance result :options (make-array 6000 :initial-element nil)
+                                  :provenance (make-array 6000 :initial-element nil))
+    (let* ((artifact (make-counterexample-artifact result))
+           (data (counterexample-artifact-data artifact)))
+      (ok (equal '(4) (getf (getf data :original) :arguments)))
+      (ok (getf (getf data :options) :unavailable))
+      (ok (getf (getf data :provenance) :unavailable)))))
+
+(deftest malformed-captured-metadata-is-rejected-before-lookup
+  (dolist (metadata (list '(:other . 3)
+                         (let ((cycle (list :other nil)))
+                           (setf (cddr cycle) cycle) cycle)))
+    (let ((result (make-instance 'property-result :trials 1 :schema-metadata metadata)))
+      (ok (handler-case (progn (make-counterexample-artifact result) nil)
+            (invalid-counterexample-artifact (condition)
+              (eq :invalid-definition-metadata
+                  (invalid-counterexample-artifact-reason condition))))))))
+
+(defclass custom-schema-property (property) ())
+
+(defmethod property-argument-schema ((property custom-schema-property))
+  (normalize-spec-form '(tuple string)))
+
+(defmethod definition-description ((property custom-schema-property))
+  (multiple-value-bind (data children links complete) (call-next-method)
+    (declare (ignore complete))
+    (values data children links t)))
+
+(deftest recheck-honors-whole-argument-schema
+  (let* ((registry (make-registry))
+         (calls 0)
+         (property (make-instance 'custom-schema-property :name 'custom-schema
+                                  :arguments '((x integer))
+                                  :source-form '(custom-schema)
+                                  :function (lambda (x) (declare (ignore x)) (incf calls) nil))))
+    (register-property property registry)
+    (let* ((evidence (observe-trial property (list "accepted-by-override")))
+           (metadata (definition-metadata property :registry registry :capabilities nil))
+           (artifact (make-counterexample-artifact
+                      (make-instance 'property-result :property 'custom-schema :trials 1
+                                     :schema-metadata metadata :failure-evidence evidence))))
+      (ok (eq :same-failure
+              (getf (recheck-counterexample artifact :registry registry
+                                           :state-policy :stateless) :status)))
+      (ok (= 2 calls)))))
+
 (defun fixture (registry &key (function (lambda (x) (declare (ignore x)) nil))
-                              (arguments '(4)))
+                              (arguments '(4)) (spec 'integer))
   (let* ((property
            (make-instance 'property :name 'example
-                          :arguments (list (list 'x (normalize-spec-form 'integer)))
+                          :arguments (list (list 'x (normalize-spec-form spec)))
                           :body '(nil) :source-form '(property example) :function function))
          (metadata (definition-metadata property :registry registry
                                         :capabilities '(:generation :unknown)))
@@ -32,6 +106,34 @@
                           :schema-metadata metadata :failure-evidence evidence
                           :status :failed :seed 42 :profile :normal :budget 20)
             property)))
+
+(deftest nonfinite-evidence-preserves-public-error-contract
+  #+sbcl
+  (dolist (bits '(#x7ff00000 -1048576 #x7ff80000))
+    (multiple-value-bind (result property)
+        (fixture (make-registry)
+                 :arguments (list (funcall (symbol-function 'sb-kernel:make-double-float) bits 0))
+                 :spec t)
+      (declare (ignore property))
+      (ok (handler-case (progn (make-counterexample-artifact result) nil)
+            (invalid-counterexample-artifact (condition)
+              (eq :unsupported-float (invalid-counterexample-artifact-reason condition))))))))
+
+(deftest long-list-counterexample-survives-persistence-and-recheck
+  (let ((registry (make-registry))
+        (input (loop for i below 500 collect i)))
+    (multiple-value-bind (result property)
+        (fixture registry :arguments (list input) :spec '(list-of integer))
+      (declare (ignore property))
+      (let* ((artifact (make-counterexample-artifact result))
+             (restored (deserialize-counterexample-artifact
+                        (serialize-counterexample-artifact artifact))))
+        (ok (equal input
+                   (first (getf (getf (counterexample-artifact-data restored) :original)
+                                :arguments))))
+        (ok (eq :same-failure
+                (getf (recheck-counterexample restored :registry registry
+                                             :state-policy :stateless) :status)))))))
 
 (deftest immutable-roundtrip-and-direct-recheck
   (let ((registry (make-registry)) (calls 0) (fixed nil))

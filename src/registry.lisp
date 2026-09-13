@@ -113,12 +113,17 @@ designators.  Both are indexed for reverse lookup.  Re-registering a name
 replaces the previous definition and drops its stale index entries.
 Returns PROPERTY."))
 
+(defun registry-index-keys-p (keys)
+  "Recognize a finite list of symbol keys for explicit registry indexes."
+  (and (finite-list-p keys) (every #'symbolp keys)))
+
 (defmethod registry-register-property :around (registry name property &key targets tags)
   "Validate before changing registry storage or reverse indexes."
   (check-type name symbol)
   (dolist (keys (list targets tags))
-    (unless (and (finite-list-p keys) (every #'symbolp keys))
-      (error 'type-error :datum nil :expected-type 'list)))
+    ;; Low-level callers supply these independently of the object's own slots.
+    (unless (registry-index-keys-p keys)
+      (error 'type-error :datum keys :expected-type '(satisfies registry-index-keys-p))))
   (call-with-definition-rollback
    property (lambda () (validate-definition property) (call-next-method))))
 

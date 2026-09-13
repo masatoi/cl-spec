@@ -111,6 +111,15 @@
     (ok (eq :none (getf (getf (function-spec-data 'identity) :capabilities) :shrinking)))
     (ok (eq :available (getf (getf (property-data 'mixed) :capabilities) :shrinking)))))
 
+(deftest graph-traversal-preserves-version-one-digests
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec digest-leaf (range integer 0 10))
+    (defspec digest-root (tuple digest-leaf (nullable digest-leaf)))
+    (ok (equal "fnv1a64-v1:f123648fe7d686f0"
+               (definition-digest 'digest-root :entity-kind :spec)))
+    (ok (equal "fnv1a64-v1:c30ab4af3e1875c2"
+               (definition-digest 'digest-leaf :entity-kind :spec)))))
+
 (deftest digests-include-clos-description-fields
   (flet ((spec (text)
            (make-instance 'cl-spec/src/ir:type-spec :type-specifier 'integer :description text))

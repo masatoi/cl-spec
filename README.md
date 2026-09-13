@@ -100,7 +100,18 @@ finite single/double floats, simple strings, cons trees and simple general
 vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
-depth 128 and 1,000,000 wire characters, with additional scalar storage limits.
+nesting depth 128 and 1,000,000 wire characters, with additional scalar storage
+limits. A flat list consumes the node budget rather than one depth level per
+cons cell; traversal and parsing use bounded iterative work lists.
+Nonfinite floats are refused through the same artifact condition as other
+unsupported evidence. Unsupported or excessive optional `:options`, `:provenance`
+and `:capabilities` metadata is replaced with `(:unavailable t :reason REASON)`;
+`:metadata-omissions` records the affected fields and reasons. These omissions
+never change saved arguments, failure identity or declaration digest. If combined
+optional metadata exceeds the artifact budget, it is omitted and evidence encoding
+is retried. `:invalid-selection` and `:missing-shrunk-evidence` identify selection
+errors directly.
+
 Load the defining packages before deserialization. Artifacts are evidence records,
 not authenticated data or a mechanism for restoring application state.
 

@@ -6,7 +6,6 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
-  (:import-from #:asdf #:find-system #:component-version)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/property
                 #:property
@@ -229,10 +228,12 @@ The backend reports counterexamples positionally; this is where they become the
           for value in values
           append (list variable value))))
 
+(defparameter *cl-spec-version* "0.1.0"
+  "Implementation version recorded in provenance; keep in sync with cl-spec.asd.")
+
 (defun capture-run-provenance (backend options)
   "Capture environment labels without retaining backend objects in result data."
-  (let ((class-name (class-name (class-of backend)))
-         (system (find-system "cl-spec" nil)))
+  (let ((class-name (class-name (class-of backend))))
     (snapshot-value
      (list :backend
            (if (and class-name (symbol-package class-name))
@@ -241,7 +242,7 @@ The backend reports counterexamples positionally; this is where they become the
                :unknown)
            :lisp-implementation-type (lisp-implementation-type)
            :lisp-implementation-version (lisp-implementation-version)
-           :cl-spec-version (or (and system (component-version system)) :unknown)
+           :cl-spec-version *cl-spec-version*
            :target-revision (getf options :target-revision :unknown)))))
 
 (defun run-property (property-designator &key profile seed options (registry *registry*))

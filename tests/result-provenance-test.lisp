@@ -38,6 +38,15 @@
                   :cl-spec-version :target-revision))
       (ok (eq :unknown (getf (getf data :provenance) key))))))
 
+(deftest runtime-version-agrees-with-release-system
+  (ok (string= cl-spec/src/property-runner::*cl-spec-version*
+               (asdf:component-version (asdf:find-system "cl-spec")))))
+
+(deftest provenance-module-has-no-asdf-runtime-dependency
+  (ok (not (member "asdf"
+                   (asdf:system-depends-on (asdf:find-system "cl-spec/src/property-runner"))
+                   :test #'equal))))
+
 (deftest function-adapter-needs-no-backend
   (let* ((*generator-backend* nil)
          (contract (make-instance 'function-spec :name 'identity

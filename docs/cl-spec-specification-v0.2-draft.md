@@ -4155,3 +4155,31 @@ failure preserves the installed wrapper, and external function redefinitions are
 refused rather than overwritten. Target invocation counts and multiple values
 remain unchanged. The module is still separate from core; no new dependency on
 instrumentation is introduced in `cl-spec` or `cl-spec/specs`.
+
+
+### PR #22 review corrections
+
+Artifact depth counts nested elements; cdr traversal stays at the current depth.
+Node limits bound list length and scheduled traversal work. AV1 remains wire
+compatible, with iterative encoding, decoding, writing and parsing. Nonfinite
+floats signal the public invalid artifact condition through the codec error type.
+
+Artifact v1 accepts an optional `:metadata-omissions` list of `(:field FIELD
+:reason REASON)` records. Unsupported optional metadata gets an unavailable
+placeholder; combined metadata budget exhaustion also triggers omission before
+retrying evidence encoding. Evidence values, failure identity and declaration
+identity are never omitted. Record validation is cycle-safe and factory creation
+uses one normal-path wire encoding, without re-decoding that wire to validate it.
+Direct recheck uses `property-argument-schema`, including evaluator subclass
+specializations; generator annotations do not cause a draw during validation.
+
+Local instrumentation snapshots and full definition digests share the ordered
+definition graph walker. Incomplete descriptions cannot establish local equality
+or inequality; independently known object/predicate identity changes still can
+establish staleness. Existing complete definition digests are unchanged.
+
+Registry index arguments remain independently validated because low-level callers
+supply them separately from a property's slots. Invalid index diagnostics preserve
+the offending value and describe the finite symbol-list constraint. Runtime version
+provenance uses a release version variable, checked against the ASDF system by tests,
+without importing ASDF into the property-runner module.
