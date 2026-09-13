@@ -7,7 +7,8 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
-  (:import-from #:cl-spec/src/backends/call-generators)
+  (:import-from #:cl-spec/src/backends/call-generators
+                #:call-arguments-generator #:call-generator-children #:call-generator-removable-p)
   (:import-from #:check-it
                 #:*num-trials*
                 #:generate
@@ -327,6 +328,9 @@ Plists distinguish constant fields from generators; optional fields can be remov
 Lists can shrink in length even when their element generator cannot shrink."
   (typecase generator
     (custom-value-generator nil)
+    (call-arguments-generator
+     (or (call-generator-removable-p generator)
+         (some #'generator-shrink-strategy-p (call-generator-children generator))))
     (plist-value-generator
      (or (some (lambda (field) (not (field-required-p field)))
                (plist-generator-fields generator))

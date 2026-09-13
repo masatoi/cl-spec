@@ -10,7 +10,9 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
                 #:call-layout-bindings #:bind-call-arguments #:bound-call-values
-                #:call-layout-accepts-p #:call-layout-required-count
+                #:call-layout-accepts-p #:call-layout-required-count #:call-layout-key-p
+                #:bound-call-presence #:bound-call-bindings
+                #:argument-binding-kind #:argument-binding-keyword
                 #:argument-binding-spec #:argument-binding-name
                 #:return-schema-primary-spec #:return-schema-value)
   (:import-from #:cl-spec/src/function-spec
@@ -121,10 +123,13 @@ return or postcondition check."))
          (input-p (member :input scopes))
          (argument-schema (when input-p
                             (function-spec-argument-schema contract)))
+         (shape-explainer (when input-p (compile-explainer argument-schema :context context)))
          (inputs (when input-p
                    (mapcar (lambda (argument)
                              (list (argument-binding-spec argument)
-                                   (list (argument-binding-name argument) :args)
+                                   (if (eq :key (argument-binding-kind argument))
+                                       (list (argument-binding-keyword argument) :args)
+                                       (list (argument-binding-name argument) :args))
                                    (compile-explainer (argument-binding-spec argument)
                                                       :context context)))
                            arguments)))
@@ -152,16 +157,22 @@ return or postcondition check."))
         (unless (call-layout-accepts-p layout values)
           (contract-failure
            name :input :arity argument-schema values
-           (list (error-datum :wrong-length '(:args) values
-                              :expected (expected-descriptor argument-schema)
-                              :expected-length (if (= arity (call-layout-required-count layout))
-                                                    arity
-                                                    (list (call-layout-required-count layout) arity))
-                               :actual-length (length values)))))
-        (loop for (spec path explainer) in inputs
-              for value in values
-              for errors = (funcall explainer value path)
-              when errors do (contract-failure name :input :argument-spec spec value errors))
+           (if (call-layout-key-p layout)
+               (funcall shape-explainer values '(:args))
+               (list (error-datum :wrong-length '(:args) values
+                                  :expected (expected-descriptor argument-schema)
+                                  :expected-length
+                                  (if (= arity (call-layout-required-count layout))
+                                      arity (list (call-layout-required-count layout) arity))
+                                  :actual-length (length values))))))
+        (let ((bound (bind-call-arguments layout values)))
+          (loop for (spec path explainer) in inputs
+                for binding in arguments
+                for present in (bound-call-presence bound)
+                for value = (cdr (assoc (argument-binding-name binding)
+                                        (bound-call-bindings bound)))
+                for errors = (when present (funcall explainer value path))
+                when errors do (contract-failure name :input :argument-spec spec value errors)))
         (when (and pre
                     (precondition-refuses-p
                      pre (bound-call-values (bind-call-arguments layout values))))

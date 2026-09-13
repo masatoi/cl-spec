@@ -84,7 +84,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
-     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome cl-spec:find-spec))
+     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome cl-spec:find-spec cl-spec:definition-digest))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -234,6 +234,10 @@ the malformed-normalization contract explicitly names its finite input corpus."
   (defgenerator registry-generator () (cl-spec:make-hash-table-registry))
   (defspec registry-object (instance-of cl-spec/src/registry:hash-table-registry)
     (:generator registry-generator))
+  (defspec-function cl-spec:definition-digest
+    "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
+    (:args (definition digest-definition) &key ((:registry registry) registry-object supplied))
+    (:returns (nullable string)))
   (defspec-function cl-spec:find-spec
     "Omitted registry uses the current registry; supplied registry is used explicitly."
     (:args (name arbitrary-symbol) &optional (registry registry-object supplied))

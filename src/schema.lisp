@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
-                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data)
+                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
+                #:call-layout-key-p #:call-layout-allow-other-keys-p)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
@@ -92,7 +93,12 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :generator (spec-generator-name definition)
          :fields
          (typecase definition
-            (call-arguments-spec (call-layout-data (call-arguments-spec-layout definition)))
+            (call-arguments-spec
+             (let ((layout (call-arguments-spec-layout definition)))
+               (append (call-layout-data layout)
+                       (when (call-layout-key-p layout)
+                         (list (list :key-arguments t
+                                     :allow-other-keys (call-layout-allow-other-keys-p layout)))))))
             (field-spec (list :closed (field-spec-closed-p definition)
                               :fields (field-descriptions definition)))
            (type-spec (list :type (type-spec-type-specifier definition)))

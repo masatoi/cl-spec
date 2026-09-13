@@ -113,3 +113,17 @@ captured precondition specs and new failure-shape key classification.
 
 #15 final verification: clean-process 49 suites, changed-file Mallet, forced core
 compilation and diff checks passed.
+
+## #16 decisions and validation
+
+Explicit `((:KEY VARIABLE) SPEC [SUPPLIED-P])`, first duplicate wins, raw order
+preserved, reserved :allow-other-keys uses its first value. Declaration
+&allow-other-keys is terminal. Keyword tail is finite/even/keyword-only.
+Optional positions are consumed greedily. Generated keys are declared keys only.
+505 tests pass, including empty-key capability and new self-spec coverage.
+The mixed optional/key compatibility fixture intentionally triggers Mallet's
+mixed-optional-and-key rule; lint this single file with that rule disabled.
+Other changed files use the normal preset.
+
+#16 final verification: clean-process 53 suites, scoped Mallet, forced core
+compilation and diff check passed.

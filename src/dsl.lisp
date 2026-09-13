@@ -300,7 +300,7 @@ lambda list is a compiler error about a form the author never wrote."
     args))
 
 (defun parse-function-spec-arguments (args)
-  "Validate required and optional argument declarations before macro expansion."
+  "Validate required, optional and explicit keyword declarations before macro expansion."
   (validate-call-declarations args))
 
 (defun expand-postcondition-forms (forms &optional (index 0))
@@ -411,10 +411,12 @@ signals keep their ordinary behavior and do not satisfy this clause.
 PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
 :CONDITION failures, even if SPEC would accept them.
 
-Required and optional positional parameters and one return value are supported.
-An &OPTIONAL marker permits (PARAMETER SPEC [SUPPLIED-P]) declarations. Predicates
-see NIL for omitted optional values and a boolean supplied flag when declared;
-target defaults are evaluated only by the target. Other lambda list keywords,
+Required and optional positional parameters, explicit keyword parameters, and one
+return value are supported. &OPTIONAL permits (PARAMETER SPEC [SUPPLIED-P]);
+&KEY permits ((:KEY PARAMETER) SPEC [SUPPLIED-P]). A terminal &ALLOW-OTHER-KEYS
+permits undeclared keywords. Predicates see NIL for omitted values and a boolean
+supplied flag when declared. The first duplicate keyword value wins. Target
+defaults are evaluated only by the target. Other lambda list keywords,
 (:returns (values ...)) and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).

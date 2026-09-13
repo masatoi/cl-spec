@@ -7,7 +7,7 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required and optional positional arguments and either one return value or a required error outcome,
+required/optional positional and keyword arguments, with either one return value or a required error outcome,
 including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
@@ -36,7 +36,7 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for thirteen public
+Load the optional specification bundle to register contracts for fourteen public
 functions and seven semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
@@ -307,7 +307,30 @@ The generator chooses an optional prefix, and shrinking can remove its suffix.
 Saved evidence retains the raw call list, while named counterexamples include
 contract values and declared suppliedness flags. Function introspection adds
 `:kind :optional` and `:supplied-p` to optional entries. `defproperty` bindings
-remain required pairs; `&key` and `&rest` are introduced in subsequent changes.
+remain required pairs; `&rest` is introduced in a subsequent change.
+
+### Keyword arguments
+
+```lisp
+(cl-spec:defspec-function lookup-page
+  (:args (query string) &key ((:limit limit) integer supplied))
+  (:returns list)
+  (:pre (or (not supplied) (plusp limit))))
+```
+
+Each keyword declaration explicitly pairs the external keyword with its variable:
+`((:KEYWORD VARIABLE) SPEC [SUPPLIED-P])`. This supports aliases and requires no
+runtime symbol interning. Omitted values bind `NIL`; suppliedness distinguishes
+explicit `NIL`. Repeated call keys bind and validate their first value, as Common
+Lisp does; later duplicate values are ignored. Argument order is passed unchanged
+to the target and retained in artifacts.
+
+The keyword tail must have an even length and keyword keys. Unknown keys are
+refused unless the declaration ends in `&allow-other-keys` or the first call-side
+`:allow-other-keys` value is true. That control keyword is reserved and cannot be
+declared as a parameter. Optional parameters consume their positions before the
+keyword tail: all optionals must be supplied to reach keyword arguments.
+Generation includes declared key pairs; shrinking can remove whole pairs.
 
 ### Shrinking correlated arguments
 
@@ -426,7 +449,7 @@ status detects the stale contract and explicit uninstrumentation remains require
 
 The argument contract describes the whole call, not just a prefix of the target's
 lambda list. For example, `(:args (a integer))` admits exactly one argument even if
-the target accepts optional extras. Optional contracts preserve omission; rest/key semantics remain deferred.
+the target accepts optional extras. Optional contracts preserve omission; rest semantics remain deferred.
 
 Violation specs are the actual argument/return IR, an argument tuple for arity, or
 a predicate spec for pre/post. Precondition values are the argument list; postcondition

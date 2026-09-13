@@ -1171,7 +1171,7 @@ D1（対応範囲）の決定：
 
 | 項目 | MVPの扱い |
 |---|---|
-| lambda list | 必須引数と`&optional`を受け付ける。`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| lambda list | 必須引数と`&optional`を受け付ける。`&key`にも対応する。`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
 | 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
 | clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
 | 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
@@ -1474,7 +1474,7 @@ artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠�
 
 # 20. Runtime validation
 
-> **位置付け:** 実装済み。required/optional positional argumentsと主返り値の契約を対象とする。
+> **位置付け:** 実装済み。required/optional positional arguments・keywordと主返り値の契約を対象とする。
 
 `validp`はboolean、`validate`は有効な値または構造化`spec-violation`を返す。
 関数の呼び出し時検査は独立system `cl-spec/instrument`を明示的にloadして有効化する。
@@ -3564,6 +3564,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| `definition-digest` | keyword registryを省略・指定した定義のdigest主値を検査 |
 | `find-spec` | optional registryの省略時は現在のregistry、指定時はそのregistryから検索 |
 | `trial-observation-outcome` | 未収集、returned全値、signaled条件診断を表すdata |
 | `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
@@ -3587,7 +3588,7 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-13関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+14関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
 任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
@@ -4289,3 +4290,24 @@ pre/postはvalueと任意のsuppliednessの順のflat bindingを受け取る。
 観測だけを採用する。custom引数generatorも同じcall schemaで検査する。
 instrumentationはmin/max arityと指定値を検証し、default、多値、targetのconditionを維持する。
 自己仕様では`find-spec`のoptional registryを通常生成と省略の両方で検査する。
+
+
+### Keyword call declarations implementation addendum (issue #16)
+
+`&key ((:external-key variable) SPEC supplied-p)`を受け付ける。suppliednessは省略可能。
+暗黙のkeyword名生成は行わず、明示pairを要求してruntime interningを避ける。
+変数名と宣言keywordは一意。`:allow-other-keys`はcontrol用に予約する。
+`&allow-other-keys`は&key節の最後に一度だけ指定可能。`&rest`は後続で追加する。
+
+raw callのkeyword tailは有限・偶数長で、キーはkeywordでなければならない。
+重複keywordはCommon Lisp同様、先頭の値だけを束縛・検証する。後続重複値は無視する。
+未知キーは宣言の&allow-other-keys、またはcall中の最初の:allow-other-keysが真なら受け付ける。
+controlの重複も先頭優先。省略と明示NILはsuppliednessで区別する。
+optionalは位置を貪欲に消費するので、keyword指定には先行optionalの全位置を埋める必要がある。
+
+targetへは元の順序・重複・controlを含むraw listを一度だけ渡す。pre/postは投影した束縛を受ける。
+generatorは宣言済みkeyの指定・省略を生成し、shrinkerはpair単位の除去と値の縮小を行う。
+省略可能な項目も子generatorが必要。空の&keyだけのcall schemaに縮小戦略があるとは報告しない。
+external keyword、名前、suppliedness、global allowanceをintrospection/digestへ含める。
+explainの値違反は宣言keyを経路に持つ。未知の入力keyはvalue由来であり、failure identityへ含めない。
+自己仕様ではdefinition-digestのkeyword registryを検査する。

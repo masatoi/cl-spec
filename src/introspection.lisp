@@ -9,8 +9,9 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/call-schema
                 #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
+                #:call-layout-key-p #:call-layout-allow-other-keys-p
                 #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
-                #:argument-binding-kind #:argument-binding-supplied-name)
+                #:argument-binding-kind #:argument-binding-supplied-name #:argument-binding-keyword)
   (:import-from #:cl-spec/src/field-spec
                 #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
@@ -102,7 +103,10 @@ own -- which is how :GENERATOR went missing from six node kinds before it moved 
 SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec call-arguments-spec))
-  (list :bindings (call-layout-data (call-arguments-spec-layout spec))))
+  (let ((layout (call-arguments-spec-layout spec)))
+    (append (list :bindings (call-layout-data layout))
+            (when (call-layout-key-p layout)
+              (list :key-arguments t :allow-other-keys (call-layout-allow-other-keys-p layout))))))
 
 (defmethod node-attributes ((spec spec))
   nil)
@@ -240,7 +244,9 @@ Argument, return, signals and argument-schema nodes are plain IR projections."
                                       :spec (spec->data (argument-binding-spec binding) registry))
                                 (unless (eq :required (argument-binding-kind binding))
                                   (list :kind (argument-binding-kind binding)
-                                        :supplied-p (argument-binding-supplied-name binding)))))
+                                        :supplied-p (argument-binding-supplied-name binding)))
+                               (when (eq :key (argument-binding-kind binding))
+                                 (list :keyword (argument-binding-keyword binding)))))
                   :argument-generator (function-spec-argument-generator contract)
                   :argument-schema (spec->data (function-spec-argument-schema contract) registry)
                   :preconditions (function-spec-preconditions contract)

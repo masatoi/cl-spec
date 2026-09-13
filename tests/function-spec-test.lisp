@@ -1403,7 +1403,7 @@ macro expansions would need the lint exemption that file carries."
     (let ((seen '())
           (kept (append cl-spec/src/function-spec::*failure-shape-keys*
                         cl-spec/src/function-spec::*failure-shape-containers*))
-          (value-derived '(:actual :actual-length :path :condition-report)))
+          (value-derived '(:actual :actual-length :path :condition-report :key)))
       (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
                       (satisfies demo-noisy-predicate) (list-of integer)
                       (vector-of integer) (tuple integer string) (not integer)
@@ -1423,11 +1423,18 @@ macro expansions would need the lint exemption that file carries."
         (dolist (value '(nil (1 "valid" :extra) (1 2)))
           (dolist (datum (getf (explain-data spec value) :errors))
             (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '(&key ((:size amount) integer))))))
+        (dolist (value '((:unknown 1) (:size) (3 4) (:size "bad")))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
       (testing "the audit itself saw the keys it is meant to check"
         (ok (member :kind seen))
         (ok (member :actual seen))
         (ok (member :field-path seen))
         (ok (member :minimum-length seen))
-        (ok (member :maximum-length seen)))
+        (ok (member :maximum-length seen))
+        (ok (member :key seen)))
       (testing "and every key it saw is either kept or known to be value-derived"
         (ok (null (set-difference seen (append kept value-derived))))))))

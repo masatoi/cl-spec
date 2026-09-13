@@ -103,9 +103,10 @@
                    :initform nil
                    :reader function-spec-argument-specs
                    :documentation "Required (PARAMETER SPEC) pairs followed optionally by
-&OPTIONAL and (PARAMETER SPEC [SUPPLIED-P]) declarations. SPEC is normalized to
-Semantic IR. Parameter and supplied-variable names are unique; omitted optional
-values bind to NIL in predicates without evaluating target defaults.")
+&OPTIONAL (PARAMETER SPEC [SUPPLIED-P]) and &KEY ((:KEY PARAMETER) SPEC [SUPPLIED-P])
+declarations, with a terminal &ALLOW-OTHER-KEYS when permitted. SPEC is normalized
+to Semantic IR. Parameter and supplied-variable names are unique. Omitted values
+bind to NIL in predicates without evaluating target defaults.")
    (argument-generator :initarg :argument-generator
                        :initform nil
                        :reader function-spec-argument-generator
@@ -469,7 +470,7 @@ compared unequal and a legitimate reduction was thrown away.  A key derived from
 the spec is safe to compare; a new EXPLAIN-DATA key is treated as value-derived
 until someone classifies it here, and EVERY-EXPLAINED-ERROR-KEY-IS-CLASSIFIED
 fails until they do. :FIELD-PATH contains only declared parent/field keys;
-unknown and duplicate input key names remain solely in the discarded :PATH.")
+Unknown input key names in :KEY and :PATH are value-derived and remain discarded.")
 
 (defparameter *failure-shape-containers* '(:errors :branches :conjuncts)
   "EXPLAIN-DATA error keys whose value is a list of error-shaped plists to walk.
