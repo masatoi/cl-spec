@@ -4092,3 +4092,29 @@ generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
+
+
+### §73.5 implementation addendum: counterexample artifacts (issue #9)
+
+Core exposes `make-counterexample-artifact`, `counterexample-artifact-data`,
+`serialize-counterexample-artifact`, `deserialize-counterexample-artifact` and
+`recheck-counterexample`. Artifact v1 freezes original and accepted shrunk
+observations, selection, captured declaration digest/capability, seed/profile/
+budget/options and execution provenance. Missing provenance is explicit `:unknown`.
+Recheck is a concrete-input operation without backend loading, generator draws
+or shrinking. It requires complete matching declaration identity, admitted input
+and `:state-policy :stateless`; it performs at most one target invocation.
+Target implementation identity is deliberately separate, so repaired code can be
+checked against old evidence. Missing/changed/incomplete definitions, rejected
+input/preconditions, unsupported state, same/different failure and success are
+separate outcomes. Failure comparison uses the runner's existing failure identity
+protocol. Input mutation causes refusal; external application state is outside
+this first version's restoration model.
+
+AV1 is a manually parsed, bounded tagged tree, never a Lisp reader form. Only
+existing symbols and documented scalar/tree values are supported; aliasing,
+cycles and opaque values are rejected rather than silently copied with changed
+semantics. The public data reader and serializer return independent copies.
+Invalid version, duplicate/unknown record fields, malformed tags and excessive
+resources signal `invalid-counterexample-artifact`. See README for value types
+and limits. MCP serialization remains the adapter's responsibility.

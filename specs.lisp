@@ -75,7 +75,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
-    compile-explainer spec-data semantic-data normalize-spec-form))
+    compile-explainer spec-data semantic-data normalize-spec-form
+    cl-spec:deserialize-counterexample-artifact))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -90,6 +91,10 @@ Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
 Generators exercise finite subsets. Most API contracts accept broader domains;
 the malformed-normalization contract explicitly names its finite input corpus."
+  (defspec-function cl-spec:deserialize-counterexample-artifact
+    "Malformed saved artifacts are refused without reader evaluation."
+    (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
+    (:signals (type cl-spec:invalid-counterexample-artifact)))
   (defgenerator form-generator () (draw-form))
   (defgenerator value-generator () (draw-value))
   (defgenerator spec-generator () (normalize-spec-form (draw-form)))

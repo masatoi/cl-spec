@@ -7,6 +7,10 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/utils/artifact-values-test)
+  (:import-from #:cl-spec/tests/result-provenance-test)
+  (:import-from #:cl-spec/tests/counterexample-test)
+  (:import-from #:cl-spec/tests/counterexample-function-test)
   (:import-from #:cl-spec/tests/conditions-test)
   (:import-from #:cl-spec/tests/utils/source-location-test)
   (:import-from #:cl-spec/tests/utils/random-test)

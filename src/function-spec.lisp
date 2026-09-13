@@ -26,6 +26,7 @@
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
                 #:property-result-schema-metadata #:property-result-budget
+                #:property-result-options #:property-result-provenance
                 #:property-result-status
                 #:property-result-property
                 #:property-result-trials
@@ -47,7 +48,7 @@
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
                 #:explain-data #:expected-descriptor)
-  (:export #:precondition-refuses-p
+  (:export #:make-function-check-property #:precondition-refuses-p
            #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
@@ -624,6 +625,21 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defmethod definition-entity-kind ((property function-check-property)) :function-spec)
 
+(defun make-function-check-property (contract &key (budget 0))
+  "Adapt CONTRACT to trial execution without requiring a generator backend."
+  (unless (typep budget '(integer 0 *))
+    (error 'type-error :datum budget :expected-type '(integer 0 *)))
+  (let ((name (function-spec-name contract)))
+    (make-instance 'function-check-property
+                   :contract contract :target (function-spec-target contract)
+                   :name name :arguments (function-spec-argument-specs contract)
+                   :targets (list name) :kind :function-spec
+                   :documentation (function-spec-documentation contract)
+                   :trials (list :normal budget)
+                   :source-form (snapshot-value (function-spec-source-form contract))
+                   :source-location (function-spec-source-location contract)
+                   :metadata (list :shrink t))))
+
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
 No target or predicate is called again to classify the result. Shrinking still
@@ -643,18 +659,12 @@ are accepted. A run with no admitted trials is :SKIPPED."
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          (source (snapshot-value (function-spec-source-form contract)))
-         (property (make-instance 'function-check-property
-                                  :contract contract :target (function-spec-target contract)
-                                  :name name :arguments (function-spec-argument-specs contract)
-                                  :targets (list name) :kind :function-spec
-                                  :documentation (function-spec-documentation contract)
-                                  :trials (list :normal budget)
-                                  :source-form source
-                                  :source-location (function-spec-source-location contract)
-                                  :metadata (list :shrink t)))
+         (property (make-function-check-property contract :budget budget))
          (result (run-property property :seed seed :options options :registry registry)))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)
+                   :options (property-result-options result)
+                   :provenance (property-result-provenance result)
                    :status (property-result-status result)
                    :property name :budget budget :source-form source
                    :trials (property-result-trials result)

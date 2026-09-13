@@ -68,6 +68,42 @@ DSL subset; this is not exhaustive API coverage. Custom generators preserve
 original counterexamples but provide no automatic shrinking. See specification
 §68.1 for the coverage and remaining work.
 
+### Persisting and directly rechecking a counterexample
+
+```lisp
+(let* ((artifact (cl-spec:make-counterexample-artifact result))
+       (wire (cl-spec:serialize-counterexample-artifact artifact))
+       (saved (cl-spec:deserialize-counterexample-artifact wire)))
+  ;; After repairing the target implementation:
+  (cl-spec:recheck-counterexample saved :state-policy :stateless))
+```
+
+The default `:selection :selected` prefers an accepted shrunk observation;
+`:original` and `:shrunk` explicitly select either saved input. Recheck checks a
+complete matching declaration digest, validates arguments and preconditions,
+then invokes the current property/function once, without generation or shrinking.
+Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
+`:definition-missing`, `:definition-mismatch`, `:incomparable-definition`,
+`:input-invalid`, `:precondition-rejected`, `:unsupported` and `:contract-error`.
+
+`:state-policy :stateless` asserts that external state needs no restoration;
+without it execution is refused. Recorded or newly detected input mutation is
+unsupported. Arbitrary external state is neither detected nor restored.
+`result-data` now captures `:options` and `:provenance` before execution; optional
+`:target-revision` in runner options records a caller-supplied implementation
+label, independent of the declaration digest. A recheck accepts its own optional
+`:target-revision` label.
+
+Artifact version 1 uses a bounded `AV1` format without the Lisp reader or symbol
+interning. It supports existing package symbols, characters, integers, ratios,
+finite single/double floats, simple strings, cons trees and simple general
+vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
+objects, other arrays and absent packages/symbols are explicitly refused with
+`invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
+depth 128 and 1,000,000 wire characters, with additional scalar storage limits.
+Load the defining packages before deserialization. Artifacts are evidence records,
+not authenticated data or a mechanism for restoring application state.
+
 ## Required error contracts
 
 `:signals` requires an error escaping the target to satisfy an existing spec:
