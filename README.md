@@ -20,6 +20,7 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 | `cl-spec` | Semantic IR, registry, validation, structured explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
+| `cl-spec/specs` | executable specifications of cl-spec's own APIs and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
@@ -31,6 +32,39 @@ backend into `cl-spec:*generator-backend*`.
 (asdf:load-system :cl-spec)
 (asdf:load-system :cl-spec/check-it)
 ```
+
+## cl-spec's own executable specifications
+
+Load the optional specification bundle to register contracts for seven public
+functions and seven semantic Properties. The definitions live in
+[`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
+the same structured APIs used by cl-mcp:
+
+```lisp
+(asdf:load-system "cl-spec/specs")
+(cl-spec:function-spec-data 'cl-spec:validate)
+(cl-spec:properties-for 'cl-spec:validp)
+
+(asdf:load-system "cl-spec/check-it")
+(cl-spec:check-function 'cl-spec:validate :trials 100 :seed 42)
+(mapcar (lambda (name)
+          (cl-spec:result-data (cl-spec:run-property name :profile :normal :seed 42)))
+        (cl-spec/specs:property-names))
+```
+
+Loading this bundle registers definitions in the current registry; it does not
+instrument functions. After clearing or replacing the registry, call
+`cl-spec/specs:register-specifications` to reinstall them. Normal `cl-spec` loads
+do not load the bundle. Generation is needed only to execute the checks.
+
+The contracts cover normal operation of `validp`, `validate`, `explain-data`,
+`compile-validator`, `compile-explainer`, `spec-data`, and `semantic-data`, using
+their required arguments and default keyword options. A Property specifies
+`validate`'s refusal behavior, which the current Function Spec syntax cannot
+express as an expected condition. Generators exercise a finite scalar/composite
+DSL subset; this is not exhaustive API coverage. Custom generators preserve
+original counterexamples but provide no automatic shrinking. See specification
+§68.1 for the coverage and remaining work.
 
 ## Example
 
@@ -56,6 +90,46 @@ The vertical slice from specification §67, working end to end:
 (cl-spec:properties-for '+)
 (cl-spec:run-property 'addition-preserves-order)
 ```
+
+## Structured plist specifications
+
+Declare required and optional fields, with unknown keys allowed by default:
+
+```lisp
+(cl-spec:defspec user-record
+  (plist
+    (:required (:id integer))
+    (:optional (:nickname (nullable string)))
+    (:closed t)))
+
+(cl-spec:validp 'user-record '(:id 1 :nickname nil)) ; => T
+(cl-spec:validp 'user-record '(:nickname nil))       ; => NIL
+(cl-spec:explain-data 'user-record '(:id "bad"))
+;; The field error has :PATH (:ID).
+(cl-spec:sample 'user-record :count 10 :seed 42)
+```
+
+Plists must be finite proper lists of keyword/value pairs with unique keys.
+Missing fields differ from fields whose value is NIL. Order does not matter.
+Use `:closed t` to reject unknown keys; the default is NIL. Empty `(plist)`
+accepts any structurally valid keyword plist. Clauses and declared keys must
+not repeat.
+
+Field errors identify their key in `:path`. Structural errors use
+`:not-a-plist`, `:duplicate-key`, `:missing-key`, and `:unknown-key`.
+Introspection exposes `:closed` and ordered `:fields` descriptors with
+`:key`, `:required`, and `:child-index` pointing into `:children`.
+Declaration digests include field keys, presence requirements and child specs.
+
+The check-it backend generates required fields and randomly includes optional
+fields. It generates no unknown keys, even for open specs. Shrinking can remove
+optional fields and shrink values while retaining required keys. Every child
+must have a generator, including optional fields; custom generators still have
+no automatic value shrink strategy.
+
+Cross-field constraints use ordinary `and` / `satisfies`. Their automatic
+generation retains the existing AND limitations below. Field metadata is
+independent of storage format; alist and hash-table DSLs are not implemented yet.
 
 ## Generate related arguments together
 
@@ -217,7 +291,9 @@ NIL with `:definition-digest-complete NIL`, never a trusted partial digest.
 Capabilities describe the currently installed backend: generator construction
 may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be
 `:none` when disabled, when the root custom generator has no shrinker, or when
-all tuple elements lack a shrink strategy.
+all tuple elements lack a shrink strategy. Empty plists and plists containing only
+required constant/custom fields also have no shrink strategy; optional field
+removal is a strategy even when field values cannot shrink.
 Construction availability does not promise a valid draw or an accepted reduction.
 No trials, targets or custom generator bodies run during built-in introspection.
 Runs reuse capabilities captured from the actual compiled generator; older

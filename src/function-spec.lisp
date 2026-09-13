@@ -431,7 +431,7 @@ a finding exactly as it was."
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
-    :status :tuple-path)
+    :status :tuple-path :field-path)
   "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
 
 A whitelist, not a list of keys to strip.  Stripping by name failed three times in

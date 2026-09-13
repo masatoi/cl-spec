@@ -7,6 +7,8 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/field-spec
+                #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
@@ -118,6 +120,10 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec instance-of-spec))
   (list* :class-name (instance-of-spec-class-name spec) (call-next-method)))
+
+(defmethod node-attributes ((spec field-spec))
+  (list* :closed (field-spec-closed-p spec) :fields (field-descriptions spec)
+         (call-next-method)))
 
 (defun spec->data (spec &optional (registry *registry*) envelope-p)
   "Return the SPEC-DATA plist for one IR node, recursing into its children.

@@ -14,6 +14,7 @@
   (:import-from #:cl-spec/tests/registry-test)
   (:import-from #:cl-spec/tests/resolve-test)
   (:import-from #:cl-spec/tests/normalize-test)
+  (:import-from #:cl-spec/tests/plist-test)
   (:import-from #:cl-spec/tests/validator-test)
   (:import-from #:cl-spec/tests/explain-test)
   (:import-from #:cl-spec/tests/generator-test)
@@ -27,7 +28,9 @@
   (:import-from #:cl-spec/tests/dsl-test)
   (:import-from #:cl-spec/tests/main-test)
   (:import-from #:cl-spec/tests/backends/check-it-test)
+  (:import-from #:cl-spec/tests/backends/plist-generator-test)
   (:import-from #:cl-spec/tests/instrument-test)
+  (:import-from #:cl-spec/tests/self-specs-test)
   (:import-from #:cl-spec/tests/self-properties-test))
 
 (in-package #:cl-spec/tests)
