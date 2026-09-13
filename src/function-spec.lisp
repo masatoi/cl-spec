@@ -484,8 +484,10 @@ name alone does not pin the contract down, though -- re-registering it leaves
 this result describing a definition that is no longer there -- so SOURCE-FORM
 records what was actually run."))
 
+(defgeneric function-check-result-budget (result)
+  (:documentation "Return the trial budget stored in the shared property result."))
+
 (defmethod function-check-result-budget ((result function-check-result))
-  "Return the trial budget stored in the shared property result."
   (property-result-budget result))
 
 (defun function-check-result-function (result)

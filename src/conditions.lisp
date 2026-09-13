@@ -50,7 +50,9 @@
   (:documentation "Root of every condition signalled by cl-spec."))
 
 (define-condition invalid-backend-result (cl-spec-error)
-  ((reason :initarg :reason :reader invalid-backend-result-reason))
+  ((reason :initarg :reason
+           :reader invalid-backend-result-reason
+           :documentation "Why the backend's returned value is invalid."))
   (:report (lambda (condition stream)
              (format stream "Invalid backend result: ~A"
                      (invalid-backend-result-reason condition))))

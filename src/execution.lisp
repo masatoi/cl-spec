@@ -17,7 +17,12 @@
 
 (in-package #:cl-spec/src/execution)
 
-(defstruct (trial-observation (:copier nil))
+(defstruct (trial-observation
+            (:constructor make-trial-observation
+                (&key run property arguments arguments-mutated-p
+                      (status :passed) reason signature explanation condition
+                      condition-report (outcome :not-collected) value))
+            (:copier nil))
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
 text at observation time."
@@ -33,6 +38,63 @@ text at observation time."
   (condition-report nil :read-only t)
   (outcome :not-collected :read-only t)
   (value nil :read-only t))
+
+;; DEFSTRUCT cannot attach a docstring to a slot, and these accessors are part
+;; of the public API, so their documentation is installed explicitly.  The
+;; generated reference reads it back with CL:DOCUMENTATION like any other
+;; function (see API-DOCS.LISP).
+
+(setf (documentation 'make-trial-observation 'function)
+      "Create the evidence record for one invocation.
+
+RUN is the observation log the trial belongs to and PROPERTY is the property
+that was run.  The accessors below expose the invocation's arguments, outcome
+and failure evidence; see OBSERVE-TRIAL for how they are filled in.")
+
+(setf (documentation 'trial-observation-arguments 'function)
+      "Snapshot of the argument list the invocation received, or NIL.")
+
+(setf (documentation 'trial-observation-arguments-mutated-p 'function)
+      "True when the invocation changed the structure of its arguments.
+
+Conses and arrays are compared with SAME-VALUE-P before and after the call.
+Arbitrary objects and external state are not checkpointed or compared.")
+
+(setf (documentation 'trial-observation-status 'function)
+      "One of :PASSED, :REJECTED, :FAILED or :ERROR.")
+
+(setf (documentation 'trial-observation-reason 'function)
+      "Machine-readable failure reason keyword, or NIL when the invocation
+passed or was rejected.")
+
+(setf (documentation 'trial-observation-signature 'function)
+      "Failure identity a shrink candidate must preserve, or NIL.
+
+Status and reason alone do not pin a failure down: the signature says which
+return spec or postcondition form broke, so shrinking cannot cross from one
+failure into another.")
+
+(setf (documentation 'trial-observation-explanation 'function)
+      "Structured EXPLAIN-DATA for the failed check, or NIL.")
+
+(setf (documentation 'trial-observation-condition 'function)
+      "The condition object the invocation signalled, or NIL.")
+
+(setf (documentation 'trial-observation-condition-report 'function)
+      "Text of CONDITION rendered at observation time, or NIL.
+
+The condition object is retained for inspection, but a report is captured
+first because not every condition can be printed again later.")
+
+(setf (documentation 'trial-observation-outcome 'function)
+      "Observed outcome plist, or :NOT-COLLECTED when the evaluator did not
+report one.
+
+Distinguishes a call that returned zero values from one that returned a single
+NIL, which the primary VALUE alone cannot.")
+
+(setf (documentation 'trial-observation-value 'function)
+      "Snapshot of the primary value the invocation returned, or NIL.")
 
 (defun snapshot-value (value)
   "Copy conses and arrays iteratively, preserving cycles and sharing within VALUE.
