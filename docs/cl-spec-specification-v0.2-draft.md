@@ -4092,3 +4092,94 @@ generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
+
+
+### §73.5 implementation addendum: counterexample artifacts (issue #9)
+
+Core exposes `make-counterexample-artifact`, `counterexample-artifact-data`,
+`serialize-counterexample-artifact`, `deserialize-counterexample-artifact` and
+`recheck-counterexample`. Artifact v1 freezes original and accepted shrunk
+observations, selection, captured declaration digest/capability, seed/profile/
+budget/options and execution provenance. Missing provenance is explicit `:unknown`.
+Recheck is a concrete-input operation without backend loading, generator draws
+or shrinking. It requires complete matching declaration identity, admitted input
+and `:state-policy :stateless`; it performs at most one target invocation.
+Target implementation identity is deliberately separate, so repaired code can be
+checked against old evidence. Missing/changed/incomplete definitions, rejected
+input/preconditions, unsupported state, same/different failure and success are
+separate outcomes. Failure comparison uses the runner's existing failure identity
+protocol. Input mutation causes refusal; external application state is outside
+this first version's restoration model.
+
+AV1 is a manually parsed, bounded tagged tree, never a Lisp reader form. Only
+existing symbols and documented scalar/tree values are supported; aliasing,
+cycles and opaque values are rejected rather than silently copied with changed
+semantics. The public data reader and serializer return independent copies.
+Invalid version, duplicate/unknown record fields, malformed tags and excessive
+resources signal `invalid-counterexample-artifact`. See README for value types
+and limits. MCP serialization remains the adapter's responsibility.
+
+
+### Definition invariant implementation addendum (issue #10)
+
+The object model validates Property, Function Spec and custom generator
+construction and shared initialization, then validates again before registry
+writes. Macro validation is an early diagnostic layer over this boundary.
+`validate-definition` and `definition-validation-slots` expose validation and
+explicit subclass participation in rollback. Failed updates restore slot values
+and boundness; registry storage/indexes are changed only after validation.
+Standard class-update initialization is checked too. This is not an arbitrary
+object graph transaction: destructive nested edits, unlisted extension slots
+and implementation-specific class-change recovery are outside rollback promises.
+Registered target/tag index changes remain explicit re-registration operations.
+A source-less callable definition remains valid but cannot have a complete
+source-based digest. The executable self-spec covers identity preservation of
+valid programmatic definition validation.
+
+
+### Instrumentation freshness implementation addendum (issue #12)
+
+`cl-spec/instrument:instrumentation-status` is a read-only structured query;
+`instrumented-function-p` retains its existing boolean/cleanup semantics.
+An installation captures registry and contract identity, scopes, its local
+unresolved declaration graph, pre/post predicate identities and full dependency
+digest. Queries distinguish absent/current/stale/indeterminate and report reasons,
+installed/current digests, and dependency status. Named references resolve during
+calls, so a dependency-only change is not itself a stale captured check. Opaque
+or incomplete declarations cannot establish freshness. Closure state is not
+checkpointed. No digest is recomputed in the hot wrapper call path.
+
+`refresh-instrumentation` requires an active installation and defaults to its
+stored registry/scopes. Compilation and metadata capture precede replacement;
+failure preserves the installed wrapper, and external function redefinitions are
+refused rather than overwritten. Target invocation counts and multiple values
+remain unchanged. The module is still separate from core; no new dependency on
+instrumentation is introduced in `cl-spec` or `cl-spec/specs`.
+
+
+### PR #22 review corrections
+
+Artifact depth counts nested elements; cdr traversal stays at the current depth.
+Node limits bound list length and scheduled traversal work. AV1 remains wire
+compatible, with iterative encoding, decoding, writing and parsing. Nonfinite
+floats signal the public invalid artifact condition through the codec error type.
+
+Artifact v1 accepts an optional `:metadata-omissions` list of `(:field FIELD
+:reason REASON)` records. Unsupported optional metadata gets an unavailable
+placeholder; combined metadata budget exhaustion also triggers omission before
+retrying evidence encoding. Evidence values, failure identity and declaration
+identity are never omitted. Record validation is cycle-safe and factory creation
+uses one normal-path wire encoding, without re-decoding that wire to validate it.
+Direct recheck uses `property-argument-schema`, including evaluator subclass
+specializations; generator annotations do not cause a draw during validation.
+
+Local instrumentation snapshots and full definition digests share the ordered
+definition graph walker. Incomplete descriptions cannot establish local equality
+or inequality; independently known object/predicate identity changes still can
+establish staleness. Existing complete definition digests are unchanged.
+
+Registry index arguments remain independently validated because low-level callers
+supply them separately from a property's slots. Invalid index diagnostics preserve
+the offending value and describe the finite symbol-list constraint. Runtime version
+provenance uses a release version variable, checked against the ASDF system by tests,
+without importing ASDF into the property-runner module.

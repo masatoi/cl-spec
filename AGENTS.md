@@ -71,3 +71,14 @@ section they implement.
 production images can load cl-spec without that capability. Property bodies and
 generators run arbitrary user code — treat a registry populated from untrusted
 input as untrusted code (specification §45, §49).
+
+
+## Verification protocol additions
+
+Counterexample artifacts and direct stateless rechecks live in `src/counterexample.lisp`;
+`src/utils/artifact-values.lisp` owns the bounded, reader-free wire codec.
+`src/definition-validation.lisp` supplies object validation and explicit extension-slot
+rollback hooks. Property/function/generator construction and registry writes use them.
+Instrumentation status and explicit refresh remain in the separate `cl-spec/instrument`
+system. Optional status self-contract registration is exposed by
+`cl-spec/specs:register-instrumentation-specifications` after that system is loaded.

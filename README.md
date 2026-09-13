@@ -36,7 +36,7 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for eight public
+Load the optional specification bundle to register contracts for ten public
 functions and seven semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
@@ -67,6 +67,53 @@ currently has one registered function contract. Generators exercise a finite sca
 DSL subset; this is not exhaustive API coverage. Custom generators preserve
 original counterexamples but provide no automatic shrinking. See specification
 §68.1 for the coverage and remaining work.
+
+### Persisting and directly rechecking a counterexample
+
+```lisp
+(let* ((artifact (cl-spec:make-counterexample-artifact result))
+       (wire (cl-spec:serialize-counterexample-artifact artifact))
+       (saved (cl-spec:deserialize-counterexample-artifact wire)))
+  ;; After repairing the target implementation:
+  (cl-spec:recheck-counterexample saved :state-policy :stateless))
+```
+
+The default `:selection :selected` prefers an accepted shrunk observation;
+`:original` and `:shrunk` explicitly select either saved input. Recheck checks a
+complete matching declaration digest, validates arguments and preconditions,
+then invokes the current property/function once, without generation or shrinking.
+Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
+`:definition-missing`, `:definition-mismatch`, `:incomparable-definition`,
+`:input-invalid`, `:precondition-rejected`, `:unsupported` and `:contract-error`.
+
+`:state-policy :stateless` asserts that external state needs no restoration;
+without it execution is refused. Recorded or newly detected input mutation is
+unsupported. Arbitrary external state is neither detected nor restored.
+`result-data` now captures `:options` and `:provenance` before execution; optional
+`:target-revision` in runner options records a caller-supplied implementation
+label, independent of the declaration digest. A recheck accepts its own optional
+`:target-revision` label.
+
+Artifact version 1 uses a bounded `AV1` format without the Lisp reader or symbol
+interning. It supports existing package symbols, characters, integers, ratios,
+finite single/double floats, simple strings, cons trees and simple general
+vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
+objects, other arrays and absent packages/symbols are explicitly refused with
+`invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
+nesting depth 128 and 1,000,000 wire characters, with additional scalar storage
+limits. A flat list consumes the node budget rather than one depth level per
+cons cell; traversal and parsing use bounded iterative work lists.
+Nonfinite floats are refused through the same artifact condition as other
+unsupported evidence. Unsupported or excessive optional `:options`, `:provenance`
+and `:capabilities` metadata is replaced with `(:unavailable t :reason REASON)`;
+`:metadata-omissions` records the affected fields and reasons. These omissions
+never change saved arguments, failure identity or declaration digest. If combined
+optional metadata exceeds the artifact budget, it is omitted and evidence encoding
+is retried. `:invalid-selection` and `:missing-shrunk-evidence` identify selection
+errors directly.
+
+Load the defining packages before deserialization. Artifacts are evidence records,
+not authenticated data or a mechanism for restoring application state.
 
 ## Required error contracts
 
@@ -260,13 +307,39 @@ references resolve in the selected registry on each call. Postconditions see the
 arguments after any target mutations, as in `check-function`.
 
 Uninstrumenting restores the original only if the current definition is still
-the installed wrapper. A later redefinition or `fmakunbound` is preserved. A state query also drops stale
-installation entries; query or uninstrument a replaced function to release that state.
+the installed wrapper. A later redefinition or `fmakunbound` is preserved. `instrumented-function-p` also drops detached
+installation entries; that boolean query or uninstrumenting releases that state.
+`instrumentation-status` preserves it so repeated diagnostic queries remain useful.
 Only ordinary symbol-named functions outside `COMMON-LISP` are supported; macros,
 special operators and generic functions are refused. Captured function objects,
 lexical calls and inlined calls bypass the wrapper. Undefined targets signal
 `unbound-target`; unsupported definitions signal `unsupported-instrumentation-target`
 with name and reason readers. Both belong to `cl-spec-error`.
+
+`(cl-spec/instrument:instrumentation-status 'positive-step)` returns a record
+with `:status` (`:not-installed`, `:current`, `:stale`, `:indeterminate`),
+`:reasons`, installed/current declaration digests and `:scopes`. It does not call
+the target, refresh the wrapper or discard installation evidence. Use `:registry`
+when comparing against a registry other than the current default.
+
+`(cl-spec/instrument:refresh-instrumentation 'positive-step)` explicitly refreshes
+an active installation, using its stored registry and scopes unless overridden.
+It compiles the new checks and captures metadata before replacing the wrapper;
+a refusal preserves the old installation. Detached or absent installations are
+refused, and an external redefinition is never overwritten by refresh.
+
+Status compares captured declarations and predicate identities separately from
+registered dependencies. Reinitialization, replacement, removal and a new compiled
+pre/post predicate are detected. Named spec references continue resolving dynamically:
+a dependency-only digest change is reported as `:dependency-status :changed`
+without declaring the captured checks stale. When the local declaration also
+changes, dependency comparison is indeterminate because the full digest includes
+both. Incomplete digests yield
+`:indeterminate` unless a known difference already establishes staleness. No
+extra digest computation is added to ordinary function calls. Status cannot
+prove that a closure's captured state or external application state is unchanged.
+`:signals` remains unsupported for installation/refresh; after such an edit,
+status detects the stale contract and explicit uninstrumentation remains required.
 
 The argument contract describes the whole call, not just a prefix of the target's
 lambda list. For example, `(:args (a integer))` admits exactly one argument even if
@@ -392,3 +465,31 @@ explain:
 ## License
 
 MIT
+
+### Programmatic definition invariants
+
+`property`, `function-spec` and `custom-generator` validate construction,
+reinitialization and class-update initialization. Arguments normalize to IR;
+names, bindings, trial budgets, callable predicates, source and metadata shapes
+are checked even without a DSL macro. Properties require a compiled function;
+custom evaluator subclasses specialize `cl-spec/src/property:validate-property-executable`.
+Direct closures without source are supported, with incomplete declaration digests.
+Body/function updates and source-bearing generator source/function updates must
+supply both halves together. Function pre/post forms and predicates also change
+together. These checks enforce representation consistency, not equivalence
+between arbitrary supplied code and source text.
+
+Registry writes call `validate-definition` before replacing definitions or
+changing reverse indexes. Refused updates restore participating slot bindings,
+including previously unbound slots. Subclasses extend
+`definition-validation-slots` with an `append` method, and specialize
+`validate-definition` (calling the next method) for their own invariants.
+Successful changes to a registered property's targets/tags require explicit
+re-registration to update indexes. Arbitrary destructive mutation inside slot
+values and raw `slot-value` writes are outside automatic update validation;
+registration validates again. The generic registry protocol still permits opaque
+backend values through the default validation method.
+
+After loading `cl-spec/instrument`, call
+`cl-spec/specs:register-instrumentation-specifications` to register the optional
+status API shape contract. The normal self-spec bundle does not load instrumentation.

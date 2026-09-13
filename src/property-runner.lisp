@@ -30,7 +30,8 @@
   (:import-from #:cl-spec/src/utils/random
                 #:make-seed
                 #:seed->random-state)
-  (:export #:result-data #:property-result-schema-metadata #:property-result-budget
+  (:export #:property-result-options #:property-result-provenance
+           #:result-data #:property-result-schema-metadata #:property-result-budget
            #:property-result-entity-kind
            #:property-result-failure-evidence #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-rejected
@@ -53,7 +54,15 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((schema-metadata :initarg :schema-metadata :initform nil
+  ((options :initarg :options :initform nil :reader property-result-options
+            :documentation "Caller options captured before backend execution.")
+   (provenance :initarg :provenance
+               :initform (list :backend :unknown :lisp-implementation-type :unknown
+                               :lisp-implementation-version :unknown
+                               :cl-spec-version :unknown :target-revision :unknown)
+               :reader property-result-provenance
+               :documentation "Run environment captured before execution; unknown fields are explicit.")
+   (schema-metadata :initarg :schema-metadata :initform nil
                     :reader property-result-schema-metadata
                     :documentation "Definition metadata captured before the run, or NIL.")
    (trial-budget :initarg :budget :initform nil :reader property-result-budget
@@ -191,6 +200,8 @@ results without captured metadata have an explicitly incomplete digest."
                    :rejected (property-result-rejected result)
                    :seed (property-result-seed result)
                    :profile (property-result-profile result)
+                   :options (property-result-options result)
+                   :provenance (property-result-provenance result)
                    :counterexample (property-result-counterexample result)
                    :shrunk-counterexample (property-result-shrunk-counterexample result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
@@ -216,6 +227,23 @@ The backend reports counterexamples positionally; this is where they become the
     (loop for (variable nil) in (property-arguments property)
           for value in values
           append (list variable value))))
+
+(defparameter *cl-spec-version* "0.1.0"
+  "Implementation version recorded in provenance; keep in sync with cl-spec.asd.")
+
+(defun capture-run-provenance (backend options)
+  "Capture environment labels without retaining backend objects in result data."
+  (let ((class-name (class-name (class-of backend))))
+    (snapshot-value
+     (list :backend
+           (if (and class-name (symbol-package class-name))
+               (format nil "~A::~A" (package-name (symbol-package class-name))
+                       (symbol-name class-name))
+               :unknown)
+           :lisp-implementation-type (lisp-implementation-type)
+           :lisp-implementation-version (lisp-implementation-version)
+           :cl-spec-version *cl-spec-version*
+           :target-revision (getf options :target-revision :unknown)))))
 
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
@@ -253,6 +281,8 @@ backend."
          (metadata (definition-metadata
                     property :registry registry
                     :capabilities '(:generation :unknown :shrinking :unknown)))
+         (captured-options (snapshot-value options))
+         (provenance (capture-run-provenance backend options))
          (start (get-internal-real-time))
          ;; One binding covers generation and shrinking alike, because the whole
          ;; trial loop lives inside this single call.
@@ -283,6 +313,7 @@ backend."
                                :skipped
                                (getf outcome :status))
                    :schema-metadata metadata :budget trials
+                   :options captured-options :provenance provenance
                    :property (property-name property)
                    :trials (getf outcome :trials)
                    :seed effective-seed

@@ -25,7 +25,7 @@
                 #:custom-generator #:custom-generator-name #:custom-generator-source-form
                 #:custom-generator-documentation)
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:backend-capabilities)
-  (:export #:schema-info #:definition-digest #:definition-metadata
+  (:export #:schema-info #:definition-digest #:definition-metadata #:definition-graph
            #:definition-description #:definition-entity-kind #:definition-generation-schema
            #:resolve-definition #:definition-shrink-enabled-p
            #:definition-instrumentation-capability))
@@ -222,43 +222,56 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
                    (t (return-from hashing nil))))
         (format nil "fnv1a64-v1:~(~16,'0X~)" hash)))))
 
-(defun definition-digest (designator &key entity-kind (registry *registry*))
-  "Return (values DIGEST COMPLETE-P) for a declaration and registered dependencies.
-A symbol requires an explicit :ENTITY-KIND. Missing or opaque definitions return
-NIL/NIL. Extension programming errors propagate rather than becoming incompleteness."
-  (when (symbolp designator)
-    (check-type entity-kind (member :spec :property :function-spec)))
-  (let ((root (resolve-definition designator entity-kind registry))
-        (seen (make-hash-table :test #'eq))
+(defun definition-graph (root &key (registry *registry*) (resolve-links-p t))
+  "Collect a complete ordered declaration graph, returning records and completeness.
+This internal protocol preserves node identity and the version-one digest ordering.
+With RESOLVE-LINKS-P false, retain link names and local classes without traversing
+registry dependencies. Missing or incomplete descriptions return NIL/NIL."
+  (let ((seen (make-hash-table :test #'eq))
         (pending nil) (records nil) (count 0))
-    (unless root (return-from definition-digest (values nil nil)))
+    (unless root (return-from definition-graph (values nil nil)))
     (labels ((reference (object)
                (multiple-value-bind (id found) (gethash object seen)
                  (if found id
                      (let ((id (incf count)))
                        (when (> count 10000)
-                         (return-from definition-digest (values nil nil)))
+                         (return-from definition-graph (values nil nil)))
                        (setf (gethash object seen) id)
                        (push object pending)
                        id)))))
       (reference root)
       (loop while pending
             for object = (pop pending)
-            do (multiple-value-bind (data children links complete)
-                   (definition-description object)
-                 (unless complete (return-from definition-digest (values nil nil)))
-                 (let ((child-ids (mapcar #'reference children))
-                       (link-ids
-                         (loop for (kind . name) in links
-                               for target = (ecase kind
-                                              (:spec (find-spec name registry))
-                                              (:generator (find-generator name registry)))
-                               do (unless target
-                                    (return-from definition-digest (values nil nil)))
-                               collect (list kind name (reference target)))))
-                   (push (list (gethash object seen) data child-ids link-ids) records))))
-      (let ((digest (canonical-digest (nreverse records))))
-        (values digest (not (null digest)))))))
+            do (multiple-value-bind (data children links complete) (definition-description object)
+                 (unless complete (return-from definition-graph (values nil nil)))
+                 (let ((child-ids (mapcar #'reference children)))
+                   (push
+                    (if resolve-links-p
+                        (list (gethash object seen) data child-ids
+                              (loop for (kind . name) in links
+                                    for target = (ecase kind
+                                                   (:spec (find-spec name registry))
+                                                   (:generator (find-generator name registry)))
+                                    do (unless target
+                                         (return-from definition-graph (values nil nil)))
+                                    collect (list kind name (reference target))))
+                        (list (gethash object seen) (class-name (class-of object))
+                              data child-ids links complete))
+                    records))))
+      (values (nreverse records) t))))
+
+(defun definition-digest (designator &key entity-kind (registry *registry*))
+  "Return (values DIGEST COMPLETE-P) for a declaration and registered dependencies.
+A symbol requires an explicit :ENTITY-KIND. Missing or opaque definitions return
+NIL/NIL. Extension programming errors propagate rather than becoming incompleteness."
+  (when (symbolp designator)
+    (check-type entity-kind (member :spec :property :function-spec)))
+  (multiple-value-bind (records complete)
+      (definition-graph (resolve-definition designator entity-kind registry) :registry registry)
+    (if complete
+        (let ((digest (canonical-digest records)))
+          (values digest (not (null digest))))
+        (values nil nil))))
 
 (defgeneric definition-instrumentation-capability (definition)
   (:documentation "Return :AVAILABLE or :UNAVAILABLE for runtime instrumentation support.

@@ -85,7 +85,8 @@
 (deftest metadata-rejects-unsupported-entity-types-explicitly
   (ok (handler-case
           (progn (cl-spec/src/schema:definition-metadata
-                  (make-instance 'cl-spec/src/generator-definition:custom-generator)) nil)
+                  (make-instance 'cl-spec/src/generator-definition:custom-generator
+                                 :name 'unsupported :function (constantly nil))) nil)
         (type-error () t))))
 
 (deftest digest-errors-are-not-confused-with-opaque-definitions
@@ -109,6 +110,15 @@
     (ok (eq :none (getf (getf (property-data 'all-custom) :capabilities) :shrinking)))
     (ok (eq :none (getf (getf (function-spec-data 'identity) :capabilities) :shrinking)))
     (ok (eq :available (getf (getf (property-data 'mixed) :capabilities) :shrinking)))))
+
+(deftest graph-traversal-preserves-version-one-digests
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec digest-leaf (range integer 0 10))
+    (defspec digest-root (tuple digest-leaf (nullable digest-leaf)))
+    (ok (equal "fnv1a64-v1:f123648fe7d686f0"
+               (definition-digest 'digest-root :entity-kind :spec)))
+    (ok (equal "fnv1a64-v1:c30ab4af3e1875c2"
+               (definition-digest 'digest-leaf :entity-kind :spec)))))
 
 (deftest digests-include-clos-description-fields
   (flet ((spec (text)
@@ -231,7 +241,7 @@
     (defspec missing integer)
     (ok (getf (spec-data 'input) :definition-digest-complete))
     (let ((property (make-instance 'cl-spec/src/property:property
-                                  :function (lambda () t))))
+                                  :name 'opaque-property :function (lambda () t))))
       (ok (null (nth-value 1 (definition-digest property)))))))
 
 (deftest capabilities-do-not-draw-or-call-targets

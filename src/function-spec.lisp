@@ -6,6 +6,10 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/definition-validation
+                #:validate-definition #:definition-validation-slots #:call-with-definition-rollback
+                #:finite-definition-form-p #:definition-keyword-plist-p)
   (:import-from #:cl-spec/src/conditions
                 #:unknown-function-spec
                 #:unbound-target
@@ -22,10 +26,12 @@
                 #:resolve-definition #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/property
-                #:property #:property-argument-schema)
+                #:property #:property-argument-schema #:validate-property-executable
+                #:property-source-form)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
                 #:property-result-schema-metadata #:property-result-budget
+                #:property-result-options #:property-result-provenance
                 #:property-result-status
                 #:property-result-property
                 #:property-result-trials
@@ -47,7 +53,7 @@
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
   (:import-from #:cl-spec/src/explain
                 #:explain-data #:expected-descriptor)
-  (:export #:precondition-refuses-p
+  (:export #:make-function-check-property #:precondition-refuses-p
            #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
@@ -162,57 +168,22 @@ function at a time (specification §3.2)."))
     source-form source-location metadata)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
+(defmethod definition-validation-slots append ((contract function-spec))
+  (copy-list *function-spec-slot-names*))
+
 (defmethod shared-initialize :around ((contract function-spec) slot-names &rest initargs)
-  "Leave CONTRACT as it was when initialization is refused.
-
-The :AFTER method below validates, but by the time it runs the standard method
-has already written the initargs into the slots.  So catching its refusal left
-the object holding exactly the state the check exists to refuse -- and
-discarding it is not open to the caller, because REGISTER-FUNCTION-SPEC stores
-the object by identity: the registry, FIND-FUNCTION-SPEC, FUNCTION-SPEC-DATA
-and CHECK-FUNCTION are all aliased to that one instance.  A refused
-REINITIALIZE-INSTANCE could leave a registered contract whose :PRECONDITIONS
-the checker then ignored while reporting :PASSED, or whose argument specs no
-longer normalized, and a refused :RETURN-SPEC typo destroyed a return spec that
-had been fine.
-
-Restoring an unbound slot writes NIL rather than making it unbound again, which
-matters only during MAKE-INSTANCE -- where the object is discarded anyway."
+  "Validate paired clauses and restore all participating slots on refusal."
   (flet ((supplied (key)
-           ;; Keys only.  MEMBER matched values as well, which both refused a
-           ;; contract whose :METADATA happened to be the keyword :PRECONDITIONS
-           ;; and, worse, let the real case through when the other keyword sat
-           ;; in a value position -- the guard reporting itself satisfied by the
-           ;; very shape it exists to catch.
            (loop for (k) on initargs by #'cddr thereis (eq k key))))
-    ;; Both halves of a clause change together or not at all.  The :AFTER
-    ;; method sees only the final state, which is consistent when one half is
-    ;; new and the other is left over -- so REINITIALIZE-INSTANCE with
-    ;; :PRECONDITIONS alone paired new text with the stale compiled predicate,
-    ;; and the checker ran the old claim while introspection showed the new
-    ;; one.  It reported :PASSED for a contract that is false.
-    (when (or (and (supplied :preconditions) (not (supplied :precondition-function)))
-              (and (supplied :precondition-function) (not (supplied :preconditions))))
-      (error 'invalid-function-spec-form
-             :form (getf initargs :preconditions)
-             :reason ":preconditions and :precondition-function change together"))
-    (when (or (and (supplied :postconditions) (not (supplied :postcondition-function)))
-              (and (supplied :postcondition-function) (not (supplied :postconditions))))
-      (error 'invalid-function-spec-form
-             :form (getf initargs :postconditions)
-             :reason ":postconditions and :postcondition-function change together")))
-  (let ((snapshot (loop for slot in *function-spec-slot-names*
-                        collect (cons slot (when (slot-boundp contract slot)
-                                             (slot-value contract slot)))))
-        (committed nil))
-    (unwind-protect
-         (multiple-value-prog1 (apply #'call-next-method contract slot-names initargs)
-           (setf committed t))
-      (unless committed
-        (loop for (slot . value) in snapshot
-              do (setf (slot-value contract slot) value))))))
+    (dolist (pair '((:preconditions :precondition-function)
+                    (:postconditions :postcondition-function)))
+      (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
+        (error 'invalid-function-spec-form :form pair
+               :reason "clause forms and compiled function must change together"))))
+  (call-with-definition-rollback
+   contract (lambda () (apply #'call-next-method contract slot-names initargs))))
 
-(defmethod shared-initialize :after ((contract function-spec) slot-names &key)
+(defmethod validate-definition ((contract function-spec))
   "Refuse a contract that could not be honoured, and normalize what can be.
 
 Enforced here rather than in CHECK-FUNCTION because the class and
@@ -245,7 +216,6 @@ predicate they can be recovered: NORMALIZE-SPEC-FORM is pure, and returns an
 already-normalized spec unchanged, so the DSL's output passes through
 untouched.  Without this a contract built through the class reached the
 generator as a bare symbol and signalled NO-APPLICABLE-METHOD."
-  (declare (ignore slot-names))
   (flet ((refuse (form reason)
            (error 'invalid-function-spec-form :form form :reason reason))
          (half (forms-initarg function-initarg forms predicate)
@@ -257,6 +227,32 @@ predicate cannot be recovered from the forms"
                   (format nil "~A was given without ~A, so the predicate ~
 would run while introspection reported no such clause"
                           function-initarg forms-initarg)))))
+    (unless (and (symbolp (function-spec-name contract))
+                 (function-spec-name contract)
+                 (not (keywordp (function-spec-name contract)))
+                 (not (constantp (function-spec-name contract))))
+      (refuse (function-spec-name contract) "expected a nonconstant function name"))
+    (unless (and (finite-list-p (function-spec-argument-specs contract))
+                 (finite-list-p (function-spec-preconditions contract))
+                 (finite-list-p (function-spec-postconditions contract))
+                 (finite-list-p (function-spec-source-form contract)))
+      (refuse nil "arguments, clause forms and source must be finite proper lists"))
+    (unless (every #'finite-definition-form-p
+                   (list (function-spec-argument-specs contract)
+                         (function-spec-return-spec contract) (function-spec-signal-spec contract)
+                         (function-spec-preconditions contract) (function-spec-postconditions contract)
+                         (function-spec-source-form contract)))
+      (refuse nil "definition forms must be acyclic"))
+    (dolist (predicate (list (function-spec-precondition-function contract)
+                             (function-spec-postcondition-function contract)))
+      (unless (or (null predicate) (functionp predicate))
+        (refuse nil "compiled clause predicates must be functions")))
+    (unless (typep (function-spec-documentation contract) '(or null string))
+      (refuse nil "documentation must be NIL or a string"))
+    (dolist (plist (list (function-spec-metadata contract)
+                         (function-spec-source-location contract)))
+      (unless (definition-keyword-plist-p plist)
+        (refuse nil "metadata and source-location must be keyword plists without duplicates")))
     (let ((pre (half ":preconditions" ":precondition-function"
                      (function-spec-preconditions contract)
                      (function-spec-precondition-function contract)))
@@ -274,11 +270,13 @@ would run while introspection reported no such clause"
     (let ((seen '()))
       (setf (slot-value contract 'argument-specs)
             (loop for entry in (function-spec-argument-specs contract)
-                  do (unless (and (consp entry)
+                  do (unless (and (finite-list-p entry)
                                   (= 2 (length entry))
                                   (first entry)
                                   (symbolp (first entry))
-                                  (not (keywordp (first entry))))
+                                  (not (keywordp (first entry)))
+                                  (not (constantp (first entry)))
+                                  (not (member (first entry) lambda-list-keywords)))
                        ;; Not merely malformed: (amount integer extra) would
                        ;; otherwise pass through with EXTRA silently dropped.
                        (refuse entry "expected (parameter spec)"))
@@ -298,7 +296,12 @@ would run while introspection reported no such clause"
       (when signals
         (setf (slot-value contract 'signal-spec) (normalize-spec-form signals)))
       (when returns
-        (setf (slot-value contract 'return-spec) (normalize-spec-form returns))))))
+        (setf (slot-value contract 'return-spec) (normalize-spec-form returns)))))
+  contract)
+
+(defmethod shared-initialize :after ((contract function-spec) slot-names &key)
+  (declare (ignore slot-names))
+  (validate-definition contract))
 
 (defun function-spec-argument-schema (contract)
   "Derive the whole argument tuple schema from CONTRACT's current declarations."
@@ -520,6 +523,15 @@ as its reduction.  The shapes come from the nested errors instead."
    (target :initarg :target :reader checked-target))
   (:documentation "Internal property adapter whose trial evaluation records the contract outcome."))
 
+(defmethod definition-validation-slots append ((property function-check-property))
+  '(contract target))
+
+(defmethod validate-property-executable ((property function-check-property))
+  (unless (and (typep (checked-contract property) 'function-spec)
+               (functionp (checked-target property)))
+    (error 'invalid-function-spec-form :form nil :reason "invalid function trial adapter"))
+  property)
+
 (defmethod definition-instrumentation-capability ((property function-check-property))
   (definition-instrumentation-capability (checked-contract property)))
 
@@ -624,6 +636,21 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defmethod definition-entity-kind ((property function-check-property)) :function-spec)
 
+(defun make-function-check-property (contract &key (budget 0))
+  "Adapt CONTRACT to trial execution without requiring a generator backend."
+  (unless (typep budget '(integer 0 *))
+    (error 'type-error :datum budget :expected-type '(integer 0 *)))
+  (let ((name (function-spec-name contract)))
+    (make-instance 'function-check-property
+                   :contract contract :target (function-spec-target contract)
+                   :name name :arguments (function-spec-argument-specs contract)
+                   :targets (list name) :kind :function-spec
+                   :documentation (function-spec-documentation contract)
+                   :trials (list :normal budget)
+                   :source-form (snapshot-value (function-spec-source-form contract))
+                   :source-location (function-spec-source-location contract)
+                   :metadata (list :shrink t))))
+
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
 No target or predicate is called again to classify the result. Shrinking still
@@ -642,19 +669,13 @@ are accepted. A run with no admitted trials is :SKIPPED."
          (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
-         (source (snapshot-value (function-spec-source-form contract)))
-         (property (make-instance 'function-check-property
-                                  :contract contract :target (function-spec-target contract)
-                                  :name name :arguments (function-spec-argument-specs contract)
-                                  :targets (list name) :kind :function-spec
-                                  :documentation (function-spec-documentation contract)
-                                  :trials (list :normal budget)
-                                  :source-form source
-                                  :source-location (function-spec-source-location contract)
-                                  :metadata (list :shrink t)))
+         (property (make-function-check-property contract :budget budget))
+         (source (property-source-form property))
          (result (run-property property :seed seed :options options :registry registry)))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)
+                   :options (property-result-options result)
+                   :provenance (property-result-provenance result)
                    :status (property-result-status result)
                    :property name :budget budget :source-form source
                    :trials (property-result-trials result)

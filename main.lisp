@@ -5,6 +5,21 @@
 (defpackage #:cl-spec/main
   (:nicknames #:cl-spec)
   (:use #:cl)
+  (:import-from #:cl-spec/src/definition-validation
+                #:validate-definition #:definition-validation-slots)
+  (:export #:validate-definition #:definition-validation-slots)
+  (:import-from #:cl-spec/src/counterexample
+                #:counterexample-artifact #:make-counterexample-artifact
+                #:counterexample-artifact-data #:serialize-counterexample-artifact
+                #:deserialize-counterexample-artifact #:recheck-counterexample
+                #:invalid-counterexample-artifact #:invalid-counterexample-artifact-reason)
+  (:export #:counterexample-artifact #:make-counterexample-artifact
+           #:counterexample-artifact-data #:serialize-counterexample-artifact
+           #:deserialize-counterexample-artifact #:recheck-counterexample
+           #:invalid-counterexample-artifact #:invalid-counterexample-artifact-reason)
+  (:import-from #:cl-spec/src/property-runner
+                #:property-result-options #:property-result-provenance)
+  (:export #:property-result-options #:property-result-provenance)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-backend-result #:invalid-backend-result-reason
                 #:cl-spec-error

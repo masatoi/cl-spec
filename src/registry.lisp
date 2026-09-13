@@ -14,6 +14,9 @@
 
 (defpackage #:cl-spec/src/registry
   (:use #:cl)
+  (:import-from #:cl-spec/src/definition-validation
+                #:validate-definition #:call-with-definition-rollback)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:registry-find-spec
            #:registry-register-spec
            #:registry-list-specs
@@ -55,6 +58,12 @@ Returns two values: the spec (NIL when absent) and a found-p boolean."))
   (:documentation "Register SPEC in REGISTRY under NAME, replacing any previous
 definition.  Returns SPEC."))
 
+(defmethod registry-register-spec :around (registry name spec)
+  "Validate before changing registry storage or reverse indexes."
+  (check-type name symbol)
+  (call-with-definition-rollback
+   spec (lambda () (validate-definition spec) (call-next-method))))
+
 (defgeneric registry-list-specs (registry)
   (:documentation "Return the names of every spec in REGISTRY, sorted."))
 
@@ -66,6 +75,12 @@ Returns two values: the function spec (NIL when absent) and a found-p boolean.")
   (:documentation "Register FUNCTION-SPEC in REGISTRY under NAME, replacing any
 previous definition.  Returns FUNCTION-SPEC."))
 
+(defmethod registry-register-function-spec :around (registry name function-spec)
+  "Validate before changing registry storage or reverse indexes."
+  (check-type name symbol)
+  (call-with-definition-rollback
+   function-spec (lambda () (validate-definition function-spec) (call-next-method))))
+
 (defgeneric registry-list-function-specs (registry)
   (:documentation "Return the names of every function spec in REGISTRY, sorted."))
 
@@ -76,6 +91,12 @@ Returns two values: the generator (NIL when absent) and a found-p boolean."))
 (defgeneric registry-register-generator (registry name generator)
   (:documentation "Register GENERATOR in REGISTRY under NAME, replacing any
 previous definition.  Returns GENERATOR."))
+
+(defmethod registry-register-generator :around (registry name generator)
+  "Validate before changing registry storage or reverse indexes."
+  (check-type name symbol)
+  (call-with-definition-rollback
+   generator (lambda () (validate-definition generator) (call-next-method))))
 
 (defgeneric registry-list-generators (registry)
   (:documentation "Return the names of every custom generator in REGISTRY, sorted."))
@@ -91,6 +112,20 @@ TARGETS is a list of symbols the property is about; TAGS is a list of tag
 designators.  Both are indexed for reverse lookup.  Re-registering a name
 replaces the previous definition and drops its stale index entries.
 Returns PROPERTY."))
+
+(defun registry-index-keys-p (keys)
+  "Recognize a finite list of symbol keys for explicit registry indexes."
+  (and (finite-list-p keys) (every #'symbolp keys)))
+
+(defmethod registry-register-property :around (registry name property &key targets tags)
+  "Validate before changing registry storage or reverse indexes."
+  (check-type name symbol)
+  (dolist (keys (list targets tags))
+    ;; Low-level callers supply these independently of the object's own slots.
+    (unless (registry-index-keys-p keys)
+      (error 'type-error :datum keys :expected-type '(satisfies registry-index-keys-p))))
+  (call-with-definition-rollback
+   property (lambda () (validate-definition property) (call-next-method))))
 
 (defgeneric registry-list-properties (registry)
   (:documentation "Return the names of every property in REGISTRY, sorted."))

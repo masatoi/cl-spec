@@ -24,7 +24,8 @@
                 #:spec-violation-value
                 #:validate
                 #:validp)
-  (:export #:register-specifications #:contract-names #:property-names))
+  (:export #:register-instrumentation-specifications #:register-specifications
+           #:contract-names #:property-names))
 
 (in-package #:cl-spec/specs)
 
@@ -75,7 +76,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
-    compile-explainer spec-data semantic-data normalize-spec-form))
+    compile-explainer spec-data semantic-data normalize-spec-form
+    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -84,12 +86,46 @@ Malformed lists must not enter a law that promises normalization succeeds."
     validation-preserves-values-or-explains-refusal boolean-composition
     introspection-preserves-spec-semantics))
 
+(defun register-instrumentation-specifications ()
+  "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
+Return its name. This bundle never loads the instrumentation system itself."
+  (let* ((package (find-package "CL-SPEC/INSTRUMENT"))
+         (name (and package (find-symbol "INSTRUMENTATION-STATUS" package))))
+    (unless (and name (fboundp name))
+      (error "Load CL-SPEC/INSTRUMENT before registering its specifications."))
+    (cl-spec:register-function-spec
+     (make-instance
+      'cl-spec:function-spec :name name
+      :argument-specs '((name (member uninstalled-self-target)))
+      :return-spec
+      '(plist (:required
+                (:status (member :not-installed :current :stale :indeterminate))
+                (:reasons (list-of keyword))
+                (:dependency-status (member :unchanged :changed :indeterminate))))
+      :source-form '(instrumentation-status-shape)
+      :documentation "Instrumentation status always identifies freshness and comparison limits."))
+    name))
+
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
 Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
 Generators exercise finite subsets. Most API contracts accept broader domains;
 the malformed-normalization contract explicitly names its finite input corpus."
+  (defspec-function cl-spec:deserialize-counterexample-artifact
+    "Malformed saved artifacts are refused without reader evaluation."
+    (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
+    (:signals (type cl-spec:invalid-counterexample-artifact)))
+  (defgenerator definition-generator ()
+    (make-instance 'cl-spec:property :name 'generated-definition
+                                    :arguments '((x integer)) :function #'identity))
+  (defspec generated-definition (instance-of cl-spec:property)
+    (:generator definition-generator))
+  (defspec-function cl-spec:validate-definition
+    "A valid programmatic definition preserves its object identity."
+    (:args (definition generated-definition))
+    (:returns (instance-of cl-spec:property))
+    (:post (eq result definition)))
   (defgenerator form-generator () (draw-form))
   (defgenerator value-generator () (draw-value))
   (defgenerator spec-generator () (normalize-spec-form (draw-form)))

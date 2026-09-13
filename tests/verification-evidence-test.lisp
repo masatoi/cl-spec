@@ -400,7 +400,8 @@
 
 (deftest unknown-trial-status-is-never-a-pass
   (ok (handler-case
-          (progn (run-property (make-instance 'invalid-status-property :trials '(:normal 1)))
+          (progn (run-property (make-instance 'invalid-status-property :name 'invalid-status :function (constantly t)
+                                               :trials '(:normal 1)))
                  nil)
         (invalid-backend-result () t))))
 

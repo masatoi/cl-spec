@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/tests/property-test
   (:use #:cl)
+  (:import-from #:cl-spec/src/ir #:reference-spec-target)
   (:import-from #:rove
                 #:deftest #:testing #:ok)
   (:import-from #:cl-spec/src/registry
@@ -39,6 +40,7 @@
                  :tags '(:money :invariant)
                  :documentation "Transfer keeps the total balance unchanged."
                  :body '((= (total-balance state) (total-balance result)))
+                 :function (lambda (state amount) (declare (ignore state amount)) t)
                  :source-form '(defproperty transfer-preserves-total-balance)
                  :source-location '(:file "/tmp/bank.lisp")
                  :trials '(:smoke 10 :normal 100)
@@ -49,7 +51,9 @@
     (let ((instance (make-test-property)))
       (ok (eq 'transfer-preserves-total-balance (property-name instance)))
       (ok (equal '((state state-spec) (amount positive-money))
-                 (property-arguments instance)))
+                 (mapcar (lambda (binding)
+                           (list (first binding) (reference-spec-target (second binding))))
+                         (property-arguments instance))))
       (ok (equal '(transfer) (property-targets instance)))
       (ok (eq :invariant (property-kind instance)))
       (ok (equal '(:money :invariant) (property-tags instance)))
@@ -65,7 +69,7 @@
 
 (deftest property-slots-default-to-nil
   (testing "a bare property has NIL everywhere except a required name"
-    (let ((instance (make-instance 'property :name 'bare)))
+    (let ((instance (make-instance 'property :name 'bare :function (constantly t))))
       (ok (eq 'bare (property-name instance)))
       (ok (null (property-arguments instance)))
       (ok (null (property-targets instance)))
@@ -104,4 +108,5 @@
       (ok (not (funcall (property-function property) -1))))
     (testing "the source body is kept alongside the compiled function"
       (ok (equal '((plusp x))
-                 (property-body (make-instance 'property :body '((plusp x)))))))))
+                 (property-body (make-instance 'property :name 'p :body '((plusp x))
+                                                :function #'plusp)))))))
