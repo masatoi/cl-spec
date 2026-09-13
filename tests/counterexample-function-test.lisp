@@ -75,7 +75,9 @@
                        (check-function definition :trials 1 :seed 42 :registry registry)))
            (draw-count draws)
            (calls *calls*))
-      (reinitialize-instance generator :function (lambda () (incf draws) (error "generator invoked")))
+      (reinitialize-instance generator
+                              :source-form '(defgenerator saved-arguments () (list 25))
+                              :function (lambda () (incf draws) (error "generator invoked")))
       (let ((*generator-backend* nil))
         (ok (eq :same-failure (recheck-status artifact registry))))
       (ok (= draw-count draws))

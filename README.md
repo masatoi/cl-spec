@@ -428,3 +428,27 @@ explain:
 ## License
 
 MIT
+
+### Programmatic definition invariants
+
+`property`, `function-spec` and `custom-generator` validate construction,
+reinitialization and class-update initialization. Arguments normalize to IR;
+names, bindings, trial budgets, callable predicates, source and metadata shapes
+are checked even without a DSL macro. Properties require a compiled function;
+custom evaluator subclasses specialize `cl-spec/src/property:validate-property-executable`.
+Direct closures without source are supported, with incomplete declaration digests.
+Body/function updates and source-bearing generator source/function updates must
+supply both halves together. Function pre/post forms and predicates also change
+together. These checks enforce representation consistency, not equivalence
+between arbitrary supplied code and source text.
+
+Registry writes call `validate-definition` before replacing definitions or
+changing reverse indexes. Refused updates restore participating slot bindings,
+including previously unbound slots. Subclasses extend
+`definition-validation-slots` with an `append` method, and specialize
+`validate-definition` (calling the next method) for their own invariants.
+Successful changes to a registered property's targets/tags require explicit
+re-registration to update indexes. Arbitrary destructive mutation inside slot
+values and raw `slot-value` writes are outside automatic update validation;
+registration validates again. The generic registry protocol still permits opaque
+backend values through the default validation method.

@@ -158,11 +158,11 @@ signals, or NIL if it signals no such condition."
                                                  :source-location '(:file "x.lisp")))
     (register-function-spec (make-instance 'function-spec :name 'foo) registry)
     (register-property (make-instance 'property
-                                      :name 'foo-preserves-total
+                                      :name 'foo-preserves-total :function (constantly t)
                                       :targets '(foo))
                        registry)
     (register-property (make-instance 'property
-                                      :name 'failed-foo-is-noop
+                                      :name 'failed-foo-is-noop :function (constantly t)
                                       :targets '(foo))
                        registry)
     (let ((data (semantic-data 'foo :registry registry)))
@@ -195,8 +195,8 @@ signals, or NIL if it signals no such condition."
 
 (deftest semantic-data-distinguishes-property-name-from-property-target
   (let ((registry (make-hash-table-registry)))
-    (register-property (make-instance 'property :name 'bar :targets '(baz)) registry)
-    (register-property (make-instance 'property :name 'qux :targets '(bar)) registry)
+    (register-property (make-instance 'property :name 'bar :function (constantly t) :targets '(baz)) registry)
+    (register-property (make-instance 'property :name 'qux :function (constantly t) :targets '(bar)) registry)
     (let ((data (semantic-data 'bar :registry registry)))
       (testing ":PROPERTY is BAR's own registration; :PROPERTIES-ABOUT is what targets BAR"
         (ok (eq 'bar (getf data :property)))
@@ -236,11 +236,11 @@ signals, or NIL if it signals no such condition."
                                                  :name 'foo
                                                  :source-location '(:file "x.lisp")))
     (register-property (make-instance 'property
-                                      :name 'foo-preserves-total
+                                      :name 'foo-preserves-total :function (constantly t)
                                       :targets '(foo))
                        registry)
     (register-property (make-instance 'property
-                                      :name 'failed-foo-is-noop
+                                      :name 'failed-foo-is-noop :function (constantly t)
                                       :targets '(foo))
                        registry)
     (let ((data (semantic-data 'foo :registry registry)))

@@ -35,7 +35,7 @@
 
 (deftest resolving-a-property-designator
   (let* ((registry (make-hash-table-registry))
-         (property (make-instance 'property :name 'p)))
+         (property (make-instance 'property :name 'p :function (constantly t))))
     (registry-register-property registry 'p property)
     (testing "a symbol resolves through the registry"
       (ok (eq property (resolve-property 'p registry))))

@@ -56,7 +56,7 @@
           (ok (member name (cl-spec:properties-for target))))))
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
-    (ok (= 9 (length (cl-spec:list-function-specs))))
+    (ok (= 10 (length (cl-spec:list-function-specs))))
     (ok (= 7 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
@@ -64,7 +64,7 @@
         (original-validp (fdefinition 'cl-spec:validp)))
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
-      (ok (= 9 (length (cl-spec:list-function-specs))))
+      (ok (= 10 (length (cl-spec:list-function-specs))))
       (ok (= 7 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))

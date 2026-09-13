@@ -7,6 +7,9 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/function-invariants-test)
+  (:import-from #:cl-spec/tests/definition-validation-test)
+  (:import-from #:cl-spec/tests/generator-invariants-test)
   (:import-from #:cl-spec/tests/utils/artifact-values-test)
   (:import-from #:cl-spec/tests/result-provenance-test)
   (:import-from #:cl-spec/tests/counterexample-test)

@@ -23,3 +23,8 @@ their semantics. Recheck needs an explicit stateless assertion; fixture support 
 outside the issue. Cost: callers with these inputs require a later codec/fixture extension.
 Decision: current working checkout uses a new feature branch; PR #8 remains untouched.
 Baseline: 333 tests pass.
+
+## Completed checkpoints
+
+- #9: `9b2fc1c`; 355 Rove tests, 30 clean-process suites; core compilation and changed-file mallet passed.
+- #10: 371 Rove tests, 33 clean-process suites; shared object validation, registration gate and rollback integrated. Core compilation passed.

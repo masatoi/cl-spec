@@ -85,7 +85,8 @@
 (deftest metadata-rejects-unsupported-entity-types-explicitly
   (ok (handler-case
           (progn (cl-spec/src/schema:definition-metadata
-                  (make-instance 'cl-spec/src/generator-definition:custom-generator)) nil)
+                  (make-instance 'cl-spec/src/generator-definition:custom-generator
+                                 :name 'unsupported :function (constantly nil))) nil)
         (type-error () t))))
 
 (deftest digest-errors-are-not-confused-with-opaque-definitions
@@ -231,7 +232,7 @@
     (defspec missing integer)
     (ok (getf (spec-data 'input) :definition-digest-complete))
     (let ((property (make-instance 'cl-spec/src/property:property
-                                  :function (lambda () t))))
+                                  :name 'opaque-property :function (lambda () t))))
       (ok (null (nth-value 1 (definition-digest property)))))))
 
 (deftest capabilities-do-not-draw-or-call-targets

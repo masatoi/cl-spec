@@ -4118,3 +4118,20 @@ semantics. The public data reader and serializer return independent copies.
 Invalid version, duplicate/unknown record fields, malformed tags and excessive
 resources signal `invalid-counterexample-artifact`. See README for value types
 and limits. MCP serialization remains the adapter's responsibility.
+
+
+### Definition invariant implementation addendum (issue #10)
+
+The object model validates Property, Function Spec and custom generator
+construction and shared initialization, then validates again before registry
+writes. Macro validation is an early diagnostic layer over this boundary.
+`validate-definition` and `definition-validation-slots` expose validation and
+explicit subclass participation in rollback. Failed updates restore slot values
+and boundness; registry storage/indexes are changed only after validation.
+Standard class-update initialization is checked too. This is not an arbitrary
+object graph transaction: destructive nested edits, unlisted extension slots
+and implementation-specific class-change recovery are outside rollback promises.
+Registered target/tag index changes remain explicit re-registration operations.
+A source-less callable definition remains valid but cannot have a complete
+source-based digest. The executable self-spec covers identity preservation of
+valid programmatic definition validation.

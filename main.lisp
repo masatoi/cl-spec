@@ -5,6 +5,9 @@
 (defpackage #:cl-spec/main
   (:nicknames #:cl-spec)
   (:use #:cl)
+  (:import-from #:cl-spec/src/definition-validation
+                #:validate-definition #:definition-validation-slots)
+  (:export #:validate-definition #:definition-validation-slots)
   (:import-from #:cl-spec/src/counterexample
                 #:counterexample-artifact #:make-counterexample-artifact
                 #:counterexample-artifact-data #:serialize-counterexample-artifact

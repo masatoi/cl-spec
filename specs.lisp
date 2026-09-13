@@ -76,7 +76,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
-    cl-spec:deserialize-counterexample-artifact))
+    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
@@ -95,6 +95,16 @@ the malformed-normalization contract explicitly names its finite input corpus."
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
     (:signals (type cl-spec:invalid-counterexample-artifact)))
+  (defgenerator definition-generator ()
+    (make-instance 'cl-spec:property :name 'generated-definition
+                                    :arguments '((x integer)) :function #'identity))
+  (defspec generated-definition (instance-of cl-spec:property)
+    (:generator definition-generator))
+  (defspec-function cl-spec:validate-definition
+    "A valid programmatic definition preserves its object identity."
+    (:args (definition generated-definition))
+    (:returns (instance-of cl-spec:property))
+    (:post (eq result definition)))
   (defgenerator form-generator () (draw-form))
   (defgenerator value-generator () (draw-value))
   (defgenerator spec-generator () (normalize-spec-form (draw-form)))
