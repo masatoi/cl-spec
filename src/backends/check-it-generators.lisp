@@ -69,7 +69,8 @@
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
            #:bounded-collection-generator #:bounded-generator-min-length
            #:bounded-generator-max-length #:bounded-generator-enumerated
-           #:bounded-generator-distinct-range #:bounded-generator-element-probe
+           #:bounded-generator-distinct-range #:bounded-generator-domain-size
+           #:bounded-generator-element-probe
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -503,6 +504,16 @@ too wide to materialize, else NIL.")
       (coerce list 'vector)
       list))
 
+(defun bounded-generator-domain-size (generator)
+  "Return the finite UNIQUE domain size of GENERATOR, or NIL when it draws elements.
+
+Generation truncates a requested length to this size, so capability reporting and
+removal shrinking both need it."
+  (or (let ((enumerated (bounded-generator-enumerated generator)))
+        (and enumerated (length enumerated)))
+      (let ((range (bounded-generator-distinct-range generator)))
+        (and range (1+ (- (cdr range) (car range)))))))
+
 (defmethod generate ((generator bounded-collection-generator))
   (let* ((minimum (bounded-generator-min-length generator))
          (maximum (bounded-generator-max-length generator))
@@ -638,6 +649,12 @@ whose values it would otherwise have to enumerate instead."
                   (error 'generator-unavailable
                          :spec spec
                          :reason "UNIQUE needs a finite element domain to draw distinct values"))
+                (when (> (length enumerated) *enumeration-limit*)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE domain has ~D values, more than the ~D ~
+                                              the enumeration limit allows"
+                                         (length enumerated) *enumeration-limit*)))
                 (when (< (length enumerated) minimum)
                   (error 'generator-unavailable
                          :spec spec

@@ -175,3 +175,29 @@
                        schema (list :registry cl-spec:*registry*))))
       (ok (typep generator 'cl-spec/src/backends/call-generators:call-arguments-generator))
       (ok (cl-spec/src/backends/call-generators:call-generator-rest-driven-p generator)))))
+
+(defvar *keyword-rest-tails* nil
+  "Raw rest tails observed by KEYWORD-REST-TARGET.")
+
+(defun keyword-rest-target (&rest raw &key a b c)
+  "Collect the raw rest tail; it must satisfy the rest length and the keyword rules."
+  (declare (ignore a b c))
+  (push (copy-list raw) *keyword-rest-tails*)
+  (list raw))
+
+(deftest constrained-universal-rest-generates-keyword-tails
+  (testing "a universal length-constrained rest is filled with keyword pairs"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*keyword-rest-tails* nil))
+      (cl-spec:defspec-function keyword-rest-target
+        (:args &rest (raw (list-of t :min-length 4 :max-length 6))
+               &key ((:a a) integer) ((:b b) integer) ((:c c) integer))
+        (:returns list))
+      (let ((result (cl-spec:check-function 'keyword-rest-target :trials 20 :seed 42)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (zerop (cl-spec:property-result-rejected result)))
+        (ok (= 20 (length *keyword-rest-tails*)))
+        (ok (every (lambda (tail)
+                     (and (evenp (length tail))
+                          (<= 4 (length tail) 6)))
+                   *keyword-rest-tails*))))))

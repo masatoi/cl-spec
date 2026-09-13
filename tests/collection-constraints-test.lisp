@@ -216,3 +216,16 @@
                      (and (= 2 (length items))
                           (equal '(0 1) (sort (copy-list items) #'<))))
                    samples))))))
+
+(deftest shrink-capability-accounts-for-domain-cardinality
+  (testing "a domain smaller than the declared maximum leaves no room to remove"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (defspec domain-capped (list-of (member 1 2) :min-length 2 :max-length 3 :unique t))
+      (ok (eq :none (getf (getf (spec-data 'domain-capped) :capabilities) :shrinking))))))
+
+(deftest unique-materialized-domains-enforce-the-cap
+  (testing "a materialized domain above the enumeration limit is refused"
+    (let* ((values (loop for value below 1001 collect value))
+           (spec (normalize-spec-form
+                  `(list-of (member ,@values) :min-length 2 :unique t))))
+      (ok (signals (sample spec :count 1) 'generator-unavailable)))))

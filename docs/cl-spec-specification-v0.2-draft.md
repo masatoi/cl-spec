@@ -679,7 +679,10 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
 `:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
 有限な整数`range`は列挙せず直接samplingするため幅の上限はない。`member`、
-`boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限る。
+`boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
+超える場合は`generator-unavailable`を通知する。
+縮小可能性の判定は要素domainの要素数も見て、実効的な最大長が`:min-length`以下なら
+要素除去の余地なしとして報告する。
 列挙できない要素、またはカスタムgeneratorが分布を持つ要素には`generator-unavailable`を
 通知する。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
 無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
@@ -4361,8 +4364,10 @@ rest束縛のpresenceは常に真とする。位置引数を消費したraw list
 &restと&keyが共存する場合は同じtailを共有し、重複・control pairもrestに含める。
 whole-list specと既存keyword検証の両方を満たす必要がある。生成・縮小では組み立てたcallを
 再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
-restとkeyの共存では、注釈なしの正確な(list-of t)だけをkeyword generatorで生成する。
-それ以外はrest generatorから最大100候補callを生成し、全引数schemaで交差条件を検査する。
+restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword generatorで生成し、
+長さ制約付きのuniversal list `(list-of t :min-length N [:max-length M])`は
+境界内の長さになるようkeyword pairで埋める。それ以外はrest generatorから最大100候補callを
+生成し、全引数schemaで交差条件を検査する。
 上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
 拒否された生成候補でtargetを呼ばない。
 explain経路には宣言rest名を用い、introspection/digestは:kind :restとwhole-list specを保持する。

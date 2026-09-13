@@ -272,9 +272,10 @@ declared range, and a shrink never removes past `:min-length`. `:unique`
 generation draws distinct elements from a finite element domain. A finite
 integer `range` is sampled directly, so any width works; `member`,
 `boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
-1000 values. A `:unique` element spec with no finite enumeration, or one whose
-custom generator owns its distribution, signals `generator-unavailable` rather
-than retrying collisions forever. A collection whose `:max-length` is 0 generates
+1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
+element spec with no finite enumeration, or one whose custom generator owns its
+distribution, signals `generator-unavailable` rather than retrying collisions
+forever. A collection whose `:max-length` is 0 generates
 the empty collection without compiling its element spec.
 
 ## Generate related arguments together
@@ -431,8 +432,10 @@ An `&key` section may follow the rest declaration. Both see the same tail,
 including duplicate keys and control pairs: the whole-list rest spec and the
 keyword rules must both hold. Without `&key`, generation uses the whole-list rest
 spec's generator. With `&key`, an exact, unannotated `(list-of t)` rest spec uses
-keyword generation. Other rest specs use their own generator and try up to 100
-candidate calls against the complete argument schema; exhaustion signals
+keyword generation, and a length-constrained universal one — `(list-of t
+:min-length N [:max-length M])` — is filled with keyword pairs whose total length
+stays inside those bounds. Other rest specs use their own generator and try up to
+100 candidate calls against the complete argument schema; exhaustion signals
 `generator-unavailable`. Custom generator annotations do not bypass this check.
 Rejected generated candidates never reach the target. Shrinking also checks both
 constraints before execution. Raw calls must remain finite proper lists. Introspection marks the parameter `:kind :rest`; rest declaration changes

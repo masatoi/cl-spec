@@ -12,6 +12,8 @@
   (:import-from #:cl-spec/src/ir
                 #:spec-generator-name #:list-of-spec #:collection-spec-element-spec
                 #:collection-constraint-plist
+                #:collection-spec-min-length #:collection-spec-max-length
+                #:collection-spec-unique-p
                 #:type-spec #:type-spec-type-specifier)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/conditions #:generator-unavailable)
@@ -25,17 +27,58 @@
   ((children :initarg :children :reader call-generator-children)
    (layout :initarg :layout :reader call-generator-layout)
    (rest-driven-p :initarg :rest-driven-p :reader call-generator-rest-driven-p)
+   (rest-length :initarg :rest-length :initform nil :reader call-generator-rest-length
+                :documentation "Length bounds of a universal constrained rest tail that
+the keyword generator fills, or NIL.")
    (validator :initarg :validator :reader call-generator-validator)
    (spec :initarg :spec :reader call-generator-spec))
   (:documentation "Generate raw calls and shrink their positional, rest, or keyword values."))
 
 (defun call-generator-removable-p (generator)
   "Return true when optional positional or generated keyword arguments can be omitted."
-  (let ((layout (call-generator-layout generator)))
+  (let* ((layout (call-generator-layout generator))
+         (rest-length (call-generator-rest-length generator)))
     (or (> (call-layout-positional-count layout) (call-layout-required-count layout))
         (and (not (call-generator-rest-driven-p generator))
              (some (lambda (binding) (eq :key (argument-binding-kind binding)))
-                   (call-layout-bindings layout))))))
+                   (call-layout-bindings layout))
+             ;; A keyword pair is removable only while the rest tail may still be
+             ;; longer than the minimum the rest spec declares.
+             (or (null rest-length)
+                 (let* ((keys (count-if (lambda (binding)
+                                          (eq :key (argument-binding-kind binding)))
+                                        (call-layout-bindings layout)))
+                        (maximum (cdr rest-length))
+                        (upper (if (eq maximum :unbounded) (* 2 keys)
+                                   (min maximum (* 2 keys)))))
+                   (>= upper (+ (car rest-length) 2))))))))
+
+(defun generate-keyword-tail (bindings children rest-length spec)
+  "Draw a keyword/value tail whose even length lies inside REST-LENGTH."
+  (let* ((keys (loop for binding in bindings
+                     for child in children
+                     when (eq :key (argument-binding-kind binding))
+                       collect (cons binding child)))
+         (minimum (car rest-length))
+         (maximum (cdr rest-length))
+         (available (* 2 (length keys)))
+         (upper (if (eq maximum :unbounded) available (min maximum available)))
+         (lowest (if (evenp minimum) minimum (1+ minimum))))
+    (when (or (zerop (length keys)) (> lowest upper))
+      (error 'generator-unavailable
+             :spec spec
+             :reason (format nil "the declared keywords cannot fill a rest tail of ~D to ~D elements"
+                             minimum maximum)))
+    (let* ((low-pairs (/ lowest 2))
+           (high-pairs (floor upper 2))
+           (pairs (+ low-pairs (random (1+ (- high-pairs low-pairs)))))
+           (chosen (loop repeat pairs
+                         for index = (random (length keys))
+                         collect (prog1 (nth index keys)
+                                   (setf keys (append (subseq keys 0 index)
+                                                      (subseq keys (1+ index))))))))
+      (loop for (binding . child) in chosen
+            append (list (argument-binding-keyword binding) (generate child))))))
 
 (defmethod generate ((generator call-arguments-generator))
   (let* ((layout (call-generator-layout generator))
@@ -43,15 +86,17 @@
          (bindings (call-layout-bindings layout))
          (required (call-layout-required-count layout))
          (positional (call-layout-positional-count layout))
-         (rest-driven (call-generator-rest-driven-p generator)))
+         (rest-driven (call-generator-rest-driven-p generator))
+         (rest-length (call-generator-rest-length generator)))
     (loop repeat 100
-          for tail = (if rest-driven
-                         (generate (nth positional children))
-                         (loop for binding in bindings for child in children
-                               when (and (eq :key (argument-binding-kind binding))
-                                         (zerop (random 2)))
-                                 append (list (argument-binding-keyword binding)
-                                              (generate child))))
+          for tail = (cond (rest-driven (generate (nth positional children)))
+                           (rest-length (generate-keyword-tail bindings children rest-length
+                                                               (call-generator-spec generator)))
+                           (t (loop for binding in bindings for child in children
+                                    when (and (eq :key (argument-binding-kind binding))
+                                              (zerop (random 2)))
+                                      append (list (argument-binding-keyword binding)
+                                                   (generate child)))))
           for proper-tail = (if (finite-list-p tail) tail
                                 (error 'generator-unavailable
                                        :spec (call-generator-spec generator)
@@ -61,10 +106,11 @@
           for arguments = (append (loop for child in children for index from 0 below count
                                         collect (generate child))
                                   proper-tail)
-          ;; Rest-driven draws need filtering against overlapping keyword constraints.
-          ;; Generated-key draws retain invalid custom output for the backend's
-          ;; initial argument validation, which refuses it without calling the target.
-          when (or (not rest-driven) (funcall (call-generator-validator generator) arguments))
+          ;; Rest-driven and length-targeted draws are filtered here; an
+          ;; unconstrained keyword draw is left to the backend's initial
+          ;; argument validation, which refuses invalid custom output.
+          when (or (not (or rest-driven rest-length))
+                   (funcall (call-generator-validator generator) arguments))
             do (return-from generate (setf (cached-value generator) arguments)))
     (error 'generator-unavailable :spec (call-generator-spec generator)
            :reason "rest and keyword constraints rejected 100 generated calls")))
@@ -126,28 +172,46 @@
                                (progn (setf (cached-value generator) candidate) nil)))))))
   (cached-value generator))
 
-(defun unconstrained-rest-list-p (spec)
-  "Recognize an unannotated universal list without bypassing extension generators.
-
-A length or uniqueness constraint makes the list something the keyword generator
-cannot satisfy, so the rest child must be generated rather than omitted."
+(defun universal-rest-list-p (spec)
+  "Return true when SPEC is (list-of t ...) with universal elements and no custom generator."
   (and (eq (class-of spec) (find-class 'list-of-spec))
        (null (spec-generator-name spec))
-       (null (collection-constraint-plist spec))
        (let ((element (collection-spec-element-spec spec)))
          (and (eq (class-of element) (find-class 'type-spec))
               (null (spec-generator-name element))
               (eq t (type-spec-type-specifier element))))))
 
+(defun unconstrained-rest-list-p (spec)
+  "Recognize an unannotated universal list without bypassing extension generators."
+  (and (universal-rest-list-p spec)
+       (null (collection-constraint-plist spec))))
+
+(defun keyword-rest-bounds (spec layout)
+  "Return (MIN . MAX) when SPEC is a universal length-constrained rest tail that
+the keyword generator can fill, else NIL.
+
+Only length bounds are handled: UNIQUE over an arbitrary tail is not something
+keyword pairs can promise, so that combination keeps the rest-driven path."
+  (when (and (call-layout-key-p layout)
+             (universal-rest-list-p spec)
+             (not (collection-spec-unique-p spec))
+             (or (plusp (collection-spec-min-length spec))
+                 (not (eq :unbounded (collection-spec-max-length spec)))))
+    (cons (collection-spec-min-length spec)
+          (collection-spec-max-length spec))))
+
 (defmethod spec-generator ((spec call-arguments-spec) context)
   (let* ((layout (call-arguments-spec-layout spec))
          (rest (call-layout-rest-binding layout))
+         (rest-spec (and rest (argument-binding-spec rest)))
+         (keyword-length (and rest-spec (keyword-rest-bounds rest-spec layout)))
+         (unconstrained (and rest-spec (unconstrained-rest-list-p rest-spec)))
          (rest-driven (and rest
                            (not (and (call-layout-key-p layout)
-                                     (unconstrained-rest-list-p
-                                      (argument-binding-spec rest)))))))
+                                     (or unconstrained keyword-length))))))
     (make-instance 'call-arguments-generator
                    :layout layout :spec spec :rest-driven-p rest-driven
+                   :rest-length keyword-length
                    :validator (compile-validator spec :context context)
                    :children
                    (mapcar (lambda (binding)
