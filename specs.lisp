@@ -467,8 +467,22 @@ the malformed-normalization contract explicitly names its finite input corpus."
      :seed (random 1000000) :profile :normal))
 
   (defun self-failing-result ()
-    "Run a throwaway property whose body always fails."
-    (self-run-result (lambda (x) (declare (ignore x)) nil)))
+    "Register and run a source-backed property whose body always fails.
+
+The body and source form keep the declaration digest complete, which is what
+lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
+    (let ((property (make-instance 'cl-spec:property
+                                   :name 'self-failing-target
+                                   :arguments '((x integer))
+                                   :targets '(self-target)
+                                   :tags '(:self)
+                                   :function (lambda (x) (declare (ignore x)) nil)
+                                   :body '(nil)
+                                   :source-form '(defproperty self-failing-target
+                                                   ((x integer)) nil)
+                                   :trials '(:normal 5))))
+      (cl-spec:register-property property)
+      (cl-spec:run-property property :seed (random 1000000) :profile :normal)))
 
   (defun self-failing-artifact ()
     "Freeze a throwaway failing run into a saved counterexample artifact."
@@ -682,7 +696,8 @@ the malformed-normalization contract explicitly names its finite input corpus."
            &key ((:state-policy policy) (member :stateless)))
     (:args-generator recheck-arguments-generator)
     (:returns recheck-record-data)
-    (:post (eq :stateless policy)))
+    (:post (eq :stateless policy)
+           (eq :same-failure (getf result :status))))
 
   (defproperty normalization-is-idempotent ((form generated-form))
     "Normalizing an existing IR object preserves its identity (§9)."
@@ -792,9 +807,11 @@ the malformed-normalization contract explicitly names its finite input corpus."
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
     (let* ((data (explain-data spec value))
+           (returned nil)
            (text (with-output-to-string (stream)
-                   (cl-spec:explain spec value :stream stream))))
-      (and (plusp (length text))
+                   (setf returned (cl-spec:explain spec value :stream stream)))))
+      (and (null returned)
+           (plusp (length text))
            (if (getf data :valid)
                (and (search "satisfies" text) t)
                (and (search "does not satisfy" text)
@@ -829,26 +846,36 @@ the malformed-normalization contract explicitly names its finite input corpus."
            (member 'self-property (cl-spec:registry-list-properties registry))
            (member 'self-contract (cl-spec:registry-list-function-specs registry))
            (member 'self-generator (cl-spec:registry-list-generators registry)))))
-  (defproperty registry-reverse-indexes-track-redefinition ((property generated-definition))
+  (defproperty registry-reverse-indexes-track-redefinition ()
     "Re-registering a property retracts its previous target and tag index entries (§8)."
     (:about cl-spec:properties-for cl-spec:properties-with-tag cl-spec:register-property)
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
-    (let ((registry (cl-spec:make-hash-table-registry)))
-      (cl-spec:registry-register-property registry 'self-property property
-                                          :targets '(self-target-a) :tags '(self-tag-a))
+    (let* ((registry (cl-spec:make-hash-table-registry))
+           (first (make-instance 'cl-spec:property
+                                 :name 'self-property
+                                 :arguments '((x integer))
+                                 :targets '(self-target-a)
+                                 :tags '(self-tag-a)
+                                 :function (lambda (x) (declare (ignore x)) t)))
+           (second (make-instance 'cl-spec:property
+                                  :name 'self-property
+                                  :arguments '((x integer))
+                                  :targets '(self-target-b)
+                                  :tags '(self-tag-b)
+                                  :function (lambda (x) (declare (ignore x)) t))))
+      (cl-spec:register-property first registry)
       (let ((indexed (and (member 'self-property
-                                  (cl-spec:registry-properties-for registry 'self-target-a))
+                                  (cl-spec:properties-for 'self-target-a registry))
                           (member 'self-property
-                                  (cl-spec:registry-properties-with-tag registry 'self-tag-a)))))
-        (cl-spec:registry-register-property registry 'self-property property
-                                            :targets '(self-target-b) :tags '(self-tag-b))
+                                  (cl-spec:properties-with-tag 'self-tag-a registry)))))
+        (cl-spec:register-property second registry)
         (and indexed
-             (null (cl-spec:registry-properties-for registry 'self-target-a))
-             (null (cl-spec:registry-properties-with-tag registry 'self-tag-a))
-             (member 'self-property (cl-spec:registry-properties-for registry 'self-target-b))
+             (null (cl-spec:properties-for 'self-target-a registry))
+             (null (cl-spec:properties-with-tag 'self-tag-a registry))
+             (member 'self-property (cl-spec:properties-for 'self-target-b registry))
              (member 'self-property
-                     (cl-spec:registry-properties-with-tag registry 'self-tag-b))))))
+                     (cl-spec:properties-with-tag 'self-tag-b registry))))))
   (defproperty registry-clear-empties ((spec spec-object) (property generated-definition))
     "CLEAR-REGISTRY leaves every index and lookup empty (§8)."
     (:about cl-spec:clear-registry cl-spec:list-specs cl-spec:list-properties
