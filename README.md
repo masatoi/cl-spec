@@ -1,4 +1,7 @@
 # cl-spec
+[![CI](https://github.com/masatoi/cl-spec/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/masatoi/cl-spec/actions/workflows/ci.yml)
+[![Lint](https://github.com/masatoi/cl-spec/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/masatoi/cl-spec/actions/workflows/lint.yml)
+[![API docs](https://github.com/masatoi/cl-spec/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/masatoi/cl-spec/actions/workflows/docs.yml)
 
 An executable semantic IR and property framework for Common Lisp programs,
 designed for both humans and LLM coding agents.
@@ -640,8 +643,18 @@ explain:
 
 ## Documentation
 
+- [`docs/api/`](docs/api/README.md) — API reference for the public packages,
+  generated from their docstrings
 - `docs/cl-spec-specification-v0.2-draft.md` — the specification
 - `docs/superpowers/specs/` — design documents
+
+The API reference is regenerated and committed by CI after every push to
+`main`. Regenerate it locally with:
+
+```lisp
+(asdf:load-system "cl-spec/api-docs")
+(cl-spec/api-docs:generate-api-docs)
+```
 
 ## License
 
