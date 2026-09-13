@@ -107,11 +107,14 @@
       (and (record-p data '(:artifact-version :record-kind :entity-kind :name
                            :definition-digest :definition-digest-complete :capabilities
                            :original :shrunk :selection :seed :profile :budget
-                           :options :provenance) '(:metadata-omissions))
+                           :options :provenance) '(:metadata-omissions
+                                                  :digest-omissions :digest-exclusions))
            (finite-list-p (getf data :metadata-omissions))
            (every (lambda (omission)
                     (and (record-p omission '(:field :reason))
-                         (member (getf omission :field) '(:options :provenance :capabilities))
+                         (member (getf omission :field) '(:options :provenance :capabilities
+                                                                        :digest-omissions
+                                                                        :digest-exclusions))
                          (keywordp (getf omission :reason))))
                   (getf data :metadata-omissions))
            (eql (getf data :artifact-version) 1)
@@ -137,9 +140,13 @@
   data)
 
 (defun counterexample-artifact-data (artifact)
-  "Return a fresh versioned data record; modifying it cannot change ARTIFACT."
+  "Return fresh data, marking digest details absent in older artifacts as not collected."
   (check-type artifact counterexample-artifact)
-  (checked-codec #'deserialize-artifact-value (counterexample-artifact-payload artifact)))
+  (let ((data (checked-codec #'deserialize-artifact-value
+                             (counterexample-artifact-payload artifact))))
+    (dolist (field '(:digest-omissions :digest-exclusions))
+      (setf (getf data field) (getf data field :not-collected)))
+    data))
 
 (defun serialize-counterexample-artifact (artifact)
   "Return bounded AV1 wire data, never a Lisp reader form."
@@ -168,7 +175,8 @@
                       '(:structure-limit :character-limit :text-limit))
         (reject-artifact (artifact-value-error-reason condition)))
       (let ((omissions (getf data :metadata-omissions)))
-        (dolist (field '(:options :provenance :capabilities))
+        (dolist (field '(:options :provenance :capabilities
+                          :digest-omissions :digest-exclusions))
           (when (getf data field)
             (setf (getf data field) (list :unavailable t :reason :artifact-budget))
             (setf omissions (remove field omissions :key (lambda (item) (getf item :field))))
@@ -203,7 +211,13 @@ is represented by an unavailable placeholder and :METADATA-OMISSIONS."
                     :name (property-result-property result)
                     :definition-digest (getf metadata :definition-digest)
                     :definition-digest-complete (getf metadata :definition-digest-complete)
-                    :capabilities (optional-metadata (getf metadata :capabilities) :capabilities)
+                    :digest-omissions
+                     (optional-metadata (getf metadata :digest-omissions :not-collected)
+                                        :digest-omissions)
+                     :digest-exclusions
+                     (optional-metadata (getf metadata :digest-exclusions :not-collected)
+                                        :digest-exclusions)
+                     :capabilities (optional-metadata (getf metadata :capabilities) :capabilities)
                     :original (evidence-data original) :shrunk (evidence-data shrunk)
                     :selection choice :seed (property-result-seed result)
                     :profile (property-result-profile result)

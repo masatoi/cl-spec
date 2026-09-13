@@ -19,6 +19,41 @@
 
 (defun make-registry () (make-hash-table-registry))
 
+(deftest legacy-artifact-details-are-explicitly-uncollected
+  (let ((registry (make-registry)))
+    (multiple-value-bind (result property) (fixture registry)
+      (declare (ignore property))
+      (let ((data (counterexample-artifact-data (make-counterexample-artifact result))))
+        (remf data :digest-omissions)
+        (remf data :digest-exclusions)
+        (let* ((wire (cl-spec/src/utils/artifact-values:serialize-artifact-value data))
+               (artifact (deserialize-counterexample-artifact wire)))
+          (ok (eq :not-collected
+                  (getf (counterexample-artifact-data artifact) :digest-omissions)))
+          (ok (eq :not-collected
+                  (getf (counterexample-artifact-data artifact) :digest-exclusions)))
+          (ok (eq :same-failure
+                  (getf (recheck-counterexample artifact :registry registry
+                                               :state-policy :stateless) :status))))))))
+
+(deftest artifact-preserves-digest-details
+  (multiple-value-bind (result property) (fixture (make-registry))
+    (declare (ignore property))
+    (let ((metadata (cl-spec/src/property-runner:property-result-schema-metadata result)))
+      (setf (getf metadata :digest-omissions)
+            (list (list :kind :missing-source :path nil :target 'example
+                        :reason :source-unavailable))
+            (getf metadata :digest-exclusions) (list :target-implementation))
+      (reinitialize-instance result :schema-metadata metadata)
+      (let* ((artifact (make-counterexample-artifact result))
+             (data (counterexample-artifact-data artifact)))
+        (ok (equal (getf metadata :digest-omissions) (getf data :digest-omissions)))
+        (ok (equal '(:target-implementation) (getf data :digest-exclusions)))
+        (setf (getf (first (getf metadata :digest-omissions)) :target) 'changed)
+        (ok (eq 'example
+                (getf (first (getf (counterexample-artifact-data artifact)
+                                   :digest-omissions)) :target)))))))
+
 (deftest invalid-selection-is-specific
   (multiple-value-bind (result property) (fixture (make-registry))
     (declare (ignore property))

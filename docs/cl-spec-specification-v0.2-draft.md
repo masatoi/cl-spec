@@ -2252,16 +2252,28 @@ v1の必須キーで`NIL`は「欠落」の代用ではなく、上表に定義�
 versionの無い旧recordは旧protocolとして扱う。新しい省略可能キーの追加はversionを維持し、
 既存キーの意味や型を非互換に変更する場合はversionを上げる。
 
+省略可能な追加キー`:digest-omissions`は比較不能の理由、`:digest-exclusions`は意図した対象範囲外を
+表す。新しいdefinition recordは両方を持つが、旧v1 recordに存在しない場合は「未収集」と解釈し、
+既知の空リストと同一視しない。
+
 ### 定義識別
 
 `definition-digest`はdefinition object、または`(definition-digest name :entity-kind kind
-:registry registry)`を受け取り、`(values digest complete-p)`を返す。
+:registry registry)`を受け取り、`(values digest complete-p omissions)`を返す。
+先頭2値の意味と完全なdigestのbytesは従来どおりである。
 同名のspec/property/function-specは独立したnamespaceである。
 `definition-metadata`はspec・property・function-spec objectから上表のメタデータを返す。
 custom-generatorはdigestの依存先としては扱うが、v1の独立したmetadata recordではない。
 非対応objectをmetadataへ渡すと`type-error`、名前のdigestで`:entity-kind`を省略・誤指定しても
 `type-error`となる。欠落した登録先は`NIL/NIL`。拡張の記述method内のプログラムエラーは伝播し、
 比較不能へ黙って変換しない。
+
+omissionsは`(:kind KIND :path PATH :target SYMBOL-OR-NIL :reason REASON)`のリストである。
+kindは`:unresolved-reference`・`:opaque-definition`・`:missing-source`・`:opaque-value`・
+`:uninterned-symbol`・`:resource-limit`。同じ対象・kind・reasonは最初の経路で一度記録し、
+独立した欠落は走査上限内でまとめて返す。経路は安定した走査番号を使い、参照先は
+`(:definitions ID :links KIND NAME)`、childは`(:definitions ID :children INDEX)`、不透明値は
+`:declarations`以下の位置index列で示す。上限に達した場合は網羅性を主張せず、上限の理由を残す。
 
 digestは保存されたsource form・正規化IR・説明文・documentation・tags・宣言metadataを基にする。
 標準IRの制約を全てslotで表現できる場合は、元source formが無くても完全な記述となる。
@@ -2277,6 +2289,9 @@ custom generatorのsource formを推移的に含む。全引数generatorも対�
 対象関数・helper関数の実装、closureの捕捉値、外部状態、source location、backendや実行時optionsは
 digestに含めない。`:definition-digest-complete T`はこの限定された範囲の完全性であり、実装が同じ、
 契約が正しい、あるいはseedから同じ実行を再現できるという証明ではない。
+`:digest-exclusions`は`(:target-implementation :helper-implementations :captured-state
+:external-state :source-location :backend)`を返す。この意図した除外はomissionではなく、完全性を
+`NIL`に変えない。
 
 v1はpackage-qualified symbol・整数・有理数・浮動小数点数・文字・文字列・cons・配列をタグ付きで
 符号化する。cons/配列の共有と循環は参照番号で表す。printer設定やユーザーpretty printerに依存せず、
@@ -2320,7 +2335,11 @@ value・condition-reportを持つ。失敗の無い箇所は`NIL`。condition ob
 任意のオブジェクトをJSON化したり復元可能にしたりするAPIではない。
 `:trials`の型は`:record-kind`に従う。propertyのdefinitionではprofile table、resultでは実行件数であり、
 互換性を維持するため既存キーを改名しない。Function Specのbudget readerは共通resultのslotを読む。
-実行後にregistryを変更しても過去のresultのdigestは変わらない。手組みresultに保存メタデータが無ければ
+実行後にregistryを変更しても過去のresultのdigest・omissions・exclusionsは変わらない。
+`:options`と`:provenance`も実行前に捕捉する。provenance内の`:collection-states`は各fieldについて
+`:known`（収集済み）、`:unknown`（収集を試みたが不明）、`:not-collected`（未収集）を区別する。
+未指定のtarget revisionは互換性のため値を`:unknown`とし、collection stateを`:not-collected`とする。
+手組みresultに保存メタデータが無ければ
 digestは明示的に比較不能となり、budgetは不明なら`NIL`となる。
 実行途中に著者が依存定義や外部状態を変更することをfreezeする機能ではない。
 
@@ -3524,7 +3543,8 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `validate` | 正常入力で同一の値を返す。拒否時の条件・errorsの一致はPropertyで検査 |
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
-| `spec-data` | v1 definition envelopeとspecのkind・source-formの保持 |
+| `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
 | 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
@@ -3544,7 +3564,8 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-8関数契約と7 Propertyをseed 1・42・2026、各50試行で実行する。
+10関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
 残る記述範囲は、keyword optionを指定した呼出し、任意の拡張specやregistry/backend実装、
@@ -4100,7 +4121,11 @@ Core exposes `make-counterexample-artifact`, `counterexample-artifact-data`,
 `serialize-counterexample-artifact`, `deserialize-counterexample-artifact` and
 `recheck-counterexample`. Artifact v1 freezes original and accepted shrunk
 observations, selection, captured declaration digest/capability, seed/profile/
-budget/options and execution provenance. Missing provenance is explicit `:unknown`.
+budget/options and execution provenance. Provenance `:collection-states` distinguishes
+known, unavailable and uncollected fields while retaining legacy scalar values.
+The additive `:digest-omissions` and `:digest-exclusions` fields preserve captured
+comparison details. Artifact v1 remains unchanged; the data reader represents these
+fields as `:not-collected` when an older artifact omitted them.
 Recheck is a concrete-input operation without backend loading, generator draws
 or shrinking. It requires complete matching declaration identity, admitted input
 and `:state-policy :stateless`; it performs at most one target invocation.
@@ -4144,7 +4169,11 @@ valid programmatic definition validation.
 An installation captures registry and contract identity, scopes, its local
 unresolved declaration graph, pre/post predicate identities and full dependency
 digest. Queries distinguish absent/current/stale/indeterminate and report reasons,
-installed/current digests, and dependency status. Named references resolve during
+installed/current digests, and dependency status. `:installed-digest-omissions` and
+`:digest-exclusions` preserve installation-time details; `:current-digest-omissions`
+is freshly collected, including missing-definition or inspection-error diagnostics.
+Absent inspection is `:not-collected`, distinct from a known empty omission list.
+Named references resolve during
 calls, so a dependency-only change is not itself a stale captured check. Opaque
 or incomplete declarations cannot establish freshness. Closure state is not
 checkpointed. No digest is recomputed in the hot wrapper call path.

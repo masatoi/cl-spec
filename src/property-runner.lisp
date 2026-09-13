@@ -59,7 +59,13 @@
    (provenance :initarg :provenance
                :initform (list :backend :unknown :lisp-implementation-type :unknown
                                :lisp-implementation-version :unknown
-                               :cl-spec-version :unknown :target-revision :unknown)
+                               :cl-spec-version :unknown :target-revision :unknown
+                                :collection-states
+                                (list :backend :not-collected
+                                      :lisp-implementation-type :not-collected
+                                      :lisp-implementation-version :not-collected
+                                      :cl-spec-version :not-collected
+                                      :target-revision :not-collected))
                :reader property-result-provenance
                :documentation "Run environment captured before execution; unknown fields are explicit.")
    (schema-metadata :initarg :schema-metadata :initform nil
@@ -186,9 +192,12 @@ results without captured metadata have an explicitly incomplete digest."
            (or (property-result-schema-metadata result)
                (list :schema-version 1 :definition-digest nil
                      :definition-digest-complete nil
+                     :digest-omissions :not-collected :digest-exclusions :not-collected
                      :definition-digest-covers :declaration-and-registered-dependencies
                      :capabilities '(:generation :unknown :shrinking :unknown
                                      :instrumentation :unknown))))))
+    (dolist (field '(:digest-omissions :digest-exclusions))
+      (setf (getf metadata field) (getf metadata field :not-collected)))
     (setf (getf metadata :record-kind) :result
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value
@@ -232,18 +241,26 @@ The backend reports counterexamples positionally; this is where they become the
   "Implementation version recorded in provenance; keep in sync with cl-spec.asd.")
 
 (defun capture-run-provenance (backend options)
-  "Capture environment labels without retaining backend objects in result data."
-  (let ((class-name (class-name (class-of backend))))
+  "Capture environment labels and distinguish unavailable from uncollected information."
+  (let* ((class-name (class-name (class-of backend)))
+         (backend-name (if (and class-name (symbol-package class-name))
+                           (format nil "~A::~A" (package-name (symbol-package class-name))
+                                   (symbol-name class-name))
+                           :unknown))
+         (revision (getf options :target-revision :not-collected)))
     (snapshot-value
-     (list :backend
-           (if (and class-name (symbol-package class-name))
-               (format nil "~A::~A" (package-name (symbol-package class-name))
-                       (symbol-name class-name))
-               :unknown)
+     (list :backend backend-name
            :lisp-implementation-type (lisp-implementation-type)
            :lisp-implementation-version (lisp-implementation-version)
            :cl-spec-version *cl-spec-version*
-           :target-revision (getf options :target-revision :unknown)))))
+           :target-revision (if (eq revision :not-collected) :unknown revision)
+           :collection-states
+           (list :backend (if (eq backend-name :unknown) :unknown :known)
+                 :lisp-implementation-type :known :lisp-implementation-version :known
+                 :cl-spec-version (if *cl-spec-version* :known :unknown)
+                 :target-revision (cond ((eq revision :not-collected) :not-collected)
+                                        ((or (null revision) (eq revision :unknown)) :unknown)
+                                        (t :known)))))))
 
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.

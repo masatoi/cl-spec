@@ -38,6 +38,27 @@
                   :cl-spec-version :target-revision))
       (ok (eq :unknown (getf (getf data :provenance) key))))))
 
+(deftest older-captured-metadata-has-explicit-detail-state
+  (let* ((metadata (list :schema-version 1 :definition-digest nil
+                         :definition-digest-complete nil))
+         (data (result-data (make-instance 'property-result :trials 0
+                                          :schema-metadata metadata))))
+    (ok (eq :not-collected (getf data :digest-omissions)))
+    (ok (eq :not-collected (getf data :digest-exclusions)))
+    (ok (eq :absent (getf metadata :digest-omissions :absent)))))
+
+(deftest provenance-distinguishes-uncollected-and-unavailable
+  (let ((*generator-backend* (make-instance 'provenance-backend)))
+    (labels ((capture (options)
+               (property-result-provenance
+                (run-property (make-instance 'property :name 'sample :function (constantly t))
+                              :seed 3 :options options))))
+      (let ((without (capture nil))
+            (unknown (capture '(:target-revision :unknown))))
+        (ok (eq :not-collected (getf (getf without :collection-states) :target-revision)))
+        (ok (eq :unknown (getf (getf unknown :collection-states) :target-revision)))
+        (ok (eq :known (getf (getf without :collection-states) :backend)))))))
+
 (deftest runtime-version-agrees-with-release-system
   (ok (string= cl-spec/src/property-runner::*cl-spec-version*
                (asdf:component-version (asdf:find-system "cl-spec")))))
@@ -71,6 +92,6 @@
   (declare (ignore property))
   (when (getf options :nested)
     (setf (car (getf options :nested)) :changed))
-  (when (getf options :target-revision)
+  (when (stringp (getf options :target-revision))
     (setf (char (getf options :target-revision) 0) #\X))
   (list :status :passed :trials 1))

@@ -38,6 +38,9 @@
         :required-metadata
         '(:schema-version :record-kind :entity-kind :definition-digest
           :definition-digest-complete :definition-digest-covers :capabilities)
+        :optional-metadata '(:digest-omissions :digest-exclusions)
+        :digest-omission-kinds '(:unresolved-reference :opaque-definition :missing-source
+                                 :opaque-value :uninterned-symbol :resource-limit)
         :entity-kinds '(:spec :property :function-spec)
         :record-kinds '(:definition :result)
         :digest-algorithm :fnv1a64-v1
@@ -222,56 +225,174 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
                    (t (return-from hashing nil))))
         (format nil "fnv1a64-v1:~(~16,'0X~)" hash)))))
 
-(defun definition-graph (root &key (registry *registry*) (resolve-links-p t))
-  "Collect a complete ordered declaration graph, returning records and completeness.
-This internal protocol preserves node identity and the version-one digest ordering.
-With RESOLVE-LINKS-P false, retain link names and local classes without traversing
-registry dependencies. Missing or incomplete descriptions return NIL/NIL."
+(defun digest-omission (kind path target reason)
+  "Construct one stable explanation of declaration data absent from a digest."
+  (list :kind kind :path path :target (when (symbolp target) target) :reason reason))
+
+(defun canonical-value-omissions (value)
+  "Locate unsupported canonical values using a bounded, cycle-safe traversal.
+Paths are positional indexes below :DECLARATIONS. List spines use element indexes.
+Array cursors schedule one child at a time, keeping pending work bounded by depth."
   (let ((seen (make-hash-table :test #'eq))
-        (pending nil) (records nil) (count 0))
-    (unless root (return-from definition-graph (values nil nil)))
-    (labels ((reference (object)
+        (reported (make-hash-table :test #'eq))
+        (pending (list (list value 0 '(:declarations) 0)))
+        (nodes 0) (characters 0) (omissions nil))
+    (labels ((omit (object kind path reason)
+               (unless (member (list kind reason) (gethash object reported) :test #'equal)
+                 (push (list kind reason) (gethash object reported))
+                 (push (digest-omission kind (reverse path) nil reason) omissions)))
+             (limit (object path reason)
+               (omit object :resource-limit path reason)
+               (setf pending nil)))
+      (loop while pending
+            for task = (pop pending)
+            do (destructuring-bind (item depth path index &optional array-cursor-p) task
+                 (if array-cursor-p
+                     (progn
+                       (when (< (1+ index) (array-total-size item))
+                         (incf (fourth task))
+                         (push task pending))
+                       (push (list (row-major-aref item index) (1+ depth)
+                                   (cons index path) 0)
+                             pending))
+                     (progn
+                       (cond
+                         ((> (incf nodes) 100000) (limit item path :node-limit))
+                         ((> depth 128) (omit item :resource-limit path :depth-limit))
+                         ((null item))
+                         ((symbolp item)
+                          (if (symbol-package item)
+                              (incf characters
+                                    (+ (length (symbol-name item))
+                                       (length (package-name (symbol-package item)))))
+                              (omit item :uninterned-symbol path :no-home-package)))
+                         ((rationalp item)
+                          (when (or (> (integer-length (numerator item)) 65536)
+                                    (> (integer-length (denominator item)) 65536))
+                            (omit item :resource-limit path :integer-limit)))
+                         ((floatp item)
+                          (handler-case (integer-decode-float item)
+                            (error () (omit item :opaque-value path :nonfinite-float))))
+                         ((characterp item))
+                         ((stringp item) (incf characters (length item)))
+                         ((or (consp item) (arrayp item))
+                          (unless (gethash item seen)
+                            (setf (gethash item seen) t)
+                            (if (consp item)
+                                (progn
+                                  (push (list (cdr item) depth path (1+ index)) pending)
+                                  (push (list (car item) (1+ depth) (cons index path) 0) pending))
+                                (cond
+                                  ((> (array-total-size item) 100000)
+                                   (omit item :resource-limit path :array-limit))
+                                  ((plusp (array-total-size item))
+                                   (push (list item depth path 0 t) pending))))))
+                         (t (omit item :opaque-value path
+                                  (if (functionp item) :function-object :unsupported-object))))
+                       (when (> characters 1000000) (limit item path :character-limit))))))
+      (nreverse omissions))))
+
+(defun collect-definition-graph (root registry resolve-links-p)
+  "Collect ordered records and independent omission reasons without changing digest ordering."
+  (let ((seen (make-hash-table :test #'eq)) (reported (make-hash-table :test #'eq))
+        (paths (make-hash-table :test #'eq))
+        (pending nil) (records nil) (omissions nil) (count 0) (edges 0))
+    (labels ((omit (object kind path target reason)
+               (unless (member (list kind reason) (gethash object reported) :test #'equal)
+                 (push (list kind reason) (gethash object reported))
+                 (push (digest-omission kind path target reason) omissions)))
+             (reference (object path)
                (multiple-value-bind (id found) (gethash object seen)
                  (if found id
-                     (let ((id (incf count)))
-                       (when (> count 10000)
-                         (return-from definition-graph (values nil nil)))
-                       (setf (gethash object seen) id)
-                       (push object pending)
-                       id)))))
-      (reference root)
+                     (if (> (incf count) 10000)
+                         (progn (omit root :resource-limit path nil :definition-limit) nil)
+                         (progn
+                           (setf (gethash object seen) count (gethash object paths) path)
+                           (push object pending)
+                           count)))))
+             (bounded-list (items path)
+               (let ((tails (make-hash-table :test #'eq)))
+                 (loop for tail = items then (cdr tail)
+                       while tail
+                       do (unless (and (consp tail) (not (gethash tail tails))
+                                       (<= (incf edges) 100000))
+                            (omit root :resource-limit path nil :description-list-limit)
+                            (return-from bounded-list nil))
+                          (setf (gethash tail tails) t)
+                       finally (return t)))))
+      (unless root
+        (return-from collect-definition-graph
+          (values nil nil (list (digest-omission :unresolved-reference nil nil
+                                                 :definition-missing)))))
+      (reference root nil)
       (loop while pending
             for object = (pop pending)
+            for path = (gethash object paths)
             do (multiple-value-bind (data children links complete) (definition-description object)
-                 (unless complete (return-from definition-graph (values nil nil)))
-                 (let ((child-ids (mapcar #'reference children)))
-                   (push
-                    (if resolve-links-p
-                        (list (gethash object seen) data child-ids
-                              (loop for (kind . name) in links
-                                    for target = (ecase kind
-                                                   (:spec (find-spec name registry))
-                                                   (:generator (find-generator name registry)))
-                                    do (unless target
-                                         (return-from definition-graph (values nil nil)))
-                                    collect (list kind name (reference target))))
-                        (list (gethash object seen) (class-name (class-of object))
-                              data child-ids links complete))
-                    records))))
-      (values (nreverse records) t))))
+                 (unless complete
+                   (let ((source-missing
+                           (or (and (eq (class-name (class-of object)) 'property)
+                                    (null (property-source-form object)))
+                               (and (eq (class-name (class-of object)) 'custom-generator)
+                                    (null (custom-generator-source-form object))))))
+                     (omit object (if source-missing :missing-source :opaque-definition)
+                           path nil
+                           (if source-missing :source-unavailable :incomplete-description))))
+                 (when (and (bounded-list children path) (bounded-list links path))
+                   (let ((child-ids
+                           (loop for child in children for index from 0
+                                 collect (reference child
+                                                    (list :definitions (gethash object seen)
+                                                          :children index)))))
+                     (push
+                      (if resolve-links-p
+                          (list (gethash object seen) data child-ids
+                                (loop for (kind . name) in links
+                                      for target = (ecase kind
+                                                     (:spec (find-spec name registry))
+                                                     (:generator (find-generator name registry)))
+                                      for link-path = (list :definitions (gethash object seen)
+                                                            :links kind name)
+                                      do (unless target
+                                           (omit name :unresolved-reference link-path name
+                                                 :definition-missing))
+                                      collect (list kind name
+                                                    (when target (reference target link-path)))))
+                          (list (gethash object seen) (class-name (class-of object))
+                                data child-ids links complete))
+                      records)))))
+      (values (nreverse records) (null omissions) (nreverse omissions)))))
+
+(defun definition-graph (root &key (registry *registry*) (resolve-links-p t))
+  "Collect complete ordered declarations, returning records, completeness and omissions.
+With RESOLVE-LINKS-P false, retain link names and local classes without traversing
+registry dependencies. Opaque scalar values remain available for local comparison."
+  (multiple-value-bind (records complete omissions)
+      (collect-definition-graph root registry resolve-links-p)
+    (values (when complete records) complete omissions)))
 
 (defun definition-digest (designator &key entity-kind (registry *registry*))
-  "Return (values DIGEST COMPLETE-P) for a declaration and registered dependencies.
-A symbol requires an explicit :ENTITY-KIND. Missing or opaque definitions return
-NIL/NIL. Extension programming errors propagate rather than becoming incompleteness."
+  "Return DIGEST, COMPLETE-P and a stable list of digest omission records.
+The first two values retain their version-one meaning and complete digest bytes.
+Missing or opaque declarations return NIL/NIL with explanatory omissions.
+Extension programming errors propagate rather than becoming incompleteness."
   (when (symbolp designator)
     (check-type entity-kind (member :spec :property :function-spec)))
-  (multiple-value-bind (records complete)
-      (definition-graph (resolve-definition designator entity-kind registry) :registry registry)
-    (if complete
-        (let ((digest (canonical-digest records)))
-          (values digest (not (null digest))))
-        (values nil nil))))
+  (let ((root (resolve-definition designator entity-kind registry)))
+    (unless root
+      (return-from definition-digest
+        (values nil nil (list (digest-omission :unresolved-reference nil designator
+                                              :definition-missing)))))
+    (multiple-value-bind (records complete omissions)
+        (collect-definition-graph root registry t)
+      (let* ((digest (canonical-digest records))
+             (value-omissions
+               (unless digest
+                 (or (canonical-value-omissions records)
+                     (list (digest-omission :resource-limit '(:declarations) nil
+                                           :canonical-encoding-limit))))))
+        (values (when complete digest) (and complete (not (null digest)))
+                (append omissions value-omissions))))))
 
 (defgeneric definition-instrumentation-capability (definition)
   (:documentation "Return :AVAILABLE or :UNAVAILABLE for runtime instrumentation support.
@@ -292,7 +413,7 @@ Other objects, including custom-generator dependencies, signal TYPE-ERROR.
 CAPABILITIES, when supplied, replaces the backend probe; execution uses this
 to avoid compiling a disposable generator before constructing the actual one."
   (check-type definition (satisfies metadata-definition-p))
-  (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
+  (multiple-value-bind (digest complete omissions) (definition-digest definition :registry registry)
     (let ((capabilities
             (copy-list (if capabilities-p capabilities
                            (backend-capabilities *generator-backend*
@@ -307,4 +428,7 @@ to avoid compiling a disposable generator before constructing the actual one."
             :entity-kind (definition-entity-kind definition)
             :definition-digest digest :definition-digest-complete complete
             :definition-digest-covers :declaration-and-registered-dependencies
+            :digest-omissions omissions
+            :digest-exclusions (list :target-implementation :helper-implementations :captured-state
+                                     :external-state :source-location :backend)
             :capabilities capabilities))))

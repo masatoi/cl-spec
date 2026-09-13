@@ -73,6 +73,12 @@ Malformed lists must not enter a law that promises normalization succeeds."
   (let ((reason (invalid-spec-form-reason condition)))
     (and (stringp reason) (plusp (length reason)))))
 
+(defun digest-details-consistent-p (data)
+  "Check completeness against the digest and collected omission records."
+  (if (getf data :definition-digest-complete)
+      (and (stringp (getf data :definition-digest)) (null (getf data :digest-omissions)))
+      (and (null (getf data :definition-digest)) (consp (getf data :digest-omissions)))))
+
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
@@ -84,7 +90,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(normalization-is-idempotent normalization-preserves-source
     validation-and-explanation-agree compiled-validation-agrees
     validation-preserves-values-or-explains-refusal boolean-composition
-    introspection-preserves-spec-semantics))
+    introspection-preserves-spec-semantics digest-details-agree-with-metadata))
 
 (defun register-instrumentation-specifications ()
   "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
@@ -101,6 +107,9 @@ Return its name. This bundle never loads the instrumentation system itself."
       '(plist (:required
                 (:status (member :not-installed :current :stale :indeterminate))
                 (:reasons (list-of keyword))
+                (:installed-digest-omissions (or (member :not-collected) (list-of t)))
+                (:current-digest-omissions (or (member :not-collected) (list-of t)))
+                (:digest-exclusions (or (member :not-collected) (list-of keyword)))
                 (:dependency-status (member :unchanged :changed :indeterminate))))
       :source-form '(instrumentation-status-shape)
       :documentation "Instrumentation status always identifies freshness and comparison limits."))
@@ -158,22 +167,39 @@ the malformed-normalization contract explicitly names its finite input corpus."
     (and (plist (:required (:spec t) (:value t) (:valid boolean)
                            (:errors (list-of t)) (:path (list-of t))))
          (satisfies explanation-consistent-p)))
+  (defspec digest-omission-data
+    (plist (:required
+             (:kind (member :unresolved-reference :opaque-definition :missing-source
+                            :opaque-value :uninterned-symbol :resource-limit))
+             (:path (list-of t)) (:target symbol) (:reason keyword))))
+  (defgenerator digest-definition-generator ()
+    (if (zerop (random 2))
+        (normalize-spec-form (draw-form))
+        (make-instance 'cl-spec:property :name 'source-less-definition
+                                        :function (lambda () t))))
+  (defspec digest-definition
+    (or (instance-of spec) (instance-of cl-spec:property))
+    (:generator digest-definition-generator))
   (defspec spec-description-data
-    (plist
-      (:required
-        (:schema-version (member 1))
-        (:record-kind (member :definition))
-        (:entity-kind (member :spec))
-        (:kind keyword)
-        (:source-form t)
-        (:definition-digest string)
-        (:definition-digest-complete boolean)
-        (:definition-digest-covers (member :declaration-and-registered-dependencies))
-        (:capabilities
-          (plist (:required
-                   (:generation (member :available :unavailable :unknown :none))
-                   (:shrinking (member :available :unavailable :unknown :none))
-                   (:instrumentation (member :available :unavailable :unknown :none))))))))
+    (and
+      (plist
+        (:required
+          (:schema-version (member 1))
+          (:record-kind (member :definition))
+          (:entity-kind (member :spec))
+          (:kind keyword)
+          (:source-form t)
+          (:definition-digest (nullable string))
+          (:digest-omissions (list-of digest-omission-data))
+          (:digest-exclusions (list-of keyword))
+          (:definition-digest-complete boolean)
+          (:definition-digest-covers (member :declaration-and-registered-dependencies))
+          (:capabilities
+            (plist (:required
+                     (:generation (member :available :unavailable :unknown :none))
+                     (:shrinking (member :available :unavailable :unknown :none))
+                     (:instrumentation (member :available :unavailable :unknown :none)))))))
+      (satisfies digest-details-consistent-p)))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
     (:args (contract-spec resolved-designator) (value arbitrary-value))
@@ -269,6 +295,19 @@ the malformed-normalization contract explicitly names its finite input corpus."
       (and (validp 'spec-description-data data)
            (eq (spec-kind spec) (getf data :kind))
            (equal (spec-source-form spec) (getf data :source-form)))))
+  (defproperty digest-details-agree-with-metadata ((definition digest-definition))
+    "Digest omissions agree with captured metadata; exclusions do not erase completeness (§38.1)."
+    (:about cl-spec:definition-digest cl-spec:definition-metadata)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 10 :normal 50))
+    (multiple-value-bind (digest complete omissions) (cl-spec:definition-digest definition)
+      (let ((metadata (cl-spec:definition-metadata definition :capabilities nil)))
+        (and (equal digest (getf metadata :definition-digest))
+             (eq complete (getf metadata :definition-digest-complete))
+             (equal omissions (getf metadata :digest-omissions))
+             (digest-details-consistent-p metadata)
+             (validp (normalize-spec-form '(list-of digest-omission-data)) omissions)
+             (not (null (member :captured-state (getf metadata :digest-exclusions))))))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

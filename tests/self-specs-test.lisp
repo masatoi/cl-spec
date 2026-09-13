@@ -57,7 +57,7 @@
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
     (ok (= 10 (length (cl-spec:list-function-specs))))
-    (ok (= 7 (length (cl-spec:list-properties))))))
+    (ok (= 8 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
@@ -65,7 +65,7 @@
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
       (ok (= 10 (length (cl-spec:list-function-specs))))
-      (ok (= 7 (length (cl-spec:list-properties))))
+      (ok (= 8 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))
     (ok (null (cl-spec:list-properties)))))
@@ -144,9 +144,24 @@
       (setf (getf data :definition-digest-complete) :yes)
       (ok (not (cl-spec:validp spec data))))
     (let* ((data (cl-spec:spec-data 'cl-spec/specs::spec-description-data))
-           (fields (getf data :fields)))
-      (ok (eq :plist (getf data :kind)))
+           (fields (getf (first (getf data :children)) :fields)))
+      (ok (eq :and (getf data :kind)))
       (ok (find :schema-version fields :key (lambda (field) (getf field :key)))))))
+
+(deftest executable-digest-details-refuse-inconsistent-metadata
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (let* ((contract (find-function-spec 'cl-spec:spec-data))
+           (spec (function-spec-return-spec contract))
+           (data (spec-data (normalize-spec-form 'integer))))
+      (setf (getf data :digest-omissions)
+            '((:kind :opaque-value :path (:declarations 0) :target nil :reason :function-object)))
+      (ok (not (validp spec data))))
+    (let* ((contract (find-function-spec 'cl-spec:spec-data))
+           (spec (function-spec-return-spec contract))
+           (data (spec-data (normalize-spec-form 'integer))))
+      (setf (getf data :digest-exclusions) :unknown)
+      (ok (not (validp spec data))))))
 
 (deftest executable-specifications-pass-generated-checks
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))

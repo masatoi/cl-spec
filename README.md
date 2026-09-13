@@ -89,7 +89,11 @@ Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
 `:state-policy :stateless` asserts that external state needs no restoration;
 without it execution is refused. Recorded or newly detected input mutation is
 unsupported. Arbitrary external state is neither detected nor restored.
-`result-data` now captures `:options` and `:provenance` before execution; optional
+`result-data` captures digest omissions/exclusions, `:options` and `:provenance`
+before execution. Provenance's `:collection-states` plist distinguishes `:known`,
+`:unknown` (collection attempted but unavailable), and `:not-collected`. An omitted
+target revision retains its legacy `:unknown` value with collection state
+`:not-collected`; optional
 `:target-revision` in runner options records a caller-supplied implementation
 label, independent of the declaration digest. A recheck accepts its own optional
 `:target-revision` label.
@@ -111,6 +115,10 @@ never change saved arguments, failure identity or declaration digest. If combine
 optional metadata exceeds the artifact budget, it is omitted and evidence encoding
 is retried. `:invalid-selection` and `:missing-shrunk-evidence` identify selection
 errors directly.
+
+Artifact v1 also preserves `:digest-omissions` and `:digest-exclusions`. The data
+reader reports `:not-collected` for these fields when absent from older v1 artifacts;
+absence does not mean a known empty omission list. The wire version remains unchanged.
 
 Load the defining packages before deserialization. Artifacts are evidence records,
 not authenticated data or a mechanism for restoring application state.
@@ -318,7 +326,10 @@ with name and reason readers. Both belong to `cl-spec-error`.
 
 `(cl-spec/instrument:instrumentation-status 'positive-step)` returns a record
 with `:status` (`:not-installed`, `:current`, `:stale`, `:indeterminate`),
-`:reasons`, installed/current declaration digests and `:scopes`. It does not call
+`:reasons`, installed/current declaration digests and `:scopes`. It also returns
+`:installed-digest-omissions`, `:current-digest-omissions` and `:digest-exclusions`.
+Installed details are snapshots; current omissions come from the current query.
+`:not-collected` means no corresponding inspection was performed. It does not call
 the target, refresh the wrapper or discard installation evidence. Use `:registry`
 when comparing against a registry other than the current default.
 
@@ -394,8 +405,8 @@ Introspection records have `:entity-kind` (`:spec`, `:property`, or
 `:function-spec`); existing `:kind` fields retain their node or author
 classification. `schema-info` describes the versioned Lisp protocol. All three
 definition readers include `:schema-version 1`, `:record-kind :definition`,
-`:definition-digest`, `:definition-digest-complete`, `:definition-digest-covers`
-and `:capabilities` on the root record. Nested specs remain ordinary IR projections.
+`:definition-digest`, `:definition-digest-complete`, `:definition-digest-covers`,
+`:digest-omissions`, `:digest-exclusions` and `:capabilities` on the root record. Nested specs remain ordinary IR projections.
 Consumers should ignore unknown keys and explicitly handle
 unsupported versions. `result-data` returns the same metadata with
 `:record-kind :result`, captured before execution, plus trials, budget and the
@@ -407,6 +418,14 @@ implementations, captured/external state, source locations and backend settings.
 It is a bounded, non-cryptographic change detector; it does not prove that a run
 is reproducible. Missing dependencies, opaque values or exceeded limits produce
 NIL with `:definition-digest-complete NIL`, never a trusted partial digest.
+`definition-digest` returns `(values digest complete-p omissions)`; existing digest
+bytes and the first two values retain their meaning. Each omission is
+`(:kind KIND :path PATH :target SYMBOL-OR-NIL :reason REASON)`. Kinds are
+`:unresolved-reference`, `:opaque-definition`, `:missing-source`, `:opaque-value`,
+`:uninterned-symbol` and `:resource-limit`. Stable traversal paths identify the
+first occurrence; independent omissions are collected within the traversal limits.
+`:digest-exclusions` lists the intentional scope exclusions above and does not make
+an otherwise complete digest incomplete.
 
 Capabilities describe the currently installed backend: generator construction
 may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be

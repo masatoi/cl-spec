@@ -16,7 +16,8 @@
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
   (:import-from #:cl-spec/src/schema
-                #:definition-instrumentation-capability #:definition-graph #:definition-digest)
+                #:definition-instrumentation-capability #:definition-graph #:definition-digest
+                #:schema-info)
   (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name #:function-spec-argument-specs
@@ -68,10 +69,11 @@ return or postcondition check."))
 (defstruct (installation
             (:constructor make-installation
                 (original wrapper &key registry contract scopes declaration declaration-available-p
-                                  precondition postcondition digest digest-complete-p)))
+                                  precondition postcondition digest digest-complete-p
+                                  digest-omissions digest-exclusions)))
   "Original definition, active wrapper, and installation-time declaration evidence."
   original wrapper registry contract scopes declaration declaration-available-p
-  precondition postcondition digest digest-complete-p)
+  precondition postcondition digest digest-complete-p digest-omissions digest-exclusions)
 
 (defun unsupported-target-reason (name)
   "Return the reason NAME cannot be wrapped, or NIL for a supported definition."
@@ -200,14 +202,16 @@ Build the new wrapper and all metadata before replacing the active installation.
            (captured-scopes (copy-list scopes))
            (wrapper (make-contract-wrapper name original contract registry captured-scopes)))
       (multiple-value-bind (declaration available) (local-declaration-snapshot contract)
-        (multiple-value-bind (digest complete) (definition-digest contract :registry registry)
+        (multiple-value-bind (digest complete omissions) (definition-digest contract :registry registry)
           (let ((new-entry
                   (make-installation
                    original wrapper :registry registry :contract contract :scopes captured-scopes
                    :declaration declaration :declaration-available-p available
                    :precondition (function-spec-precondition-function contract)
                    :postcondition (function-spec-postcondition-function contract)
-                   :digest digest :digest-complete-p complete)))
+                   :digest digest :digest-complete-p complete
+                   :digest-omissions (snapshot-value omissions)
+                   :digest-exclusions (snapshot-value (getf (schema-info) :digest-excludes)))))
             (setf (fdefinition name) wrapper
                   (gethash name *instrumented-functions*) new-entry))))
       name)))
@@ -215,11 +219,14 @@ Build the new wrapper and all metadata before replacing the active installation.
 (defun instrumentation-status (name &key (registry *registry*))
   "Describe installed checks without changing the function or installation table.
 Local declaration changes are stale. Named dependencies resolve dynamically, so
-their changes are reported separately. Incomplete evidence is indeterminate."
+their changes are reported separately. Incomplete evidence is indeterminate.
+Installed omissions and digest exclusions are installation-time snapshots.
+Current omissions are freshly collected; :NOT-COLLECTED distinguishes absent
+inspection from a known empty omission list."
   (check-type name symbol)
   (let ((entry (gethash name *instrumented-functions*))
         (reasons nil) (stale nil) (current-digest nil) (current-complete nil)
-        (local-available nil))
+        (local-available nil) (current-omissions :not-collected))
     (labels ((report-status (status dependency-status)
                (snapshot-value
                 (list :name name :status status :reasons (reverse reasons)
@@ -227,6 +234,11 @@ their changes are reported separately. Incomplete evidence is indeterminate."
                       :installed-digest (when entry (installation-digest entry))
                       :installed-digest-complete (when entry (installation-digest-complete-p entry))
                       :current-digest current-digest :current-digest-complete current-complete
+                      :installed-digest-omissions
+                      (if entry (installation-digest-omissions entry) :not-collected)
+                      :current-digest-omissions current-omissions
+                      :digest-exclusions
+                      (if entry (installation-digest-exclusions entry) :not-collected)
                       :scopes (when entry (installation-scopes entry)))))
              (mark-stale (reason) (setf stale t) (push reason reasons)))
       (unless (typep entry 'installation)
@@ -238,7 +250,11 @@ their changes are reported separately. Incomplete evidence is indeterminate."
       (handler-case
           (let ((contract (registry-find-function-spec registry name)))
             (cond
-              ((null contract) (mark-stale :definition-missing))
+              ((null contract)
+               (mark-stale :definition-missing)
+               (setf current-omissions
+                     (list (list :kind :missing-definition :path nil :target name
+                                 :reason :not-registered))))
               (t
                (unless (eq contract (installation-contract entry))
                  (mark-stale :definition-replaced))
@@ -253,10 +269,13 @@ their changes are reported separately. Incomplete evidence is indeterminate."
                  (when (and local-available
                             (not (same-value-p declaration (installation-declaration entry))))
                    (mark-stale :declaration-changed)))
-               (multiple-value-setq (current-digest current-complete)
+               (multiple-value-setq (current-digest current-complete current-omissions)
                  (definition-digest contract :registry registry)))))
         (error ()
-          (setf current-complete nil)
+          (setf current-complete nil
+                current-omissions
+                (list (list :kind :inspection-error :path nil :target name
+                            :reason :inspection-error)))
           (push :inspection-error reasons)))
       (let* ((complete (and (installation-digest-complete-p entry) current-complete))
              (dependency-status
