@@ -48,8 +48,8 @@
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
-                #:function-spec-name
-                #:function-spec-argument-specs
+                #:function-spec-name #:function-spec-call-layout
+                #:function-spec-argument-specs #:function-spec-argument-schema
                 #:function-spec-return-spec
                 #:function-spec-preconditions
                 #:function-spec-postconditions
@@ -321,9 +321,6 @@ instead turned a claim that is false for every input into a tautology.")
 (deftest defspec-function-refuses-what-the-checker-cannot-honour
   (testing "a lambda list keyword in :ARGS is named in the refusal, not dropped"
     (ok (signals (macroexpand-1 '(defspec-function f
-                                  (:args (a integer) &optional (b integer))))
-                 'invalid-function-spec-form))
-    (ok (signals (macroexpand-1 '(defspec-function f
                                   (:args (a integer) &key (b integer))))
                  'invalid-function-spec-form))
     (ok (signals (macroexpand-1 '(defspec-function f (:args (a integer) &rest more)))
@@ -340,11 +337,6 @@ instead turned a claim that is false for every input into a tautology.")
     ;; the NIL its author meant.  NULL is the type they wanted, and the
     ;; refusal names it.
     (ok (signals (macroexpand-1 '(defspec-function f (:returns nil)))
-                 'invalid-function-spec-form)))
-  (testing "multiple values are refused, because :RETURNS checks one value"
-    (ok (signals (macroexpand-1 '(defspec-function f
-                                  (:args (a integer))
-                                  (:returns (values integer integer))))
                  'invalid-function-spec-form)))
   (testing "a repeated clause is refused rather than silently taking one of them"
     (ok (signals (macroexpand-1 '(defspec-function f
@@ -1406,7 +1398,7 @@ macro expansions would need the lint exemption that file carries."
     (let ((seen '())
           (kept (append cl-spec/src/function-spec::*failure-shape-keys*
                         cl-spec/src/function-spec::*failure-shape-containers*))
-          (value-derived '(:actual :actual-length :path :condition-report)))
+          (value-derived '(:actual :actual-length :path :condition-report :key)))
       (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
                       (satisfies demo-noisy-predicate) (list-of integer)
                       (vector-of integer) (tuple integer string) (not integer)
@@ -1420,9 +1412,73 @@ macro expansions would need the lint exemption that file carries."
                               '(:a (:b "bad"))))
             (dolist (datum (getf (explain-data spec value) :errors))
               (setf seen (explained-error-keys datum seen))))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '((a integer) &optional (b string b-p))))))
+        (dolist (value '(nil (1 "valid" :extra) (1 2)))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '(&key ((:size amount) integer))))))
+        (dolist (value '((:unknown 1) (:size) (3 4) (:size "bad")))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs
+                                  '((head integer) &rest (tail (list-of string)))))))
+        (dolist (value '(nil (1 2) (1 "valid" 3)))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-return-spec
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :return-spec '(values integer string)))))
+        (dolist (value '(nil (1) (1 "valid" :extra) ("bad" "valid")))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
       (testing "the audit itself saw the keys it is meant to check"
         (ok (member :kind seen))
         (ok (member :actual seen))
-        (ok (member :field-path seen)))
+        (ok (member :field-path seen))
+        (ok (member :minimum-length seen))
+        (ok (member :maximum-length seen))
+        (ok (member :key seen)))
       (testing "and every key it saw is either kept or known to be value-derived"
         (ok (null (set-difference seen (append kept value-derived))))))))
+
+(deftest call-layout-cache-tracks-current-declarations
+  (let* ((contract (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs '((a integer))))
+         (first (function-spec-call-layout contract))
+         (spec (second (first (function-spec-argument-specs contract)))))
+    (ok (eq first (function-spec-call-layout contract)))
+    (reinitialize-instance contract)
+    (ok (not (eq first (function-spec-call-layout contract))))
+    (setf first (function-spec-call-layout contract))
+    (ok (eq spec (cl-spec/src/call-schema:argument-binding-spec
+                  (first (cl-spec/src/call-schema:call-layout-bindings first)))))
+    (setf (caar (function-spec-argument-specs contract)) 'renamed)
+    (let ((changed (function-spec-call-layout contract)))
+      (ok (not (eq first changed)))
+      (ok (eq 'renamed (cl-spec/src/call-schema:argument-binding-name
+                        (first (cl-spec/src/call-schema:call-layout-bindings changed)))))
+      (ok (eq changed (function-spec-call-layout contract)))
+      ;; The public layout reader also exposes mutable list storage.
+      (setf (car (cl-spec/src/call-schema:call-layout-bindings changed)) nil)
+      (ok (not (eq changed (function-spec-call-layout contract)))))
+    (reinitialize-instance contract :argument-specs '(&key ((:value b) string)))
+    (let ((updated (function-spec-call-layout contract)))
+      (ok (cl-spec/src/call-schema:call-layout-key-p updated))
+      (ok (eq updated (function-spec-call-layout contract)))
+      (ok (handler-case
+              (progn (reinitialize-instance contract :argument-specs '((t integer))) nil)
+            (invalid-function-spec-form () t)))
+      (ok (eq updated (function-spec-call-layout contract)))
+      (setf (caar (cdr (function-spec-argument-specs contract))) '(:other b))
+      (ok (cl-spec/src/call-schema:call-layout-accepts-p
+           (function-spec-call-layout contract) '(:other "value")))
+      (let ((declarations (function-spec-argument-specs contract)))
+        (setf (cdr (last declarations)) declarations)
+        (ok (handler-case (progn (function-spec-call-layout contract) nil)
+              (program-error () t)))))))

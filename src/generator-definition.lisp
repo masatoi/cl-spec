@@ -8,6 +8,9 @@
 
 (defpackage #:cl-spec/src/generator-definition
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions
+                #:invalid-generator-form #:invalid-generator-form-reason
+                #:invalid-generator-form-form)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
                 #:registry-register-generator)
@@ -18,7 +21,7 @@
                 #:finite-definition-form-p #:definition-keyword-plist-p)
   (:export #:custom-generator
            #:custom-generator-name
-           #:custom-generator-function
+           #:custom-generator-function #:custom-generator-shrinker
            #:custom-generator-documentation
            #:custom-generator-source-form
            #:custom-generator-source-location
@@ -27,16 +30,6 @@
            #:register-generator))
 
 (in-package #:cl-spec/src/generator-definition)
-
-(define-condition invalid-generator-form (error)
-  ((reason :initarg :reason :reader invalid-generator-form-reason
-           :documentation "The violated generator invariant.")
-   (form :initarg :form :reader invalid-generator-form-form
-         :documentation "The offending generator field or update."))
-  (:documentation "A malformed custom generator definition or inconsistent update.")
-  (:report (lambda (condition stream)
-             (format stream "Invalid generator definition: ~A"
-                     (invalid-generator-form-reason condition)))))
 
 (defclass custom-generator ()
   ((name :initarg :name
@@ -50,6 +43,10 @@ the same registry the spec was resolved in.")
              :reader custom-generator-function
              :documentation "Function of no arguments returning one generated
 value.  The backend calls it once per draw.")
+   (shrinker :initarg :shrinker
+             :initform nil
+             :reader custom-generator-shrinker
+             :documentation "Optional function returning an ordered finite list of shrink candidates.")
    (documentation-string :initarg :documentation
                          :initform nil
                          :reader custom-generator-documentation
@@ -68,7 +65,7 @@ An entity of its own rather than a slot on the spec, so that one generator can
 be shared by several specs and found by name the way a spec or a contract can."))
 
 (defmethod definition-validation-slots append ((generator custom-generator))
-  '(name function documentation-string source-form source-location))
+  '(name function shrinker documentation-string source-form source-location))
 
 (defmethod shared-initialize :around ((generator custom-generator) slot-names
                                      &rest initargs &key &allow-other-keys)
@@ -81,6 +78,11 @@ be shared by several specs and found by name the way a spec or a contract can.")
                 (not (eq (loop for key in initargs by #'cddr thereis (eq key :function))
                          (loop for key in initargs by #'cddr thereis (eq key :source-form)))))
        (error 'invalid-generator-form :reason :source-function-update-required :form initargs))
+     (when (and (slot-boundp generator 'source-form)
+                (custom-generator-source-form generator)
+                (loop for key in initargs by #'cddr thereis (eq key :shrinker))
+                (not (loop for key in initargs by #'cddr thereis (eq key :source-form))))
+       (error 'invalid-generator-form :reason :source-shrinker-update-required :form initargs))
      (call-next-method))))
 
 (defmethod shared-initialize :after ((generator custom-generator) slot-names &key)
@@ -99,6 +101,8 @@ be shared by several specs and found by name the way a spec or a contract can.")
       (require-field (and name (symbolp name) (not (keywordp name)) (not (constantp name)))
                      :invalid-name name)
       (require-field (functionp function) :invalid-function function)
+      (require-field (typep (custom-generator-shrinker generator) '(or null function))
+                     :invalid-shrinker (custom-generator-shrinker generator))
       (require-field (typep documentation '(or null string)) :invalid-documentation documentation)
       (require-field (and (finite-list-p source) (finite-definition-form-p source))
                      :invalid-source-form source)

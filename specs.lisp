@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
+  (:import-from #:cl-spec/src/registry #:hash-table-registry #:registry-find-spec)
   (:import-from #:cl-spec/main
                 #:compile-explainer
                 #:compile-validator
@@ -73,18 +74,27 @@ Malformed lists must not enter a law that promises normalization succeeds."
   (let ((reason (invalid-spec-form-reason condition)))
     (and (stringp reason) (plusp (length reason)))))
 
+(defun digest-details-consistent-p (data)
+  "Check completeness against the digest and collected omission records."
+  (if (getf data :definition-digest-complete)
+      (and (stringp (getf data :definition-digest)) (null (getf data :digest-omissions)))
+      (and (null (getf data :definition-digest)) (consp (getf data :digest-omissions)))))
+
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
   '(validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
-    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition))
+    cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
+     cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
+     cl-spec:find-spec cl-spec:definition-digest))
 
 (defun property-names ()
   "Return the executable semantic laws in this specification bundle."
   '(normalization-is-idempotent normalization-preserves-source
     validation-and-explanation-agree compiled-validation-agrees
     validation-preserves-values-or-explains-refusal boolean-composition
-    introspection-preserves-spec-semantics))
+    introspection-preserves-spec-semantics digest-details-agree-with-metadata
+    rest-projection-agrees-with-target))
 
 (defun register-instrumentation-specifications ()
   "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
@@ -101,6 +111,9 @@ Return its name. This bundle never loads the instrumentation system itself."
       '(plist (:required
                 (:status (member :not-installed :current :stale :indeterminate))
                 (:reasons (list-of keyword))
+                (:installed-digest-omissions (or (member :not-collected) (list-of t)))
+                (:current-digest-omissions (or (member :not-collected) (list-of t)))
+                (:digest-exclusions (or (member :not-collected) (list-of keyword)))
                 (:dependency-status (member :unchanged :changed :indeterminate))))
       :source-form '(instrumentation-status-shape)
       :documentation "Instrumentation status always identifies freshness and comparison limits."))
@@ -116,6 +129,36 @@ the malformed-normalization contract explicitly names its finite input corpus."
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
     (:signals (type cl-spec:invalid-counterexample-artifact)))
+  (defspec target-outcome-data
+    (or (member :not-collected)
+        (plist (:required (:kind (member :returned)) (:values (list-of t))))
+        (plist (:required (:kind (member :signaled))
+                          (:condition-type t) (:condition-report (nullable string))))))
+  (defgenerator observation-generator ()
+    (cl-spec:make-trial-observation
+     :outcome (case (random 3)
+                (0 :not-collected)
+                (1 (list :kind :returned :values (list (draw-value))))
+                (t (list :kind :signaled :condition-type 'simple-error
+                         :condition-report "sample")))))
+  (defspec observed-trial (instance-of cl-spec:trial-observation)
+    (:generator observation-generator))
+  (defspec-function cl-spec:trial-observation-outcome
+    "Observed target data is distinct from the contract classification."
+    (:args (observation observed-trial))
+    (:returns target-outcome-data))
+  (defgenerator custom-generator-definition-generator ()
+    (make-instance 'cl-spec:custom-generator :name 'generated-custom-generator
+                   :function (lambda () 4)
+                   :shrinker (when (zerop (random 2))
+                               (lambda (value) (if (zerop value) nil (list 0))))))
+  (defspec custom-generator-definition
+    (instance-of cl-spec:custom-generator)
+    (:generator custom-generator-definition-generator))
+  (defspec-function cl-spec:custom-generator-shrinker
+    "A custom generator exposes an optional callable shrink strategy."
+    (:args (generator custom-generator-definition))
+    (:returns (nullable function)))
   (defgenerator definition-generator ()
     (make-instance 'cl-spec:property :name 'generated-definition
                                     :arguments '((x integer)) :function #'identity))
@@ -158,22 +201,59 @@ the malformed-normalization contract explicitly names its finite input corpus."
     (and (plist (:required (:spec t) (:value t) (:valid boolean)
                            (:errors (list-of t)) (:path (list-of t))))
          (satisfies explanation-consistent-p)))
+  (defspec digest-omission-data
+    (plist (:required
+             (:kind (member :unresolved-reference :opaque-definition :missing-source
+                            :opaque-value :uninterned-symbol :resource-limit))
+             (:path (list-of t)) (:target symbol) (:reason keyword))))
+  (defgenerator digest-definition-generator ()
+    (if (zerop (random 2))
+        (normalize-spec-form (draw-form))
+        (make-instance 'cl-spec:property :name 'source-less-definition
+                                        :function (lambda () t))))
+  (defspec digest-definition
+    (or (instance-of spec) (instance-of cl-spec:property))
+    (:generator digest-definition-generator))
   (defspec spec-description-data
-    (plist
-      (:required
-        (:schema-version (member 1))
-        (:record-kind (member :definition))
-        (:entity-kind (member :spec))
-        (:kind keyword)
-        (:source-form t)
-        (:definition-digest string)
-        (:definition-digest-complete boolean)
-        (:definition-digest-covers (member :declaration-and-registered-dependencies))
-        (:capabilities
-          (plist (:required
-                   (:generation (member :available :unavailable :unknown :none))
-                   (:shrinking (member :available :unavailable :unknown :none))
-                   (:instrumentation (member :available :unavailable :unknown :none))))))))
+    (and
+      (plist
+        (:required
+          (:schema-version (member 1))
+          (:record-kind (member :definition))
+          (:entity-kind (member :spec))
+          (:kind keyword)
+          (:source-form t)
+          (:definition-digest (nullable string))
+          (:digest-omissions (list-of digest-omission-data))
+          (:digest-exclusions (list-of keyword))
+          (:definition-digest-complete boolean)
+          (:definition-digest-covers (member :declaration-and-registered-dependencies))
+          (:capabilities
+            (plist (:required
+                     (:generation (member :available :unavailable :unknown :none))
+                     (:shrinking (member :available :unavailable :unknown :none))
+                     (:instrumentation (member :available :unavailable :unknown :none)))))))
+      (satisfies digest-details-consistent-p)))
+  (defgenerator registry-generator () (cl-spec:make-hash-table-registry))
+  (defspec registry-object (instance-of hash-table-registry)
+    (:generator registry-generator))
+  (defspec-function cl-spec:definition-digest
+    "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
+    (:args (definition digest-definition) &key ((:registry registry) registry-object supplied))
+    (:returns (values (nullable string) boolean (list-of digest-omission-data)))
+    (:post-values (digest complete omissions)
+      (if complete
+          (and (stringp digest) (null omissions))
+          (and (null digest) (consp omissions)))))
+  (defspec-function cl-spec:find-spec
+    "Omitted registry uses the current registry; supplied registry is used explicitly."
+    (:args (name arbitrary-symbol) &optional (registry registry-object supplied))
+    (:returns (values (nullable (instance-of spec)) boolean))
+    (:post-values (found-spec found-p)
+      (multiple-value-bind (expected present)
+          (registry-find-spec
+           (if supplied registry cl-spec:*registry*) name)
+        (and (eq found-spec expected) (eq found-p present)))))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
     (:args (contract-spec resolved-designator) (value arbitrary-value))
@@ -269,6 +349,33 @@ the malformed-normalization contract explicitly names its finite input corpus."
       (and (validp 'spec-description-data data)
            (eq (spec-kind spec) (getf data :kind))
            (equal (spec-source-form spec) (getf data :source-form)))))
+  (defproperty digest-details-agree-with-metadata ((definition digest-definition))
+    "Digest omissions agree with captured metadata; exclusions do not erase completeness (§38.1)."
+    (:about cl-spec:definition-digest cl-spec:definition-metadata)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 10 :normal 50))
+    (multiple-value-bind (digest complete omissions) (cl-spec:definition-digest definition)
+      (let ((metadata (cl-spec:definition-metadata definition :capabilities nil)))
+        (and (equal digest (getf metadata :definition-digest))
+             (eq complete (getf metadata :definition-digest-complete))
+             (equal omissions (getf metadata :digest-omissions))
+             (digest-details-consistent-p metadata)
+             (validp (normalize-spec-form '(list-of digest-omission-data)) omissions)
+             (not (null (member :captured-state (getf metadata :digest-exclusions))))))))
+  (defproperty rest-projection-agrees-with-target ((seed (range integer 0 1000)))
+    "CHECK-FUNCTION binds the whole remaining list exactly as an APPLY target receives it."
+    (:about cl-spec:check-function)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 10 :normal 50))
+    (let ((contract
+            (make-instance 'cl-spec:function-spec :name 'list
+                           :argument-specs '(&rest (tail (list-of integer)))
+                           :return-spec 'list
+                           :postconditions '((equal result tail))
+                           :postcondition-function (lambda (result tail) (equal result tail)))))
+      (eq :passed
+          (cl-spec:property-result-status
+           (cl-spec:check-function contract :trials 5 :seed seed)))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

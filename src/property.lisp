@@ -22,6 +22,7 @@
            #:property
            #:property-name
            #:property-arguments #:property-argument-schema
+           #:property-call-arguments-p #:property-named-arguments
            #:property-targets
            #:property-kind
            #:property-tags
@@ -94,6 +95,18 @@ introspection can show the author's source.")
              :reader property-metadata
              :documentation "Arbitrary plist for callers and future extensions."))
   (:documentation "A registered, executable statement about program behaviour."))
+
+(defgeneric property-call-arguments-p (property arguments)
+  (:documentation "Check raw call shape without running argument predicates or target code.")
+  (:method ((property property) arguments)
+    (and (finite-list-p arguments)
+         (= (length arguments) (length (property-arguments property))))))
+
+(defgeneric property-named-arguments (property arguments)
+  (:documentation "Project raw call arguments to a plist of contract variable bindings.")
+  (:method ((property property) arguments)
+    (loop for (name nil) in (property-arguments property)
+          for value in arguments append (list name value))))
 
 (defmethod definition-validation-slots append ((object property))
   '(name arguments targets kind tags documentation-string property-function body

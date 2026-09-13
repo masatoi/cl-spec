@@ -11,7 +11,8 @@
                 #:property-result-entity-kind #:property-result-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
                 #:property-result-seed #:property-result-profile #:property-result-budget
-                #:property-result-options #:property-result-provenance)
+                #:property-result-options #:property-result-provenance
+                #:property-result-shrink-report)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status #:trial-observation-reason
@@ -82,7 +83,8 @@
              (case reason
                ((:return-spec :postcondition)
                 (and (eq status :failed) (= (length signature) 3)
-                     (eq (first signature) :return-value) (eq (second signature) reason)))
+                     (member (first signature) '(:return-value :return-values))
+                      (eq (second signature) reason)))
                (:missing-condition
                 (and (eq status :failed) (equal signature '(:missing-condition))))
                (:condition-spec
@@ -107,11 +109,14 @@
       (and (record-p data '(:artifact-version :record-kind :entity-kind :name
                            :definition-digest :definition-digest-complete :capabilities
                            :original :shrunk :selection :seed :profile :budget
-                           :options :provenance) '(:metadata-omissions))
+                           :options :provenance) '(:metadata-omissions
+                                                  :digest-omissions :digest-exclusions :shrink-report))
            (finite-list-p (getf data :metadata-omissions))
            (every (lambda (omission)
                     (and (record-p omission '(:field :reason))
-                         (member (getf omission :field) '(:options :provenance :capabilities))
+                         (member (getf omission :field) '(:options :provenance :capabilities
+                                                                        :digest-omissions
+                                                                        :digest-exclusions :shrink-report))
                          (keywordp (getf omission :reason))))
                   (getf data :metadata-omissions))
            (eql (getf data :artifact-version) 1)
@@ -137,9 +142,13 @@
   data)
 
 (defun counterexample-artifact-data (artifact)
-  "Return a fresh versioned data record; modifying it cannot change ARTIFACT."
+  "Return fresh data, marking digest details absent in older artifacts as not collected."
   (check-type artifact counterexample-artifact)
-  (checked-codec #'deserialize-artifact-value (counterexample-artifact-payload artifact)))
+  (let ((data (checked-codec #'deserialize-artifact-value
+                             (counterexample-artifact-payload artifact))))
+    (dolist (field '(:digest-omissions :digest-exclusions :shrink-report))
+      (setf (getf data field) (getf data field :not-collected)))
+    data))
 
 (defun serialize-counterexample-artifact (artifact)
   "Return bounded AV1 wire data, never a Lisp reader form."
@@ -168,7 +177,8 @@
                       '(:structure-limit :character-limit :text-limit))
         (reject-artifact (artifact-value-error-reason condition)))
       (let ((omissions (getf data :metadata-omissions)))
-        (dolist (field '(:options :provenance :capabilities))
+        (dolist (field '(:options :provenance :capabilities
+                          :digest-omissions :digest-exclusions :shrink-report))
           (when (getf data field)
             (setf (getf data field) (list :unavailable t :reason :artifact-budget))
             (setf omissions (remove field omissions :key (lambda (item) (getf item :field))))
@@ -203,9 +213,17 @@ is represented by an unavailable placeholder and :METADATA-OMISSIONS."
                     :name (property-result-property result)
                     :definition-digest (getf metadata :definition-digest)
                     :definition-digest-complete (getf metadata :definition-digest-complete)
-                    :capabilities (optional-metadata (getf metadata :capabilities) :capabilities)
+                    :digest-omissions
+                     (optional-metadata (getf metadata :digest-omissions :not-collected)
+                                        :digest-omissions)
+                     :digest-exclusions
+                     (optional-metadata (getf metadata :digest-exclusions :not-collected)
+                                        :digest-exclusions)
+                     :capabilities (optional-metadata (getf metadata :capabilities) :capabilities)
                     :original (evidence-data original) :shrunk (evidence-data shrunk)
-                    :selection choice :seed (property-result-seed result)
+                    :shrink-report (optional-metadata (property-result-shrink-report result)
+                                                       :shrink-report)
+                     :selection choice :seed (property-result-seed result)
                     :profile (property-result-profile result)
                     :budget (property-result-budget result)
                     :options (optional-metadata (property-result-options result) :options)

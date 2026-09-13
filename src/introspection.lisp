@@ -7,6 +7,11 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/call-schema
+                #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
+                #:call-layout-policy-data
+                #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
+                #:argument-binding-kind #:argument-binding-supplied-name #:argument-binding-keyword)
   (:import-from #:cl-spec/src/field-spec
                 #:field-spec #:field-spec-closed-p #:field-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
@@ -46,11 +51,11 @@
   (:import-from #:cl-spec/src/function-spec
                 #:resolve-function-spec
                 #:function-spec-name
-                #:function-spec-argument-specs
+                #:function-spec-call-layout
                 #:function-spec-argument-generator #:function-spec-argument-schema
                 #:function-spec-return-spec #:function-spec-signal-spec
                 #:function-spec-preconditions
-                #:function-spec-postconditions
+                #:function-spec-postconditions #:function-spec-post-value-variables
                 #:function-spec-documentation
                 #:function-spec-source-form
                 #:function-spec-source-location
@@ -96,6 +101,11 @@ list, so a key added to the base method reaches every node type.  A method that
 replaces the base one drops it silently on the kinds that have a method of their
 own -- which is how :GENERATOR went missing from six node kinds before it moved to
 SPEC->DATA, where the definition-level attributes live (PR review)."))
+
+(defmethod node-attributes ((spec call-arguments-spec))
+  (let ((layout (call-arguments-spec-layout spec)))
+    (append (list :bindings (call-layout-data layout))
+            (call-layout-policy-data layout))))
 
 (defmethod node-attributes ((spec spec))
   nil)
@@ -219,16 +229,27 @@ they hold runs CHECK-FUNCTION rather than inspecting them.
 The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
 :DEFINITION-DIGEST, :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and
 :CAPABILITIES (SCHEMA-INFO, §38.1). These envelope keys are always present.
-Argument, return, signals and argument-schema nodes are plain IR projections."
+Argument, return, signals and argument-schema nodes are plain IR projections.
+Fixed return declarations use :KIND :VALUES with ordered children. Explicit
+:POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (append (definition-metadata contract :registry registry)
+            (unless (eq :primary (function-spec-post-value-variables contract))
+              (list :post-value-variables (function-spec-post-value-variables contract)))
             (list :name (function-spec-name contract)
                   ;; KIND is retained for compatibility; ENTITY-KIND routes records.
                   :kind :function-spec
                   :documentation (function-spec-documentation contract)
                   :arguments
-                  (loop for (variable spec) in (function-spec-argument-specs contract)
-                        collect (list :variable variable :spec (spec->data spec registry)))
+                  (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+                        collect
+                        (append (list :variable (argument-binding-name binding)
+                                      :spec (spec->data (argument-binding-spec binding) registry))
+                                (unless (eq :required (argument-binding-kind binding))
+                                  (list :kind (argument-binding-kind binding)
+                                        :supplied-p (argument-binding-supplied-name binding)))
+                               (when (eq :key (argument-binding-kind binding))
+                                 (list :keyword (argument-binding-keyword binding)))))
                   :argument-generator (function-spec-argument-generator contract)
                   :argument-schema (spec->data (function-spec-argument-schema contract) registry)
                   :preconditions (function-spec-preconditions contract)

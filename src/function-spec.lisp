@@ -24,9 +24,22 @@
   (:import-from #:cl-spec/src/schema
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
                 #:resolve-definition #:definition-instrumentation-capability)
-  (:import-from #:cl-spec/src/ir #:tuple-spec)
+  (:import-from #:cl-spec/src/ir #:tuple-spec #:tuple-spec-element-specs)
+  (:import-from #:cl-spec/src/call-schema
+                #:make-call-layout #:bind-call-arguments #:bound-call-values
+                #:make-return-schema #:return-schema-value #:return-schema-mode
+                #:normalize-return-declaration #:return-values-spec #:call-declaration-variables
+                #:normalize-call-declarations #:call-layout-required-only-p
+                #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
+                #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
+                #:call-arguments-spec)
+  (:import-from #:cl-spec/src/call-validation)
+  (:import-from #:cl-spec/src/call-outcome
+                #:invoke-target-once #:make-call-outcome
+                #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
+                #:property-call-arguments-p #:property-named-arguments
                 #:property-source-form)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
@@ -43,7 +56,8 @@
                 #:property-result-elapsed
                 #:run-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
-                #:property-result-shrunk-outcome #:property-result-rejected
+                #:property-result-shrunk-outcome #:property-result-shrink-report
+                #:property-result-rejected
                 #:property-result-failure-reason #:property-result-explanation
                 #:property-result-entity-kind)
   (:import-from #:cl-spec/src/generator
@@ -58,10 +72,12 @@
            #:function-spec-name
            #:function-spec-argument-specs
            #:function-spec-argument-generator #:function-spec-argument-schema
+           #:function-spec-call-layout #:function-spec-return-schema
            #:function-spec-return-spec
            #:function-spec-signal-spec
            #:function-spec-preconditions
-           #:function-spec-postconditions
+           #:function-spec-postconditions #:function-spec-post-value-variables
+            #:validate-post-value-variables
            #:function-spec-precondition-function
            #:function-spec-postcondition-function
            #:function-spec-documentation
@@ -82,17 +98,22 @@
 (in-package #:cl-spec/src/function-spec)
 
 (defclass function-spec ()
-  ((name :initarg :name
+  ((call-layout-cache :initform nil)
+   (call-layout-declarations :initform nil)
+   (call-layout-bindings-snapshot :initform nil)
+   (name :initarg :name
          :initform nil
          :reader function-spec-name
          :documentation "Package-qualified symbol naming the specified function.")
    (argument-specs :initarg :argument-specs
                    :initform nil
                    :reader function-spec-argument-specs
-                   :documentation "List of (PARAMETER SPEC) pairs in lambda list
-order, from :ARGS.  SPEC is always a Semantic IR object: a designator handed to
-the constructor is normalized in place, so every reader sees one shape.  Each
-PARAMETER is named once.")
+                   :documentation "Required (PARAMETER SPEC) pairs followed optionally by
+&OPTIONAL (PARAMETER SPEC [SUPPLIED-P]) and &KEY ((:KEY PARAMETER) SPEC [SUPPLIED-P])
+declarations. &REST (PARAMETER WHOLE-LIST-SPEC) captures the raw remaining tail
+before &KEY. A terminal &ALLOW-OTHER-KEYS permits extra keys. SPEC is normalized
+to Semantic IR. Parameter and supplied-variable names are unique. Omitted values
+bind to NIL in predicates without evaluating target defaults.")
    (argument-generator :initarg :argument-generator
                        :initform nil
                        :reader function-spec-argument-generator
@@ -129,6 +150,11 @@ true when every :PRE form holds, or NIL when the contract has no :PRE.
 
 Compiled at macroexpansion time rather than interpreted at check time, because
 §60 forbids runtime EVAL and a stored form cannot otherwise be run.")
+   (post-value-variables :initarg :post-value-variables
+                        :initform :primary
+                        :reader function-spec-post-value-variables
+                        :documentation "Use :PRIMARY for legacy post predicates, or an explicit
+list of return names. Explicit predicates receive the full values list first.")
    (postcondition-function :initarg :postcondition-function
                            :initform nil
                            :reader function-spec-postcondition-function
@@ -164,8 +190,9 @@ function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
   '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
-    precondition-function postcondition-function documentation-string
-    source-form source-location metadata)
+    precondition-function postcondition-function post-value-variables documentation-string
+    source-form source-location metadata
+    call-layout-cache call-layout-declarations call-layout-bindings-snapshot)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
 (defmethod definition-validation-slots append ((contract function-spec))
@@ -175,6 +202,13 @@ function at a time (specification §3.2)."))
   "Validate paired clauses and restore all participating slots on refusal."
   (flet ((supplied (key)
            (loop for (k) on initargs by #'cddr thereis (eq k key))))
+    (when (and (supplied :post-value-variables)
+               (slot-boundp contract 'post-value-variables)
+               (not (equal (getf initargs :post-value-variables)
+                           (function-spec-post-value-variables contract)))
+               (not (and (supplied :postconditions) (supplied :postcondition-function))))
+      (error 'invalid-function-spec-form :form initargs
+             :reason "Post-value binding changes require new forms and a compiled predicate."))
     (dolist (pair '((:preconditions :precondition-function)
                     (:postconditions :postcondition-function)))
       (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
@@ -182,6 +216,21 @@ function at a time (specification §3.2)."))
                :reason "clause forms and compiled function must change together"))))
   (call-with-definition-rollback
    contract (lambda () (apply #'call-next-method contract slot-names initargs))))
+
+(defun validate-post-value-variables (names count arguments)
+  "Require COUNT unique bindable value names distinct from ARGUMENTS and RESULT."
+  (unless (and (finite-list-p names) (= (length names) count)
+               (every (lambda (name)
+                        (and name (symbolp name) (not (constantp name))
+                             (not (and (plusp (length (symbol-name name)))
+                                       (char= #\& (char (symbol-name name) 0))))
+                             (not (string-equal "RESULT" (symbol-name name)))
+                             (not (member name arguments))))
+                      names)
+               (= (length names) (length (remove-duplicates names :test #'eq))))
+    (error 'invalid-function-spec-form :form names
+           :reason "Post-value names must match fixed returns and be unique, bindable variables."))
+  names)
 
 (defmethod validate-definition ((contract function-spec))
   "Refuse a contract that could not be honoured, and normalize what can be.
@@ -240,7 +289,8 @@ would run while introspection reported no such clause"
     (unless (every #'finite-definition-form-p
                    (list (function-spec-argument-specs contract)
                          (function-spec-return-spec contract) (function-spec-signal-spec contract)
-                         (function-spec-preconditions contract) (function-spec-postconditions contract)
+                         (function-spec-preconditions contract)
+                         (function-spec-postconditions contract)
                          (function-spec-source-form contract)))
       (refuse nil "definition forms must be acyclic"))
     (dolist (predicate (list (function-spec-precondition-function contract)
@@ -267,23 +317,8 @@ would run while introspection reported no such clause"
         (refuse (or (function-spec-postconditions contract)
                     (function-spec-postcondition-function contract))
                 post)))
-    (let ((seen '()))
-      (setf (slot-value contract 'argument-specs)
-            (loop for entry in (function-spec-argument-specs contract)
-                  do (unless (and (finite-list-p entry)
-                                  (= 2 (length entry))
-                                  (first entry)
-                                  (symbolp (first entry))
-                                  (not (keywordp (first entry)))
-                                  (not (constantp (first entry)))
-                                  (not (member (first entry) lambda-list-keywords)))
-                       ;; Not merely malformed: (amount integer extra) would
-                       ;; otherwise pass through with EXTRA silently dropped.
-                       (refuse entry "expected (parameter spec)"))
-                     (when (member (first entry) seen)
-                       (refuse entry "the same parameter is named twice"))
-                     (push (first entry) seen)
-                  collect (list (first entry) (normalize-spec-form (second entry))))))
+    (setf (slot-value contract 'argument-specs)
+          (normalize-call-declarations (function-spec-argument-specs contract)))
     (let ((generator (function-spec-argument-generator contract)))
       (unless (or (null generator)
                   (and (symbolp generator) (not (keywordp generator))))
@@ -296,18 +331,60 @@ would run while introspection reported no such clause"
       (when signals
         (setf (slot-value contract 'signal-spec) (normalize-spec-form signals)))
       (when returns
-        (setf (slot-value contract 'return-spec) (normalize-spec-form returns)))))
+        (setf (slot-value contract 'return-spec) (normalize-return-declaration returns)))))
+  (unless (eq :primary (function-spec-post-value-variables contract))
+    (unless (and (typep (function-spec-return-spec contract) 'return-values-spec)
+                 (function-spec-postconditions contract)
+                 (function-spec-postcondition-function contract))
+      (error 'invalid-function-spec-form :form (function-spec-post-value-variables contract)
+             :reason "Explicit post-value bindings require fixed returns and a post predicate."))
+    (validate-post-value-variables
+     (function-spec-post-value-variables contract)
+     (length (tuple-spec-element-specs (function-spec-return-spec contract)))
+     (call-declaration-variables (function-spec-argument-specs contract))))
+  (setf (slot-value contract 'call-layout-cache) nil
+        (slot-value contract 'call-layout-declarations) nil
+        (slot-value contract 'call-layout-bindings-snapshot) nil)
   contract)
 
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)
   (declare (ignore slot-names))
   (validate-definition contract))
 
-(defun function-spec-argument-schema (contract)
-  "Derive the whole argument tuple schema from CONTRACT's current declarations."
-  (make-instance 'tuple-spec
-                 :element-specs (mapcar #'second (function-spec-argument-specs contract))
-                 :generator (function-spec-argument-generator contract)))
+(defun function-spec-argument-schema
+    (contract &optional (layout (make-call-layout (function-spec-argument-specs contract))))
+  "Derive a raw argument schema with a fresh layout, or the supplied LAYOUT.
+An installation may supply its private layout. Both paths isolate captured checks
+from the contract's exposed layout cache."
+  (if (call-layout-required-only-p layout)
+      (make-instance 'tuple-spec
+                     :element-specs (mapcar #'argument-binding-spec (call-layout-bindings layout))
+                     :generator (function-spec-argument-generator contract))
+      (make-instance 'call-arguments-spec :layout layout
+                     :generator (function-spec-argument-generator contract))))
+
+(defun function-spec-call-layout (contract)
+  "Return a validated layout for CONTRACT's current argument declarations.
+Reuse descriptors while declaration containers and exposed binding storage match
+their snapshots. Spec objects retain their identity; their internals are not
+layout data. Comparing against finite snapshots also bounds malformed cycles."
+  (let ((declarations (function-spec-argument-specs contract))
+        (cached (slot-value contract 'call-layout-cache)))
+    (if (and cached
+             (equal declarations (slot-value contract 'call-layout-declarations))
+             (equal (call-layout-bindings cached)
+                    (slot-value contract 'call-layout-bindings-snapshot)))
+        cached
+        (let ((layout (make-call-layout declarations)))
+          (setf (slot-value contract 'call-layout-cache) layout
+                (slot-value contract 'call-layout-declarations) (copy-tree declarations)
+                (slot-value contract 'call-layout-bindings-snapshot)
+                (copy-list (call-layout-bindings layout)))
+          layout))))
+
+(defun function-spec-return-schema (contract)
+  "Derive the return schema from CONTRACT\'s current primary return declaration."
+  (make-return-schema :primary-spec (function-spec-return-spec contract)))
 
 (defun register-function-spec (function-spec &optional (registry *registry*))
   "Register FUNCTION-SPEC in REGISTRY under its own name and return it."
@@ -448,7 +525,7 @@ a finding exactly as it was."
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
-    :status :tuple-path :field-path)
+    :minimum-length :maximum-length :status :tuple-path :field-path)
   "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
 
 A whitelist, not a list of keys to strip.  Stripping by name failed three times in
@@ -459,7 +536,7 @@ compared unequal and a legitimate reduction was thrown away.  A key derived from
 the spec is safe to compare; a new EXPLAIN-DATA key is treated as value-derived
 until someone classifies it here, and EVERY-EXPLAINED-ERROR-KEY-IS-CLASSIFIED
 fails until they do. :FIELD-PATH contains only declared parent/field keys;
-unknown and duplicate input key names remain solely in the discarded :PATH.")
+Unknown input key names in :KEY and :PATH are value-derived and remain discarded.")
 
 (defparameter *failure-shape-containers* '(:errors :branches :conjuncts)
   "EXPLAIN-DATA error keys whose value is a list of error-shaped plists to walk.
@@ -539,58 +616,87 @@ as its reduction.  The shapes come from the nested errors instead."
   "Use the function's whole argument schema, including its custom generator."
   (function-spec-argument-schema (checked-contract property)))
 
+(defmethod property-call-arguments-p ((property function-check-property) arguments)
+  (call-layout-accepts-p (function-spec-call-layout (checked-contract property)) arguments))
+
+(defmethod property-named-arguments ((property function-check-property) arguments)
+  (loop for (name . value) in
+        (bound-call-bindings
+         (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
+        append (list name value)))
+
 (defmethod evaluate-trial ((property function-check-property) arguments &key context)
   "Call the target once and classify that invocation before returning its evidence."
   (let* ((contract (checked-contract property))
          (registry (getf context :registry))
          (returns (function-spec-return-spec contract))
+         (return-schema (function-spec-return-schema contract))
+         (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
          (signals (function-spec-signal-spec contract))
          (pre (function-spec-precondition-function contract))
-         (post (function-spec-postcondition-function contract)))
+         (post (function-spec-postcondition-function contract))
+         (outcome nil))
     (flet ((failure (reason detail condition &optional value)
              (values (if condition :error :failed) reason
-                     (failure-signature reason detail condition) detail condition value)))
+                     (let ((signature (failure-signature reason detail condition)))
+                       (if (or (and (eq reason :return-spec)
+                                    (eq :values (return-schema-mode return-schema)))
+                               (and (eq reason :postcondition) values-post-p))
+                           (cons :return-values (cdr signature))
+                           signature))
+                      detail condition value outcome)))
       (handler-case
-          (if (precondition-refuses-p pre arguments)
-              (values :rejected nil nil nil nil nil)
-              (multiple-value-bind (value condition)
-                  (handler-case (values (apply (checked-target property) arguments) nil)
-                    (error (condition) (values nil condition)))
-                (cond
-                  ;; A broad expected-error spec must not certify a broken call.
-                  ;; Preserve target evidence, as for contracts without :SIGNALS.
-                  ((typep condition '(or program-error undefined-function))
-                   (failure :condition nil condition))
-                  (signals
-                   (if condition
-                       (let ((explanation (explain-data signals condition :registry registry)))
-                         (if (getf explanation :valid)
-                             (values :passed nil nil nil nil nil)
-                             (failure :condition-spec explanation condition)))
-                       (failure :missing-condition
-                                (list :expected (expected-descriptor signals)) nil value)))
-                  (condition (failure :condition nil condition))
-                  (t
-                   (let ((explanation (when returns
-                                        (explain-data returns value :registry registry))))
-                     (cond
-                       ((and explanation (not (getf explanation :valid)))
-                        (failure :return-spec explanation nil value))
-                       (post
-                        (multiple-value-bind (holds index tag)
-                            (apply post value arguments)
-                          (if holds
-                              (values :passed nil nil nil nil value)
-                              (failure :postcondition
-                                       (when (and (eq tag :cl-spec-post-form-failure)
-                                                  (integerp index)
-                                                  (<= 0 index)
-                                                  (< index
-                                                     (length
-                                                      (function-spec-postconditions contract))))
-                                         (list :post-form index))
-                                       nil value))))
-                       (t (values :passed nil nil nil nil value))))))))
+          (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
+                 (values (bound-call-values bound)))
+            (if (precondition-refuses-p pre values)
+                (values :rejected nil nil nil nil nil nil)
+                (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
+                       (condition (when (eq :signaled (call-outcome-kind raw-outcome))
+                                    (call-outcome-condition raw-outcome)))
+                       (value (first (call-outcome-values raw-outcome)))
+                       (projected (return-schema-value return-schema
+                                                       (call-outcome-values raw-outcome))))
+                  ;; Freeze invocation evidence before contract predicates can mutate returns.
+                  (setf outcome
+                        (make-call-outcome
+                         :kind (call-outcome-kind raw-outcome)
+                         :values (snapshot-value (call-outcome-values raw-outcome))
+                         :condition condition))
+                  (cond
+                    ;; Broad expected-error contracts must not certify a broken call.
+                    ((typep condition '(or program-error undefined-function))
+                     (failure :condition nil condition))
+                    (signals
+                     (if condition
+                         (let ((explanation (explain-data signals condition :registry registry)))
+                           (if (getf explanation :valid)
+                               (values :passed nil nil nil nil nil outcome)
+                               (failure :condition-spec explanation condition)))
+                         (failure :missing-condition
+                                  (list :expected (expected-descriptor signals)) nil value)))
+                    (condition (failure :condition nil condition))
+                    (t
+                     (let ((explanation (when returns
+                                          (explain-data returns projected :registry registry))))
+                       (cond
+                         ((and explanation (not (getf explanation :valid)))
+                          (failure :return-spec explanation nil value))
+                         (post
+                          (multiple-value-bind (holds index tag)
+                              (apply post (if values-post-p (call-outcome-values raw-outcome) value)
+                                      values)
+                            (if holds
+                                (values :passed nil nil nil nil value outcome)
+                                (failure :postcondition
+                                         (when (and (eq tag :cl-spec-post-form-failure)
+                                                    (integerp index)
+                                                    (<= 0 index)
+                                                    (< index
+                                                       (length
+                                                        (function-spec-postconditions contract))))
+                                           (list :post-form index))
+                                         nil value))))
+                         (t (values :passed nil nil nil nil value outcome)))))))))
         ;; Structural errors in the contract itself still abort an initial trial.
         ;; The backend rejects these if encountered only during shrinking.
         ((and error (not undefined-function) (not program-error)) (condition)
@@ -610,16 +716,25 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod definition-description ((contract function-spec))
   "Describe the contract declaration, not the target implementation."
   (values
-   (list :entity-kind :function-spec :name (function-spec-name contract)
-         :variables (mapcar #'first (function-spec-argument-specs contract))
-         :documentation (function-spec-documentation contract)
-         :source (function-spec-source-form contract)
-         :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
-         :returns (not (null (function-spec-return-spec contract)))
-         :signals (not (null (function-spec-signal-spec contract)))
-         :generator (function-spec-argument-generator contract)
-         :metadata (function-spec-metadata contract))
-   (append (mapcar #'second (function-spec-argument-specs contract))
+   (append
+    (unless (eq :primary (function-spec-post-value-variables contract))
+      (list :post-value-variables (function-spec-post-value-variables contract)))
+    (list :entity-kind :function-spec :name (function-spec-name contract)
+          :variables (loop for entry in (function-spec-argument-specs contract)
+                           collect (if (consp entry)
+                                       (if (third entry)
+                                           (list (first entry) :supplied (third entry))
+                                           (first entry))
+                                       entry))
+          :documentation (function-spec-documentation contract)
+          :source (function-spec-source-form contract)
+          :pre (function-spec-preconditions contract) :post (function-spec-postconditions contract)
+          :returns (not (null (function-spec-return-spec contract)))
+          :signals (not (null (function-spec-signal-spec contract)))
+          :generator (function-spec-argument-generator contract)
+          :metadata (function-spec-metadata contract)))
+   (append (loop for entry in (function-spec-argument-specs contract)
+                 when (consp entry) collect (second entry))
            (when (function-spec-return-spec contract)
              (list (function-spec-return-spec contract)))
            (when (function-spec-signal-spec contract)
@@ -636,6 +751,15 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defmethod definition-entity-kind ((property function-check-property)) :function-spec)
 
+(defun function-check-bindings (contract)
+  "Build required property bindings for the flattened predicate arguments."
+  (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+        append (append (list (list (argument-binding-name binding)
+                                   (argument-binding-spec binding)))
+                       (when (argument-binding-supplied-name binding)
+                         (list (list (argument-binding-supplied-name binding)
+                                     (normalize-spec-form 'boolean)))))))
+
 (defun make-function-check-property (contract &key (budget 0))
   "Adapt CONTRACT to trial execution without requiring a generator backend."
   (unless (typep budget '(integer 0 *))
@@ -643,7 +767,7 @@ as its reduction.  The shapes come from the nested errors instead."
   (let ((name (function-spec-name contract)))
     (make-instance 'function-check-property
                    :contract contract :target (function-spec-target contract)
-                   :name name :arguments (function-spec-argument-specs contract)
+                   :name name :arguments (function-check-bindings contract)
                    :targets (list name) :kind :function-spec
                    :documentation (function-spec-documentation contract)
                    :trials (list :normal budget)
@@ -686,6 +810,7 @@ are accepted. A run with no admitted trials is :SKIPPED."
                    :failure-evidence (property-result-failure-evidence result)
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
+                    :shrink-report (property-result-shrink-report result)
                    :condition (property-result-condition result)
                    :elapsed (property-result-elapsed result)
                    :rejected (property-result-rejected result)

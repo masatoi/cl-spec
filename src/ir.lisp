@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/ir
   (:use #:cl)
+  (:import-from #:cl-spec/src/definition-validation #:definition-validation-slots)
   (:export #:spec
            #:spec-name
            #:spec-description
@@ -231,6 +232,9 @@ slot a particular class stores its children in."))
                   :reader tuple-spec-element-specs
                   :documentation "One spec per position, in order."))
   (:documentation "A fixed-length sequence with a spec per position."))
+
+(defmethod definition-validation-slots append ((spec tuple-spec))
+  '(element-specs))
 
 (defmethod spec-kind ((spec tuple-spec))
   :tuple)

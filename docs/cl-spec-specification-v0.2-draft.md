@@ -71,7 +71,7 @@
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須引数と単一値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
@@ -1152,7 +1152,7 @@ identity不明、縮小時のerrorにより一致を確認できず、採用し�
 
 # 17. Function Spec
 
-> **位置付け:** 実装済み（最小範囲）。必須引数と単一の戻り値を検査する。
+> **位置付け:** 実装済み（最小範囲）。必須・optional引数と主返り値を検査する。
 > 対応範囲は§73.1のD1として確定した。
 
 関数仕様は少なくとも、
@@ -1171,10 +1171,10 @@ D1（対応範囲）の決定：
 
 | 項目 | MVPの扱い |
 |---|---|
-| lambda list | 必須引数のみ。`&optional`・`&key`・`&rest`等は拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
+| lambda list | 必須引数と`&optional`・`&key`・`&rest`を受け付ける。その他のlambda-list keywordは拒否する。単独で書かれた場合だけでなく、`(&optional integer)`のように引数名の位置に現れた場合も拒否する |
 | 引数名 | 束縛可能なsymbolのみ。定数（`t`、`pi`等）と、`:post`が戻り値に使う`RESULT`と同じsymbolは拒否する。述語はこれらの名前を並べたlambdaにコンパイルされるため |
 | clauseの形 | 真リストのみ。`(:pre . y)`は`(and . y)`へ展開され、formですらなくなる |
-| 多値 | 対応しない。`(:returns (values ...))`は拒否する。`:returns`は第一返り値を指す |
+| 多値 | `(:returns (values SPEC...))`で固定個数と各値を検査する。通常の`:returns SPEC`は主返り値のみ（0値ならNIL）。`:post-values (NAME...)`で各値を明示束縛する |
 | `(:returns nil)` | 拒否する。型指定子`nil`は要素を持たない型なので、この契約は`nil`を含むあらゆる戻り値を違反として報告する。意図した型は`null`である |
 | pre/postの評価順 | `:pre`は呼び出し前、引数のみを見る。`:post`は`:returns`の検査を通過したあと、引数と`result`を見る |
 | 全引数generator | `(:args-generator NAME)`で登録済み`defgenerator`を指定可能。引数順のproper listを一回で生成し、個数と各specを検証した後に`:pre`を適用する |
@@ -1443,8 +1443,28 @@ generator自身のerrorは伝播し、有効な値が出るまで再試行する
 
 有効な引数でも`:pre`を満たさなければ棄却し、その件数を結果に載せる。
 seedは通常の実行と同じrandom stateに適用されるため、generatorがそのstateを使い、
-外部状態に依存しなければ入力列を再現できる。custom tupleに縮小方法は定義しない。
-失敗時は元の観測を保持して`:shrunk-outcome :none`とし、独立生成用shrinkerへ置き換えない。
+外部状態に依存しなければ入力列を再現できる。`defgenerator`は省略可能な先頭節
+`(:shrink (arguments) body...)`をdocstringの後、draw bodyの前に受け付ける。
+CLOSでは`:shrinker`に一引数関数またはNILを指定し、`custom-generator-shrinker`で読む。
+既存の引数なしdraw bodyは変わらない。sourceがある定義のshrinker更新は、sourceとdraw関数を
+同時に更新する。shrinkerの有無とsourceをdigestに反映し、省略した既存定義のdigestは維持する。
+
+shrinkerはコピーされた現在の全引数listを受け、優先順の有限proper listとして候補を返す。
+候補は全引数schema、`:pre`、targetの順に調べ、入力変更がなく元の失敗署名に一致する候補だけを
+採用する。採用候補から探索を再開する。訪問済み入力を再実行せず、引数ごとの独立縮小を併用しない。
+省略時は元の観測を保持して`:shrunk-outcome :none`となる。
+
+custom全引数縮小では`:options '(:shrink-budget N)`で候補予算を指定する（既定100、整数0〜100000）。
+生成前に予算を検証する。候補batch全体のproper-list検査も残予算内で行い、超過batchは実行しない。
+候補数には重複・schema不適合・pre棄却も含む。生成試行数`:trials`と区別し、
+`property-result-shrink-report` / `result-data`の`:shrink-report`へ
+`(:candidates N :budget B :termination KEYWORD)`を保存する。
+artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠落は`:not-collected`と解釈する。
+縮小を観測しない旧backendにも同じ値を用いる。
+
+候補列の不正、shrinker error、検出したcons/配列変更は探索を停止し、元の証拠とそれ以前の採用証拠を
+保持する。任意のユーザーコード自体の停止・外部状態復元・大域的最小性は保証しない。
+再現には決定的候補順序が必要。nested custom value generatorの縮小は従来のno-opを維持する。
 
 上記3変数の比較テスト（100生成、seed 42）では、独立生成は80棄却・20回の関数検査、
 全引数generatorは0棄却・100回の関数検査となった。これはこの生成分布での実測であり、
@@ -1454,7 +1474,7 @@ seedは通常の実行と同じrandom stateに適用されるため、generator�
 
 # 20. Runtime validation
 
-> **位置付け:** 実装済み。required positional argumentsと主返り値の契約を対象とする。
+> **位置付け:** 実装済み。required/optional positional arguments・keywordと主返り値の契約を対象とする。
 
 `validp`はboolean、`validate`は有効な値または構造化`spec-violation`を返す。
 関数の呼び出し時検査は独立system `cl-spec/instrument`を明示的にloadして有効化する。
@@ -1476,17 +1496,18 @@ coreのみのloadでは関数定義を書き換えるmoduleもgenerator backend�
 | scope | 検査内容 | 実行時点 |
 |---|---|---|
 | `:input` | 引数個数、各引数spec、`:pre` | target実行前 |
-| `:output` | 主返り値のspec | targetが正常に返った後 |
-| `:post` | 主返り値と引数の事後条件 | output検査の後 |
+| `:output` | 主返り値または固定多値のspecと個数 | targetが正常に返った後 |
+| `:post` | 主返り値または明示束縛した各値と引数の事後条件 | output検査の後 |
 
 `:args`はtargetのlambda listのprefixではなく、許容する全引数を定義する。
 `(:args (a integer))`なら、targetが`&optional`・`&rest`・`&key`を持っていても
-契約が許すのは1引数の呼び出しだけである。追加引数の契約は未対応であり、未検査で通過させない。
+契約が許すのは1引数の呼び出しだけである。追加引数を許す場合はoptional/key/rest宣言を指定する。
 
 既定は全scope。部分集合・空listを指定できる。不明なscope・proper list以外は
 `type-error`で拒否し、既存の関数定義を変更しない。無効scopeの検査はコンパイルも実行もしない。
 targetは一度だけ実行し、正常時は全multiple valuesをそのまま返す。
-契約が検査するのは主返り値のみ（返り値0個の場合はNIL）。target自身のconditionはそのまま伝播する。
+通常の返り値契約は主値のみ（0値ならNIL）、明示多値契約は全値と個数を検査する。
+target自身のconditionはそのまま伝播する。
 pre predicateの`spec-violation`は`check-function`と同じ入力refusalとして扱い、
 `:input / :precondition`の`instrumentation-violation`へ変換する。
 preのその他のerror、およびpostのerrorはそのconditionを伝播する。
@@ -1497,7 +1518,8 @@ preのその他のerror、およびpostのerrorはそのconditionを伝播する
 reasonは`:arity`、`:argument-spec`、`:precondition`、`:return-spec`、`:postcondition`。
 既存の`spec-violation-spec/value/path/errors`も利用できる。
 `:spec`は実際の引数・戻り値のIR、arityでは引数tuple、pre/postでは合成したpredicate spec。
-preの`:value`は引数list、postの`:value`は`(primary-value . arguments)`とし、
+preの`:value`は引数list、postの`:value`は通常`(primary-value . arguments)`、
+`:post-values`では`(returned-values-list . arguments)`とし、
 それぞれのpredicate specの入力と一致させる。関数名は専用のfunction readerに保持する。
 errorsには`error-datum`を使い、値は`:actual`、kindは`:wrong-length`や`:predicate-failed`など
 既存explainerの語彙で表す。scope・reasonはconditionの専用readerで区別する。
@@ -2252,16 +2274,28 @@ v1の必須キーで`NIL`は「欠落」の代用ではなく、上表に定義�
 versionの無い旧recordは旧protocolとして扱う。新しい省略可能キーの追加はversionを維持し、
 既存キーの意味や型を非互換に変更する場合はversionを上げる。
 
+省略可能な追加キー`:digest-omissions`は比較不能の理由、`:digest-exclusions`は意図した対象範囲外を
+表す。新しいdefinition recordは両方を持つが、旧v1 recordに存在しない場合は「未収集」と解釈し、
+既知の空リストと同一視しない。
+
 ### 定義識別
 
 `definition-digest`はdefinition object、または`(definition-digest name :entity-kind kind
-:registry registry)`を受け取り、`(values digest complete-p)`を返す。
+:registry registry)`を受け取り、`(values digest complete-p omissions)`を返す。
+先頭2値の意味と完全なdigestのbytesは従来どおりである。
 同名のspec/property/function-specは独立したnamespaceである。
 `definition-metadata`はspec・property・function-spec objectから上表のメタデータを返す。
 custom-generatorはdigestの依存先としては扱うが、v1の独立したmetadata recordではない。
 非対応objectをmetadataへ渡すと`type-error`、名前のdigestで`:entity-kind`を省略・誤指定しても
 `type-error`となる。欠落した登録先は`NIL/NIL`。拡張の記述method内のプログラムエラーは伝播し、
 比較不能へ黙って変換しない。
+
+omissionsは`(:kind KIND :path PATH :target SYMBOL-OR-NIL :reason REASON)`のリストである。
+kindは`:unresolved-reference`・`:opaque-definition`・`:missing-source`・`:opaque-value`・
+`:uninterned-symbol`・`:resource-limit`。同じ対象・kind・reasonは最初の経路で一度記録し、
+独立した欠落は走査上限内でまとめて返す。経路は安定した走査番号を使い、参照先は
+`(:definitions ID :links KIND NAME)`、childは`(:definitions ID :children INDEX)`、不透明値は
+`:declarations`以下の位置index列で示す。上限に達した場合は網羅性を主張せず、上限の理由を残す。
 
 digestは保存されたsource form・正規化IR・説明文・documentation・tags・宣言metadataを基にする。
 標準IRの制約を全てslotで表現できる場合は、元source formが無くても完全な記述となる。
@@ -2277,6 +2311,9 @@ custom generatorのsource formを推移的に含む。全引数generatorも対�
 対象関数・helper関数の実装、closureの捕捉値、外部状態、source location、backendや実行時optionsは
 digestに含めない。`:definition-digest-complete T`はこの限定された範囲の完全性であり、実装が同じ、
 契約が正しい、あるいはseedから同じ実行を再現できるという証明ではない。
+`:digest-exclusions`は`(:target-implementation :helper-implementations :captured-state
+:external-state :source-location :backend)`を返す。この意図した除外はomissionではなく、完全性を
+`NIL`に変えない。
 
 v1はpackage-qualified symbol・整数・有理数・浮動小数点数・文字・文字列・cons・配列をタグ付きで
 符号化する。cons/配列の共有と循環は参照番号で表す。printer設定やユーザーpretty printerに依存せず、
@@ -2295,7 +2332,7 @@ backend無しは`:generation :unavailable :shrinking :unavailable`、query未実
 として返す。値を生成せず、custom generator・対象関数・SATISFIES述語を実行しない。
 生成成功や契約を満たすdrawの存在を保証するqueryではない。
 
-縮小を無効化したproperty、空tuple、rootがcustom generator（参照経由を含む）、tuple/mappingの
+縮小を無効化したproperty、空tuple、rootがshrinkerを持たないcustom generator（参照経由を含む）、tuple/mappingの
 全要素に縮小戦略が無い場合は`:shrinking :none`。listは要素がcustomでも長さを縮小できる。
 他の`:available`は縮小戦略の存在だけを意味し、要素ごとの縮小可能性や
 必ず有効な縮小候補が得られることを保証しない。`:instrumentation`はcoreのみでは`:unavailable`。
@@ -2320,7 +2357,11 @@ value・condition-reportを持つ。失敗の無い箇所は`NIL`。condition ob
 任意のオブジェクトをJSON化したり復元可能にしたりするAPIではない。
 `:trials`の型は`:record-kind`に従う。propertyのdefinitionではprofile table、resultでは実行件数であり、
 互換性を維持するため既存キーを改名しない。Function Specのbudget readerは共通resultのslotを読む。
-実行後にregistryを変更しても過去のresultのdigestは変わらない。手組みresultに保存メタデータが無ければ
+実行後にregistryを変更しても過去のresultのdigest・omissions・exclusionsは変わらない。
+`:options`と`:provenance`も実行前に捕捉する。provenance内の`:collection-states`は各fieldについて
+`:known`（収集済み）、`:unknown`（収集を試みたが不明）、`:not-collected`（未収集）を区別する。
+未指定のtarget revisionは互換性のため値を`:unknown`とし、collection stateを`:not-collected`とする。
+手組みresultに保存メタデータが無ければ
 digestは明示的に比較不能となり、budgetは不明なら`NIL`となる。
 実行途中に著者が依存定義や外部状態を変更することをfreezeする機能ではない。
 
@@ -3524,7 +3565,12 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `validate` | 正常入力で同一の値を返す。拒否時の条件・errorsの一致はPropertyで検査 |
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
-| `spec-data` | v1 definition envelopeとspecのkind・source-formの保持 |
+| `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
+| `definition-digest` | keyword registryを省略・指定した定義のdigest主値を検査 |
+| `find-spec` | optional registryの省略時は現在のregistry、指定時はそのregistryから検索 |
+| `trial-observation-outcome` | 未収集、returned全値、signaled条件診断を表すdata |
+| `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
+| digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
 | 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
@@ -3538,13 +3584,14 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
 狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
 正規化成功まで主張しない。`validate`の正常系は引数集合generatorで構築し、rejectに予算を費やさない。
-custom generatorには縮小戦略がないので、この範囲の失敗は元の反例を保持する。
+この自己仕様のcustom generatorにはshrinkerを指定していないため、失敗は元の反例を保持する。
 explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
 introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-8関数契約と7 Propertyをseed 1・42・2026、各50試行で実行する。
+14関数契約と8 Propertyをseed 1・42・2026、各50試行で実行する。
+任意のinstrumentation status自己契約も、未収集を含むdigest詳細fieldの型を検査する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
 
 残る記述範囲は、keyword optionを指定した呼出し、任意の拡張specやregistry/backend実装、
@@ -3807,7 +3854,7 @@ symbolの表示文字列を任意のreader入力として評価しない。既�
 
 | ID | 決定・実装済み | 残る判断・受け入れ条件 | 関連節 |
 |---|---|---|---|
-| D1 | required引数・主返り値・pre/post、必須errorのsignals契約、全引数generator、runtime scope | optional/key/rest・多値・signalsの非error／選択的outcome・実行前状態・明示post束縛は拡張時に決める | §17〜21 |
+| D1 | required/optional/key/rest引数・主返り値/固定多値・pre/post/post-values、必須errorのsignals契約、全引数generator、runtime scope | signalsの非error／選択的outcome・実行前状態・optional/rest返り値は拡張時に決める | §17〜21 |
 | D2 | statusとreason、必須trials、budget・棄却数、0件／全件棄却のskip、adapterの検証不足集計 | 実行環境・入力coverageの未知情報、fixture／timeout等の結果との統合 | §14・19・47、LLM-01 |
 | D3 | seed/profile replay、宣言digest、観測した元／縮小反例の保持 | 保存入力の直接再検査API、可逆artifact、options・環境・fixture復元条件 | §15・57、LLM-03 |
 | D4 | 入力domain/pre検査、failure identity、未知post identity拒否、縮小採否の表示、mutation検知 | 中断・時間／回数予算切れ・完了を分ける結果、任意状態の復元。大域最小性は保証しない | §14・16、LLM-04 |
@@ -4100,7 +4147,11 @@ Core exposes `make-counterexample-artifact`, `counterexample-artifact-data`,
 `serialize-counterexample-artifact`, `deserialize-counterexample-artifact` and
 `recheck-counterexample`. Artifact v1 freezes original and accepted shrunk
 observations, selection, captured declaration digest/capability, seed/profile/
-budget/options and execution provenance. Missing provenance is explicit `:unknown`.
+budget/options and execution provenance. Provenance `:collection-states` distinguishes
+known, unavailable and uncollected fields while retaining legacy scalar values.
+The additive `:digest-omissions` and `:digest-exclusions` fields preserve captured
+comparison details. Artifact v1 remains unchanged; the data reader represents these
+fields as `:not-collected` when an older artifact omitted them.
 Recheck is a concrete-input operation without backend loading, generator draws
 or shrinking. It requires complete matching declaration identity, admitted input
 and `:state-policy :stateless`; it performs at most one target invocation.
@@ -4144,7 +4195,11 @@ valid programmatic definition validation.
 An installation captures registry and contract identity, scopes, its local
 unresolved declaration graph, pre/post predicate identities and full dependency
 digest. Queries distinguish absent/current/stale/indeterminate and report reasons,
-installed/current digests, and dependency status. Named references resolve during
+installed/current digests, and dependency status. `:installed-digest-omissions` and
+`:digest-exclusions` preserve installation-time details; `:current-digest-omissions`
+is freshly collected, including missing-definition or inspection-error diagnostics.
+Absent inspection is `:not-collected`, distinct from a known empty omission list.
+Named references resolve during
 calls, so a dependency-only change is not itself a stale captured check. Opaque
 or incomplete declarations cannot establish freshness. Closure state is not
 checkpointed. No digest is recomputed in the hot wrapper call path.
@@ -4183,3 +4238,128 @@ supply them separately from a property's slots. Invalid index diagnostics preser
 the offending value and describe the finite symbol-list constraint. Runtime version
 provenance uses a release version variable, checked against the ASDF system by tests,
 without importing ASDF into the property-runner module.
+
+
+### Call schema / observed outcome implementation addendum (issue #14)
+
+`src/call-schema.lisp`は内部の`call-layout`、`argument-binding`、`bound-call`、
+`return-schema`を定義する。実呼出し引数、述語の束縛値、名前付きbinding、suppliednessを分離し、
+対象関数のdefault式や述語を実行しない。このIR導入時点では必須位置引数のみを表した。optional対応は後述の#15で追加する。
+`function-spec-call-layout`と`function-spec-return-schema`は現在のslotから導出するため、
+reinitialize後に古いschemaを参照しない。公開`function-spec-argument-schema`は従来のtupleを返し、
+reader、generator指定、宣言digestの既存値を維持する。
+
+`src/call-outcome.lisp`の`invoke-target-once`はtargetを一度だけ呼び、
+returnedの全値list、またはsignaledの元のerror instanceを保持する。
+`:returns`は従来どおり主値だけを検査し、0値ならNILへ射影する。
+`evaluate-trial`の先頭6戻り値は互換とし、省略可能な第7値でtarget outcomeを渡す。
+条件判定と戻り値述語の前に、全戻り値のcons/配列をsnapshotする。
+PROGRAM-ERROR/UNDEFINED-FUNCTION予約、`:signals`の排他・必須error、既存の失敗署名は変わらない。
+
+`trial-observation-outcome`とresult v1のfailure内`:outcome`は
+`(:kind :returned :values LIST)`または
+`(:kind :signaled :condition-type TYPE :condition-report STRING-OR-NIL)`を返す。
+旧6値拡張の欠落は`:not-collected`。既存`:value`は主値のまま。
+artifact v1は実引数と失敗同一性を保持し、targetの返した任意オブジェクトを永続化する要件は加えない。
+旧artifactの読込とgeneratorなしの再検証は維持する。
+
+instrumentationは同じbinding/return射影を使うが、targetをcatchして再signalするhelperは使わない。
+既存のmultiple-value-callを保ち、callerからtargetのrestartを利用できる。
+optional対応は#15、key/restおよび明示的な多値DSLは後続issueで追加する。
+
+
+### Optional call declarations implementation addendum (issue #15)
+
+`(:args (a SPEC) &optional (b SPEC supplied-p) (c SPEC))`を受け付ける。
+optional宣言は2要素または3要素、3番目は省略可能なsuppliedness変数。
+必須・optional値・suppliednessを含め全変数名は一意で、定数やlambda-list markerを変数にしない。
+`&optional`は一回のみ、必須宣言の後に置く。`&key`/`&rest`等はまだ拒否する。
+`defproperty`は従来どおり必須pairのみとし、この構文拡張を暗黙に適用しない。
+CLOSの`:argument-specs`も同じmarker/宣言列を受け、spec位置のみを正規化する。
+
+省略された値の契約内束縛はNIL、suppliednessはNIL。明示NILはsuppliedness T。
+省略時は値specを評価しない。targetのdefault値を予測・複製せず、default式はtargetで一度だけ評価する。
+pre/postはvalueと任意のsuppliednessの順のflat bindingを受け取る。
+複数optionalは位置引数なので、後方だけの指定はできない。
+
+必須だけのschemaは既存tupleとdigestを維持する。拡張呼出しには内部`:call-arguments` specを使い、
+子spec、required/optional区分、名前、suppliednessをintrospection・digest・explainへ反映する。
+`property-call-arguments-p`は述語を再実行せず観測したraw callの形を検査し、
+`property-named-arguments`は契約の名前付き束縛へ射影する。artifactには元のraw listを保存する。
+
+生成器はoptional prefixの長さを0〜個数から選び、指定した値だけを生成する。
+縮小はoptional suffixの除去、その後の指定値縮小を試みる。schema/pre/失敗同一性/変更検出を通過した
+観測だけを採用する。custom引数generatorも同じcall schemaで検査する。
+instrumentationはmin/max arityと指定値を検証し、default、多値、targetのconditionを維持する。
+自己仕様では`find-spec`のoptional registryを通常生成と省略の両方で検査する。
+
+
+### Keyword call declarations implementation addendum (issue #16)
+
+`&key ((:external-key variable) SPEC supplied-p)`を受け付ける。suppliednessは省略可能。
+暗黙のkeyword名生成は行わず、明示pairを要求してruntime interningを避ける。
+変数名と宣言keywordは一意。`:allow-other-keys`はcontrol用に予約する。
+`&allow-other-keys`は&key節の最後に一度だけ指定可能。`&rest`は後続で追加する。
+
+raw callのkeyword tailは有限・偶数長で、キーはkeywordでなければならない。
+重複keywordはCommon Lisp同様、先頭の値だけを束縛・検証する。後続重複値は無視する。
+未知キーは宣言の&allow-other-keys、またはcall中の最初の:allow-other-keysが真なら受け付ける。
+controlの重複も先頭優先。省略と明示NILはsuppliednessで区別する。
+optionalは位置を貪欲に消費するので、keyword指定には先行optionalの全位置を埋める必要がある。
+
+targetへは元の順序・重複・controlを含むraw listを一度だけ渡す。pre/postは投影した束縛を受ける。
+generatorは宣言済みkeyの指定・省略を生成し、shrinkerはpair単位の除去と値の縮小を行う。
+省略可能な項目も子generatorが必要。空の&keyだけのcall schemaに縮小戦略があるとは報告しない。
+external keyword、名前、suppliedness、global allowanceをintrospection/digestへ含める。
+explainの値違反は宣言keyを経路に持つ。未知の入力keyはvalue由来であり、failure identityへ含めない。
+自己仕様ではdefinition-digestのkeyword registryを検査する。
+
+
+### Rest call declarations implementation addendum (issue #17)
+
+`&rest (NAME WHOLE-LIST-SPEC)`は一つのrest宣言を表す。suppliedness変数は指定しない。
+required/optionalの後、任意の&key節の前に置く。重複marker、変数名、余分な宣言を拒否する。
+restのspecは要素ではなく残りのリスト全体に適用する。空リストも検証対象であり、
+rest束縛のpresenceは常に真とする。位置引数を消費したraw listのtailをそのまま束縛し、
+要素・tailのidentityを保存する。raw callは常に有限proper listを要求する。
+
+&restと&keyが共存する場合は同じtailを共有し、重複・control pairもrestに含める。
+whole-list specと既存keyword検証の両方を満たす必要がある。生成・縮小では組み立てたcallを
+再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
+restとkeyの共存では、注釈なしの正確な(list-of t)だけをkeyword generatorで生成する。
+それ以外はrest generatorから最大100候補callを生成し、全引数schemaで交差条件を検査する。
+上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
+拒否された生成候補でtargetを呼ばない。
+explain経路には宣言rest名を用い、introspection/digestは:kind :restとwhole-list specを保持する。
+自己仕様のrest-projection-agrees-with-targetはcheck-functionを通じ、CL:LISTの実際の戻り値と
+postconditionのrest束縛が一致する法則を生成検査する。
+
+
+## Fixed multiple-value return contracts implementation addendum (issue #18)
+
+`(:returns (values SPEC...))`は固定個数の返り値を要求する。0個、1個のNIL、
+複数個を区別し、不足・余剰をそれぞれ`:missing-values`・`:extra-values`で報告する。
+通常の`:returns SPEC`と`:post`のRESULTは従来どおり主値で、0値ならNIL。
+VALUESはFunction Specの戻り値宣言だけで認識し、一般データDSLへ追加しない。
+内部`return-values-spec`は順序付き子specを持ち、派生return-schemaは`:values` modeとなる。
+
+`(:post-values (NAME...) FORM...)`は固定値数と同数の変数を明示束縛する。
+変数は相互に一意かつ束縛可能で、引数・suppliedness変数・RESULT名との衝突を拒否する。
+空の変数listは0値契約に対応する。bodyは必要。`:post`・`:signals`と併用不可。
+RESULTの暗黙束縛は主値のまま。CLOSの`:post-value-variables`は通常`:primary`、
+明示多値では変数listで、対応するcompiled post predicateの第一引数は全値listとなる。
+同readerを公開し、再初期化も他のpost slotと整合しなければrollbackする。
+
+返り値を取得するためにtargetを再実行しない。1回の実行で全値を取得し、predicate前に
+証拠をsnapshotする。固定多値のfailure identityは`:return-values`、位置は既存の
+`:tuple-path`へ保持し、異なる位置・個数違反・post違反への縮小を採用しない。
+postの失敗form位置が不明の場合は同一失敗と認めない。
+
+instrumentationはoutput scopeで同じ値射影を検査し、正常時は元の全値を同順・同個数で返す。
+post scopeだけを有効にした場合、明示束縛はmultiple-value-bind同様、不足位置をNILとし
+余剰値を束縛しない。個数の契約はoutput scopeが担当する。targetのcondition/restartは保持する。
+
+definition/result schema v1へ`:values` nodeと`:post-value-variables`を加算する。
+古いprimary-only宣言のdigestは変更しない。artifact v1は新しいfailure identityを認識し、
+従来どおり入力と失敗の同一性を保存する。返り値の保存可能性を反例保存の条件にしない。
+自己仕様はfind-specの2値、definition-digestの3値とその相互関係を検査する。

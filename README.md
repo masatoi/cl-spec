@@ -7,7 +7,8 @@ designed for both humans and LLM coding agents.
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
-required positional arguments and either one return value or a required error outcome,
+required/optional positional, keyword and rest arguments, primary or fixed multiple
+return values, or a required error outcome,
 including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
@@ -36,8 +37,8 @@ backend into `cl-spec:*generator-backend*`.
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for ten public
-functions and seven semantic Properties. The definitions live in
+Load the optional specification bundle to register contracts for fourteen public
+functions and nine semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
 
@@ -59,13 +60,14 @@ instrument functions. After clearing or replacing the registry, call
 do not load the bundle. Generation is needed only to execute the checks.
 
 The contracts cover normal operation of `validp`, `validate`, `explain-data`,
-`compile-validator`, `compile-explainer`, `spec-data`, and `semantic-data`, using
+`compile-validator`, `compile-explainer`, `spec-data`, `semantic-data`, and
+`custom-generator-shrinker`, using
 their required arguments and default keyword options. A required-error contract
 covers `normalize-spec-form` on a finite malformed-DSL corpus. A Property checks
 the relation between `validate`'s refusal and `explain-data`; each function name
 currently has one registered function contract. Generators exercise a finite scalar/composite
 DSL subset; this is not exhaustive API coverage. Custom generators preserve
-original counterexamples but provide no automatic shrinking. See specification
+original counterexamples; whole-argument generators can supply a shrinker. See specification
 §68.1 for the coverage and remaining work.
 
 ### Persisting and directly rechecking a counterexample
@@ -89,7 +91,11 @@ Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
 `:state-policy :stateless` asserts that external state needs no restoration;
 without it execution is refused. Recorded or newly detected input mutation is
 unsupported. Arbitrary external state is neither detected nor restored.
-`result-data` now captures `:options` and `:provenance` before execution; optional
+`result-data` captures digest omissions/exclusions, `:options` and `:provenance`
+before execution. Provenance's `:collection-states` plist distinguishes `:known`,
+`:unknown` (collection attempted but unavailable), and `:not-collected`. An omitted
+target revision retains its legacy `:unknown` value with collection state
+`:not-collected`; optional
 `:target-revision` in runner options records a caller-supplied implementation
 label, independent of the declaration digest. A recheck accepts its own optional
 `:target-revision` label.
@@ -111,6 +117,10 @@ never change saved arguments, failure identity or declaration digest. If combine
 optional metadata exceeds the artifact budget, it is omitted and evidence encoding
 is retried. `:invalid-selection` and `:missing-shrunk-evidence` identify selection
 errors directly.
+
+Artifact v1 also preserves `:digest-omissions` and `:digest-exclusions`. The data
+reader reports `:not-collected` for these fields when absent from older v1 artifacts;
+absence does not mean a known empty omission list. The wire version remains unchanged.
 
 Load the defining packages before deserialization. Artifacts are evidence records,
 not authenticated data or a mechanism for restoring application state.
@@ -262,10 +272,167 @@ list of the declared arity and satisfy every argument spec before `:pre` or the
 target runs. Invalid output signals `invalid-generated-arguments`, without retries.
 `:pre` still rejects valid tuples that fail its additional constraints.
 
-Use the run's random state, as above, for seeded replay. Custom argument tuples
-have no automatic shrink strategy; failures retain their original observation.
+Use the run's random state, as above, for seeded replay. Without an explicit
+shrinker, custom argument tuples retain their original observation.
 The CLOS equivalent is `:argument-generator`; `function-spec-data` includes
 `:argument-generator` and the derived tuple `:argument-schema`.
+
+Function checks record the target outcome separately from the contract verdict.
+`trial-observation-outcome` and each `result-data` failure expose either
+`(:kind :returned :values (...))` or
+`(:kind :signaled :condition-type ... :condition-report ...)`. Returned conses and
+arrays are captured before contract predicates can change them. The existing
+`:value` remains the primary value; zero values and one `NIL` stay distinct in
+`:outcome`. Older six-value evaluator extensions report `:not-collected`.
+Artifact v1 still persists concrete arguments and failure identity, so opaque
+returned objects do not prevent direct rechecking.
+
+### Fixed multiple return values
+
+```lisp
+(defun divide-with-remainder (numerator denominator)
+  (floor numerator denominator))
+(cl-spec:defspec-function divide-with-remainder
+  (:args (numerator integer) (denominator (range integer 1 20)))
+  (:returns (values integer integer))
+  (:post-values (quotient remainder)
+    (= numerator (+ (* quotient denominator) remainder))
+    (<= 0 remainder (1- denominator))))
+```
+
+`(:returns (values SPEC...))` checks the exact count and each value in order.
+`(:returns (values))` accepts zero values, while `(values null)` requires one NIL.
+Ordinary `(:returns SPEC)` still checks only the primary value, treating zero
+values as NIL. The `values` declaration is specific to Function Spec returns.
+
+`:post-values` explicitly names every return and cannot coexist with `:post` or
+`:signals`. It requires a fixed return declaration, a body, and distinct bindable
+names that do not collide with arguments, suppliedness variables, or `RESULT`.
+`RESULT` still means the primary value in either post clause. Existing `:post`
+also works with a fixed return declaration. CLOS construction accepts
+`:return-spec '(values ...)` and `:post-value-variables '(...)`; its compiled
+post predicate receives the full value list before the bound arguments.
+`function-spec-post-value-variables` returns `:primary` for an ordinary post.
+
+Count failures distinguish `:missing-values` and `:extra-values`; per-value
+errors retain their zero-based position in `:tuple-path`. Shrinking preserves
+that position and does not cross a fixed return violation into a post violation.
+Results retain primary `:value` and all frozen values in `:outcome`. Artifact v1
+persists the new `:return-values` failure identity for direct recheck; it still
+requires only the concrete inputs to be serializable. Definition/result schema
+v1 gains the `:values` IR kind and explicit `:post-value-variables` metadata.
+
+### Optional positional arguments
+
+```lisp
+(defun optional-value (&optional (value 42)) value)
+(cl-spec:defspec-function optional-value
+  (:args &optional (value (nullable integer) supplied))
+  (:returns (nullable integer))
+  (:post (if supplied (eql result value) (= result 42))))
+```
+
+After `&optional`, each declaration is `(NAME SPEC)` or `(NAME SPEC SUPPLIED-P)`.
+Contract predicates receive `NIL` for an omitted value and false suppliedness;
+explicit `NIL` has true suppliedness and must satisfy its spec. The target's
+default forms run only in the actual call. There are no contract default forms.
+Multiple optional parameters are positional: supplying a later one also supplies
+every preceding one. Required parameters precede the single `&optional` marker.
+
+The generator chooses an optional prefix, and shrinking can remove its suffix.
+Saved evidence retains the raw call list, while named counterexamples include
+contract values and declared suppliedness flags. Function introspection adds
+`:kind :optional` and `:supplied-p` to optional entries. `defproperty` bindings
+remain required pairs.
+
+### Keyword arguments
+
+```lisp
+(cl-spec:defspec-function lookup-page
+  (:args (query string) &key ((:limit limit) integer supplied))
+  (:returns list)
+  (:pre (or (not supplied) (plusp limit))))
+```
+
+Each keyword declaration explicitly pairs the external keyword with its variable:
+`((:KEYWORD VARIABLE) SPEC [SUPPLIED-P])`. This supports aliases and requires no
+runtime symbol interning. Omitted values bind `NIL`; suppliedness distinguishes
+explicit `NIL`. Repeated call keys bind and validate their first value, as Common
+Lisp does; later duplicate values are ignored. Argument order is passed unchanged
+to the target and retained in artifacts.
+
+The keyword tail must have an even length and keyword keys. Unknown keys are
+refused unless the declaration ends in `&allow-other-keys` or the first call-side
+`:allow-other-keys` value is true. That control keyword is reserved and cannot be
+declared as a parameter. Optional parameters consume their positions before the
+keyword tail: all optionals must be supplied to reach keyword arguments.
+Generation includes declared key pairs; shrinking can remove whole pairs.
+
+### Rest arguments
+
+```lisp
+(defun total (&rest items) (reduce #'+ items :initial-value 0))
+(cl-spec:defspec-function total
+  (:args &rest (items (list-of integer)))
+  (:returns integer)
+  (:post (= result (reduce #'+ items :initial-value 0))))
+```
+
+`&rest (NAME WHOLE-LIST-SPEC)` declares exactly one parameter without a suppliedness
+flag. Its spec validates the entire remaining list, including the empty list;
+use `(list-of integer)` for homogeneous elements or `(tuple integer string)`
+for a fixed heterogeneous tail. Required and optional parameters consume their
+positions first. Predicates receive the original remaining list, preserving its
+objects and identity, and the rest binding is always present.
+
+An `&key` section may follow the rest declaration. Both see the same tail,
+including duplicate keys and control pairs: the whole-list rest spec and the
+keyword rules must both hold. Without `&key`, generation uses the whole-list rest
+spec's generator. With `&key`, an exact, unannotated `(list-of t)` rest spec uses
+keyword generation. Other rest specs use their own generator and try up to 100
+candidate calls against the complete argument schema; exhaustion signals
+`generator-unavailable`. Custom generator annotations do not bypass this check.
+Rejected generated candidates never reach the target. Shrinking also checks both
+constraints before execution. Raw calls must remain finite proper lists. Introspection marks the parameter `:kind :rest`; rest declaration changes
+participate in the definition digest.
+
+### Shrinking correlated arguments
+
+A leading `:shrink` clause receives the current argument list and returns a proper
+list of candidate argument lists, in preference order:
+
+```lisp
+(cl-spec:defgenerator interval-arguments ()
+  (:shrink (arguments)
+    (unless (equal arguments '(0 2 1))
+      (list '(0 2 1))))
+  (list 10000 20000 15001))
+```
+
+Use it through `(:args-generator interval-arguments)`. The runner checks each
+candidate against the argument schema, then the precondition, then calls the
+target. It accepts only a changed input with the original failure identity and
+restarts from that input. It does not independently shrink fields. Visited inputs
+are skipped, and the original observation is retained throughout.
+
+For custom whole-argument shrinking, `check-function` and `run-property` accept
+`:options '(:shrink-budget 100)`; the
+default is 100 and the supported range is 0–100000. Candidate batches must be
+finite proper lists within the remaining budget. An oversized batch stops the
+search before invoking its candidates. Duplicates and rejected candidates consume
+budget. `property-result-shrink-report` and `result-data` expose `:candidates`,
+`:budget`, and `:termination`, separately from generated `:trials`; artifacts retain
+this report. Built-in shrinking and older backends/artifacts use `:not-collected` when they
+do not collect this report.
+
+Malformed candidate lists, shrinker errors, and detected cons/array mutation stop
+the search while preserving previous evidence. User shrinker code must terminate;
+cl-spec does not interrupt arbitrary code or restore external state. Deterministic
+candidate order is needed for replay, and the result is not a global minimum.
+The CLOS equivalent is `:shrinker`, read by `custom-generator-shrinker`; changing
+it on a source-backed generator requires matching source and draw-function updates.
+The source declaration participates in the definition digest. Nested custom value
+generators currently retain their no-op shrink behavior.
 
 ## Runtime instrumentation
 
@@ -291,7 +458,7 @@ Load the optional system, then select the checks to enforce at call sites:
 ```
 
 All three scopes are enabled by default. `:input` checks arity, argument specs and
-`:pre`; `:output` checks the primary return value; `:post` checks postconditions.
+`:pre`; `:output` checks the primary or fixed multiple-value return contract; `:post` checks postconditions.
 Checks use no generator. Violations are `cl-spec/instrument:instrumentation-violation`
 conditions, a subtype of `cl-spec:spec-violation`, with function, scope and reason
 readers in the instrumentation package. Existing spec-violation readers expose
@@ -318,7 +485,10 @@ with name and reason readers. Both belong to `cl-spec-error`.
 
 `(cl-spec/instrument:instrumentation-status 'positive-step)` returns a record
 with `:status` (`:not-installed`, `:current`, `:stale`, `:indeterminate`),
-`:reasons`, installed/current declaration digests and `:scopes`. It does not call
+`:reasons`, installed/current declaration digests and `:scopes`. It also returns
+`:installed-digest-omissions`, `:current-digest-omissions` and `:digest-exclusions`.
+Installed details are snapshots; current omissions come from the current query.
+`:not-collected` means no corresponding inspection was performed. It does not call
 the target, refresh the wrapper or discard installation evidence. Use `:registry`
 when comparing against a registry other than the current default.
 
@@ -343,11 +513,14 @@ status detects the stale contract and explicit uninstrumentation remains require
 
 The argument contract describes the whole call, not just a prefix of the target's
 lambda list. For example, `(:args (a integer))` admits exactly one argument even if
-the target accepts optional extras. Optional/rest/key contract semantics remain deferred.
+the target accepts optional extras. Optional contracts preserve omission; rest contracts validate the whole remaining list.
 
 Violation specs are the actual argument/return IR, an argument tuple for arity, or
 a predicate spec for pre/post. Precondition values are the argument list; postcondition
-values are `(primary-value . arguments)`. Error records use the usual `:actual`,
+values are `(primary-value . arguments)` for `:post` and
+`(returned-values-list . arguments)` for `:post-values`. With only `:post` scope
+enabled, explicit value bindings use NIL for absent values and ignore extra values;
+return count enforcement belongs to `:output`. Error records use the usual `:actual`,
 `:expected`, and explainer `:kind` vocabulary.
 
 Serialize installation/removal
@@ -394,8 +567,8 @@ Introspection records have `:entity-kind` (`:spec`, `:property`, or
 `:function-spec`); existing `:kind` fields retain their node or author
 classification. `schema-info` describes the versioned Lisp protocol. All three
 definition readers include `:schema-version 1`, `:record-kind :definition`,
-`:definition-digest`, `:definition-digest-complete`, `:definition-digest-covers`
-and `:capabilities` on the root record. Nested specs remain ordinary IR projections.
+`:definition-digest`, `:definition-digest-complete`, `:definition-digest-covers`,
+`:digest-omissions`, `:digest-exclusions` and `:capabilities` on the root record. Nested specs remain ordinary IR projections.
 Consumers should ignore unknown keys and explicitly handle
 unsupported versions. `result-data` returns the same metadata with
 `:record-kind :result`, captured before execution, plus trials, budget and the
@@ -407,6 +580,14 @@ implementations, captured/external state, source locations and backend settings.
 It is a bounded, non-cryptographic change detector; it does not prove that a run
 is reproducible. Missing dependencies, opaque values or exceeded limits produce
 NIL with `:definition-digest-complete NIL`, never a trusted partial digest.
+`definition-digest` returns `(values digest complete-p omissions)`; existing digest
+bytes and the first two values retain their meaning. Each omission is
+`(:kind KIND :path PATH :target SYMBOL-OR-NIL :reason REASON)`. Kinds are
+`:unresolved-reference`, `:opaque-definition`, `:missing-source`, `:opaque-value`,
+`:uninterned-symbol` and `:resource-limit`. Stable traversal paths identify the
+first occurrence; independent omissions are collected within the traversal limits.
+`:digest-exclusions` lists the intentional scope exclusions above and does not make
+an otherwise complete digest incomplete.
 
 Capabilities describe the currently installed backend: generator construction
 may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be

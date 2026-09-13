@@ -19,7 +19,8 @@ documents live in `docs/superpowers/specs/`.
 explain, spec introspection, the check-it generator backend, `defproperty` and
 the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
-their §73.1 D1 range: required positional arguments and either one return value
+their expanded §73.1 D1 range: required/optional positional, keyword and rest arguments,
+primary or fixed multiple return values, and explicit `:post-values` bindings,
 or a required error outcome via `:signals`. Expected-error contracts are not
 supported by runtime instrumentation.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,

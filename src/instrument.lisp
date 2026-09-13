@@ -8,21 +8,34 @@
 
 (defpackage #:cl-spec/src/instrument
   (:use #:cl)
+  (:import-from #:cl-spec/src/call-schema
+                #:make-call-layout #:call-layout-bindings #:bind-call-arguments #:bound-call-values
+                #:call-layout-accepts-p #:call-layout-required-count #:call-layout-key-p
+                #:call-layout-rest-binding
+                #:bound-call-presence #:bound-call-bindings
+                #:argument-binding-kind #:argument-binding-keyword
+                #:argument-binding-spec #:argument-binding-name
+                #:return-schema-primary-spec #:return-schema-value)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec-argument-specs #:function-spec-return-schema
+                #:function-spec-argument-schema)
   (:nicknames #:cl-spec/instrument)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
-  (:import-from #:cl-spec/src/ir #:tuple-spec #:predicate-spec #:predicate-spec-predicate)
+  (:import-from #:cl-spec/src/ir #:predicate-spec #:predicate-spec-predicate)
   (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
   (:import-from #:cl-spec/src/schema
-                #:definition-instrumentation-capability #:definition-graph #:definition-digest)
+                #:definition-instrumentation-capability #:definition-graph #:definition-digest
+                #:schema-info)
   (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
-                #:function-spec #:function-spec-name #:function-spec-argument-specs
+                #:function-spec #:function-spec-name
                 #:function-spec-signal-spec
-                #:function-spec-return-spec #:function-spec-precondition-function
+                #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
+                #:function-spec-post-value-variables
                 #:precondition-refuses-p)
   (:export #:unsupported-instrumentation-target #:unsupported-instrumentation-target-name
            #:unsupported-instrumentation-target-reason
@@ -68,10 +81,11 @@ return or postcondition check."))
 (defstruct (installation
             (:constructor make-installation
                 (original wrapper &key registry contract scopes declaration declaration-available-p
-                                  precondition postcondition digest digest-complete-p)))
+                                  precondition postcondition digest digest-complete-p
+                                  digest-omissions digest-exclusions)))
   "Original definition, active wrapper, and installation-time declaration evidence."
   original wrapper registry contract scopes declaration declaration-available-p
-  precondition postcondition digest digest-complete-p)
+  precondition postcondition digest digest-complete-p digest-omissions digest-exclusions)
 
 (defun unsupported-target-reason (name)
   "Return the reason NAME cannot be wrapped, or NIL for a supported definition."
@@ -105,71 +119,114 @@ return or postcondition check."))
 
 (defun make-contract-wrapper (name original contract registry scopes)
   "Compile enabled checks and capture their predicates around ORIGINAL."
-  (let* ((arguments (function-spec-argument-specs contract))
-         (arity (length arguments))
+  (let* ((layout (make-call-layout (function-spec-argument-specs contract)))
+         (arguments (call-layout-bindings layout))
+         (arity (length (call-layout-bindings layout)))
          (context (list :registry registry))
          (input-p (member :input scopes))
          (argument-schema (when input-p
-                            (make-instance 'tuple-spec :element-specs (mapcar #'second arguments))))
+                            (function-spec-argument-schema contract layout)))
+         (shape-explainer (when input-p (compile-explainer argument-schema :context context)))
          (inputs (when input-p
                    (mapcar (lambda (argument)
-                             (list (second argument)
-                                   (list (first argument) :args)
-                                   (compile-explainer (second argument) :context context)))
+                             (list (argument-binding-spec argument)
+                                   (if (eq :key (argument-binding-kind argument))
+                                       (list (argument-binding-keyword argument) :args)
+                                       (list (argument-binding-name argument) :args))
+                                   (compile-explainer (argument-binding-spec argument)
+                                                      :context context)))
                            arguments)))
          (pre (when input-p (function-spec-precondition-function contract)))
          (pre-test (when pre
-                     (lambda (values) (not (precondition-refuses-p pre values)))))
+                     (lambda (values)
+                       (not (precondition-refuses-p
+                             pre (bound-call-values (bind-call-arguments layout values)))))))
          (pre-spec (when pre (make-instance 'predicate-spec :predicate pre-test)))
-         (returns (function-spec-return-spec contract))
+         (return-schema (function-spec-return-schema contract))
+         (returns (return-schema-primary-spec return-schema))
          (output (when (and (member :output scopes) returns)
                    (compile-explainer returns :context context)))
          (post (when (member :post scopes) (function-spec-postcondition-function contract)))
+         (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
          (post-spec (when post
                       (make-instance 'predicate-spec
                                      :predicate (lambda (value-and-args)
-                                                  (apply post value-and-args)))))
+                                                  (apply post (first value-and-args)
+                                                          (bound-call-values
+                                                           (bind-call-arguments
+                                                            layout (rest value-and-args))))))))
          (post-count (length (function-spec-postconditions contract))))
     (lambda (&rest values)
-      (when input-p
-        (unless (= arity (length values))
-          (contract-failure
-           name :input :arity argument-schema values
-           (list (error-datum :wrong-length '(:args) values
-                              :expected (expected-descriptor argument-schema)
-                              :expected-length arity :actual-length (length values)))))
-        (loop for (spec path explainer) in inputs
-              for value in values
-              for errors = (funcall explainer value path)
-              when errors do (contract-failure name :input :argument-spec spec value errors))
-        (when (precondition-refuses-p pre values)
-          (contract-failure name :input :precondition pre-spec values
-                            (list (error-datum :predicate-failed '(:pre) values
-                                               :predicate pre-test
-                                               :expected (expected-descriptor pre-spec))))))
-      (if (not (or output post))
-          (apply original values)
-          (multiple-value-call
-              (lambda (&rest results)
-                (let ((value (first results)))
-                  (when output
-                    (let ((errors (funcall output value '(:returns))))
-                      (when errors
-                        (contract-failure name :output :return-spec returns value errors))))
-                  (when post
-                    (multiple-value-bind (holds index tag) (apply post value values)
-                      (unless holds
-                        (let ((path (if (and (eq tag :cl-spec-post-form-failure)
-                                             (integerp index) (<= 0 index) (< index post-count))
-                                        (list index :post) '(:post)))
-                              (value-and-args (cons value values)))
-                          (contract-failure
-                           name :post :postcondition post-spec value-and-args
-                           (list (error-datum :predicate-failed path value-and-args
-                                              :predicate (predicate-spec-predicate post-spec)
-                                              :expected (expected-descriptor post-spec))))))))
-                  (values-list results)))
-            (apply original values))))))
+      (let ((cached nil) (spine nil))
+        (labels ((unchanged-p ()
+                   ;; Iterate the finite snapshot, never an untrusted mutated tail.
+                   (let ((tail values))
+                     (dolist (entry spine (null tail))
+                       (unless (and (eq tail (car entry))
+                                    (eq (car tail) (cdr entry)))
+                         (return nil))
+                       (setf tail (cdr tail)))))
+                 (current-bindings ()
+                   (unless (and cached (unchanged-p))
+                     (setf cached (bind-call-arguments layout values)
+                           spine (loop for tail on values
+                                       collect (cons tail (car tail)))))
+                   cached))
+          (when input-p
+            (unless (call-layout-accepts-p layout values)
+              (contract-failure
+               name :input :arity argument-schema values
+               (if (or (call-layout-key-p layout) (call-layout-rest-binding layout))
+                   (funcall shape-explainer values '(:args))
+                   (list (error-datum :wrong-length '(:args) values
+                                      :expected (expected-descriptor argument-schema)
+                                      :expected-length
+                                      (if (= arity (call-layout-required-count layout))
+                                          arity (list (call-layout-required-count layout) arity))
+                                      :actual-length (length values))))))
+            (let ((bound (current-bindings)))
+              (loop for (spec path explainer) in inputs
+                    for binding in arguments
+                    for present in (bound-call-presence bound)
+                    for value = (cdr (assoc (argument-binding-name binding)
+                                            (bound-call-bindings bound)))
+                    for errors = (when present (funcall explainer value path))
+                    when errors do (contract-failure name :input :argument-spec spec value errors)))
+            ;; APPLY may expose its argument spine to a user &REST parameter.
+            ;; Preserve the cache's scalar projection while sharing argument objects.
+            (when (and pre
+                       (precondition-refuses-p
+                         pre (copy-list (bound-call-values (current-bindings)))))
+              (contract-failure name :input :precondition pre-spec values
+                                (list (error-datum :predicate-failed '(:pre) values
+                                                   :predicate pre-test
+                                                   :expected (expected-descriptor pre-spec))))))
+          (if (not (or output post))
+              (apply original values)
+              (multiple-value-call
+                  (lambda (&rest results)
+                    (let ((value (return-schema-value return-schema results))
+                          (post-value (if values-post-p results (first results))))
+                      (when output
+                        (let ((errors (funcall output value '(:returns))))
+                          (when errors
+                            (contract-failure name :output :return-spec returns value errors))))
+                      (when post
+                        (multiple-value-bind (holds index tag)
+                             (apply post post-value
+                                     (bound-call-values (current-bindings)))
+                          (unless holds
+                            (let ((path (if (and (eq tag :cl-spec-post-form-failure)
+                                                 (integerp index) (<= 0 index) (< index post-count))
+                                            (list index :post) '(:post)))
+                                  (value-and-args (cons post-value values)))
+                              (contract-failure
+                               name :post :postcondition post-spec value-and-args
+                               (list (error-datum :predicate-failed path value-and-args
+                                                  :predicate (predicate-spec-predicate post-spec)
+                                                  :expected (expected-descriptor post-spec))))))))
+                      (values-list results)))
+                (apply original values))))))))
 
 (defun local-declaration-snapshot (contract)
   "Snapshot complete local declarations without resolving registry dependencies.
@@ -200,14 +257,16 @@ Build the new wrapper and all metadata before replacing the active installation.
            (captured-scopes (copy-list scopes))
            (wrapper (make-contract-wrapper name original contract registry captured-scopes)))
       (multiple-value-bind (declaration available) (local-declaration-snapshot contract)
-        (multiple-value-bind (digest complete) (definition-digest contract :registry registry)
+        (multiple-value-bind (digest complete omissions) (definition-digest contract :registry registry)
           (let ((new-entry
                   (make-installation
                    original wrapper :registry registry :contract contract :scopes captured-scopes
                    :declaration declaration :declaration-available-p available
                    :precondition (function-spec-precondition-function contract)
                    :postcondition (function-spec-postcondition-function contract)
-                   :digest digest :digest-complete-p complete)))
+                   :digest digest :digest-complete-p complete
+                   :digest-omissions (snapshot-value omissions)
+                   :digest-exclusions (snapshot-value (getf (schema-info) :digest-excludes)))))
             (setf (fdefinition name) wrapper
                   (gethash name *instrumented-functions*) new-entry))))
       name)))
@@ -215,11 +274,14 @@ Build the new wrapper and all metadata before replacing the active installation.
 (defun instrumentation-status (name &key (registry *registry*))
   "Describe installed checks without changing the function or installation table.
 Local declaration changes are stale. Named dependencies resolve dynamically, so
-their changes are reported separately. Incomplete evidence is indeterminate."
+their changes are reported separately. Incomplete evidence is indeterminate.
+Installed omissions and digest exclusions are installation-time snapshots.
+Current omissions are freshly collected; :NOT-COLLECTED distinguishes absent
+inspection from a known empty omission list."
   (check-type name symbol)
   (let ((entry (gethash name *instrumented-functions*))
         (reasons nil) (stale nil) (current-digest nil) (current-complete nil)
-        (local-available nil))
+        (local-available nil) (current-omissions :not-collected))
     (labels ((report-status (status dependency-status)
                (snapshot-value
                 (list :name name :status status :reasons (reverse reasons)
@@ -227,6 +289,11 @@ their changes are reported separately. Incomplete evidence is indeterminate."
                       :installed-digest (when entry (installation-digest entry))
                       :installed-digest-complete (when entry (installation-digest-complete-p entry))
                       :current-digest current-digest :current-digest-complete current-complete
+                      :installed-digest-omissions
+                      (if entry (installation-digest-omissions entry) :not-collected)
+                      :current-digest-omissions current-omissions
+                      :digest-exclusions
+                      (if entry (installation-digest-exclusions entry) :not-collected)
                       :scopes (when entry (installation-scopes entry)))))
              (mark-stale (reason) (setf stale t) (push reason reasons)))
       (unless (typep entry 'installation)
@@ -238,7 +305,11 @@ their changes are reported separately. Incomplete evidence is indeterminate."
       (handler-case
           (let ((contract (registry-find-function-spec registry name)))
             (cond
-              ((null contract) (mark-stale :definition-missing))
+              ((null contract)
+               (mark-stale :definition-missing)
+               (setf current-omissions
+                     (list (list :kind :unresolved-reference :path nil :target name
+                                 :reason :definition-missing))))
               (t
                (unless (eq contract (installation-contract entry))
                  (mark-stale :definition-replaced))
@@ -253,10 +324,13 @@ their changes are reported separately. Incomplete evidence is indeterminate."
                  (when (and local-available
                             (not (same-value-p declaration (installation-declaration entry))))
                    (mark-stale :declaration-changed)))
-               (multiple-value-setq (current-digest current-complete)
+               (multiple-value-setq (current-digest current-complete current-omissions)
                  (definition-digest contract :registry registry)))))
         (error ()
-          (setf current-complete nil)
+          (setf current-complete nil
+                current-omissions
+                (list (list :kind :opaque-definition :path nil :target name
+                            :reason :inspection-error)))
           (push :inspection-error reasons)))
       (let* ((complete (and (installation-digest-complete-p entry) current-complete))
              (dependency-status

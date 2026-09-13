@@ -31,6 +31,58 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest rest-projection-has-an-executable-law
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (eq :passed
+            (property-result-status
+             (run-property 'cl-spec/specs::rest-projection-agrees-with-target
+                           :seed 42))))))
+
+(deftest keyword-registry-is-covered-by-self-specification
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:definition-digest))
+    (ok (eq :passed
+            (property-result-status
+             (check-function 'cl-spec:definition-digest :trials 50 :seed 42))))))
+
+(deftest optional-registry-is-covered-by-self-specification
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:find-spec))
+    (ok (eq :passed
+            (property-result-status
+             (check-function 'cl-spec:find-spec :trials 50 :seed 42))))))
+
+(deftest multiple-values-are-covered-by-self-specifications
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (entry '((cl-spec:find-spec 2) (cl-spec:definition-digest 3)))
+      (let* ((contract (find-function-spec (first entry)))
+             (schema (cl-spec:function-spec-return-spec contract)))
+        (ok (eq :values (cl-spec:spec-kind schema)))
+        (ok (= (second entry) (length (cl-spec:spec-children schema))))
+        (ok (= (second entry) (length (cl-spec:function-spec-post-value-variables contract))))
+        (ok (eq :passed (property-result-status
+                         (check-function contract :trials 50 :seed 42))))))))
+
+(deftest target-outcome-has-an-executable-data-contract
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:trial-observation-outcome))
+    (ok (eq :passed
+            (property-result-status
+             (check-function 'cl-spec:trial-observation-outcome :trials 20 :seed 42))))))
+
+(deftest custom-shrinker-reader-has-an-executable-contract
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:custom-generator-shrinker))
+    (ok (eq :passed
+            (property-result-status
+             (check-function 'cl-spec:custom-generator-shrinker :trials 20 :seed 42))))))
+
 (deftest malformed-dsl-has-an-executable-error-contract
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
@@ -56,16 +108,16 @@
           (ok (member name (cl-spec:properties-for target))))))
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
-    (ok (= 10 (length (cl-spec:list-function-specs))))
-    (ok (= 7 (length (cl-spec:list-properties))))))
+    (ok (= 14 (length (cl-spec:list-function-specs))))
+    (ok (= 9 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (original-validp (fdefinition 'cl-spec:validp)))
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
-      (ok (= 10 (length (cl-spec:list-function-specs))))
-      (ok (= 7 (length (cl-spec:list-properties))))
+      (ok (= 14 (length (cl-spec:list-function-specs))))
+      (ok (= 9 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))
     (ok (null (cl-spec:list-properties)))))
@@ -144,9 +196,24 @@
       (setf (getf data :definition-digest-complete) :yes)
       (ok (not (cl-spec:validp spec data))))
     (let* ((data (cl-spec:spec-data 'cl-spec/specs::spec-description-data))
-           (fields (getf data :fields)))
-      (ok (eq :plist (getf data :kind)))
+           (fields (getf (first (getf data :children)) :fields)))
+      (ok (eq :and (getf data :kind)))
       (ok (find :schema-version fields :key (lambda (field) (getf field :key)))))))
+
+(deftest executable-digest-details-refuse-inconsistent-metadata
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (let* ((contract (find-function-spec 'cl-spec:spec-data))
+           (spec (function-spec-return-spec contract))
+           (data (spec-data (normalize-spec-form 'integer))))
+      (setf (getf data :digest-omissions)
+            '((:kind :opaque-value :path (:declarations 0) :target nil :reason :function-object)))
+      (ok (not (validp spec data))))
+    (let* ((contract (find-function-spec 'cl-spec:spec-data))
+           (spec (function-spec-return-spec contract))
+           (data (spec-data (normalize-spec-form 'integer))))
+      (setf (getf data :digest-exclusions) :unknown)
+      (ok (not (validp spec data))))))
 
 (deftest executable-specifications-pass-generated-checks
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
