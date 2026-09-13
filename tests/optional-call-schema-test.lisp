@@ -58,7 +58,7 @@
 
 (deftest optional-declarations-refuse-malformed-and-duplicate-bindings
   (dolist (declarations
-           '((&optional &optional) (&rest (value integer)) (&key (value integer))
+           '((&optional &optional) (&rest (value integer supplied)) (&key (value integer))
              ((value integer flag)) (&optional (value integer flag extra))
              (&optional (value integer :flag)) (&optional (value integer nil))
              ((same integer) &optional (other integer same))

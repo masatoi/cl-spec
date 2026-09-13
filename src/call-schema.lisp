@@ -7,8 +7,9 @@
  (:import-from #:cl-spec/src/conditions #:invalid-function-spec-form)
  (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
- (:export #:argument-binding-keyword #:call-layout-key-p #:call-layout-allow-other-keys-p
- #:call-layout-positional-count #:call-layout-shape-error #:validate-call-declarations #:normalize-call-declarations #:call-declaration-variables
+ (:export #:call-layout-rest-binding #:argument-binding-keyword #:call-layout-key-p
+ #:call-layout-allow-other-keys-p #:call-layout-positional-count #:call-layout-shape-error
+ #:validate-call-declarations #:normalize-call-declarations #:call-declaration-variables
  #:argument-binding-supplied-name #:call-layout-required-count #:call-layout-data
  #:call-layout-accepts-p #:call-layout-required-only-p #:call-arguments-spec
  #:call-arguments-spec-layout #:argument-binding #:call-layout #:bound-call #:return-schema
@@ -24,7 +25,7 @@
  "A normalized positional or explicit keyword parameter."
  (name nil :type symbol :read-only t)
  (spec nil :type spec :read-only t)
- (kind :required :type (member :required :optional :key) :read-only t)
+ (kind :required :type (member :required :optional :rest :key) :read-only t)
  (supplied-name nil :type symbol :read-only t)
  (keyword nil :type symbol :read-only t))
 
@@ -63,15 +64,18 @@
            ((eq declaration '&optional)
             (unless (eq mode :required) (bad "Misplaced &optional."))
             (setf mode :optional))
+           ((eq declaration '&rest)
+            (unless (member mode '(:required :optional)) (bad "Misplaced &rest."))
+            (setf mode :rest))
            ((eq declaration '&key)
-            (unless (member mode '(:required :optional)) (bad "Misplaced &key."))
+            (unless (member mode '(:required :optional :after-rest)) (bad "Misplaced &key."))
             (setf mode :key))
            ((eq declaration '&allow-other-keys)
             (unless (eq mode :key) (bad "Misplaced &allow-other-keys."))
             (setf mode :end))
            (t
-            (unless (and (not (eq mode :end)) (finite-list-p declaration)
-                         (if (eq mode :required) (= (length declaration) 2)
+            (unless (and (not (member mode '(:end :after-rest))) (finite-list-p declaration)
+                         (if (member mode '(:required :rest)) (= (length declaration) 2)
                              (member (length declaration) '(2 3))))
               (bad "Malformed parameter declaration."))
             (if (eq mode :key)
@@ -84,7 +88,9 @@
                   (setf (gethash (first pair) keys) t)
                   (name (second pair)))
                 (name (first declaration)))
-            (when (cddr declaration) (name (third declaration))))))))
+            (when (cddr declaration) (name (third declaration)))
+            (when (eq mode :rest) (setf mode :after-rest)))))
+       (when (eq mode :rest) (bad "Missing &rest declaration."))))
    declarations))
 
 (defun normalize-call-declarations (declarations)
@@ -109,9 +115,13 @@
  "Return the minimum accepted positional argument count."
  (count :required (call-layout-bindings layout) :key #'argument-binding-kind))
 
+(defun call-layout-rest-binding (layout)
+ "Return the whole-tail rest descriptor, or NIL."
+ (find :rest (call-layout-bindings layout) :key #'argument-binding-kind))
+
 (defun call-layout-positional-count (layout)
  "Return the number of positional parameters."
- (count-if (lambda (binding) (not (eq :key (argument-binding-kind binding))))
+ (count-if (lambda (binding) (member (argument-binding-kind binding) '(:required :optional)))
            (call-layout-bindings layout)))
 
 (defun call-layout-shape-error (layout arguments)
@@ -120,7 +130,8 @@
    ((not (finite-list-p arguments)) :not-a-list)
    ((< (length arguments) (call-layout-required-count layout)) :wrong-length)
    ((not (call-layout-key-p layout))
-    (unless (<= (length arguments) (call-layout-positional-count layout)) :wrong-length))
+    (unless (or (call-layout-rest-binding layout)
+                (<= (length arguments) (call-layout-positional-count layout))) :wrong-length))
    (t
     (let ((tail (nthcdr (min (length arguments) (call-layout-positional-count layout)) arguments)))
       (cond
@@ -165,6 +176,7 @@
    (%make-call-layout
     (loop for declaration in declarations
           if (eq declaration '&optional) do (setf kind :optional)
+          else if (eq declaration '&rest) do (setf kind :rest)
           else if (eq declaration '&key) do (setf kind :key)
           else unless (eq declaration '&allow-other-keys)
           collect (let ((spec (second declaration)) (binder (first declaration)))
@@ -185,8 +197,9 @@
                     (loop for tail on remaining by #'cddr
                           when (eq (first tail) (argument-binding-keyword binding))
                             return tail)))
-            (present-p (not (null (if key-p pair remaining))))
-            (value (if key-p (second pair) (pop remaining))))
+            (rest-p (eq :rest (argument-binding-kind binding)))
+            (present-p (or rest-p (not (null (if key-p pair remaining)))))
+            (value (cond (rest-p remaining) (key-p (second pair)) (t (pop remaining)))))
        (push value values)
        (push present-p presence)
        (push (cons (argument-binding-name binding) value) bindings)

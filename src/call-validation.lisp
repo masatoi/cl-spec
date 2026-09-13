@@ -7,7 +7,7 @@
  #:call-layout-data #:call-layout-required-count
  #:argument-binding-name #:argument-binding-spec #:argument-binding-kind
  #:argument-binding-keyword #:bind-call-arguments #:bound-call-bindings #:bound-call-presence
- #:call-layout-shape-error #:call-layout-key-p #:call-layout-allow-other-keys-p)
+ #:call-layout-rest-binding #:call-layout-shape-error #:call-layout-key-p #:call-layout-allow-other-keys-p)
  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
  (:import-from #:cl-spec/src/explain #:compile-node #:expected-descriptor #:error-datum))
 
@@ -24,7 +24,9 @@
          (if kind
              (list (error-datum kind base-path value :expected expected
                                :minimum-length (call-layout-required-count layout)
-                               :maximum-length (unless (call-layout-key-p layout) (length compiled))
+                               :maximum-length (unless (or (call-layout-key-p layout)
+                                                           (call-layout-rest-binding layout))
+                                                 (length compiled))
                                :actual-length (when (finite-list-p value) (length value))
                                :key key))
              (let* ((bound (bind-call-arguments layout value))
@@ -37,9 +39,11 @@
                      (loop for datum in
                            (funcall function
                                     (cdr (assoc (argument-binding-name binding) bindings))
-                                    (if (eq :key (argument-binding-kind binding))
-                                        (cons (argument-binding-keyword binding) base-path)
-                                        (list* (argument-binding-name binding) index base-path)))
+                                    (case (argument-binding-kind binding)
+                                      (:key (cons (argument-binding-keyword binding) base-path))
+                                      (:rest (cons (argument-binding-name binding) base-path))
+                                      (otherwise
+                                       (list* (argument-binding-name binding) index base-path))))
                            collect (let ((copy (copy-list datum)))
                                      (setf (getf copy :tuple-path)
                                            (cons index (getf datum :tuple-path)))

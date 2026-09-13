@@ -31,6 +31,14 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest rest-projection-has-an-executable-law
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (eq :passed
+            (property-result-status
+             (run-property 'cl-spec/specs::rest-projection-agrees-with-target
+                           :seed 42))))))
+
 (deftest keyword-registry-is-covered-by-self-specification
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
@@ -89,7 +97,7 @@
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
     (ok (= 14 (length (cl-spec:list-function-specs))))
-    (ok (= 8 (length (cl-spec:list-properties))))))
+    (ok (= 9 (length (cl-spec:list-properties))))))
 
 (deftest executable-specifications-use-the-current-registry
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
@@ -97,7 +105,7 @@
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
       (ok (= 14 (length (cl-spec:list-function-specs))))
-      (ok (= 8 (length (cl-spec:list-properties))))
+      (ok (= 9 (length (cl-spec:list-properties))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))
     (ok (null (cl-spec:list-properties)))))

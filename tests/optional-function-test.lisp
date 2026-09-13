@@ -76,7 +76,7 @@
     (ok (eq before (function-spec-argument-specs contract)))))
 
 (deftest deferred-call-syntax-stays-rejected
-  (dolist (args '((&rest (a integer)) (&key (a integer))
+  (dolist (args '((&aux (a integer)) (&key (a integer))
                  ((a integer supplied)) (&optional (a integer) &optional (b integer))))
     (ok (signals (make-instance 'function-spec :name 'optional-target :argument-specs args)
                  'invalid-function-spec-form))))

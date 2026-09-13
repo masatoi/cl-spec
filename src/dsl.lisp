@@ -300,7 +300,7 @@ lambda list is a compiler error about a form the author never wrote."
     args))
 
 (defun parse-function-spec-arguments (args)
-  "Validate required, optional and explicit keyword declarations before macro expansion."
+  "Validate positional, rest and explicit keyword declarations before macro expansion."
   (validate-call-declarations args))
 
 (defun expand-postcondition-forms (forms &optional (index 0))
@@ -413,6 +413,8 @@ PROGRAM-ERROR and UNDEFINED-FUNCTION (including subclasses) always remain
 
 Required and optional positional parameters, explicit keyword parameters, and one
 return value are supported. &OPTIONAL permits (PARAMETER SPEC [SUPPLIED-P]);
+&REST takes one (PARAMETER WHOLE-LIST-SPEC) before any &KEY declarations.
+Its predicate variable holds the raw remaining tail, including keyword pairs.
 &KEY permits ((:KEY PARAMETER) SPEC [SUPPLIED-P]). A terminal &ALLOW-OTHER-KEYS
 permits undeclared keywords. Predicates see NIL for omitted values and a boolean
 supplied flag when declared. The first duplicate keyword value wins. Target

@@ -85,7 +85,7 @@
   (dolist (args '((&key (amount integer))
                  (&key ((:allow-other-keys permission) boolean))
                  (&key ((:size amount) integer) &allow-other-keys ((:more more) integer))
-                 (&rest (rest list))))
+                 (&aux (aux list))))
     (ok (signals (make-instance 'function-spec :name 'key-target :argument-specs args)
                  'invalid-function-spec-form))))
 

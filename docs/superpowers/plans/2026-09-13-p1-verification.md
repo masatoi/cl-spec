@@ -4,15 +4,15 @@ Base: main 35c374e (PR #22 merged), branch p1-verification.
 User-authorized order: #11, #13, #14, #15, #16, #17, #18.
 P2 #19/#20 are outside this task. Commit each issue after targeted/full validation.
 
-- [ ] #11: digest omissions/exclusions and explicit provenance collection states;
+- [x] #11: digest omissions/exclusions and explicit provenance collection states;
   preserve information in results/artifacts/instrumentation. Additive schema v1.
-- [ ] #13: finite, budgeted correlated shrink candidates, custom generator DSL,
+- [x] #13: finite, budgeted correlated shrink candidates, custom generator DSL,
   capabilities, failure-preserving acceptance, artifact integration.
-- [ ] #14: argument binding / return schema / observed outcome IR, retaining existing
+- [x] #14: argument binding / return schema / observed outcome IR, retaining existing
   public readers and required positional/primary-return behavior.
-- [ ] #15: optional arguments with explicit presence, without evaluating target defaults.
-- [ ] #16: keyword calls preserving original argument order and CL binding semantics.
-- [ ] #17: rest calls preserving raw tail, bounded generation and shrinking.
+- [x] #15: optional arguments with explicit presence, without evaluating target defaults.
+- [x] #16: keyword calls preserving original argument order and CL binding semantics.
+- [x] #17: rest calls preserving raw tail, bounded generation and shrinking.
 - [ ] #18: explicit fixed multiple-value contracts, keeping old primary-only contracts.
 
 Each checkpoint: tests first, suite registration, executable self-specs, README/spec
@@ -127,3 +127,31 @@ Other changed files use the normal preset.
 
 #16 final verification: clean-process 53 suites, scoped Mallet, forced core
 compilation and diff check passed.
+
+## #17 decisions and validation
+
+Rest syntax is one `&rest (NAME WHOLE-LIST-SPEC)` before any key declarations.
+Predicates receive the original raw tail, including keyword pairs; empty rest is
+validated too. Generation draws the whole list, preserves optional-prefix binding,
+and shrinks it through its own generator. With keys, exact unannotated `(list-of t)`
+uses declared key generators; other rest specs filter whole calls with a 100-draw
+bound, refusing unavailable intersections before target execution.
+526 tests pass including direct recheck, raw-tail identity, target mutation evidence,
+bounded intersection rejection, constrained shrinking and instrument delivery.
+Scoped lint exception for the intentional mixed optional/key rest-generator fixture.
+Clean-process 57 suites, changed-file Mallet, forced core compilation and diff checks.
+
+## #18 design
+
+Use function-only `(:returns (values SPEC...))` for exactly the declared value count,
+including zero. Ordinary `:returns SPEC` keeps primary-only projection (zero -> NIL).
+The return declaration remains authoritative; an internal return-values-spec carries
+fixed child specs, and return-schema derives its mode. No general data DSL VALUES.
+Add exclusive `(:post-values (NAME...) FORM...)`, requiring a fixed values declaration
+and one unique nonconstant variable per return. Argument-variable collisions and
+reserved RESULT names are refused; RESULT remains the implicit primary value.
+Existing :post keeps its primary-value semantics with either return mode.
+Full target values are captured once, raw values validated, frozen evidence retained.
+Fixed count and value-position failures are distinguishable in failure identity.
+Instrumentation validates the same projection and returns all raw values unchanged.
+Result/artifact schema stays additive v1; old primary-only digests remain stable.

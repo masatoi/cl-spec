@@ -1429,6 +1429,13 @@ macro expansions would need the lint exemption that file carries."
         (dolist (value '((:unknown 1) (:size) (3 4) (:size "bad")))
           (dolist (datum (getf (explain-data spec value) :errors))
             (setf seen (explained-error-keys datum seen)))))
+      (let ((spec (function-spec-argument-schema
+                   (make-instance 'function-spec :name 'demo-adds
+                                  :argument-specs
+                                  '((head integer) &rest (tail (list-of string)))))))
+        (dolist (value '(nil (1 2) (1 "valid" 3)))
+          (dolist (datum (getf (explain-data spec value) :errors))
+            (setf seen (explained-error-keys datum seen)))))
       (testing "the audit itself saw the keys it is meant to check"
         (ok (member :kind seen))
         (ok (member :actual seen))

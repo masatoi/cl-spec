@@ -4311,3 +4311,23 @@ generatorは宣言済みkeyの指定・省略を生成し、shrinkerはpair単�
 external keyword、名前、suppliedness、global allowanceをintrospection/digestへ含める。
 explainの値違反は宣言keyを経路に持つ。未知の入力keyはvalue由来であり、failure identityへ含めない。
 自己仕様ではdefinition-digestのkeyword registryを検査する。
+
+
+### Rest call declarations implementation addendum (issue #17)
+
+`&rest (NAME WHOLE-LIST-SPEC)`は一つのrest宣言を表す。suppliedness変数は指定しない。
+required/optionalの後、任意の&key節の前に置く。重複marker、変数名、余分な宣言を拒否する。
+restのspecは要素ではなく残りのリスト全体に適用する。空リストも検証対象であり、
+rest束縛のpresenceは常に真とする。位置引数を消費したraw listのtailをそのまま束縛し、
+要素・tailのidentityを保存する。raw callは常に有限proper listを要求する。
+
+&restと&keyが共存する場合は同じtailを共有し、重複・control pairもrestに含める。
+whole-list specと既存keyword検証の両方を満たす必要がある。生成・縮小では組み立てたcallを
+再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
+restとkeyの共存では、注釈なしの正確な(list-of t)だけをkeyword generatorで生成する。
+それ以外はrest generatorから最大100候補callを生成し、全引数schemaで交差条件を検査する。
+上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
+拒否された生成候補でtargetを呼ばない。
+explain経路には宣言rest名を用い、introspection/digestは:kind :restとwhole-list specを保持する。
+自己仕様のrest-projection-agrees-with-targetはcheck-functionを通じ、CL:LISTの実際の戻り値と
+postconditionのrest束縛が一致する法則を生成検査する。

@@ -7,6 +7,10 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/rest-call-schema-test)
+  (:import-from #:cl-spec/tests/rest-function-test)
+  (:import-from #:cl-spec/tests/rest-generator-test)
+  (:import-from #:cl-spec/tests/rest-instrument-test)
   (:import-from #:cl-spec/tests/key-call-schema-test)
   (:import-from #:cl-spec/tests/key-function-test)
   (:import-from #:cl-spec/tests/key-generator-test)

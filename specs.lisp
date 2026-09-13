@@ -91,7 +91,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
   '(normalization-is-idempotent normalization-preserves-source
     validation-and-explanation-agree compiled-validation-agrees
     validation-preserves-values-or-explains-refusal boolean-composition
-    introspection-preserves-spec-semantics digest-details-agree-with-metadata))
+    introspection-preserves-spec-semantics digest-details-agree-with-metadata rest-projection-agrees-with-target))
 
 (defun register-instrumentation-specifications ()
   "Register the optional status API contract after CL-SPEC/INSTRUMENT is loaded.
@@ -353,6 +353,20 @@ the malformed-normalization contract explicitly names its finite input corpus."
              (digest-details-consistent-p metadata)
              (validp (normalize-spec-form '(list-of digest-omission-data)) omissions)
              (not (null (member :captured-state (getf metadata :digest-exclusions))))))))
+  (defproperty rest-projection-agrees-with-target ((seed (range integer 0 1000)))
+    "CHECK-FUNCTION binds the whole remaining list exactly as an APPLY target receives it."
+    (:about cl-spec:check-function)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 10 :normal 50))
+    (let ((contract
+            (make-instance 'cl-spec:function-spec :name 'list
+                           :argument-specs '(&rest (tail (list-of integer)))
+                           :return-spec 'list
+                           :postconditions '((equal result tail))
+                           :postcondition-function (lambda (result tail) (equal result tail)))))
+      (eq :passed
+          (cl-spec:property-result-status
+           (cl-spec:check-function contract :trials 5 :seed seed)))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

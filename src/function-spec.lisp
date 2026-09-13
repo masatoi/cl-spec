@@ -104,7 +104,8 @@
                    :reader function-spec-argument-specs
                    :documentation "Required (PARAMETER SPEC) pairs followed optionally by
 &OPTIONAL (PARAMETER SPEC [SUPPLIED-P]) and &KEY ((:KEY PARAMETER) SPEC [SUPPLIED-P])
-declarations, with a terminal &ALLOW-OTHER-KEYS when permitted. SPEC is normalized
+declarations. &REST (PARAMETER WHOLE-LIST-SPEC) captures the raw remaining tail
+before &KEY. A terminal &ALLOW-OTHER-KEYS permits extra keys. SPEC is normalized
 to Semantic IR. Parameter and supplied-variable names are unique. Omitted values
 bind to NIL in predicates without evaluating target defaults.")
    (argument-generator :initarg :argument-generator

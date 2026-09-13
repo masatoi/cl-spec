@@ -11,6 +11,7 @@
   (:import-from #:cl-spec/src/call-schema
                 #:call-layout-bindings #:bind-call-arguments #:bound-call-values
                 #:call-layout-accepts-p #:call-layout-required-count #:call-layout-key-p
+                #:call-layout-rest-binding
                 #:bound-call-presence #:bound-call-bindings
                 #:argument-binding-kind #:argument-binding-keyword
                 #:argument-binding-spec #:argument-binding-name
@@ -157,7 +158,7 @@ return or postcondition check."))
         (unless (call-layout-accepts-p layout values)
           (contract-failure
            name :input :arity argument-schema values
-           (if (call-layout-key-p layout)
+           (if (or (call-layout-key-p layout) (call-layout-rest-binding layout))
                (funcall shape-explainer values '(:args))
                (list (error-datum :wrong-length '(:args) values
                                   :expected (expected-descriptor argument-schema)
