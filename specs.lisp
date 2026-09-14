@@ -37,7 +37,7 @@
 (defun draw-form ()
   "Draw a finite DSL example spanning scalar and composite specs."
   (let ((bound (1+ (random 20))))
-    (case (random 17)
+    (case (random 18)
       (0 'integer) (1 'string) (2 `(range integer ,(- bound) ,bound))
       (3 `(and integer (range ,(- bound) ,bound)))
       (4 '(or integer string)) (5 '(not integer))
@@ -52,7 +52,10 @@
       (14 '(alist (:test equal) (:required (:id integer)) (:closed t)))
       (15 '(hash-table (:test eql) (:required (:id integer))
                        (:optional (:nickname (nullable string)))))
-      (16 '(object-of self-object-sample (:required (self-object-sample-id integer)))))))
+      (16 '(object-of self-object-sample (:required (self-object-sample-id integer))))
+      (17 '(tagged-by :kind
+             (:left (plist (:required (:kind (member :left)) (:value integer)) (:closed t)))
+             (:right (plist (:required (:kind (member :right)) (:value string)) (:closed t))))))))
 
 (defparameter *sampled-dsl-forms*
   (append '(integer string (or integer string) (not integer) (nullable integer)
@@ -65,7 +68,10 @@
             (alist (:test equal) (:required (:id integer)) (:closed t))
             (hash-table (:test eql) (:required (:id integer))
                         (:optional (:nickname (nullable string))))
-            (object-of self-object-sample (:required (self-object-sample-id integer))))
+            (object-of self-object-sample (:required (self-object-sample-id integer)))
+            (tagged-by :kind
+              (:left (plist (:required (:kind (member :left)) (:value integer)) (:closed t)))
+              (:right (plist (:required (:kind (member :right)) (:value string)) (:closed t)))))
           (loop for bound from 1 to 20
                 append (list `(range integer ,(- bound) ,bound)
                              `(and integer (range ,(- bound) ,bound)))))

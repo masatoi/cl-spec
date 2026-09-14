@@ -16,6 +16,8 @@
                 #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
                 #:make-field-definition #:reader-designator-p
                 #:key-test-designator #:key-test-designator-p #:key-test-function)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:make-branch-definition)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
@@ -25,7 +27,7 @@
 (defparameter *spec-primitives*
   '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
     "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "ALIST" "HASH-TABLE"
-    "OBJECT-OF"
+    "OBJECT-OF" "TAGGED-BY"
     "INSTANCE-OF")
   "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
 
@@ -176,6 +178,41 @@ Clauses and entries are collected first and the key test applied last, so a
                      (when class-name (list :class-name class-name))
                      (spec-initargs form name source-location generator))))))
 
+(defun normalize-tagged-union (args form name source-location generator)
+  "Normalize (TAGGED-BY TAG-READER (NAME SPEC) ...) into a TAGGED-UNION-SPEC.
+
+The branch NAME is both the label reported in diagnostics and the EQL tag value
+the reader is matched against, so the two can never drift apart."
+  (let ((tag-reader (first args))
+        (clauses (rest args)))
+    (unless (and tag-reader (symbolp tag-reader))
+      (error 'invalid-spec-form
+             :form form
+             :reason "TAGGED-BY takes a keyword tag key or a reader symbol"))
+    (when (null clauses)
+      (error 'invalid-spec-form :form form
+                                :reason "TAGGED-BY needs at least one (NAME SPEC) branch"))
+    (let ((branches nil)
+          (seen nil))
+      (dolist (clause clauses)
+        (unless (and (finite-list-p clause) (= 2 (length clause))
+                     (symbolp (first clause)) (first clause))
+          (error 'invalid-spec-form
+                 :form form
+                 :reason "TAGGED-BY branches are (NAME SPEC) pairs with a non-NIL symbol name"))
+        (when (member (first clause) seen)
+          (error 'invalid-spec-form :form form
+                                    :reason "TAGGED-BY branch names must be unique"))
+        (push (first clause) seen)
+        (push (make-branch-definition
+               :name (first clause)
+               :spec (normalize-spec-form (second clause)))
+              branches))
+      (apply #'make-instance 'tagged-union-spec
+             :tag-reader tag-reader
+             :branches (nreverse branches)
+             (spec-initargs form name source-location generator)))))
+
 (defun normalize-collection-options (options form)
   "Return (values MIN-LENGTH MAX-LENGTH UNIQUE) for a collection's OPTIONS.
 
@@ -267,6 +304,8 @@ other compound heads do."
                                  '(:required :optional)
                                  "object fields must be (READER SPEC) pairs naming a reader"
                                  class-name)))
+        ((string= head-name "TAGGED-BY")
+         (normalize-tagged-union args form name source-location generator))
         ((string= head-name "TYPE")
          (apply #'make-instance 'type-spec
                 :type-specifier (first (require-arity args 1 form))

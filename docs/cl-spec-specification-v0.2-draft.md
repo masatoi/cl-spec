@@ -664,6 +664,7 @@ plist
 alist
 hash-table
 object-of
+tagged-by
 instance-of
 
 ```
@@ -915,6 +916,58 @@ readerは観測だけを行い、instanceの構築方法は持たない。した
 `:generation :unavailable`となる。instanceを生成したい場合は定義に
 `(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
 constructorとinitargを知るのは著者だけだからである。縮小も同じgenerator/shrinkerに従う。
+
+---
+
+# 9.5 タグ付きunion（dispatch付きunion）
+
+実装済みの記法：
+
+```lisp
+(defspec target-outcome-data
+  (tagged-by :kind
+    (:returned (plist (:required (:kind (member :returned)) (:values (list-of t)))
+                      (:closed t)))
+    (:signaled (plist (:required (:kind (member :signaled))
+                                 (:condition-type t)
+                                 (:condition-report (nullable string)))
+                      (:closed t)))))
+```
+
+`tagged-by`はtag readerを1つ取り、続けて`(NAME SPEC)`のbranchを取る。
+`NAME`は非NILのsymbolで、診断に返す分岐名であると同時に、readerが返したtagと
+EQLで照合する値でもある。branch名とtag値がずれない。branch名は一意でなければならず、
+branchは1つ以上必要である。SPECは通常のspec formで、子IRとして宣言順に並ぶ。
+
+tag readerは、keywordなら値のplist entryを`getf`で読む。それ以外のsymbol/関数は
+object readerと同じく一引数readerとして値に適用する。tag readerが
+`unbound-slot`以外のconditionを通知した場合は`:reader-errored`とし、
+`undefined-function`・`program-error`は著者の誤りとして伝播させる（§9.4と同じ規則）。
+
+意味論は「tagで分岐を選び、その分岐だけを検証する」である。tagがbranch名と一致すれば
+そのbranchのSPECだけを検証し、返るエラーには`:branch NAME`を付ける。どのbranchにも
+一致しなければ`:no-branch`とし、`:observed-tag`と`:known-tags`を持つ。`or`が
+全branchのエラーを`:no-branch-matched`に並べるのに対し、tag付きunionは該当branchに
+エラーを絞り、分岐名を機械可読に返す。表現力を増やすのではなく、`or`+`plist`で
+書ける仕様を機械が扱いやすくする拡張である。
+
+branch SPECは値全体を記述する。tagはunionが読み取るだけで注入しないため、
+`:closed t`のplist branchでは`:kind`フィールドも宣言する。branch SPECがtagを
+含まない場合、その値はunionの検証に失敗しうる（生成値も同じ）。
+
+`spec-data`は`:tag-reader`と`:branches`（`(:name NAME :child-index INDEX)`）を返す。
+digestはtag readerとbranch名の並びを含み、branch SPECは子IRとして覆われる。
+expected descriptorは`:kind :tagged-union`・`:tag-reader`・`:branches`を持ち、
+各branchが`:name`と子の`:expected`を持つ。
+
+生成は全branchを`or-generator`で覆い、どのbranchも到達可能にする。加えて
+`sample`は`:branch NAME`を受け取り、そのbranchだけを抽選する。
+`tagged-union-branch`はbranch SPECを返し、`spec-data`と合わせてLLMが分岐を
+選んで生成・検査できる。branch名が不正な場合は既知branchを添えて拒否する。
+
+failure identityは`:branch`と`:known-tags`をspec由来のkeyとして保持し、
+`:observed-tag`は入力由来なので保持しない。同じbranchの同じ違反は一致し、
+別branchの違反やno-branchとは区別される。
 
 ---
 
@@ -4297,8 +4350,8 @@ A〜Cの意味論と結果protocolが固まってから追加する。
 フィールド仕様も実装済みで、`:test`によるキー比較、キー欠落とNIL値の区別、
 alistの重複キー拒否を意味論として固定した（§9.3）。構造体・CLOSのフィールド仕様は
 明示readerで観測する`object-of`として実装済み（§9.4）で、生成は
-`(:generator NAME)`に委ねる。タグ付きunionは、field-specと
-`definition-constraints`を土台にした次の拡張である。
+`(:generator NAME)`に委ねる。タグ付きunionは`tagged-by`として実装済み（§9.5）で、
+tag readerで分岐を選び、該当branchだけを検証して分岐名を返す。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 

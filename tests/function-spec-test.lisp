@@ -1411,7 +1411,7 @@ macro expansions would need the lint exemption that file carries."
           (kept (append cl-spec/src/function-spec::*failure-shape-keys*
                         cl-spec/src/function-spec::*failure-shape-containers*))
           (value-derived '(:actual :actual-length :path :condition-report :key
-                           :actual-test)))
+                           :actual-test :observed-tag)))
       (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
                       (satisfies demo-noisy-predicate) (list-of integer)
                       (vector-of integer) (tuple integer string) (not integer)
@@ -1424,7 +1424,12 @@ macro expansions would need the lint exemption that file carries."
                       (alist (:required (:a (alist (:required (:b integer))))))
                       (hash-table (:test equal) (:required (:a integer))
                                   (:optional (:b string)) (:closed t))
-                      (hash-table (:required (:a (hash-table (:required (:b integer))))))))
+                      (hash-table (:required (:a (hash-table (:required (:b integer))))))
+                      (tagged-by :kind
+                        (:left (plist (:required (:kind (member :left)) (:value integer))
+                                      (:closed t)))
+                        (:right (plist (:required (:kind (member :right)) (:value string))
+                                       (:closed t))))))
         (let ((spec (normalize-spec-form form)))
           (dolist (value (list 1 -1 3.5 "s" nil #\a '(1 "a") '(1) #(1) '(:a 1)
                               '(:a "bad") '(:a 1 :a 2) '(:a 1 :extra nil)
@@ -1432,6 +1437,8 @@ macro expansions would need the lint exemption that file carries."
                               '((:a . 1)) '((:a . "bad")) '((:a . 1) (:a . 2))
                               '((:a . 1) (:extra . nil)) '((:a . (:b . "bad")))
                               '((:a . 1) . 2) '((:a . 1) :atom)
+                              '(:kind :left :value "bad") '(:kind :right :value 1)
+                              '(:kind :other :value 1)
                               (make-hash-table :test 'eql)
                               (hash-table-with 'eql '((:a . 1)))
                               (hash-table-with 'eql '((:a . "bad")))

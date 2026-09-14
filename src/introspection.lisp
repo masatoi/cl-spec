@@ -15,6 +15,8 @@
   (:import-from #:cl-spec/src/field-spec
                 #:field-spec #:keyed-field-spec #:object-spec #:object-spec-class-name
                 #:field-spec-closed-p #:field-key-test #:field-descriptions)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:tagged-union-tag-reader #:branch-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
@@ -146,6 +148,11 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec object-spec))
   (list* :class-name (object-spec-class-name spec) (call-next-method)))
+
+(defmethod node-attributes ((spec tagged-union-spec))
+  (list* :tag-reader (tagged-union-tag-reader spec)
+         :branches (branch-descriptions spec)
+         (call-next-method)))
 
 (defun spec->data (spec &optional (registry *registry*) envelope-p)
   "Return the SPEC-DATA plist for one IR node, recursing into its children.

@@ -53,6 +53,9 @@
                 #:key-test-name
                 #:plist-structure-error
                 #:alist-structure-error #:hash-table-structure-error)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:tagged-union-tag-reader #:tagged-union-branches
+                #:branch-name #:branch-spec #:read-tag-value)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -80,8 +83,9 @@ running from the root value down to the failing part."
 
 (defparameter +field-structure-error-kinds+
   '(:not-a-plist :not-an-alist :not-a-hash-table :bad-association
-    :duplicate-key :missing-key :unknown-key :wrong-key-test :unbound-slot)
-  "EXPLAIN-DATA kinds a field record's own structure check produces.
+    :duplicate-key :missing-key :unknown-key :wrong-key-test :unbound-slot
+    :no-branch)
+  "EXPLAIN-DATA kinds a composite node's own structure check produces.
 
 These stay visible inside a conjunction instead of collapsing into one
 checklist line, because each names a different malformed position.")
@@ -157,6 +161,13 @@ this generic; the default only identifies the node kind."))
 (defmethod expected-descriptor ((spec object-spec))
   (list :kind :object :class (object-spec-class-name spec)
         :fields (field-expectation-descriptors spec)))
+
+(defmethod expected-descriptor ((spec tagged-union-spec))
+  (list :kind :tagged-union
+        :tag-reader (tagged-union-tag-reader spec)
+        :branches (loop for branch in (tagged-union-branches spec)
+                        collect (list :name (branch-name branch)
+                                      :expected (expected-descriptor (branch-spec branch))))))
 
 (defgeneric compile-node (spec context)
   (:documentation "Compile SPEC into a function of (VALUE PATH).
@@ -560,6 +571,46 @@ reader rather than a bad value and propagate to the author."
                         key))
                       (t nil)))))))))
 
+(defun read-union-tag (value designator)
+  "Return (values OK TAG CONDITION) reading VALUE's tag through DESIGNATOR.
+
+OK is NIL when the reader signalled; CONDITION then describes it.  A tag that
+cannot be read is a fact about the value, so it is reported as :READER-ERRORED
+rather than treated as an absent tag."
+  (handler-case
+      (values t (read-tag-value value designator) nil)
+    ((and error (not (or undefined-function program-error))) (condition)
+      (values nil nil condition))))
+
+(defun branch-errors (errors name)
+  "Return ERRORS with the matched branch NAME attached to each top-level datum.
+
+Only top-level datums are tagged: a nested :ERRORS list already belongs to the
+same branch, and :BRANCH is what lets a reader see which alternative was chosen."
+  (loop for datum in errors
+        collect (let ((copy (copy-list datum)))
+                  (setf (getf copy :branch) name)
+                  copy)))
+
+(defmethod compile-node ((spec tagged-union-spec) context)
+  (let* ((designator (tagged-union-tag-reader spec))
+         (branches (tagged-union-branches spec))
+         (compiled (mapcar (lambda (branch) (compile-node (branch-spec branch) context))
+                           branches))
+         (tags (mapcar #'branch-name branches))
+         (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (multiple-value-bind (ok tag condition) (read-union-tag value designator)
+        (if (not ok)
+            (list (error-datum :reader-errored path value :expected expected
+                               :condition-type (type-of condition)
+                               :condition-report (princ-to-string condition)))
+            (let ((index (position tag tags :test #'eql)))
+              (if index
+                  (branch-errors (funcall (nth index compiled) value path) (nth index tags))
+                  (list (error-datum :no-branch path value :expected expected
+                                     :observed-tag tag :known-tags tags)))))))))
+
 (defun compile-explainer (spec &key context)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
@@ -619,6 +670,9 @@ descriptor, which is why the common cases are unwrapped here."
                (:unbound-slot "unbound field"))
              (getf datum :path)
              (format-expected (getf datum :expected))))
+    (:no-branch
+     (format stream "~vT✗ no branch for tag ~S; known tags ~S~%"
+             indent (getf datum :observed-tag) (getf datum :known-tags)))
     (:conjunct-failed
      (dolist (conjunct (getf datum :conjuncts))
        (format stream "~vT~A ~A~%"

@@ -26,6 +26,8 @@
                 #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
                 #:field-spec-fields #:field-key-test #:key-test-name
                 #:field-key #:field-value-spec #:field-required-p)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:tagged-union-branches #:branch-spec)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable)
   (:import-from #:cl-spec/src/ir
@@ -317,6 +319,20 @@ because only its author knows the constructor and its initargs."
          :spec spec
          :reason "an OBJECT-OF spec is observed through readers and cannot be constructed; ~
                   declare a (:GENERATOR NAME) to draw instances"))
+
+(defmethod spec-generator ((spec tagged-union-spec) context)
+  "Draw from every branch through an OR, so each branch a tag selects is reachable.
+A branch spec must produce a value whose tag reads as the branch name; the union
+does not inject the tag, because it does not know the branch representation."
+  (let ((branches (tagged-union-branches spec)))
+    (when (null branches)
+      (error 'generator-unavailable :spec spec :reason "an empty tagged union admits nothing"))
+    (let ((generators (mapcar (lambda (branch) (spec-generator (branch-spec branch) context))
+                              branches)))
+      ;; A single branch needs no weighted choice, matching OR's handling.
+      (if (null (rest generators))
+          (first generators)
+          (make-instance 'or-generator :sub-generators generators)))))
 
 (defun custom-spec-generator (name spec context)
   "Return a generator drawing from the custom generator NAME names.

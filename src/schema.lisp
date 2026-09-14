@@ -10,6 +10,9 @@
                 #:plist-spec #:keyed-field-spec #:alist-spec #:hash-table-spec
                 #:object-spec #:object-spec-class-name
                 #:field-spec #:field-spec-closed-p #:field-key-test #:field-descriptions)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:tagged-union-tag-reader #:tagged-union-branches
+                #:branch-name)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
   (:import-from #:cl-spec/src/ir
                 #:spec #:spec-name #:spec-description #:spec-kind #:spec-source-form #:spec-metadata
@@ -115,6 +118,10 @@ now complete; until it does, its digest stays incomplete rather than trusted."))
 (defmethod definition-constraints ((definition object-spec))
   (list* :class (object-spec-class-name definition) (call-next-method)))
 
+(defmethod definition-constraints ((definition tagged-union-spec))
+  (list :tag-reader (tagged-union-tag-reader definition)
+        :branches (mapcar #'branch-name (tagged-union-branches definition))))
+
 (defmethod definition-constraints ((definition type-spec))
   (list :type (type-spec-type-specifier definition)))
 
@@ -165,7 +172,7 @@ unknown subclass yields an incomplete digest rather than a trusted partial one."
                        instance-of-spec and-spec or-spec not-spec nullable-spec
                        list-of-spec vector-of-spec tuple-spec
                        field-spec plist-spec keyed-field-spec alist-spec hash-table-spec
-                       object-spec
+                       object-spec tagged-union-spec
                        call-arguments-spec return-values-spec)))))
 
 (defmethod definition-description-complete-p ((definition property))

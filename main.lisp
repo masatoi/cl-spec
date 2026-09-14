@@ -211,6 +211,8 @@
                 #:custom-generator-source-form
                 #:custom-generator-source-location
                 #:register-generator)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-branch)
   (:import-from #:cl-spec/src/introspection
                 #:describe-spec
                 #:describe-property
@@ -416,6 +418,7 @@
            #:describe-spec
            #:describe-property
            #:spec-data
+           #:tagged-union-branch
            #:property-data
            #:function-spec-data
            #:semantic-data
