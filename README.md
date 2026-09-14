@@ -41,7 +41,7 @@ backend into `cl-spec:*generator-backend*`.
 ## cl-spec's own executable specifications
 
 Load the optional specification bundle to register contracts for twenty-seven
-public functions and twenty-one semantic Properties. The definitions live in
+public functions and twenty-four semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
 
@@ -75,7 +75,10 @@ finite malformed-DSL corpus, and malformed surface declarations are refused at
 macroexpansion. Properties check the relations between validation and
 explanation (structured, compiled and rendered), registry round trips and reverse
 indexes, collection and plist semantics, runner seed replay, artifact round trips
-and failure-identity reflexivity. Loading `cl-spec/instrument` and calling
+and failure-identity reflexivity. Two laws run the generators themselves over a
+small built-in spec corpus: every generated value must satisfy its own spec, and
+every retained shrunk counterexample must be a schema-valid input that still
+fails identically when rechecked. Loading `cl-spec/instrument` and calling
 `cl-spec/specs:register-instrumentation-specifications` adds the optional
 instrumentation contracts and two install/uninstall laws. Generators exercise a
 finite scalar/composite DSL subset, including `MEMBER`, `VECTOR-OF` and `PLIST`;
@@ -248,6 +251,43 @@ Cross-field constraints use ordinary `and` / `satisfies`. Their automatic
 generation retains the existing AND limitations below. Field metadata is
 independent of storage format; alist and hash-table DSLs are not implemented yet.
 
+## Collection length and uniqueness
+
+`list-of` and `vector-of` accept length and uniqueness options:
+
+```lisp
+(cl-spec:defspec small-batch
+  (list-of integer :min-length 1 :max-length 100))
+
+(cl-spec:defspec distinct-ids
+  (vector-of (range integer 0 1000) :min-length 2 :unique t))
+```
+
+`:min-length` defaults to 0, `:max-length` defaults to unbounded and accepts `*`
+as the unbounded marker, and `:unique` defaults to NIL. `:unique` compares
+elements with `EQL`. Length violations explain as `:too-short` / `:too-long`
+with `:minimum-length` / `:maximum-length` and `:actual-length`; a repeat
+explains as `:duplicate-element` at the later element's `:path`, with
+`:first-index` naming the earlier occurrence.
+
+The constraints reach generation and shrinking: lengths are drawn inside the
+declared range, and a shrink never removes past `:min-length`. `:unique`
+generation draws distinct elements from a finite element domain. A finite
+integer `range` is sampled directly, so any width works and does not widen the
+generated collection length; fractional endpoints admit the integers between
+them, as validation reads them; `member`,
+`boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
+1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
+element spec with no finite enumeration, or one whose custom generator owns its
+distribution — including a custom generator nested inside a `nullable` or `or`
+node — signals `generator-unavailable` rather than retrying collisions
+forever. A collection whose `:max-length` is 0 generates
+the empty collection without compiling its element spec, and so does a `:unique`
+collection whose finite element domain is empty when `:min-length` is 0. Element-wise shrinking
+replaces an element only with a value the element shrinker reported through the
+shrink callback, so a value that passes the property or fails the element spec
+never becomes part of the recorded counterexample.
+
 ## Generate related arguments together
 
 Use `:args-generator` when independently generated arguments would mostly be
@@ -402,11 +442,26 @@ An `&key` section may follow the rest declaration. Both see the same tail,
 including duplicate keys and control pairs: the whole-list rest spec and the
 keyword rules must both hold. Without `&key`, generation uses the whole-list rest
 spec's generator. With `&key`, an exact, unannotated `(list-of t)` rest spec uses
-keyword generation. Other rest specs use their own generator and try up to 100
-candidate calls against the complete argument schema; exhaustion signals
+keyword generation, and a length-constrained universal one — `(list-of t
+:min-length N [:max-length M])` — is filled with keyword pairs whose total length
+stays inside those bounds; a minimum longer than the distinct keyword count reuses
+declared keywords, which a raw call allows because the first occurrence binds, and
+an empty `&key` section is filled with the standard `:allow-other-keys` control
+pair rather than signalling that no keyword can be generated. A rest spec
+registered under a name is classified like the same spec written inline —
+reference chains are followed — while a name annotated with a custom generator
+keeps that generator instead of the keyword shortcut. Every pair —
+declared or control — is drawn through the backend's one generator protocol, so a
+keyword whose value spec compiles to a constant receives that constant: `null`,
+`(member nil)` and a reference to either generate `NIL`, never `T`.
+Other rest specs use their own generator and try up to
+100 candidate calls against the complete argument schema; exhaustion signals
 `generator-unavailable`. Custom generator annotations do not bypass this check.
 Rejected generated candidates never reach the target. Shrinking also checks both
-constraints before execution. Raw calls must remain finite proper lists. Introspection marks the parameter `:kind :rest`; rest declaration changes
+constraints before execution, and removes a keyword pair — including the
+`:allow-other-keys` control pair — only while the call still satisfies the whole
+argument schema, so the advertised shrinking capability matches what shrinking
+can actually propose. Raw calls must remain finite proper lists. Introspection marks the parameter `:kind :rest`; rest declaration changes
 participate in the definition digest.
 
 ### Shrinking correlated arguments

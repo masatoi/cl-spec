@@ -49,6 +49,7 @@
   (:import-from #:cl-spec/tests/resolve-test)
   (:import-from #:cl-spec/tests/normalize-test)
   (:import-from #:cl-spec/tests/plist-test)
+  (:import-from #:cl-spec/tests/collection-constraints-test)
   (:import-from #:cl-spec/tests/validator-test)
   (:import-from #:cl-spec/tests/explain-test)
   (:import-from #:cl-spec/tests/generator-test)

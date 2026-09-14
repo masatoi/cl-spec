@@ -19,6 +19,7 @@
                 #:range-spec #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum
                 #:instance-of-spec #:instance-of-spec-class-name
                 #:and-spec #:or-spec #:not-spec #:nullable-spec
+                #:bounded-collection-spec #:collection-constraint-plist
                 #:list-of-spec #:vector-of-spec #:tuple-spec)
   (:import-from #:cl-spec/src/property
                 #:property #:property-name #:property-arguments #:property-source-form
@@ -32,6 +33,7 @@
   (:export #:schema-info #:definition-digest #:definition-metadata #:definition-graph
            #:definition-description #:definition-entity-kind #:definition-generation-schema
            #:resolve-definition #:definition-shrink-enabled-p
+           #:definition-constraints #:definition-description-complete-p
            #:definition-instrumentation-capability))
 
 (in-package #:cl-spec/src/schema)
@@ -81,6 +83,54 @@
 
 (defmethod definition-entity-kind ((definition property)) :property)
 
+(defgeneric definition-constraints (definition)
+  (:documentation "Return the node-specific attribute plist that enters a declaration digest.
+
+DEFINITION-DESCRIPTION places the result under :FIELDS.  A new SPEC subclass
+extends the digest by adding a method here rather than editing
+DEFINITION-DESCRIPTION; because the result is digest input, changing a method
+changes every digest that covers the node.  A subclass that adds fields must
+also add a DEFINITION-DESCRIPTION-COMPLETE-P method saying the description is
+now complete; until it does, its digest stays incomplete rather than trusted."))
+
+(defmethod definition-constraints ((definition t))
+  (declare (ignore definition))
+  nil)
+
+(defmethod definition-constraints ((definition call-arguments-spec))
+  (let* ((layout (call-arguments-spec-layout definition))
+         (policy (call-layout-policy-data layout)))
+    ;; V1 hashes a policy record after the bindings.  Introspection flattens
+    ;; the same policy into its public display plist.
+    (append (call-layout-data layout) (when policy (list policy)))))
+
+(defmethod definition-constraints ((definition field-spec))
+  (list :closed (field-spec-closed-p definition)
+        :fields (field-descriptions definition)))
+
+(defmethod definition-constraints ((definition type-spec))
+  (list :type (type-spec-type-specifier definition)))
+
+(defmethod definition-constraints ((definition reference-spec))
+  (list :target (reference-spec-target definition)))
+
+(defmethod definition-constraints ((definition predicate-spec))
+  (list :predicate (predicate-spec-predicate definition)))
+
+(defmethod definition-constraints ((definition member-spec))
+  (list :values (member-spec-values definition)))
+
+(defmethod definition-constraints ((definition range-spec))
+  (list :base (range-spec-base-type definition)
+        :minimum (range-spec-minimum definition)
+        :maximum (range-spec-maximum definition)))
+
+(defmethod definition-constraints ((definition instance-of-spec))
+  (list :class (instance-of-spec-class-name definition)))
+
+(defmethod definition-constraints ((definition bounded-collection-spec))
+  (collection-constraint-plist definition))
+
 (defgeneric definition-description (definition)
   (:documentation "Return values: declaration data, ordered child definitions,
 registry links as (KIND . NAME) pairs, and whether the stored description is complete.
@@ -90,40 +140,46 @@ Do not invoke user code. Source locations and capabilities are excluded."))
   (declare (ignore definition))
   (values nil nil nil nil))
 
+(defgeneric definition-description-complete-p (definition)
+  (:documentation "Return true when DEFINITION's class is fully described by DEFINITION-DESCRIPTION.
+
+This is the completeness half of the extension point DEFINITION-CONSTRAINTS opens:
+a new SPEC subclass adds a DEFINITION-CONSTRAINTS method for its fields and a
+method here saying those fields are all of them.  The default is NIL, so an
+unknown subclass yields an incomplete digest rather than a trusted partial one."))
+
+(defmethod definition-description-complete-p ((definition t))
+  (declare (ignore definition))
+  nil)
+
+(defmethod definition-description-complete-p ((definition spec))
+  (not (null (member (class-name (class-of definition))
+                     '(type-spec reference-spec predicate-spec member-spec range-spec
+                       instance-of-spec and-spec or-spec not-spec nullable-spec
+                       list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec
+                       return-values-spec)))))
+
+(defmethod definition-description-complete-p ((definition property))
+  (and (eq (class-name (class-of definition)) 'property)
+       (not (null (property-source-form definition)))))
+
+(defmethod definition-description-complete-p ((definition custom-generator))
+  (and (eq (class-name (class-of definition)) 'custom-generator)
+       (not (null (custom-generator-source-form definition)))))
+
 (defmethod definition-description ((definition spec))
   (values
    (list :entity-kind :spec :name (spec-name definition) :kind (spec-kind definition)
          :description (spec-description definition)
          :source (spec-source-form definition) :metadata (spec-metadata definition)
          :generator (spec-generator-name definition)
-         :fields
-         (typecase definition
-            (call-arguments-spec
-             (let* ((layout (call-arguments-spec-layout definition))
-                    (policy (call-layout-policy-data layout)))
-               ;; V1 hashes a policy record after the bindings. Introspection
-               ;; flattens the same policy into its public display plist.
-               (append (call-layout-data layout) (when policy (list policy)))))
-            (field-spec (list :closed (field-spec-closed-p definition)
-                              :fields (field-descriptions definition)))
-           (type-spec (list :type (type-spec-type-specifier definition)))
-           (reference-spec (list :target (reference-spec-target definition)))
-           (predicate-spec (list :predicate (predicate-spec-predicate definition)))
-           (member-spec (list :values (member-spec-values definition)))
-           (range-spec (list :base (range-spec-base-type definition)
-                             :minimum (range-spec-minimum definition)
-                             :maximum (range-spec-maximum definition)))
-           (instance-of-spec (list :class (instance-of-spec-class-name definition)))))
+         :fields (definition-constraints definition))
    (spec-children definition)
    (append (when (typep definition 'reference-spec)
              (list (cons :spec (reference-spec-target definition))))
            (when (spec-generator-name definition)
              (list (cons :generator (spec-generator-name definition)))))
-   (not (null (member (class-name (class-of definition))
-                       '(type-spec reference-spec predicate-spec member-spec range-spec
-                         instance-of-spec and-spec or-spec not-spec nullable-spec
-                         list-of-spec vector-of-spec tuple-spec plist-spec call-arguments-spec
-                          return-values-spec))))))
+   (definition-description-complete-p definition)))
 
 (defmethod definition-description ((definition property))
   (values
@@ -134,16 +190,14 @@ Do not invoke user code. Source locations and capabilities are excluded."))
          :kind (property-kind definition) :targets (property-targets definition)
          :trials (property-trials definition) :metadata (property-metadata definition))
    (list (property-argument-schema definition)) nil
-   (and (eq (class-name (class-of definition)) 'property)
-         (not (null (property-source-form definition))))))
+   (definition-description-complete-p definition)))
 
 (defmethod definition-description ((definition custom-generator))
   (values (append (list :entity-kind :generator :name (custom-generator-name definition)
                         :documentation (custom-generator-documentation definition)
                         :source (custom-generator-source-form definition))
                   (when (custom-generator-shrinker definition) (list :shrinker t)))
-          nil nil (and (eq (class-name (class-of definition)) 'custom-generator)
-                        (not (null (custom-generator-source-form definition))))))
+          nil nil (definition-description-complete-p definition)))
 
 (defgeneric definition-generation-schema (definition)
   (:documentation "Return the schema used to generate this definition's inputs or values."))

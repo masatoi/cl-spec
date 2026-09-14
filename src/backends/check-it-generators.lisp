@@ -11,6 +11,7 @@
                 #:generator
                 #:generate
                 #:shrink
+                #:*size*
                 #:cached-value
                 #:int-generator
                 #:real-generator
@@ -46,6 +47,9 @@
                 #:tuple-spec
                 #:tuple-spec-element-specs
                 #:collection-spec-element-spec
+                #:collection-spec-min-length
+                #:collection-spec-max-length
+                #:collection-spec-unique-p
                 #:list-of-spec
                 #:vector-of-spec
                 #:reference-spec
@@ -62,6 +66,10 @@
                 #:compile-validator)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
+           #:bounded-collection-generator #:bounded-generator-min-length
+           #:bounded-generator-max-length #:bounded-generator-enumerated
+           #:bounded-generator-distinct-range #:bounded-generator-domain-size
+           #:bounded-generator-element-probe
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -326,30 +334,432 @@ shifted width or half the declared range goes unreachable."
                  :sub-generators (mapcar (lambda (child) (spec-generator child context))
                                          (tuple-spec-element-specs spec))))
 
+(defun collection-constrained-p (spec)
+  "Return true when SPEC declares a length or uniqueness constraint."
+  (or (plusp (collection-spec-min-length spec))
+      (not (eq :unbounded (collection-spec-max-length spec)))
+      (collection-spec-unique-p spec)))
+
+(defparameter *enumeration-limit* 1000
+  "Largest finite element domain ENUMERABLE-VALUES materializes for UNIQUE.")
+
+(defun integer-range-bounds (spec)
+  "Return (VALUES MINIMUM MAXIMUM) for an integer RANGE-SPEC, or NIL.
+
+Fractional finite endpoints are read the way validation reads them: the admitted
+values are the integers between the endpoints, so the minimum rounds up and the
+maximum rounds down.  A missing result means either that no integer lies in the
+interval (MINIMUM above MAXIMUM) or that a bound is not a finite number, which is
+why INTEGER-RANGE-P tells the two apart."
+  (let ((minimum (range-spec-minimum spec))
+        (maximum (range-spec-maximum spec)))
+    (when (and (eq (range-spec-base-type spec) 'integer)
+               (realp minimum) (realp maximum))
+      (let ((low (ceiling minimum))
+            (high (floor maximum)))
+        (when (<= low high)
+          (values low high))))))
+
+(defun integer-range-p (spec)
+  "Return true when SPEC is an integer range with finite real endpoints."
+  (and (eq (range-spec-base-type spec) 'integer)
+       (realp (range-spec-minimum spec))
+       (realp (range-spec-maximum spec))))
+
+(defgeneric enumerable-values (spec context)
+  (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
+
+VALUES is a finite list of the values SPEC admits and ENUMERABLE-P says whether
+that list is the whole domain -- so an empty domain is (VALUES NIL T) and stays
+distinguishable from a spec that cannot be enumerated at all.
+
+UNIQUE generation draws distinct elements from this list; a spec without a finite
+enumeration refuses UNIQUE rather than retrying collisions forever through
+check-it's guard generator, which recurses with no depth limit.")
+  (:method ((spec spec) context)
+    (declare (ignore context))
+    (values nil nil)))
+
+(defmethod enumerable-values ((spec member-spec) context)
+  (declare (ignore context))
+  (values (remove-duplicates (copy-list (member-spec-values spec)) :test #'eql) t))
+
+(defmethod enumerable-values ((spec type-spec) context)
+  (declare (ignore context))
+  (case (type-spec-type-specifier spec)
+    ((null) (values (list nil) t))
+    ((boolean) (values (list t nil) t))
+    (t (values nil nil))))
+
+(defmethod enumerable-values ((spec nullable-spec) context)
+  (multiple-value-bind (inner enumerable-p)
+      (enumerable-values (nullable-spec-inner-spec spec) context)
+    (if (not enumerable-p)
+        (values nil nil)
+        ;; ADJOIN rather than CONS: a boolean or member inner domain already holds
+        ;; NIL, and an EQL-duplicated domain would overstate the finite size and let
+        ;; UNIQUE draw a repeated NIL.
+        (values (adjoin nil (copy-list inner) :test #'eql) t))))
+
+(defmethod enumerable-values ((spec range-spec) context)
+  (declare (ignore context))
+  (when (integer-range-p spec)
+    (multiple-value-bind (low high) (integer-range-bounds spec)
+      (cond
+        ;; Fractions such as (range integer 0.5 0.9) admit no integer: that is an
+        ;; empty domain, not a domain that cannot be enumerated.
+        ((null low) (values nil t))
+        ((<= (- high low) *enumeration-limit*)
+         (values (loop for value from low to high collect value) t))
+        (t (values nil nil))))))
+
+(defmethod enumerable-values ((spec or-spec) context)
+  (let ((values nil))
+    (dolist (child (or-spec-children spec))
+      (multiple-value-bind (child-values child-p) (enumerable-values child context)
+        (unless child-p (return-from enumerable-values (values nil nil)))
+        (setf values (union values child-values :test #'eql))))
+    (values values t)))
+
+(defmethod enumerable-values ((spec reference-spec) context)
+  "Resolve a named spec so a finite domain reached by name stays enumerable.
+
+Without this, (list-of id :unique t) for (defspec id (member 1 2 3)) refused
+generation even though the target is one of the enumerable domains."
+  (let ((target (reference-spec-target spec))
+        (registry (context-registry context)))
+    (when (member target *reference-trail*)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "recursive specs have no finite element enumeration"))
+    (let ((resolved (resolve-spec target registry))
+          (*reference-trail* (cons target *reference-trail*)))
+      ;; A custom generator owns the distribution; enumerating the target's
+      ;; underlying node would silently replace it.
+      (unless (spec-generator-name resolved)
+        (enumerable-values resolved context)))))
+
+(defgeneric finite-integer-range (spec context)
+  (:documentation "Return (values MINIMUM MAXIMUM) when SPEC admits a finite integer interval.")
+  (:method ((spec spec) context)
+    (declare (ignore context))
+    nil))
+
+(defmethod finite-integer-range ((spec range-spec) context)
+  (declare (ignore context))
+  (multiple-value-bind (low high) (integer-range-bounds spec)
+    ;; An interval with no integer in it is left to ENUMERABLE-VALUES, which
+    ;; reports it as an empty domain rather than as no domain at all.
+    (when low (values low high))))
+
+(defmethod finite-integer-range ((spec reference-spec) context)
+  (let ((target (reference-spec-target spec))
+        (registry (context-registry context)))
+    (when (member target *reference-trail*)
+      (error 'generator-unavailable
+             :spec spec
+             :reason "recursive specs have no finite integer range"))
+    (let ((resolved (resolve-spec target registry))
+          (*reference-trail* (cons target *reference-trail*)))
+      (unless (spec-generator-name resolved)
+        (finite-integer-range resolved context)))))
+
+(defun shuffle-list (sequence)
+  "Return a fresh copy of SEQUENCE in random order (Fisher-Yates)."
+  (let ((copy (copy-seq (coerce sequence 'vector))))
+    (loop for index from (1- (length copy)) downto 1
+          for other = (random (1+ index))
+          do (rotatef (aref copy index) (aref copy other)))
+    (coerce copy 'list)))
+
+(defun sample-distinct-integers (minimum maximum count)
+  "Return COUNT distinct integers from the inclusive interval [MINIMUM, MAXIMUM].
+
+Partial Fisher-Yates over a sparse swap map: only COUNT entries are touched, so
+a range wider than *ENUMERATION-LIMIT* is sampled without materializing it, and
+each draw removes the chosen value from the remaining pool."
+  (let* ((width (1+ (- maximum minimum)))
+         (take (min count width))
+         (swaps (make-hash-table :test #'eql))
+         (result nil))
+    (loop for index from 0 below take
+          for candidate = (+ index (random (- width index)))
+          for chosen = (gethash candidate swaps candidate)
+          for current = (gethash index swaps index)
+          do (push (+ minimum chosen) result)
+             (setf (gethash index swaps) chosen
+                   (gethash candidate swaps) current))
+    result))
+
+(defun eql-duplicates-p (items)
+  "Return true when ITEMS contains two EQL values."
+  (let ((seen (make-hash-table :test #'eql)))
+    (loop for index from 0 below (length items)
+          for item = (elt items index)
+          when (nth-value 1 (gethash item seen)) return t
+          do (setf (gethash item seen) t)
+          finally (return nil))))
+
+(defclass bounded-collection-generator (generator)
+  ((element-generator :initarg :element-generator
+                      :reader bounded-generator-element-generator
+                      :documentation "Function of no arguments returning a
+fresh element generator.")
+   (element-validator :initarg :element-validator
+                      :reader bounded-generator-element-validator
+                      :documentation "Predicate each element must satisfy.")
+   (element-probe :initarg :element-probe
+                  :initform nil
+                  :reader bounded-generator-element-probe
+                  :documentation "Eagerly compiled element generator, kept only to
+report whether element-wise shrinking is possible.")
+   (min-length :initarg :min-length :reader bounded-generator-min-length)
+   (max-length :initarg :max-length :reader bounded-generator-max-length)
+   (unique-p :initarg :unique-p :reader bounded-generator-unique-p)
+   (vector-p :initarg :vector-p :reader bounded-generator-vector-p)
+   (enumerated :initarg :enumerated :initform nil :reader bounded-generator-enumerated
+               :documentation "Finite element domain as a vector when UNIQUE-P, else NIL.
+A present but empty vector means the domain is empty, which is different from
+having no finite domain at all.")
+   (distinct-range :initarg :distinct-range :initform nil
+                   :reader bounded-generator-distinct-range
+                   :documentation "Inclusive integer bounds when UNIQUE-P samples a range
+too wide to materialize, else NIL.")
+   (children :initform nil :accessor bounded-generator-children
+             :documentation "Element generators of the current draw, for element-wise shrinking."))
+  (:documentation "Generate a bounded, optionally UNIQUE collection and shrink within the range."))
+
+(defun bounded-candidate (generator list)
+  "Build a collection of GENERATOR's representation from LIST."
+  (if (bounded-generator-vector-p generator)
+      (coerce list 'vector)
+      list))
+
+(defun bounded-generator-domain-size (generator)
+  "Return the finite UNIQUE domain size of GENERATOR, or NIL when it draws elements.
+
+Generation truncates a requested length to this size, so capability reporting and
+removal shrinking both need it.  An empty enumerated domain is present, so it
+reports 0 rather than falling through to the element generators."
+  (let ((enumerated (bounded-generator-enumerated generator)))
+    (if enumerated
+        (length enumerated)
+        (let ((range (bounded-generator-distinct-range generator)))
+          (and range (1+ (- (cdr range) (car range))))))))
+
+(defmethod generate ((generator bounded-collection-generator))
+  (let* ((minimum (bounded-generator-min-length generator))
+         (maximum (bounded-generator-max-length generator))
+         (size (max check-it:*size* minimum))
+         (upper (if (eq maximum :unbounded) size (min maximum size)))
+         (count (if (>= upper minimum)
+                    (+ minimum (random (1+ (- upper minimum))))
+                    minimum))
+         (enumerated (bounded-generator-enumerated generator))
+         (distinct-range (bounded-generator-distinct-range generator)))
+    (cond
+      (distinct-range
+       (setf (bounded-generator-children generator) nil
+             (cached-value generator)
+             (bounded-candidate generator
+                                (sample-distinct-integers (car distinct-range)
+                                                          (cdr distinct-range)
+                                                          count))))
+      (enumerated
+       (let* ((pool (shuffle-list enumerated))
+              (items (subseq pool 0 (min count (length pool)))))
+         (setf (bounded-generator-children generator) nil
+               (cached-value generator) (bounded-candidate generator items))))
+      (t
+       (let ((children nil)
+             (items nil))
+         (loop repeat count
+               do (let ((child (funcall (bounded-generator-element-generator generator))))
+                    (push child children)
+                    (push (generate child) items)))
+         (setf (bounded-generator-children generator) (nreverse children)
+               (cached-value generator)
+               (bounded-candidate generator (nreverse items))))))))
+
+(defmethod shrink ((generator bounded-collection-generator) test)
+  "Shrink length-wise while MIN-LENGTH holds, then element-wise within the constraints."
+  (let ((minimum (bounded-generator-min-length generator))
+        (unique (bounded-generator-unique-p generator)))
+    (labels ((items () (cached-value generator))
+             (build (list) (bounded-candidate generator list))
+             (element-wise ()
+               (let ((validator (bounded-generator-element-validator generator)))
+                 (loop for index from 0 below (length (items))
+                       for child in (bounded-generator-children generator)
+                       when (typep child 'generator)
+                         do (shrink child
+                                    (lambda (value)
+                                      ;; Some check-it shrinkers return an untested
+                                      ;; transformed value.  Only a value the callback
+                                      ;; observed -- valid and still failing -- may
+                                      ;; replace this element.
+                                      (if (and validator (not (funcall validator value)))
+                                          t
+                                          (let ((candidate (copy-seq (items))))
+                                            (setf (elt candidate index) value)
+                                            (if (or (and unique (eql-duplicates-p candidate))
+                                                    (funcall test (build candidate)))
+                                                t
+                                                (progn
+                                                  (setf (elt (items) index) value)
+                                                  nil)))))))
+                 (items)))
+             (remove-wise ()
+               (loop for index from 0 below (length (items))
+                     when (> (length (items)) minimum)
+                       do (let* ((head (subseq (items) 0 index))
+                                 (tail (subseq (items) (1+ index)))
+                                 (shrunk (build (concatenate (if (bounded-generator-vector-p
+                                                                  generator)
+                                                                 'vector 'list)
+                                                             head tail))))
+                            (unless (funcall test shrunk)
+                              (setf (cached-value generator) shrunk)
+                              (let ((children (bounded-generator-children generator)))
+                                (when children
+                                  (setf (bounded-generator-children generator)
+                                        (append (subseq children 0 index)
+                                                (subseq children (1+ index))))))
+                              (return-from remove-wise t))))
+               nil))
+      (cond ((zerop (length (items))) (items))
+            ((and (> (length (items)) minimum) (remove-wise)) (shrink generator test))
+            (t (element-wise))))))
+
+(defun effective-generator-name (spec context)
+  "Return the custom generator SPEC names, following references and enumerable
+composites, or NIL.
+
+A custom generator owns how its values are drawn, so UNIQUE refuses a domain
+whose values it would otherwise have to enumerate instead.  The traversal mirrors
+ENUMERABLE-VALUES: a custom generator nested in a NULLABLE or OR node owns that
+node's distribution too, and enumerating the node's underlying member or boolean
+domain would silently replace it."
+  (or (spec-generator-name spec)
+      (typecase spec
+        (reference-spec
+         (let ((target (reference-spec-target spec)))
+           (unless (member target *reference-trail*)
+             (let ((*reference-trail* (cons target *reference-trail*)))
+               (effective-generator-name (resolve-spec target (context-registry context))
+                                         context)))))
+        (nullable-spec
+         (effective-generator-name (nullable-spec-inner-spec spec) context))
+        (or-spec
+         (some (lambda (child) (effective-generator-name child context))
+               (or-spec-children spec))))))
+
+(defun compile-collection-generator (spec context vector-p)
+  "Compile a generator for the bounded collection SPEC."
+  (let ((element (collection-spec-element-spec spec))
+        (minimum (collection-spec-min-length spec))
+        (maximum (collection-spec-max-length spec))
+        (unique (collection-spec-unique-p spec)))
+    (when (eql maximum 0)
+      ;; No element can be drawn, so the element spec need not compile or
+      ;; enumerate: the empty collection is the only admissible value.
+      (return-from compile-collection-generator
+        (make-instance 'bounded-collection-generator
+                       :element-generator (lambda () nil)
+                       :element-validator nil
+                       :element-probe nil
+                       :min-length 0
+                       :max-length 0
+                       :unique-p unique
+                       :vector-p vector-p
+                       :enumerated nil
+                       :distinct-range nil)))
+    (when (and unique (effective-generator-name element context))
+      (error 'generator-unavailable
+             :spec spec
+             :reason "UNIQUE cannot enumerate a spec whose custom generator owns its distribution"))
+    (let ((probe nil)
+          (enumerated nil)
+          (distinct-range nil))
+      (when unique
+        (multiple-value-bind (range-minimum range-maximum)
+            (finite-integer-range element context)
+          (if range-minimum
+              ;; A finite integer range samples without materializing, so its
+              ;; width is not capped by *ENUMERATION-LIMIT*.
+              (let ((width (1+ (- range-maximum range-minimum))))
+                (when (< width minimum)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
+                                         width minimum)))
+                (setf distinct-range (cons range-minimum range-maximum)))
+              (multiple-value-bind (values enumerable-p) (enumerable-values element context)
+                (unless enumerable-p
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason "UNIQUE needs a finite element domain to draw distinct values"))
+                (when (> (length values) *enumeration-limit*)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE domain has ~D values, more than the ~D ~
+                                              the enumeration limit allows"
+                                         (length values) *enumeration-limit*)))
+                (when (< (length values) minimum)
+                  (error 'generator-unavailable
+                         :spec spec
+                         :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
+                                         (length values) minimum)))
+                ;; A vector keeps an empty domain distinct from "no domain": the
+                ;; empty collection is then the one admissible value of a
+                ;; MIN-LENGTH 0 collection.
+                (setf enumerated (coerce values 'vector))))))
+      ;; A UNIQUE collection draws from its domain, keeps no element generators
+      ;; and reports shrinking from the domain size, so the eager probe would only
+      ;; raise *REQUIRED-SIZE* to the element range's width and make GENERATE try
+      ;; to build a collection that wide.
+      (unless unique
+        (setf probe (spec-generator element context)))
+      (setf *required-size* (max *required-size* minimum))
+      (make-instance 'bounded-collection-generator
+                     :element-generator (lambda () (spec-generator element context))
+                     :element-probe probe
+                     :element-validator (compile-validator element :context context)
+                     :min-length minimum
+                     :max-length maximum
+                     :unique-p unique
+                     :vector-p vector-p
+                     :enumerated enumerated
+                     :distinct-range distinct-range))))
+
 (defmethod spec-generator ((spec list-of-spec) context)
-  (let ((element (collection-spec-element-spec spec)))
-    ;; Compile the element once, eagerly, purely so its bounds reach
-    ;; *REQUIRED-SIZE* while COMPILE-SPEC-GENERATOR's binding is still in
-    ;; effect -- the value itself is discarded. check-it still needs a fresh
-    ;; generator per element for element-wise shrinking, which the closure
-    ;; below provides; it calls the generator function once per element per
-    ;; draw.
-    (spec-generator element context)
-    (make-instance 'list-generator
-                   :generator-function (lambda () (spec-generator element context)))))
+  (if (collection-constrained-p spec)
+      (compile-collection-generator spec context nil)
+      (let ((element (collection-spec-element-spec spec)))
+        ;; Compile the element once, eagerly, purely so its bounds reach
+        ;; *REQUIRED-SIZE* while COMPILE-SPEC-GENERATOR's binding is still in
+        ;; effect -- the value itself is discarded. check-it still needs a fresh
+        ;; generator per element for element-wise shrinking, which the closure
+        ;; below provides; it calls the generator function once per element per
+        ;; draw.
+        (spec-generator element context)
+        (make-instance 'list-generator
+                       :generator-function (lambda () (spec-generator element context))))))
 
 (defmethod spec-generator ((spec vector-of-spec) context)
-  (let ((element (collection-spec-element-spec spec)))
-    ;; See LIST-OF-SPEC's method: the eager call below exists only to raise
-    ;; *REQUIRED-SIZE*; the closure still supplies a fresh generator per
-    ;; element.
-    (spec-generator element context)
-    (make-instance 'mapped-generator
-                   :mapping (lambda (items) (coerce items 'vector))
-                   :sub-generators
-                   (list (make-instance 'list-generator
-                                        :generator-function
-                                        (lambda () (spec-generator element context)))))))
+  (if (collection-constrained-p spec)
+      (compile-collection-generator spec context t)
+      (let ((element (collection-spec-element-spec spec)))
+        ;; See LIST-OF-SPEC's method: the eager call below exists only to raise
+        ;; *REQUIRED-SIZE*; the closure still supplies a fresh generator per
+        ;; element.
+        (spec-generator element context)
+        (make-instance 'mapped-generator
+                       :mapping (lambda (items) (coerce items 'vector))
+                       :sub-generators
+                       (list (make-instance 'list-generator
+                                            :generator-function
+                                            (lambda () (spec-generator element context))))))))
 
 (defmethod spec-generator ((spec reference-spec) context)
   (let ((target (reference-spec-target spec))

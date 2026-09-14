@@ -668,6 +668,31 @@ instance-of
 `cons-of` はMVPでは実装しない。§52のMVP対応リストにも含まれておらず、§7のIRクラス階層にも
 対応ノードが無い。post-MVPとして扱い、`(tuple ...)` または `(list-of ...)` で代替する。
 
+`list-of`と`vector-of`は要素specに続けて`:min-length`・`:max-length`・`:unique`を
+keyword引数として受け取る。`:max-length`は`*`で無制限を表し、省略時は無制限、
+`:min-length`の省略時は0、`:unique`の省略時はNILである。値は登録前に検査し、
+`:min-length`が`:max-length`を超える場合や未知のoptionを拒否する。
+
+`:unique`は要素をEQLで比較する。長さ違反は`:too-short`・`:too-long`、重複は
+`:duplicate-element`として説明し、`:too-short`/`:too-long`は`:minimum-length`または
+`:maximum-length`と`:actual-length`を、重複は2個目の要素の`:path`と最初の出現位置
+`:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
+`:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
+有限な整数`range`は列挙せず直接samplingするため幅の上限はない。この場合も生成される
+コレクション長は要素rangeの幅ではなく通常のsizeから抽選し、幅を長さへ流用しない。
+端点が小数でもvalidationと同じく区間に含まれる整数を対象にし、整数が無ければ空domainとする。
+`member`、
+`boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
+超える場合は`generator-unavailable`を通知する。空の有限domainは「列挙不能」と区別し、
+`:min-length`が0なら空コレクションを生成する。
+縮小可能性の判定は要素domainの要素数も見て、実効的な最大長が`:min-length`以下なら
+要素除去の余地なしとして報告する。要素単位の縮小はshrinkerがcallbackで報告した値だけを採用し、
+propertyを通る値や要素specに違反する値をcounterexampleへ混入させない。
+列挙できない要素、またはカスタムgeneratorが分布を持つ要素には`generator-unavailable`を
+通知する（`nullable`・`or`の子にネストしたカスタムgeneratorも同じく分布を所有する）。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
+無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
+ノードだけが`:min-length`/`:max-length`/`:unique`を持つ）。
+
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
 ただしCommon Lisp type languageと完全互換にすることは目標としない。
@@ -3584,6 +3609,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
 | `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
 | DSL網羅 | MEMBER/VECTOR-OF/PLISTの真理条件、field errorのpath、surface macroの不正宣言拒否 |
+| コレクション制約 | LIST-OF/VECTOR-OFの長さ・一意性の真理条件と`:too-short`/`:too-long`/`:duplicate-element` |
 | runner再利用 | seedからのreplay一致、artifactのserialize/deserialize往復 |
 | instrumentation | status形状、`instrumented-function-p`/`uninstrument-function`、install/uninstall往復と未契約拒否 |
 
@@ -3602,7 +3628,9 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-27関数契約と21 Propertyをseed 1・42・2026、各50試行で実行する。
+27関数契約と24 Propertyをseed 1・42・2026、各50試行で実行する。
+このうち2 Propertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
+保持された縮小反例が引数schemaを満たし再検査で同一失敗を維持することを検査する。
 任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
 install/uninstall往復・未契約拒否の2 Property)は別途登録し、専用テストで実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
@@ -4153,6 +4181,8 @@ optional/key/rest、多値、warning・非errorや正常復帰との選択を許
 generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
+`list-of`/`vector-of`の長さ・一意性制約は実装済み（§9、§68.1）。alist/hash-tableの
+フィールド仕様とタグ付きunionは、field-specと`definition-constraints`を土台にした次の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 
@@ -4201,6 +4231,13 @@ Registered target/tag index changes remain explicit re-registration operations.
 A source-less callable definition remains valid but cannot have a complete
 source-based digest. The executable self-spec covers identity preservation of
 valid programmatic definition validation.
+
+Generation is another such boundary: `generator-for`/`sample` run
+`validate-definition` over the spec object and every spec it contains before
+compiling it, so a programmatically built node cannot reach a backend with
+constraints that normalization and registry validation would have refused.
+Shared and circular object graphs are walked once. This is validation of the
+object passed for generation, not a general object-graph transaction.
 
 
 ### Instrumentation freshness implementation addendum (issue #12)
@@ -4341,8 +4378,20 @@ rest束縛のpresenceは常に真とする。位置引数を消費したraw list
 &restと&keyが共存する場合は同じtailを共有し、重複・control pairもrestに含める。
 whole-list specと既存keyword検証の両方を満たす必要がある。生成・縮小では組み立てたcallを
 再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
-restとkeyの共存では、注釈なしの正確な(list-of t)だけをkeyword generatorで生成する。
-それ以外はrest generatorから最大100候補callを生成し、全引数schemaで交差条件を検査する。
+restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword generatorで生成し、
+この判定はrest specが名前参照でも同じで、参照連鎖を解決してから適用する
+（generator注釈を持つリンク・ノードはそのgeneratorを所有者として優先し、keyword生成へ切り替えない）。
+長さ制約付きのuniversal list `(list-of t :min-length N [:max-length M])`は
+境界内の長さになるようkeyword pairで埋める。宣言keyの個数より`:min-length`が長い場合は
+宣言keyを再利用する（raw callでは重複keyが許され、最初の出現だけが束縛される）。
+宣言keyが無い空の`&key`節でも`:allow-other-keys`制御pairを使えば充足できるため、
+生成不能とはせず制御pairで埋める（未知keywordの新規生成＝runtime interningは行わない）。
+宣言key・制御pairとも同じ生成プロトコルで値を得るので、値specが定数へcompileされる場合
+（`null`、`(member nil)`、その名前参照など）はその定数を渡す。NILを「生成器なし」の
+センチネルとして流用しない。keyword pairの除去は宣言keyと制御pairの双方を対象とし、
+全引数schemaを満たす候補だけを採用する。
+それ以外はrest generatorから最大100候補callを
+生成し、全引数schemaで交差条件を検査する。
 上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
 拒否された生成候補でtargetを呼ばない。
 explain経路には宣言rest名を用い、introspection/digestは:kind :restとwhole-list specを保持する。

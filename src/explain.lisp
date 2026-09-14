@@ -25,6 +25,11 @@
                 #:range-spec-maximum
                 #:instance-of-spec
                 #:instance-of-spec-class-name
+                #:bounded-collection-spec
+                #:collection-spec-min-length
+                #:collection-spec-max-length
+                #:collection-spec-unique-p
+                #:collection-constraint-plist
                 #:reference-spec
                 #:reference-spec-target
                 #:and-spec
@@ -99,10 +104,12 @@ this generic; the default only identifies the node kind."))
   (list :spec (reference-spec-target spec)))
 
 (defmethod expected-descriptor ((spec list-of-spec))
-  (list :list-of (expected-descriptor (collection-spec-element-spec spec))))
+  (list* :list-of (expected-descriptor (collection-spec-element-spec spec))
+         (collection-constraint-plist spec)))
 
 (defmethod expected-descriptor ((spec vector-of-spec))
-  (list :vector-of (expected-descriptor (collection-spec-element-spec spec))))
+  (list* :vector-of (expected-descriptor (collection-spec-element-spec spec))
+         (collection-constraint-plist spec)))
 
 (defmethod expected-descriptor ((spec tuple-spec))
   (list* :tuple (mapcar #'expected-descriptor (tuple-spec-element-specs spec))))
@@ -256,15 +263,53 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
       (unless (null value)
         (funcall inner value path)))))
 
+(defun collection-length-errors (spec value path expected)
+  "Return a :too-short or :too-long error datum for VALUE, or NIL."
+  (let ((minimum (collection-spec-min-length spec))
+        (maximum (collection-spec-max-length spec))
+        (length (length value)))
+    (cond ((< length minimum)
+           (list (error-datum :too-short path value :expected expected
+                              :minimum-length minimum :actual-length length)))
+          ((and (integerp maximum) (> length maximum))
+           (list (error-datum :too-long path value :expected expected
+                              :maximum-length maximum :actual-length length))))))
+
+(defun collection-uniqueness-errors (spec value path expected)
+  "Return a :duplicate-element datum for every repeated element of VALUE, or NIL.
+
+Elements are compared with EQL, which is what the declaration promises; a keyed
+identity is future work, not a hidden reinterpretation of EQL.  A list is walked
+with DOLIST rather than indexed access, so a long unique list stays linear."
+  (when (collection-spec-unique-p spec)
+    (let ((seen (make-hash-table :test #'eql))
+          (errors nil)
+          (index 0))
+      (flet ((examine (item)
+               (multiple-value-bind (first-index present-p) (gethash item seen)
+                 (if present-p
+                     (push (error-datum :duplicate-element (cons index path) item
+                                        :expected expected :first-index first-index)
+                           errors)
+                     (setf (gethash item seen) index)))
+               (incf index)))
+        (if (listp value)
+            (dolist (item value) (examine item))
+            (loop for position from 0 below (length value)
+                  do (examine (aref value position)))))
+      (nreverse errors))))
+
 (defmethod compile-node ((spec list-of-spec) context)
   (let ((element (compile-node (collection-spec-element-spec spec) context))
         (expected (expected-descriptor spec)))
     (lambda (value path)
       (if (not (proper-list-p value))
           (list (error-datum :not-a-list path value :expected expected))
-          (loop for item in value
-                for index from 0
-                append (funcall element item (cons index path)))))))
+          (append (collection-length-errors spec value path expected)
+                  (loop for item in value
+                        for index from 0
+                        append (funcall element item (cons index path)))
+                  (collection-uniqueness-errors spec value path expected))))))
 
 (defmethod compile-node ((spec vector-of-spec) context)
   (let ((element (compile-node (collection-spec-element-spec spec) context))
@@ -272,8 +317,10 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
     (lambda (value path)
       (if (not (vectorp value))
           (list (error-datum :not-a-vector path value :expected expected))
-          (loop for index from 0 below (length value)
-                append (funcall element (aref value index) (cons index path)))))))
+          (append (collection-length-errors spec value path expected)
+                  (loop for index from 0 below (length value)
+                        append (funcall element (aref value index) (cons index path)))
+                  (collection-uniqueness-errors spec value path expected))))))
 
 (defmethod compile-node ((spec tuple-spec) context)
   (let* ((element-specs (tuple-spec-element-specs spec))

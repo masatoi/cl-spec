@@ -2,11 +2,13 @@
 
 (defpackage #:cl-spec/tests/schema-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/src/dsl #:defspec #:defproperty #:defgenerator #:defspec-function)
   (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry)
   (:import-from #:cl-spec/src/introspection #:spec-data #:property-data #:function-spec-data)
-  (:import-from #:cl-spec/src/schema #:definition-digest)
+  (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
+  (:import-from #:cl-spec/src/schema
+                #:definition-digest #:definition-description #:definition-constraints)
   (:import-from #:cl-spec/src/property-runner #:run-property #:result-data)
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/generator #:*generator-backend*)
@@ -120,6 +122,12 @@
     (ok (equal "fnv1a64-v1:c30ab4af3e1875c2"
                (definition-digest 'digest-leaf :entity-kind :spec)))))
 
+(deftest unconstrained-collections-keep-their-version-one-digest
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec digest-collection (list-of integer))
+    (ok (equal "fnv1a64-v1:34cd9f98f3185457"
+               (definition-digest 'digest-collection :entity-kind :spec)))))
+
 (deftest digests-include-clos-description-fields
   (flet ((spec (text)
            (make-instance 'cl-spec/src/ir:type-spec :type-specifier 'integer :description text))
@@ -142,6 +150,37 @@
                                           :type-specifier 'integer :extra extra))
       (ok (null digest))
       (ok (null complete)))))
+
+(defclass described-extension (cl-spec/src/ir:spec)
+  ((extra :initarg :extra :reader described-extension-extra))
+  (:documentation "An extension that declares its fields and its completeness."))
+
+(defmethod cl-spec/src/ir:spec-kind ((spec described-extension))
+  :described-extension)
+
+(defmethod cl-spec/src/schema:definition-constraints ((definition described-extension))
+  (list :extra (described-extension-extra definition)))
+
+(defmethod cl-spec/src/schema:definition-description-complete-p
+    ((definition described-extension))
+  t)
+
+(deftest extension-methods-produce-complete-digests
+  (testing "a subclass that declares both halves gets a real digest"
+    (let ((first (make-instance 'described-extension :extra 1))
+          (second (make-instance 'described-extension :extra 2)))
+      (ok (stringp (definition-digest first)))
+      (ok (nth-value 1 (definition-digest first)))
+      (ok (not (equal (definition-digest first) (definition-digest second)))))))
+
+(deftest definition-constraints-feed-the-digest-fields
+  (testing "node-specific attributes project through DEFINITION-CONSTRAINTS"
+    (let ((range (normalize-spec-form '(range integer 0 10)))
+          (record (normalize-spec-form '(plist (:required (:id integer)) (:closed t)))))
+      (ok (equal '(:base integer :minimum 0 :maximum 10)
+                 (definition-constraints range)))
+      (ok (equal (definition-constraints record)
+                 (getf (definition-description record) :fields))))))
 
 (deftest canonical-digest-does-not-invoke-user-printers
   (let ((expected (cl-spec/src/schema::canonical-digest '(1 2 3)))

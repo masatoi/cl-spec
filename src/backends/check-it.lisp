@@ -24,7 +24,10 @@
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
-                #:plist-value-generator #:plist-generator-fields #:plist-generator-children)
+                #:plist-value-generator #:plist-generator-fields #:plist-generator-children
+                #:bounded-collection-generator #:bounded-generator-min-length
+                #:bounded-generator-max-length #:bounded-generator-domain-size
+                #:bounded-generator-element-probe)
   (:import-from #:cl-spec/src/field-spec #:field-required-p)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
@@ -370,6 +373,19 @@ Lists can shrink in length even when their element generator cannot shrink."
                   (and (typep child 'check-it:generator)
                        (generator-shrink-strategy-p child)))
                 (plist-generator-children generator))))
+    (bounded-collection-generator
+     (let* ((minimum (bounded-generator-min-length generator))
+            (maximum (bounded-generator-max-length generator))
+            (domain (bounded-generator-domain-size generator)))
+       (if domain
+           ;; UNIQUE draws from a fixed pool and keeps no element generators, and
+           ;; generation truncates the requested length to that pool size.
+           (> (if (eq maximum :unbounded) domain (min maximum domain)) minimum)
+           (or (eq maximum :unbounded)
+               (> maximum minimum)
+               (let ((probe (bounded-generator-element-probe generator)))
+                 (and (typep probe 'check-it:generator)
+                      (generator-shrink-strategy-p probe)))))))
     ((or tuple-generator mapped-generator)
      (some #'generator-shrink-strategy-p (sub-generators generator)))
     (guard-generator (generator-shrink-strategy-p (sub-generator generator)))

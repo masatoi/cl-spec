@@ -44,7 +44,9 @@
                 #:range-spec-minimum
                 #:range-spec-maximum
                 #:instance-of-spec
-                #:instance-of-spec-class-name)
+                #:instance-of-spec-class-name
+                #:bounded-collection-spec
+                #:collection-constraint-plist)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:resolve-property)
@@ -131,6 +133,9 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 (defmethod node-attributes ((spec instance-of-spec))
   (list* :class-name (instance-of-spec-class-name spec) (call-next-method)))
 
+(defmethod node-attributes ((spec bounded-collection-spec))
+  (append (collection-constraint-plist spec) (call-next-method)))
+
 (defmethod node-attributes ((spec field-spec))
   (list* :closed (field-spec-closed-p spec) :fields (field-descriptions spec)
          (call-next-method)))
@@ -166,8 +171,10 @@ CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
    :source-location (:file <string> :package <string>)
    :children (<nested plist> ...))
 
-:CHILDREN is present only on nodes that have children. The root additionally has
-:SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
+:CHILDREN is present only on nodes that have children. A constrained LIST-OF or
+VECTOR-OF adds :MIN-LENGTH, :MAX-LENGTH and :UNIQUE for the constraints it
+declares; an unconstrained collection carries none of them. The root additionally
+has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES (see
 SCHEMA-INFO, specification §38.1). Children are plain IR projections."
   (spec->data (resolve-spec spec-designator registry) registry t))
