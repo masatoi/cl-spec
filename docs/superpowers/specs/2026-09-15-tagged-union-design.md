@@ -43,8 +43,11 @@ public `tagged-union-branch` returns the branch spec for a designator. Together
 they let a caller draw or inspect one alternative; an unknown branch names the
 branches that exist.
 
-Failure identity keeps `:branch` and `:known-tags` as spec-derived keys and drops
-`:observed-tag` as value-derived, so the same violation in the same branch
+Failure identity keeps `:branch`, `:branch-path` and `:known-tags` as spec-derived
+keys and drops `:observed-tag` as value-derived. `:branch` names the innermost
+union that produced the error and `:branch-path` accumulates every enclosing
+branch name outermost first (like `:field-path`), so a nested union's selection
+survives an outer union's tagging and the same violation in the same branch
 compares equal while a different branch or an unmatched tag does not.
 
 ## Not in this change

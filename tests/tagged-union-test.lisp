@@ -192,3 +192,27 @@
     (ok (handler-case (progn (reinitialize-instance spec :branches (list branch branch)) nil)
           (invalid-spec-form () t)))
     (ok (equal (list branch) (tagged-union-branches spec)))))
+
+(deftest tagged-by-nested-unions-keep-the-branch-path
+  (testing "an outer union does not overwrite the inner branch it wrapped"
+    (let* ((spec (normalize-spec-form
+                  '(tagged-by :outer-kind
+                    (:wrapped (tagged-by :inner-kind
+                                (:x (plist (:required (:inner-kind (member :x))
+                                                     (:v integer))
+                                           (:closed t)))
+                                (:y (plist (:required (:inner-kind (member :y))
+                                                     (:v string))
+                                           (:closed t)))))
+                    (:plain (plist (:required (:outer-kind (member :plain)) (:v integer))
+                                   (:closed t))))))
+           (datum (first (getf (explain-data spec
+                                            '(:outer-kind :wrapped :inner-kind :x :v "bad"))
+                               :errors)))
+           (inner (first (getf (explain-data spec
+                                            '(:outer-kind :wrapped :inner-kind :y :v 1))
+                               :errors))))
+      (ok (eq :x (getf datum :branch)))
+      (ok (equal '(:wrapped :x) (getf datum :branch-path)))
+      (ok (eq :y (getf inner :branch)))
+      (ok (equal '(:wrapped :y) (getf inner :branch-path))))))

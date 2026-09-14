@@ -41,6 +41,14 @@
   "Return true when KEY occurs in ALIST, even when its value is NIL."
   (not (null (assoc key alist :test #'eql))))
 
+(defclass unprintable-key ()
+  ()
+  (:documentation "A hash-table key whose printer signals, for the no-print test."))
+
+(defmethod print-object ((object unprintable-key) stream)
+  (declare (ignore object stream))
+  (error "print boom"))
+
 (deftest alist-presence-and-openness
   (let ((form '(alist (:required (:id (nullable integer))) (:optional (:label string)))))
     (ok (accepts-p form '((:id . nil))))
@@ -292,3 +300,25 @@
              (printed (with-output-to-string (out) (print-explain-error datum out 0))))
         (ok (search (second entry) printed :test #'char-equal)
             (format nil "~S must stay visible: ~A" (first entry) printed))))))
+
+(deftest programmatic-key-tests-are-canonicalized
+  (testing "a plain symbol key test is stored as the canonical keyword"
+    (let* ((field (make-field-definition :key "id" :value-spec (normalize-spec-form 'integer)))
+           (spec (make-instance 'hash-table-spec :key-test 'equal :fields (list field))))
+      (ok (eq :equal (field-key-test spec)))
+      (ok (eq :equal (getf (spec-data spec) :test)))
+      (ok (validp spec (make-table :test 'equal :entries (list (cons (copy-seq "id") 1)))))
+      (ok (not (validp spec (make-table :test 'equal :entries (list (cons "other" 1))))))
+      (reinitialize-instance spec :key-test 'eql)
+      (ok (eq :eql (field-key-test spec))))))
+
+(deftest hash-table-unknown-keys-never-print
+  (testing "ordering unknown-key errors does not invoke a user printer"
+    (let ((spec (normalize-spec-form '(hash-table (:closed t))))
+          (table (make-hash-table :test 'eql)))
+      (setf (gethash (make-instance 'unprintable-key) table) 1)
+      (setf (gethash (make-instance 'unprintable-key) table) 2)
+      (let ((errors (getf (explain-data spec table) :errors)))
+        (ok (= 2 (length errors)))
+        (ok (every (lambda (datum) (eq :unknown-key (getf datum :kind))) errors)))
+      (ok (not (validp spec table))))))

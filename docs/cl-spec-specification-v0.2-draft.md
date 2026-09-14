@@ -846,8 +846,9 @@ check-it backendは必須キーを常に生成し、任意キーは各drawで独
 一致しない場合は`:wrong-key-test`（`:actual-test`に実際のtest）として拒否する。
 これにより「宣言したキー比較」と「値が実際に使う比較」が食い違わない。
 キーの有無は`gethash`の第2返り値で判定するため、値NILとキー欠落を区別する。
-closedなspecの未宣言キーは`:unknown-key`で、`maphash`の順序に依存しないよう
-表示キーで整列して報告する。
+closedなspecの未宣言キーは`:unknown-key`で、`maphash`の順序のまま報告する。
+validation中に任意のキーを印字しない（利用者の`print-object`が通知・停止しうるため）。
+`:unknown-key`はどのキーでも同じfailure shapeなので、順序が不定でもidentityは変わらない。
 
 キーはkeywordに限らない。`field-definition`のkeyは任意のobjectで、宣言時のキー重複判定と
 実行時の照合はどちらも`:test`を使う。既存の`field-spec`・`field-definition`をそのまま
@@ -949,7 +950,9 @@ object readerと同じく一引数readerとして値に適用する。tag reader
 一致しなければ`:no-branch`とし、`:observed-tag`と`:known-tags`を持つ。`or`が
 全branchのエラーを`:no-branch-matched`に並べるのに対し、tag付きunionは該当branchに
 エラーを絞り、分岐名を機械可読に返す。表現力を増やすのではなく、`or`+`plist`で
-書ける仕様を機械が扱いやすくする拡張である。
+書ける仕様を機械が扱いやすくする拡張である。unionが入れ子になっても、`:branch`は
+最も内側の選択を保ち、`:branch-path`が囲むbranch名を外側から順に蓄積する
+（fieldの`:field-path`と同じ規則）。
 
 branch SPECは値全体を記述する。tagはunionが読み取るだけで注入しないため、
 `:closed t`のplist branchでは`:kind`フィールドも宣言する。branch SPECがtagを
@@ -965,9 +968,10 @@ expected descriptorは`:kind :tagged-union`・`:tag-reader`・`:branches`を持�
 `tagged-union-branch`はbranch SPECを返し、`spec-data`と合わせてLLMが分岐を
 選んで生成・検査できる。branch名が不正な場合は既知branchを添えて拒否する。
 
-failure identityは`:branch`と`:known-tags`をspec由来のkeyとして保持し、
+failure identityは`:branch`・`:branch-path`・`:known-tags`をspec由来のkeyとして保持し、
 `:observed-tag`は入力由来なので保持しない。同じbranchの同じ違反は一致し、
-別branchの違反やno-branchとは区別される。
+別branchの違反やno-branchとは区別される。入れ子のunionでも内側のbranch選択が
+`:branch`・`:branch-path`に残るため、内側の分岐違いは一致しない。
 
 ---
 

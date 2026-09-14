@@ -208,23 +208,30 @@ before the slots change."))
 
 The candidate KEY-TEST and CLASS-NAME are threaded to VALIDATE-FIELD-LAYOUT
 because reinitialization must refuse a bad value before the slots change; reading
-the slots here would see the previous values."
+the slots here would see the previous values.  A keyed spec then stores the
+canonical keyword rather than the plain symbol a caller may have written, so
+every later consumer -- introspection, digest, explainer and generator -- sees
+one designator."
   (declare (ignore slot-names initargs))
-  (validate-field-layout
-   spec
-   (if fields-p fields
-       (when (slot-boundp spec 'fields) (field-spec-fields spec)))
-   (if closed-p-p closed-p
-       (when (slot-boundp spec 'closed-p) (field-spec-closed-p spec)))
-   :key-test (cond (key-test-p key-test)
-                   ((and (typep spec 'keyed-field-spec) (slot-boundp spec 'key-test))
-                    (slot-value spec 'key-test))
-                   (t :eql))
-   :class-name (cond (class-name-p class-name)
-                     ((and (typep spec 'object-spec) (slot-boundp spec 'class-name))
-                      (slot-value spec 'class-name))
-                     (t nil)))
-  (call-next-method))
+  (let ((candidate-key-test
+          (cond (key-test-p key-test)
+                ((and (typep spec 'keyed-field-spec) (slot-boundp spec 'key-test))
+                 (slot-value spec 'key-test))
+                (t :eql))))
+    (validate-field-layout
+     spec
+     (if fields-p fields
+         (when (slot-boundp spec 'fields) (field-spec-fields spec)))
+     (if closed-p-p closed-p
+         (when (slot-boundp spec 'closed-p) (field-spec-closed-p spec)))
+     :key-test candidate-key-test
+     :class-name (cond (class-name-p class-name)
+                       ((and (typep spec 'object-spec) (slot-boundp spec 'class-name))
+                        (slot-value spec 'class-name))
+                       (t nil)))
+    (prog1 (call-next-method)
+      (when (typep spec 'keyed-field-spec)
+        (setf (slot-value spec 'key-test) (key-test-designator candidate-key-test))))))
 
 (defun plist-structure-error (value)
   "Return (values KIND KEY INDEX KEYS) after checking a keyword plist.

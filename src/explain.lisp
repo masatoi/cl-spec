@@ -510,8 +510,11 @@ separate a violation in one field from the same violation in another."
                                              (field-value-spec field))))))
                       field-key)))
              (when closed-p
-               ;; MAPHASH order is unspecified; sort by printed key so two runs
-               ;; report the same unknown keys in the same order.
+               ;; MAPHASH order is unspecified and arbitrary keys may have a
+               ;; signalling or nonterminating printer, so the errors are
+               ;; reported in that order rather than sorted by a printed key.
+               ;; Every :unknown-key datum has the same failure shape, so the
+               ;; order does not affect failure identity.
                (let ((unknown nil))
                  (maphash (lambda (key item)
                             (unless (gethash key declared)
@@ -519,9 +522,7 @@ separate a violation in one field from the same violation in another."
                                                  :expected expected)
                                     unknown)))
                           value)
-                 (sort unknown #'string<
-                       :key (lambda (datum)
-                              (prin1-to-string (getf datum :path))))))))))))
+                 (nreverse unknown)))))))))
 
 (defun read-object-field (object reader)
   "Return (values PRESENT-P VALUE CONDITION) reading OBJECT through READER.
@@ -583,13 +584,19 @@ rather than treated as an absent tag."
       (values nil nil condition))))
 
 (defun branch-errors (errors name)
-  "Return ERRORS with the matched branch NAME attached to each top-level datum.
+  "Return ERRORS tagged with the matched branch NAME.
 
-Only top-level datums are tagged: a nested :ERRORS list already belongs to the
-same branch, and :BRANCH is what lets a reader see which alternative was chosen."
+:BRANCH names the innermost union that produced the datum, so a nested union's
+selection survives an outer union's tagging; :BRANCH-PATH accumulates every
+enclosing branch name outermost first, the way :FIELD-PATH accumulates fields.
+Only top-level datums are tagged: a nested :ERRORS list belongs to the same
+branch."
   (loop for datum in errors
         collect (let ((copy (copy-list datum)))
-                  (setf (getf copy :branch) name)
+                  (unless (getf copy :branch)
+                    (setf (getf copy :branch) name))
+                  (setf (getf copy :branch-path)
+                        (cons name (getf copy :branch-path)))
                   copy)))
 
 (defmethod compile-node ((spec tagged-union-spec) context)
