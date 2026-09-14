@@ -228,3 +228,30 @@
                           (<= 4 (length tail))
                           (>= (count :a tail) 2)))
                    *reused-keyword-tails*))))))
+
+(defvar *control-keyword-tails* nil
+  "Raw rest tails observed by CONTROL-KEYWORD-TARGET.")
+
+(defun control-keyword-target (&rest raw &key)
+  "Collect a raw rest tail filled from the :ALLOW-OTHER-KEYS control pair."
+  (push (copy-list raw) *control-keyword-tails*)
+  (list raw))
+
+(deftest constrained-universal-rest-fills-a-bare-keyword-section
+  (testing "an empty &key section still admits the :ALLOW-OTHER-KEYS control pair"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*control-keyword-tails* nil))
+      (cl-spec:defspec-function control-keyword-target
+        (:args &rest (raw (list-of t :min-length 4))
+               &key)
+        (:returns list))
+      (let ((result (cl-spec:check-function 'control-keyword-target :trials 20 :seed 11)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (zerop (cl-spec:property-result-rejected result)))
+        (ok (= 20 (length *control-keyword-tails*)))
+        (ok (every (lambda (tail)
+                     (and (evenp (length tail))
+                          (<= 4 (length tail))
+                          (loop for (key value) on tail by #'cddr
+                                always (and (eq key :allow-other-keys) (eq value t)))))
+                   *control-keyword-tails*))))))

@@ -554,19 +554,27 @@ removal shrinking both need it."
     (labels ((items () (cached-value generator))
              (build (list) (bounded-candidate generator list))
              (element-wise ()
-               (loop for index from 0 below (length (items))
-                     for child in (bounded-generator-children generator)
-                     when (typep child 'generator)
-                       do (let ((shrunk
-                                  (shrink child
-                                          (lambda (value)
-                                            (let ((candidate (copy-seq (items))))
-                                              (setf (elt candidate index) value)
-                                              (if (and unique (eql-duplicates-p candidate))
-                                                  t
-                                                  (funcall test (build candidate))))))))
-                            (setf (elt (items) index) shrunk)))
-               (items))
+               (let ((validator (bounded-generator-element-validator generator)))
+                 (loop for index from 0 below (length (items))
+                       for child in (bounded-generator-children generator)
+                       when (typep child 'generator)
+                         do (shrink child
+                                    (lambda (value)
+                                      ;; Some check-it shrinkers return an untested
+                                      ;; transformed value.  Only a value the callback
+                                      ;; observed -- valid and still failing -- may
+                                      ;; replace this element.
+                                      (if (and validator (not (funcall validator value)))
+                                          t
+                                          (let ((candidate (copy-seq (items))))
+                                            (setf (elt candidate index) value)
+                                            (if (or (and unique (eql-duplicates-p candidate))
+                                                    (funcall test (build candidate)))
+                                                t
+                                                (progn
+                                                  (setf (elt (items) index) value)
+                                                  nil)))))))
+                 (items)))
              (remove-wise ()
                (loop for index from 0 below (length (items))
                      when (> (length (items)) minimum)

@@ -245,3 +245,41 @@
           (let ((spec (normalize-spec-form
                        `(list-of (nullable ,custom) :min-length 2 :unique t))))
             (ok (signals (sample spec :count 1) 'generator-unavailable))))))))
+
+(deftest programmatic-collection-constraints-are-validated-before-compiling
+  (testing "a directly constructed bound cannot bypass normalization"
+    (let ((spec (make-instance 'list-of-spec
+                               :element-spec (normalize-spec-form '(member 1 2))
+                               :max-length -1)))
+      (ok (signals (sample spec :count 1) 'invalid-spec-form)))))
+
+(defclass untested-shrink-generator (check-it:generator)
+  ((value :initarg :value :reader untested-shrink-value))
+  (:documentation "A generator whose SHrink reports a value the callback never saw."))
+
+(defmethod check-it:generate ((generator untested-shrink-generator))
+  (untested-shrink-value generator))
+
+(defmethod check-it:shrink ((generator untested-shrink-generator) test)
+  "Hand back a value the callback never observed, imitating a terminal shrinker."
+  (declare (ignore test))
+  99)
+
+(deftest collection-element-shrinks-retain-only-observed-values
+  (testing "an unobserved element-shrinker result does not replace a cached element"
+    (let ((generator (make-instance
+                      'cl-spec/src/backends/check-it-generators:bounded-collection-generator
+                      :element-generator
+                      (lambda () (make-instance 'untested-shrink-generator :value 10))
+                      :element-validator (constantly t)
+                      :element-probe nil
+                      :min-length 2
+                      :max-length 2
+                      :unique-p nil
+                      :vector-p nil)))
+      (ok (equal '(10 10) (check-it:generate generator)))
+      (ok (equal '(10 10)
+                 (check-it:shrink generator
+                                  (lambda (candidate)
+                                    (declare (ignore candidate))
+                                    nil)))))))

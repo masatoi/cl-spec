@@ -48,39 +48,56 @@ invent duplicates it does not need."
               (max lowest natural)
               (min maximum (max lowest natural))))))
 
+(defun keyword-pair-count (bindings)
+  "Return how many distinct keyword pairs a tail may draw from BINDINGS.
+
+An empty &key section is still a keyword call: the standard :ALLOW-OTHER-KEYS
+control pair is accepted, so a key-p layout always has at least one pair to draw."
+  (max 1 (count-if (lambda (binding) (eq :key (argument-binding-kind binding)))
+                   bindings)))
+
+(defun keyword-tail-pool (bindings children)
+  "Return the (KEYWORD . CHILD) pairs a keyword tail may draw from, never empty.
+
+A CHILD of NIL means the pair's value is the literal T, which is how the
+:ALLOW-OTHER-KEYS control pair is written: generating fresh unknown keywords
+would require runtime interning, which the keyword DSL deliberately avoids."
+  (let ((declared (loop for binding in bindings
+                        for child in children
+                        when (eq :key (argument-binding-kind binding))
+                          collect (cons (argument-binding-keyword binding) child))))
+    (or declared
+        (list (cons :allow-other-keys nil)))))
+
 (defun call-generator-removable-p (generator)
   "Return true when optional positional or generated keyword arguments can be omitted."
   (let ((layout (call-generator-layout generator))
         (rest-length (call-generator-rest-length generator)))
     (or (> (call-layout-positional-count layout) (call-layout-required-count layout))
         (and (not (call-generator-rest-driven-p generator))
-             (some (lambda (binding) (eq :key (argument-binding-kind binding)))
-                   (call-layout-bindings layout))
-             ;; A keyword pair is removable only while the rest tail may still be
-             ;; longer than the minimum the rest spec declares.
-             (or (null rest-length)
+             (if rest-length
+                 ;; A keyword pair is removable only while the rest tail may still
+                 ;; be longer than the minimum the rest spec declares.
                  (>= (cdr (keyword-tail-span
-                           (count-if (lambda (binding)
-                                       (eq :key (argument-binding-kind binding)))
-                                     (call-layout-bindings layout))
+                           (keyword-pair-count (call-layout-bindings layout))
                            (car rest-length) (cdr rest-length)))
-                     (+ (car rest-length) 2)))))))
+                     (+ (car rest-length) 2))
+                 (some (lambda (binding) (eq :key (argument-binding-kind binding)))
+                       (call-layout-bindings layout)))))))
 
 (defun generate-keyword-tail (bindings children rest-length spec)
   "Draw a keyword/value tail whose even length lies inside REST-LENGTH.
 
 Duplicate keywords are legal and the first occurrence binds, so a declared key is
-reused when the minimum demands more pairs than there are distinct keywords."
-  (let* ((keys (loop for binding in bindings
-                     for child in children
-                     when (eq :key (argument-binding-kind binding))
-                       collect (cons binding child)))
+reused when the minimum demands more pairs than there are distinct keywords.  A
+layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pair."
+  (let* ((pool (keyword-tail-pool bindings children))
          (minimum (car rest-length))
          (maximum (cdr rest-length))
-         (span (keyword-tail-span (length keys) minimum maximum))
+         (span (keyword-tail-span (length pool) minimum maximum))
          (lowest (car span))
          (upper (cdr span)))
-    (when (or (and (null keys) (plusp lowest)) (> lowest upper))
+    (when (> lowest upper)
       (error 'generator-unavailable
              :spec spec
              :reason (format nil "the declared keywords cannot fill a rest tail of ~D to ~D elements"
@@ -88,16 +105,16 @@ reused when the minimum demands more pairs than there are distinct keywords."
     (let* ((low-pairs (/ lowest 2))
            (high-pairs (floor upper 2))
            (pairs (+ low-pairs (random (1+ (- high-pairs low-pairs)))))
-           (remaining (copy-list keys))
+           (remaining (copy-list pool))
            (chosen nil))
       (loop repeat pairs
-            do (when (null remaining) (setf remaining (copy-list keys)))
+            do (when (null remaining) (setf remaining (copy-list pool)))
                (let ((index (random (length remaining))))
                  (push (nth index remaining) chosen)
                  (setf remaining (append (subseq remaining 0 index)
                                          (subseq remaining (1+ index))))))
-      (loop for (binding . child) in (nreverse chosen)
-            append (list (argument-binding-keyword binding) (generate child))))))
+      (loop for (keyword . child) in (nreverse chosen)
+            append (list keyword (if child (generate child) t))))))
 
 (defmethod generate ((generator call-arguments-generator))
   (let* ((layout (call-generator-layout generator))

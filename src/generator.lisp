@@ -18,8 +18,10 @@
                 #:trial-observation-arguments #:trial-observation-signature
                 #:trial-observation-condition #:observation-failure-p
                 #:failure-identities-match-p #:same-value-p)
+  (:import-from #:cl-spec/src/definition-validation
+                #:validate-definition)
   (:import-from #:cl-spec/src/ir
-                #:spec)
+                #:spec #:spec-children)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -212,12 +214,30 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
 
 The core cannot read check-it's own default, so the backend answers for it."))
 
+(defun validate-definition-tree (spec)
+  "Validate SPEC and every spec it contains, returning SPEC.
+
+A spec object handed straight to GENERATOR-FOR never passed through normalization
+or the registry, so nothing else checks its constraints: a programmatically built
+collection with a malformed bound would otherwise compile into a generator whose
+values its own spec rejects.  Shared and circular object graphs are walked once."
+  (let ((seen (make-hash-table :test #'eq)))
+    (labels ((walk (node)
+               (unless (gethash node seen)
+                 (setf (gethash node seen) t)
+                 (validate-definition node)
+                 (dolist (child (spec-children node))
+                   (walk child)))))
+      (walk spec))
+    spec))
+
 (defun generator-for (spec-designator &key context options (registry *registry*))
   "Return a compiled generator for SPEC-DESIGNATOR using the current backend.
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
 The result is opaque to everything but the backend and GENERATE-VALUE."
   (let ((spec (resolve-spec spec-designator registry)))
+    (validate-definition-tree spec)
     (compile-generator (current-generator-backend) spec
                        :context (or context (list :registry registry))
                        :options options)))

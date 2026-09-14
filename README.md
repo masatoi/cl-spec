@@ -277,7 +277,10 @@ element spec with no finite enumeration, or one whose custom generator owns its
 distribution — including a custom generator nested inside a `nullable` or `or`
 node — signals `generator-unavailable` rather than retrying collisions
 forever. A collection whose `:max-length` is 0 generates
-the empty collection without compiling its element spec.
+the empty collection without compiling its element spec. Element-wise shrinking
+replaces an element only with a value the element shrinker reported through the
+shrink callback, so a value that passes the property or fails the element spec
+never becomes part of the recorded counterexample.
 
 ## Generate related arguments together
 
@@ -436,7 +439,9 @@ spec's generator. With `&key`, an exact, unannotated `(list-of t)` rest spec use
 keyword generation, and a length-constrained universal one — `(list-of t
 :min-length N [:max-length M])` — is filled with keyword pairs whose total length
 stays inside those bounds; a minimum longer than the distinct keyword count reuses
-declared keywords, which a raw call allows because the first occurrence binds.
+declared keywords, which a raw call allows because the first occurrence binds, and
+an empty `&key` section is filled with the standard `:allow-other-keys` control
+pair rather than signalling that no keyword can be generated.
 Other rest specs use their own generator and try up to
 100 candidate calls against the complete argument schema; exhaustion signals
 `generator-unavailable`. Custom generator annotations do not bypass this check.

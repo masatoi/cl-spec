@@ -682,7 +682,8 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
 超える場合は`generator-unavailable`を通知する。
 縮小可能性の判定は要素domainの要素数も見て、実効的な最大長が`:min-length`以下なら
-要素除去の余地なしとして報告する。
+要素除去の余地なしとして報告する。要素単位の縮小はshrinkerがcallbackで報告した値だけを採用し、
+propertyを通る値や要素specに違反する値をcounterexampleへ混入させない。
 列挙できない要素、またはカスタムgeneratorが分布を持つ要素には`generator-unavailable`を
 通知する（`nullable`・`or`の子にネストしたカスタムgeneratorも同じく分布を所有する）。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
 無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
@@ -4225,6 +4226,13 @@ A source-less callable definition remains valid but cannot have a complete
 source-based digest. The executable self-spec covers identity preservation of
 valid programmatic definition validation.
 
+Generation is another such boundary: `generator-for`/`sample` run
+`validate-definition` over the spec object and every spec it contains before
+compiling it, so a programmatically built node cannot reach a backend with
+constraints that normalization and registry validation would have refused.
+Shared and circular object graphs are walked once. This is validation of the
+object passed for generation, not a general object-graph transaction.
+
 
 ### Instrumentation freshness implementation addendum (issue #12)
 
@@ -4368,6 +4376,8 @@ restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword genera
 長さ制約付きのuniversal list `(list-of t :min-length N [:max-length M])`は
 境界内の長さになるようkeyword pairで埋める。宣言keyの個数より`:min-length`が長い場合は
 宣言keyを再利用する（raw callでは重複keyが許され、最初の出現だけが束縛される）。
+宣言keyが無い空の`&key`節でも`:allow-other-keys`制御pairを使えば充足できるため、
+生成不能とはせず制御pairで埋める（未知keywordの新規生成＝runtime interningは行わない）。
 それ以外はrest generatorから最大100候補callを
 生成し、全引数schemaで交差条件を検査する。
 上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
