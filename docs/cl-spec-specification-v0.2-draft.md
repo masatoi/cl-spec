@@ -661,6 +661,8 @@ cons-of
 tuple
 nullable
 plist
+alist
+hash-table
 instance-of
 
 ```
@@ -770,8 +772,8 @@ Tでは拒否する。不正宣言は`invalid-spec-form`とし、登録前に拒
 `src/field-spec.lisp`に格納形式非依存の`field-definition`
 （key・value-spec・required-p）と`field-spec`（fields・closed-p）を置く。
 `plist-spec`がkeywordキーとplistの構造を扱う。子IRの列挙は宣言順である。
-内部フィールドのkey表現をkeywordに限定せず、将来のalist/hash-tableが独自の
-キー比較規則を持てる境界とする。これらのDSLと共通変換APIは未実装。
+内部フィールドのkey表現をkeywordに限定せず、alist/hash-tableが独自の
+キー比較規則を持てる境界とする。これらは§9.3で実装済み（共通の変換APIは提供しない）。
 共通のfinite field list・field-definition要素・boolean closed flagはfield-specで検査し、
 plist-specはkeywordと重複キーの制約を加える。初期化・再初期化の変更前に拒否する。
 
@@ -804,6 +806,66 @@ check-it backendは必須キーを常に生成し、任意キーは各drawで独
 
 フィールド間制約は既存の`and`・`satisfies`で表現する。
 制約solverやAND生成の一般化は導入しない。
+
+---
+
+# 9.3 フィールド付きalist / hash-table spec
+
+実装済みの記法：
+
+```lisp
+(defspec user-alist
+  (alist
+    (:test equal)
+    (:required ("id" integer))
+    (:optional ("nickname" (nullable string)))
+    (:closed t)))
+
+(defspec user-table
+  (hash-table
+    (:test equal)
+    (:required ("id" integer))
+    (:optional ("nickname" (nullable string)))
+    (:closed t)))
+```
+
+`alist`と`hash-table`は§9.2の`plist`と同じ`:required`・`:optional`・`:closed`句を取る。
+加えて`:test`句がキー比較を固定する。値は`eq`・`eql`・`equal`・`equalp`
+（keywordでも通常のsymbolでもよい）で、省略時は`eql`。plistはkeywordをEQLで比較するため
+`:test`句を受けず、`:test`を書いたplist宣言は拒否する。
+
+`alist`の値はproper listで、各要素は`(KEY . VALUE)`のconsである。キーは`car`、値は`cdr`で、
+`assoc`と同じ読み方をする。したがって`(:id . nil)`はキーが存在し値がNILであり、
+キー欠落とは区別する。各要素がconsでない場合は`:bad-association`、listでない場合は
+`:not-an-alist`、宣言した`:test`で重複するキーは`:duplicate-key`として拒否する。
+重複の`:path`は2個目の出現位置を持つ。
+
+`hash-table`の値はhash tableであり、そのtestは宣言した`:test`と一致しなければならない。
+一致しない場合は`:wrong-key-test`（`:actual-test`に実際のtest）として拒否する。
+これにより「宣言したキー比較」と「値が実際に使う比較」が食い違わない。
+キーの有無は`gethash`の第2返り値で判定するため、値NILとキー欠落を区別する。
+closedなspecの未宣言キーは`:unknown-key`で、`maphash`の順序に依存しないよう
+表示キーで整列して報告する。
+
+キーはkeywordに限らない。`field-definition`のkeyは任意のobjectで、宣言時のキー重複判定と
+実行時の照合はどちらも`:test`を使う。既存の`field-spec`・`field-definition`をそのまま
+土台にし、`keyed-field-spec`が`key-test`だけを加える。子IRの列挙は宣言順である。
+
+構造検査は子specの述語より前に行う。フィールドの`:path`はキーを含み、
+`:field-path`は宣言フィールドのキー列だけを持つ。したがってalist/hash-tableでも
+Function Specのfailure identityがフィールド間の違反を区別できる。
+
+`spec-data`は`:kind`・`:test`・`:closed`・`:fields`を返す。digestは`:test`を
+含むため、同じフィールドでもalistとhash-table、`:test`の違いで異なる。
+plistの`spec-data`とdigestは変更しない（`:test`句を持たないため）。
+
+check-it backendはplistと同じく必須キーを常に生成し、任意キーを各drawで独立に選ぶ。
+alistは`(KEY . VALUE)`を、hash-tableは宣言したtestのtableを生成する。
+縮小は任意キーの削除と値の縮小を行い、必須キーと宣言したtestを保つ。
+未対応の子specは`generator-unavailable`、空のspecや定数のみのspecの
+縮小capabilityは`:none`。
+
+フィールド間制約はplistと同じく既存の`and`・`satisfies`で表現する。
 
 ---
 
@@ -4182,7 +4244,9 @@ generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 `list-of`/`vector-of`の長さ・一意性制約は実装済み（§9、§68.1）。alist/hash-tableの
-フィールド仕様とタグ付きunionは、field-specと`definition-constraints`を土台にした次の拡張である。
+フィールド仕様も実装済みで、`:test`によるキー比較、キー欠落とNIL値の区別、
+alistの重複キー拒否を意味論として固定した（§9.3）。タグ付きunionは、
+field-specと`definition-constraints`を土台にした次の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 

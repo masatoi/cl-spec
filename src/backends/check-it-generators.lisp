@@ -23,7 +23,8 @@
                 #:guard-generator
                 #:mapped-generator)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:field-spec-fields
+                #:plist-spec #:alist-spec #:hash-table-spec
+                #:field-spec-fields #:field-key-test #:key-test-name
                 #:field-key #:field-value-spec #:field-required-p)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable)
@@ -66,6 +67,7 @@
                 #:compile-validator)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
+           #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
            #:bounded-collection-generator #:bounded-generator-min-length
            #:bounded-generator-max-length #:bounded-generator-enumerated
            #:bounded-generator-distinct-range #:bounded-generator-domain-size
@@ -182,6 +184,129 @@ where it can validate and observe the complete correlated candidate."
                                          (compile-validator (field-value-spec field)
                                                             :context context))
                                        fields))))
+
+(defclass keyed-value-generator (generator)
+  ((fields :initarg :fields :reader keyed-generator-fields)
+   (children :initarg :children :reader keyed-generator-children)
+   (validators :initarg :validators :reader keyed-generator-validators)
+   (key-test :initarg :key-test :reader keyed-generator-key-test))
+  (:documentation "Generate an alist or hash table from declared fields and shrink it.
+
+Subclasses only encode and decode the association list; presence, optional
+removal and value shrinking are shared, so both representations keep required
+keys and compare keys with the test the spec declares."))
+
+(defgeneric encode-associations (generator associations)
+  (:documentation "Return ASSOCIATIONS, a list of (KEY . VALUE), as GENERATOR's representation."))
+
+(defgeneric decode-associations (generator value)
+  (:documentation "Return VALUE as a list of (KEY . VALUE) associations."))
+
+(defclass alist-value-generator (keyed-value-generator)
+  ()
+  (:documentation "Generate alists whose keys are unique under the declared test."))
+
+(defmethod encode-associations ((generator alist-value-generator) associations)
+  (loop for (key . value) in associations collect (cons key value)))
+
+(defmethod decode-associations ((generator alist-value-generator) value)
+  "Reconstruct associations from a generated alist.
+
+Every CDR is the value, matching the validator's ASSOC reading, so a dotted pair
+and a two-element list are read the same way here as they are checked."
+  (declare (ignore generator))
+  (loop for entry in value collect (cons (car entry) (cdr entry))))
+
+(defclass hash-table-value-generator (keyed-value-generator)
+  ()
+  (:documentation "Generate hash tables using the key test the spec declares."))
+
+(defmethod encode-associations ((generator hash-table-value-generator) associations)
+  (let ((table (make-hash-table :test (key-test-name (keyed-generator-key-test generator)))))
+    (loop for (key . value) in associations
+          do (setf (gethash key table) value))
+    table))
+
+(defmethod decode-associations ((generator hash-table-value-generator) value)
+  "Return VALUE's entries as associations.
+
+The order is unspecified but immaterial: generation encodes in field order, and
+shrinking looks each declared key up rather than walking the decoded list."
+  (declare (ignore generator))
+  (let ((associations nil))
+    (maphash (lambda (key item) (push (cons key item) associations)) value)
+    associations))
+
+(defmethod generate ((generator keyed-value-generator))
+  "Draw required fields and independently choose whether each optional field is present."
+  (setf (cached-value generator)
+        (encode-associations
+         generator
+         (loop for field in (keyed-generator-fields generator)
+               for child in (keyed-generator-children generator)
+               when (or (field-required-p field) (zerop (random 2)))
+                 collect (cons (field-key field) (generate child))))))
+
+(defmethod shrink ((generator keyed-value-generator) test)
+  "Remove optional fields and retain only tested, valid reductions of field values.
+
+The shape mirrors PLIST-VALUE-GENERATOR's shrinker: TEST returns NIL while a
+candidate still fails the property, so a candidate is kept exactly when it is
+valid and still failing."
+  (let ((test-name (key-test-name (keyed-generator-key-test generator))))
+    (loop for field in (keyed-generator-fields generator)
+          for child in (keyed-generator-children generator)
+          for validator in (keyed-generator-validators generator)
+          for key = (field-key field)
+          do (unless (field-required-p field)
+               (let ((associations (decode-associations generator (cached-value generator))))
+                 (when (assoc key associations :test test-name)
+                   (let ((candidate (encode-associations
+                                     generator
+                                     (remove key associations :key #'car :test test-name))))
+                     (when (not (funcall test candidate))
+                       (setf (cached-value generator) candidate))))))
+             (let ((associations (decode-associations generator (cached-value generator))))
+               (when (and (typep child 'generator)
+                          (assoc key associations :test test-name))
+                 ;; Some check-it shrinkers return an untested transformed value.
+                 ;; Only a value observed by the callback can replace this field.
+                 (shrink child
+                         (lambda (value)
+                           (if (not (funcall validator value))
+                               t
+                               (let* ((associations (decode-associations
+                                                     generator (cached-value generator)))
+                                      (candidate (encode-associations
+                                                  generator
+                                                  (acons key value
+                                                         (remove key associations
+                                                                 :key #'car :test test-name)))))
+                                 (if (funcall test candidate)
+                                     t
+                                     (progn (setf (cached-value generator) candidate)
+                                            nil))))))))))
+    (cached-value generator))
+
+(defun make-keyed-value-generator (class spec context)
+  "Build an instance of CLASS for the keyed field SPEC."
+  (let ((fields (field-spec-fields spec)))
+    (make-instance class
+                   :fields fields
+                   :key-test (field-key-test spec)
+                   :children (mapcar (lambda (field)
+                                       (spec-generator (field-value-spec field) context))
+                                     fields)
+                   :validators (mapcar (lambda (field)
+                                         (compile-validator (field-value-spec field)
+                                                            :context context))
+                                       fields))))
+
+(defmethod spec-generator ((spec alist-spec) context)
+  (make-keyed-value-generator 'alist-value-generator spec context))
+
+(defmethod spec-generator ((spec hash-table-spec) context)
+  (make-keyed-value-generator 'hash-table-value-generator spec context))
 
 (defun custom-spec-generator (name spec context)
   "Return a generator drawing from the custom generator NAME names.

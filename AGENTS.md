@@ -15,7 +15,9 @@ Custom generators (`defgenerator`, no-argument bodies), whole-argument generator
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
 Field-aware keyword plist specs support required/optional keys, closed records,
 structured errors, introspection and check-it generation/shrinking. Field metadata
-is separated from storage representation in `src/field-spec.lisp`.
+is separated from storage representation in `src/field-spec.lisp`. Alist and
+hash-table field specs share that base through a `:test` clause that fixes key
+comparison, presence-versus-NIL and alist duplicate-key semantics.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Project Structure & Module Organization

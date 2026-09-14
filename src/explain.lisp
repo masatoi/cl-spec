@@ -46,9 +46,12 @@
                 #:tuple-spec
                 #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:field-spec-fields #:field-spec-closed-p
-                #:field-key #:field-value-spec #:field-required-p
-                #:plist-structure-error)
+                #:plist-spec #:keyed-field-spec #:alist-spec #:hash-table-spec
+                #:field-spec-fields #:field-spec-closed-p
+                #:field-key #:field-value-spec #:field-required-p #:field-key-test
+                #:key-test-name
+                #:plist-structure-error
+                #:alist-structure-error #:hash-table-structure-error)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -73,6 +76,14 @@
 PATH is accumulated innermost first and reversed here, so callers always see it
 running from the root value down to the failing part."
   (list* :kind kind :path (reverse path) :actual value extra))
+
+(defparameter +field-structure-error-kinds+
+  '(:not-a-plist :not-an-alist :not-a-hash-table :bad-association
+    :duplicate-key :missing-key :unknown-key :wrong-key-test)
+  "EXPLAIN-DATA kinds a field record's own structure check produces.
+
+These stay visible inside a conjunction instead of collapsing into one
+checklist line, because each names a different malformed position.")
 
 (defgeneric expected-descriptor (spec)
   (:documentation "Return a small plist saying what SPEC admits.
@@ -126,12 +137,21 @@ this generic; the default only identifies the node kind."))
 (defmethod expected-descriptor ((spec not-spec))
   (list :not (expected-descriptor (not-spec-inner-spec spec))))
 
+(defun field-expectation-descriptors (spec)
+  "Return the expected descriptor of each declared field of SPEC, in declaration order."
+  (loop for field in (field-spec-fields spec)
+        collect (list :key (field-key field)
+                      :required (field-required-p field)
+                      :expected (expected-descriptor (field-value-spec field)))))
+
 (defmethod expected-descriptor ((spec plist-spec))
   (list :kind :plist :closed (field-spec-closed-p spec)
-        :fields (loop for field in (field-spec-fields spec)
-                      collect (list :key (field-key field)
-                                    :required (field-required-p field)
-                                    :expected (expected-descriptor (field-value-spec field))))))
+        :fields (field-expectation-descriptors spec)))
+
+(defmethod expected-descriptor ((spec keyed-field-spec))
+  (list :kind (spec-kind spec) :test (field-key-test spec)
+        :closed (field-spec-closed-p spec)
+        :fields (field-expectation-descriptors spec)))
 
 (defgeneric compile-node (spec context)
   (:documentation "Compile SPEC into a function of (VALUE PATH).
@@ -396,6 +416,97 @@ with DOLIST rather than indexed access, so a long unique list stays linear."
                        collect (error-datum :unknown-key (cons key path) (gethash key index)
                                             :expected expected)))))))))
 
+(defun field-path-errors (errors key)
+  "Return ERRORS with KEY prepended to each datum's declared :FIELD-PATH.
+
+:FIELD-PATH carries only declared field keys, which is what lets failure identity
+separate a violation in one field from the same violation in another."
+  (loop for datum in errors
+        collect (let ((copy (copy-list datum)))
+                  (setf (getf copy :field-path)
+                        (cons key (getf datum :field-path)))
+                  copy)))
+
+(defmethod compile-node ((spec alist-spec) context)
+  (let* ((fields (field-spec-fields spec))
+         (compiled (mapcar (lambda (field) (compile-node (field-value-spec field) context))
+                           fields))
+         (test-name (key-test-name (field-key-test spec)))
+         (declared (mapcar #'field-key fields))
+         (closed-p (field-spec-closed-p spec))
+         (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (multiple-value-bind (kind key) (alist-structure-error value (field-key-test spec))
+        (if kind
+            (list (error-datum kind (if (eq kind :duplicate-key) (cons key path) path)
+                               value :expected expected))
+            (append
+             (loop for field in fields
+                   for function in compiled
+                   for field-key = (field-key field)
+                   append
+                   (let ((entry (assoc field-key value :test test-name)))
+                     (field-path-errors
+                      (cond
+                        (entry (funcall function (cdr entry) (cons field-key path)))
+                        ((field-required-p field)
+                         (list (error-datum :missing-key (cons field-key path) nil
+                                            :expected
+                                            (expected-descriptor
+                                             (field-value-spec field))))))
+                      field-key)))
+             (when closed-p
+               (loop for entry in value
+                     for key = (car entry)
+                     unless (member key declared :test test-name)
+                       collect (error-datum :unknown-key (cons key path) (cdr entry)
+                                            :expected expected)))))))))
+
+(defmethod compile-node ((spec hash-table-spec) context)
+  (let* ((fields (field-spec-fields spec))
+         (compiled (mapcar (lambda (field) (compile-node (field-value-spec field) context))
+                           fields))
+         (test-name (key-test-name (field-key-test spec)))
+         (declared (make-hash-table :test test-name))
+         (closed-p (field-spec-closed-p spec))
+         (expected (expected-descriptor spec)))
+    (dolist (field fields)
+      (setf (gethash (field-key field) declared) t))
+    (lambda (value path)
+      (multiple-value-bind (kind actual) (hash-table-structure-error value (field-key-test spec))
+        (if kind
+            (if (eq kind :wrong-key-test)
+                (list (error-datum kind path value :expected expected :actual-test actual))
+                (list (error-datum kind path value :expected expected)))
+            (append
+             (loop for field in fields
+                   for function in compiled
+                   for field-key = (field-key field)
+                   append
+                   (multiple-value-bind (item present-p) (gethash field-key value)
+                     (field-path-errors
+                      (cond
+                        (present-p (funcall function item (cons field-key path)))
+                        ((field-required-p field)
+                         (list (error-datum :missing-key (cons field-key path) nil
+                                            :expected
+                                            (expected-descriptor
+                                             (field-value-spec field))))))
+                      field-key)))
+             (when closed-p
+               ;; MAPHASH order is unspecified; sort by printed key so two runs
+               ;; report the same unknown keys in the same order.
+               (let ((unknown nil))
+                 (maphash (lambda (key item)
+                            (unless (gethash key declared)
+                              (push (error-datum :unknown-key (cons key path) item
+                                                 :expected expected)
+                                    unknown)))
+                          value)
+                 (sort unknown #'string<
+                       :key (lambda (datum)
+                              (prin1-to-string (getf datum :path))))))))))))
+
 (defun compile-explainer (spec &key context)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
@@ -439,14 +550,19 @@ descriptor, which is why the common cases are unwrapped here."
 (defun print-explain-error (datum stream indent)
   "Print one structured error DATUM to STREAM, indented to column INDENT."
   (case (getf datum :kind)
-    ((:not-a-plist :duplicate-key :missing-key :unknown-key)
+    ((:not-a-plist :not-an-alist :not-a-hash-table :bad-association
+      :duplicate-key :missing-key :unknown-key :wrong-key-test)
      (format stream "~vT✗ ~A~@[ at ~S~]; expected ~A~%"
              indent
              (case (getf datum :kind)
                (:not-a-plist "not a plist")
+               (:not-an-alist "not an alist")
+               (:not-a-hash-table "not a hash table")
+               (:bad-association "malformed association")
                (:duplicate-key "duplicate key")
                (:missing-key "missing key")
-               (:unknown-key "unknown key"))
+               (:unknown-key "unknown key")
+               (:wrong-key-test "wrong key test"))
              (getf datum :path)
              (format-expected (getf datum :expected))))
     (:conjunct-failed
@@ -467,8 +583,7 @@ descriptor, which is why the common cases are unwrapped here."
             (failed-expected (getf failed-conjunct :expected)))
        (dolist (child (getf datum :errors))
          (unless (and (equal (getf child :expected) failed-expected)
-                       (not (member (getf child :kind)
-                                    '(:not-a-plist :duplicate-key :missing-key :unknown-key))))
+                       (not (member (getf child :kind) +field-structure-error-kinds+)))
            (print-explain-error child stream (+ indent 2))))))
     (:no-branch-matched
      (format stream "~vTno branch matched~%" indent)

@@ -33,7 +33,7 @@
 (defun draw-form ()
   "Draw a finite DSL example spanning scalar and composite specs."
   (let ((bound (1+ (random 20))))
-    (case (random 14)
+    (case (random 16)
       (0 'integer) (1 'string) (2 `(range integer ,(- bound) ,bound))
       (3 `(and integer (range ,(- bound) ,bound)))
       (4 '(or integer string)) (5 '(not integer))
@@ -44,7 +44,10 @@
       (11 '(plist (:required (:id integer)) (:closed t)))
       (12 '(plist (:required (:id integer))
                   (:optional (:nickname (nullable string)))))
-      (13 '(list-of integer :min-length 1 :max-length 3)))))
+      (13 '(list-of integer :min-length 1 :max-length 3))
+      (14 '(alist (:test equal) (:required (:id integer)) (:closed t)))
+      (15 '(hash-table (:test eql) (:required (:id integer))
+                       (:optional (:nickname (nullable string))))))))
 
 (defparameter *sampled-dsl-forms*
   (append '(integer string (or integer string) (not integer) (nullable integer)
@@ -53,7 +56,10 @@
             (plist (:required (:id integer)) (:closed t))
             (plist (:required (:id integer))
                    (:optional (:nickname (nullable string))))
-            (list-of integer :min-length 1 :max-length 3))
+            (list-of integer :min-length 1 :max-length 3)
+            (alist (:test equal) (:required (:id integer)) (:closed t))
+            (hash-table (:test eql) (:required (:id integer))
+                        (:optional (:nickname (nullable string)))))
           (loop for bound from 1 to 20
                 append (list `(range integer ,(- bound) ,bound)
                              `(and integer (range ,(- bound) ,bound)))))
