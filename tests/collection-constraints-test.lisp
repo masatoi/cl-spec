@@ -385,3 +385,19 @@ returns the last one even when the callback rejected it."))
                           (= (length items)
                              (length (remove-duplicates items :test #'eql)))))
                    samples))))))
+
+(deftest unique-ranges-with-fractional-bounds-enumerate-their-integers
+  (testing "an integer range with fractional endpoints admits the integers between them"
+    (let ((spec (normalize-spec-form
+                 '(list-of (range integer 0.5 2.5) :min-length 2 :max-length 2 :unique t))))
+      (let ((samples (sample spec :count 20 :seed 3)))
+        (ok (every (lambda (items) (equal '(1 2) (sort (copy-list items) #'<))) samples)))))
+  (testing "an interval containing no integer is an empty domain"
+    (ok (equal '(nil nil)
+               (sample (normalize-spec-form '(list-of (range integer 0.5 0.9) :unique t))
+                       :count 2 :seed 3))))
+  (testing "a positive minimum over that empty interval is refused"
+    (ok (signals (sample (normalize-spec-form
+                          '(list-of (range integer 0.5 0.9) :min-length 1 :unique t))
+                         :count 1)
+                 'generator-unavailable))))

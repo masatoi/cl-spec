@@ -680,6 +680,7 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
 有限な整数`range`は列挙せず直接samplingするため幅の上限はない。この場合も生成される
 コレクション長は要素rangeの幅ではなく通常のsizeから抽選し、幅を長さへ流用しない。
+端点が小数でもvalidationと同じく区間に含まれる整数を対象にし、整数が無ければ空domainとする。
 `member`、
 `boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
 超える場合は`generator-unavailable`を通知する。空の有限domainは「列挙不能」と区別し、

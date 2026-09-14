@@ -343,6 +343,29 @@ shifted width or half the declared range goes unreachable."
 (defparameter *enumeration-limit* 1000
   "Largest finite element domain ENUMERABLE-VALUES materializes for UNIQUE.")
 
+(defun integer-range-bounds (spec)
+  "Return (VALUES MINIMUM MAXIMUM) for an integer RANGE-SPEC, or NIL.
+
+Fractional finite endpoints are read the way validation reads them: the admitted
+values are the integers between the endpoints, so the minimum rounds up and the
+maximum rounds down.  A missing result means either that no integer lies in the
+interval (MINIMUM above MAXIMUM) or that a bound is not a finite number, which is
+why INTEGER-RANGE-P tells the two apart."
+  (let ((minimum (range-spec-minimum spec))
+        (maximum (range-spec-maximum spec)))
+    (when (and (eq (range-spec-base-type spec) 'integer)
+               (realp minimum) (realp maximum))
+      (let ((low (ceiling minimum))
+            (high (floor maximum)))
+        (when (<= low high)
+          (values low high))))))
+
+(defun integer-range-p (spec)
+  "Return true when SPEC is an integer range with finite real endpoints."
+  (and (eq (range-spec-base-type spec) 'integer)
+       (realp (range-spec-minimum spec))
+       (realp (range-spec-maximum spec))))
+
 (defgeneric enumerable-values (spec context)
   (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
 
@@ -380,14 +403,15 @@ check-it's guard generator, which recurses with no depth limit.")
 
 (defmethod enumerable-values ((spec range-spec) context)
   (declare (ignore context))
-  (let ((minimum (range-spec-minimum spec))
-        (maximum (range-spec-maximum spec)))
-    (if (and (eq (range-spec-base-type spec) 'integer)
-             (integerp minimum) (integerp maximum)
-             (<= minimum maximum)
-             (<= (- maximum minimum) *enumeration-limit*))
-        (values (loop for value from minimum to maximum collect value) t)
-        (values nil nil))))
+  (when (integer-range-p spec)
+    (multiple-value-bind (low high) (integer-range-bounds spec)
+      (cond
+        ;; Fractions such as (range integer 0.5 0.9) admit no integer: that is an
+        ;; empty domain, not a domain that cannot be enumerated.
+        ((null low) (values nil t))
+        ((<= (- high low) *enumeration-limit*)
+         (values (loop for value from low to high collect value) t))
+        (t (values nil nil))))))
 
 (defmethod enumerable-values ((spec or-spec) context)
   (let ((values nil))
@@ -423,12 +447,10 @@ generation even though the target is one of the enumerable domains."
 
 (defmethod finite-integer-range ((spec range-spec) context)
   (declare (ignore context))
-  (let ((minimum (range-spec-minimum spec))
-        (maximum (range-spec-maximum spec)))
-    (when (and (eq (range-spec-base-type spec) 'integer)
-               (integerp minimum) (integerp maximum)
-               (<= minimum maximum))
-      (values minimum maximum))))
+  (multiple-value-bind (low high) (integer-range-bounds spec)
+    ;; An interval with no integer in it is left to ENUMERABLE-VALUES, which
+    ;; reports it as an empty domain rather than as no domain at all.
+    (when low (values low high))))
 
 (defmethod finite-integer-range ((spec reference-spec) context)
   (let ((target (reference-spec-target spec))
