@@ -684,7 +684,7 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 縮小可能性の判定は要素domainの要素数も見て、実効的な最大長が`:min-length`以下なら
 要素除去の余地なしとして報告する。
 列挙できない要素、またはカスタムgeneratorが分布を持つ要素には`generator-unavailable`を
-通知する。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
+通知する（`nullable`・`or`の子にネストしたカスタムgeneratorも同じく分布を所有する）。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
 無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
 ノードだけが`:min-length`/`:max-length`/`:unique`を持つ）。
 
@@ -4366,7 +4366,9 @@ whole-list specと既存keyword検証の両方を満たす必要がある。生�
 再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
 restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword generatorで生成し、
 長さ制約付きのuniversal list `(list-of t :min-length N [:max-length M])`は
-境界内の長さになるようkeyword pairで埋める。それ以外はrest generatorから最大100候補callを
+境界内の長さになるようkeyword pairで埋める。宣言keyの個数より`:min-length`が長い場合は
+宣言keyを再利用する（raw callでは重複keyが許され、最初の出現だけが束縛される）。
+それ以外はrest generatorから最大100候補callを
 生成し、全引数schemaで交差条件を検査する。
 上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、
 拒否された生成候補でtargetを呼ばない。

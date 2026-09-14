@@ -201,3 +201,30 @@
                      (and (evenp (length tail))
                           (<= 4 (length tail) 6)))
                    *keyword-rest-tails*))))))
+
+(defvar *reused-keyword-tails* nil
+  "Raw rest tails observed by REUSED-KEYWORD-TARGET.")
+
+(defun reused-keyword-target (&rest raw &key a)
+  "Collect the raw rest tail, which must reuse :A to reach the declared minimum."
+  (declare (ignore a))
+  (push (copy-list raw) *reused-keyword-tails*)
+  (list raw))
+
+(deftest constrained-universal-rest-reuses-declared-keywords
+  (testing "a minimum longer than the distinct keyword count repeats a declared key"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*reused-keyword-tails* nil))
+      (cl-spec:defspec-function reused-keyword-target
+        (:args &rest (raw (list-of t :min-length 4))
+               &key ((:a a) integer))
+        (:returns list))
+      (let ((result (cl-spec:check-function 'reused-keyword-target :trials 20 :seed 7)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (zerop (cl-spec:property-result-rejected result)))
+        (ok (= 20 (length *reused-keyword-tails*)))
+        (ok (every (lambda (tail)
+                     (and (evenp (length tail))
+                          (<= 4 (length tail))
+                          (>= (count :a tail) 2)))
+                   *reused-keyword-tails*))))))

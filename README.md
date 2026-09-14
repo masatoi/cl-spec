@@ -274,7 +274,8 @@ integer `range` is sampled directly, so any width works; `member`,
 `boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
 1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
 element spec with no finite enumeration, or one whose custom generator owns its
-distribution, signals `generator-unavailable` rather than retrying collisions
+distribution — including a custom generator nested inside a `nullable` or `or`
+node — signals `generator-unavailable` rather than retrying collisions
 forever. A collection whose `:max-length` is 0 generates
 the empty collection without compiling its element spec.
 
@@ -434,7 +435,9 @@ keyword rules must both hold. Without `&key`, generation uses the whole-list res
 spec's generator. With `&key`, an exact, unannotated `(list-of t)` rest spec uses
 keyword generation, and a length-constrained universal one — `(list-of t
 :min-length N [:max-length M])` — is filled with keyword pairs whose total length
-stays inside those bounds. Other rest specs use their own generator and try up to
+stays inside those bounds; a minimum longer than the distinct keyword count reuses
+declared keywords, which a raw call allows because the first occurrence binds.
+Other rest specs use their own generator and try up to
 100 candidate calls against the complete argument schema; exhaustion signals
 `generator-unavailable`. Custom generator annotations do not bypass this check.
 Rejected generated candidates never reach the target. Shrinking also checks both

@@ -34,10 +34,24 @@ the keyword generator fills, or NIL.")
    (spec :initarg :spec :reader call-generator-spec))
   (:documentation "Generate raw calls and shrink their positional, rest, or keyword values."))
 
+(defun keyword-tail-span (key-count minimum maximum)
+  "Return (LOWEST . UPPER), the even tail lengths a keyword generator may draw.
+
+Duplicate keywords are legal in a raw call and the first occurrence binds, so a
+declared key is reused when MINIMUM needs more pairs than there are distinct
+keywords.  UPPER otherwise stays at the distinct-key span, so generation does not
+invent duplicates it does not need."
+  (let ((lowest (if (evenp minimum) minimum (1+ minimum)))
+        (natural (* 2 key-count)))
+    (cons lowest
+          (if (eq maximum :unbounded)
+              (max lowest natural)
+              (min maximum (max lowest natural))))))
+
 (defun call-generator-removable-p (generator)
   "Return true when optional positional or generated keyword arguments can be omitted."
-  (let* ((layout (call-generator-layout generator))
-         (rest-length (call-generator-rest-length generator)))
+  (let ((layout (call-generator-layout generator))
+        (rest-length (call-generator-rest-length generator)))
     (or (> (call-layout-positional-count layout) (call-layout-required-count layout))
         (and (not (call-generator-rest-driven-p generator))
              (some (lambda (binding) (eq :key (argument-binding-kind binding)))
@@ -45,26 +59,28 @@ the keyword generator fills, or NIL.")
              ;; A keyword pair is removable only while the rest tail may still be
              ;; longer than the minimum the rest spec declares.
              (or (null rest-length)
-                 (let* ((keys (count-if (lambda (binding)
-                                          (eq :key (argument-binding-kind binding)))
-                                        (call-layout-bindings layout)))
-                        (maximum (cdr rest-length))
-                        (upper (if (eq maximum :unbounded) (* 2 keys)
-                                   (min maximum (* 2 keys)))))
-                   (>= upper (+ (car rest-length) 2))))))))
+                 (>= (cdr (keyword-tail-span
+                           (count-if (lambda (binding)
+                                       (eq :key (argument-binding-kind binding)))
+                                     (call-layout-bindings layout))
+                           (car rest-length) (cdr rest-length)))
+                     (+ (car rest-length) 2)))))))
 
 (defun generate-keyword-tail (bindings children rest-length spec)
-  "Draw a keyword/value tail whose even length lies inside REST-LENGTH."
+  "Draw a keyword/value tail whose even length lies inside REST-LENGTH.
+
+Duplicate keywords are legal and the first occurrence binds, so a declared key is
+reused when the minimum demands more pairs than there are distinct keywords."
   (let* ((keys (loop for binding in bindings
                      for child in children
                      when (eq :key (argument-binding-kind binding))
                        collect (cons binding child)))
          (minimum (car rest-length))
          (maximum (cdr rest-length))
-         (available (* 2 (length keys)))
-         (upper (if (eq maximum :unbounded) available (min maximum available)))
-         (lowest (if (evenp minimum) minimum (1+ minimum))))
-    (when (or (zerop (length keys)) (> lowest upper))
+         (span (keyword-tail-span (length keys) minimum maximum))
+         (lowest (car span))
+         (upper (cdr span)))
+    (when (or (and (null keys) (plusp lowest)) (> lowest upper))
       (error 'generator-unavailable
              :spec spec
              :reason (format nil "the declared keywords cannot fill a rest tail of ~D to ~D elements"
@@ -72,12 +88,15 @@ the keyword generator fills, or NIL.")
     (let* ((low-pairs (/ lowest 2))
            (high-pairs (floor upper 2))
            (pairs (+ low-pairs (random (1+ (- high-pairs low-pairs)))))
-           (chosen (loop repeat pairs
-                         for index = (random (length keys))
-                         collect (prog1 (nth index keys)
-                                   (setf keys (append (subseq keys 0 index)
-                                                      (subseq keys (1+ index))))))))
-      (loop for (binding . child) in chosen
+           (remaining (copy-list keys))
+           (chosen nil))
+      (loop repeat pairs
+            do (when (null remaining) (setf remaining (copy-list keys)))
+               (let ((index (random (length remaining))))
+                 (push (nth index remaining) chosen)
+                 (setf remaining (append (subseq remaining 0 index)
+                                         (subseq remaining (1+ index))))))
+      (loop for (binding . child) in (nreverse chosen)
             append (list (argument-binding-keyword binding) (generate child))))))
 
 (defmethod generate ((generator call-arguments-generator))

@@ -229,3 +229,19 @@
            (spec (normalize-spec-form
                   `(list-of (member ,@values) :min-length 2 :unique t))))
       (ok (signals (sample spec :count 1) 'generator-unavailable)))))
+
+(deftest unique-refuses-composites-with-a-nested-custom-generator
+  (testing "a custom generator on a composite child is not replaced by its domain"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (defgenerator nested-id () 1)
+      ;; Programmatic composition: a spec object keeps its generator name when it
+      ;; is embedded in another form, so the composite must not enumerate it.
+      (let ((custom (normalize-spec-form '(member 1 2) :generator 'nested-id)))
+        (testing "OR"
+          (let ((spec (normalize-spec-form
+                       `(list-of (or ,custom (member 5)) :min-length 2 :unique t))))
+            (ok (signals (sample spec :count 1) 'generator-unavailable))))
+        (testing "NULLABLE"
+          (let ((spec (normalize-spec-form
+                       `(list-of (nullable ,custom) :min-length 2 :unique t))))
+            (ok (signals (sample spec :count 1) 'generator-unavailable))))))))

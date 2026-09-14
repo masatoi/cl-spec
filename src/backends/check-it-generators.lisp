@@ -47,7 +47,6 @@
                 #:tuple-spec
                 #:tuple-spec-element-specs
                 #:collection-spec-element-spec
-                #:bounded-collection-spec
                 #:collection-spec-min-length
                 #:collection-spec-max-length
                 #:collection-spec-unique-p
@@ -591,24 +590,34 @@ removal shrinking both need it."
             (t (element-wise))))))
 
 (defun effective-generator-name (spec context)
-  "Return the custom generator SPEC names, following references, or NIL.
+  "Return the custom generator SPEC names, following references and enumerable
+composites, or NIL.
 
 A custom generator owns how its values are drawn, so UNIQUE refuses a domain
-whose values it would otherwise have to enumerate instead."
+whose values it would otherwise have to enumerate instead.  The traversal mirrors
+ENUMERABLE-VALUES: a custom generator nested in a NULLABLE or OR node owns that
+node's distribution too, and enumerating the node's underlying member or boolean
+domain would silently replace it."
   (or (spec-generator-name spec)
-      (when (typep spec 'reference-spec)
-        (let ((target (reference-spec-target spec)))
-          (unless (member target *reference-trail*)
-            (let ((*reference-trail* (cons target *reference-trail*)))
-              (effective-generator-name (resolve-spec target (context-registry context))
-                                        context)))))))
+      (typecase spec
+        (reference-spec
+         (let ((target (reference-spec-target spec)))
+           (unless (member target *reference-trail*)
+             (let ((*reference-trail* (cons target *reference-trail*)))
+               (effective-generator-name (resolve-spec target (context-registry context))
+                                         context)))))
+        (nullable-spec
+         (effective-generator-name (nullable-spec-inner-spec spec) context))
+        (or-spec
+         (some (lambda (child) (effective-generator-name child context))
+               (or-spec-children spec))))))
 
 (defun compile-collection-generator (spec context vector-p)
   "Compile a generator for the bounded collection SPEC."
-  (let* ((element (collection-spec-element-spec spec))
-         (minimum (collection-spec-min-length spec))
-         (maximum (collection-spec-max-length spec))
-         (unique (collection-spec-unique-p spec)))
+  (let ((element (collection-spec-element-spec spec))
+        (minimum (collection-spec-min-length spec))
+        (maximum (collection-spec-max-length spec))
+        (unique (collection-spec-unique-p spec)))
     (when (eql maximum 0)
       ;; No element can be drawn, so the element spec need not compile or
       ;; enumerate: the empty collection is the only admissible value.
