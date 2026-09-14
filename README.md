@@ -444,7 +444,10 @@ keyword generation, and a length-constrained universal one — `(list-of t
 stays inside those bounds; a minimum longer than the distinct keyword count reuses
 declared keywords, which a raw call allows because the first occurrence binds, and
 an empty `&key` section is filled with the standard `:allow-other-keys` control
-pair rather than signalling that no keyword can be generated. Every pair —
+pair rather than signalling that no keyword can be generated. A rest spec
+registered under a name is classified like the same spec written inline —
+reference chains are followed — while a name annotated with a custom generator
+keeps that generator instead of the keyword shortcut. Every pair —
 declared or control — is drawn through the backend's one generator protocol, so a
 keyword whose value spec compiles to a constant receives that constant: `null`,
 `(member nil)` and a reference to either generate `NIL`, never `T`.

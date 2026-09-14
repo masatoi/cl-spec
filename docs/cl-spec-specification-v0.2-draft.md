@@ -4375,6 +4375,8 @@ rest束縛のpresenceは常に真とする。位置引数を消費したraw list
 whole-list specと既存keyword検証の両方を満たす必要がある。生成・縮小では組み立てたcallを
 再検証し、不適合候補を実行しない。rest単独ではwhole-list specのgeneratorを使い、固定の最大arityを仮定しない。
 restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword generatorで生成し、
+この判定はrest specが名前参照でも同じで、参照連鎖を解決してから適用する
+（generator注釈を持つリンク・ノードはそのgeneratorを所有者として優先し、keyword生成へ切り替えない）。
 長さ制約付きのuniversal list `(list-of t :min-length N [:max-length M])`は
 境界内の長さになるようkeyword pairで埋める。宣言keyの個数より`:min-length`が長い場合は
 宣言keyを再利用する（raw callでは重複keyが許され、最初の出現だけが束縛される）。

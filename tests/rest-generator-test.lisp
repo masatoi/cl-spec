@@ -428,3 +428,65 @@
                             (member (second raw) '(1 2))
                             (eql (second observation) (second raw)))))
                    *keyword-value-observations*))))))
+
+(defvar *named-rest-tails* nil
+  "Raw rest tails observed by NAMED-REST-TARGET.")
+
+(defun named-rest-target (&rest raw &key a)
+  "Collect the raw rest tail; its spec is always registered under a name."
+  (declare (ignore a))
+  (push (copy-list raw) *named-rest-tails*)
+  (list raw))
+
+(deftest named-universal-rests-use-the-keyword-shortcut
+  (testing "a rest spec registered under a name is classified like its inline form"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec bounded-tail (list-of t :min-length 2))
+      (cl-spec:defspec alias-tail bounded-tail)
+      (cl-spec:defspec plain-tail (list-of t))
+      (dolist (entry '((bounded-tail 2 . 2) (alias-tail 2 . 2) (plain-tail 0 . 2)))
+        (destructuring-bind (rest-spec minimum . maximum) entry
+          (let ((*named-rest-tails* nil))
+            (testing (format nil "rest spec ~S" rest-spec)
+              (let ((result (cl-spec:check-function
+                             (make-instance 'cl-spec:function-spec
+                                            :name 'named-rest-target
+                                            :argument-specs `(&rest (raw ,rest-spec)
+                                                             &key ((:a a) integer))
+                                            :return-spec 'list)
+                             :trials 10 :seed 6)))
+                (ok (eq :passed (cl-spec:property-result-status result)))
+                (ok (zerop (cl-spec:property-result-rejected result)))
+                (ok (= 10 (length *named-rest-tails*)))
+                (ok (every (lambda (tail)
+                             (and (evenp (length tail))
+                                  (<= minimum (length tail) maximum)
+                                  (loop for rest on tail by #'cddr
+                                        always (eq (car rest) :a))))
+                           *named-rest-tails*))))))))))
+
+(defvar *custom-rest-tails* nil
+  "Raw rest tails observed by CUSTOM-REST-TARGET.")
+
+(defun custom-rest-target (&rest raw &key a)
+  "Collect the raw rest tail drawn by the rest spec's custom generator."
+  (declare (ignore a))
+  (push (copy-list raw) *custom-rest-tails*)
+  (list raw))
+
+(deftest generator-annotated-named-rests-keep-their-owner
+  (testing "a custom generator on the named rest spec is not replaced by keyword pairs"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*custom-rest-tails* nil))
+      (cl-spec:defgenerator fixed-tail () '(:a 7))
+      (cl-spec:defspec owned-tail (list-of t :min-length 2) (:generator fixed-tail))
+      (let ((result (cl-spec:check-function
+                     (make-instance 'cl-spec:function-spec
+                                    :name 'custom-rest-target
+                                    :argument-specs '(&rest (raw owned-tail)
+                                                     &key ((:a a) integer))
+                                    :return-spec 'list)
+                     :trials 10 :seed 4)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (= 10 (length *custom-rest-tails*)))
+        (ok (every (lambda (tail) (equal '(:a 7) tail)) *custom-rest-tails*))))))

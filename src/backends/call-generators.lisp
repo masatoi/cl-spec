@@ -14,7 +14,9 @@
                 #:collection-constraint-plist
                 #:collection-spec-min-length #:collection-spec-max-length
                 #:collection-spec-unique-p
+                #:reference-spec #:reference-spec-target
                 #:type-spec #:type-spec-type-specifier)
+  (:import-from #:cl-spec/src/resolve #:resolve-spec #:context-registry)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/conditions #:generator-unavailable)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
@@ -224,6 +226,25 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
                                (progn (setf (cached-value generator) candidate) nil)))))))
   (cached-value generator))
 
+(defun resolve-rest-spec (spec context &optional trail)
+  "Return the spec a rest declaration's reference chain ends at, or NIL.
+
+The chain is followed so a name registered for `(list-of t ...)` is classified
+like the same spec written inline.  A link carrying a custom generator ends the
+walk with NIL: that generator owns the values, so the universal-rest shortcut
+must not fill the tail with keyword pairs instead.  RECURSIVE chains and a
+custom generator on the resolved node are both NIL for the same reason."
+  (when (spec-generator-name spec)
+    (return-from resolve-rest-spec nil))
+  (if (typep spec 'reference-spec)
+      (let ((target (reference-spec-target spec)))
+        (when (member target trail :test #'eq)
+          (return-from resolve-rest-spec nil))
+        (resolve-rest-spec (resolve-spec target (context-registry context))
+                           context
+                           (cons target trail)))
+      spec))
+
 (defun universal-rest-list-p (spec)
   "Return true when SPEC is (list-of t ...) with universal elements and no custom generator."
   (and (eq (class-of spec) (find-class 'list-of-spec))
@@ -256,8 +277,11 @@ keyword pairs can promise, so that combination keeps the rest-driven path."
   (let* ((layout (call-arguments-spec-layout spec))
          (rest (call-layout-rest-binding layout))
          (rest-spec (and rest (argument-binding-spec rest)))
-         (keyword-length (and rest-spec (keyword-rest-bounds rest-spec layout)))
-         (unconstrained (and rest-spec (unconstrained-rest-list-p rest-spec)))
+         ;; Resolve names first: a registered (list-of t ...) is the same tail as
+         ;; the inline form, while a generator-annotated link keeps its owner.
+         (rest-target (and rest-spec (resolve-rest-spec rest-spec context)))
+         (keyword-length (and rest-target (keyword-rest-bounds rest-target layout)))
+         (unconstrained (and rest-target (unconstrained-rest-list-p rest-target)))
          (rest-driven (and rest
                            (not (and (call-layout-key-p layout)
                                      (or unconstrained keyword-length))))))
