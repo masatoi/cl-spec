@@ -47,6 +47,7 @@
                 #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:keyed-field-spec #:alist-spec #:hash-table-spec
+                #:object-spec #:object-spec-class-name #:reader-function
                 #:field-spec-fields #:field-spec-closed-p
                 #:field-key #:field-value-spec #:field-required-p #:field-key-test
                 #:key-test-name
@@ -79,7 +80,7 @@ running from the root value down to the failing part."
 
 (defparameter +field-structure-error-kinds+
   '(:not-a-plist :not-an-alist :not-a-hash-table :bad-association
-    :duplicate-key :missing-key :unknown-key :wrong-key-test)
+    :duplicate-key :missing-key :unknown-key :wrong-key-test :unbound-slot)
   "EXPLAIN-DATA kinds a field record's own structure check produces.
 
 These stay visible inside a conjunction instead of collapsing into one
@@ -151,6 +152,10 @@ this generic; the default only identifies the node kind."))
 (defmethod expected-descriptor ((spec keyed-field-spec))
   (list :kind (spec-kind spec) :test (field-key-test spec)
         :closed (field-spec-closed-p spec)
+        :fields (field-expectation-descriptors spec)))
+
+(defmethod expected-descriptor ((spec object-spec))
+  (list :kind :object :class (object-spec-class-name spec)
         :fields (field-expectation-descriptors spec)))
 
 (defgeneric compile-node (spec context)
@@ -507,6 +512,54 @@ separate a violation in one field from the same violation in another."
                        :key (lambda (datum)
                               (prin1-to-string (getf datum :path))))))))))))
 
+(defun read-object-field (object reader)
+  "Return (values PRESENT-P VALUE CONDITION) reading OBJECT through READER.
+
+PRESENT-P is NIL and CONDITION is NIL when READER signals UNBOUND-SLOT, which is
+how an unbound CLOS slot announces itself; a bound slot holding NIL stays a
+present field.  Any other condition is returned as CONDITION for the caller to
+report, except UNDEFINED-FUNCTION and PROGRAM-ERROR, which describe a broken
+reader rather than a bad value and propagate to the author."
+  (handler-case
+      (values t (funcall (reader-function reader) object) nil)
+    (unbound-slot () (values nil nil nil))
+    ((and error (not (or undefined-function program-error))) (condition)
+      (values nil nil condition))))
+
+(defmethod compile-node ((spec object-spec) context)
+  (let* ((class-name (object-spec-class-name spec))
+         (fields (field-spec-fields spec))
+         (compiled (mapcar (lambda (field) (compile-node (field-value-spec field) context))
+                           fields))
+         (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (let ((class (find-class class-name nil)))
+        (if (not (and class (typep value class)))
+            (list (error-datum :not-an-instance path value :expected expected))
+            (loop for field in fields
+                  for function in compiled
+                  for key = (field-key field)
+                  append
+                  (multiple-value-bind (present-p item condition) (read-object-field value key)
+                    (cond
+                      (present-p
+                       (field-path-errors (funcall function item (cons key path)) key))
+                      (condition
+                       (field-path-errors
+                        (list (error-datum :reader-errored (cons key path) value
+                                           :expected
+                                           (expected-descriptor (field-value-spec field))
+                                           :condition-type (type-of condition)
+                                           :condition-report (princ-to-string condition)))
+                        key))
+                      ((field-required-p field)
+                       (field-path-errors
+                        (list (error-datum :unbound-slot (cons key path) nil
+                                           :expected
+                                           (expected-descriptor (field-value-spec field))))
+                        key))
+                      (t nil)))))))))
+
 (defun compile-explainer (spec &key context)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
@@ -551,7 +604,7 @@ descriptor, which is why the common cases are unwrapped here."
   "Print one structured error DATUM to STREAM, indented to column INDENT."
   (case (getf datum :kind)
     ((:not-a-plist :not-an-alist :not-a-hash-table :bad-association
-      :duplicate-key :missing-key :unknown-key :wrong-key-test)
+      :duplicate-key :missing-key :unknown-key :wrong-key-test :unbound-slot)
      (format stream "~vT✗ ~A~@[ at ~S~]; expected ~A~%"
              indent
              (case (getf datum :kind)
@@ -562,7 +615,8 @@ descriptor, which is why the common cases are unwrapped here."
                (:duplicate-key "duplicate key")
                (:missing-key "missing key")
                (:unknown-key "unknown key")
-               (:wrong-key-test "wrong key test"))
+               (:wrong-key-test "wrong key test")
+               (:unbound-slot "unbound field"))
              (getf datum :path)
              (format-expected (getf datum :expected))))
     (:conjunct-failed

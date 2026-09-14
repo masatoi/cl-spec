@@ -17,7 +17,9 @@ Field-aware keyword plist specs support required/optional keys, closed records,
 structured errors, introspection and check-it generation/shrinking. Field metadata
 is separated from storage representation in `src/field-spec.lisp`. Alist and
 hash-table field specs share that base through a `:test` clause that fixes key
-comparison, presence-versus-NIL and alist duplicate-key semantics.
+comparison, presence-versus-NIL and alist duplicate-key semantics. Struct and
+CLOS field specs (`object-of`) observe instances through explicit readers; they
+validate and introspect but need a custom generator to construct values.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Project Structure & Module Organization

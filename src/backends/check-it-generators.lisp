@@ -23,7 +23,7 @@
                 #:guard-generator
                 #:mapped-generator)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:alist-spec #:hash-table-spec
+                #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
                 #:field-spec-fields #:field-key-test #:key-test-name
                 #:field-key #:field-value-spec #:field-required-p)
   (:import-from #:cl-spec/src/conditions
@@ -307,6 +307,16 @@ valid and still failing."
 
 (defmethod spec-generator ((spec hash-table-spec) context)
   (make-keyed-value-generator 'hash-table-value-generator spec context))
+
+(defmethod spec-generator ((spec object-spec) context)
+  "Refuse to invent an object: readers observe but do not construct.
+A (:GENERATOR NAME) on the definition is the supported way to draw instances,
+because only its author knows the constructor and its initargs."
+  (declare (ignore context))
+  (error 'generator-unavailable
+         :spec spec
+         :reason "an OBJECT-OF spec is observed through readers and cannot be constructed; ~
+                  declare a (:GENERATOR NAME) to draw instances"))
 
 (defun custom-spec-generator (name spec context)
   "Return a generator drawing from the custom generator NAME names.

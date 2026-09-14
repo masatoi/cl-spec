@@ -663,6 +663,7 @@ nullable
 plist
 alist
 hash-table
+object-of
 instance-of
 
 ```
@@ -866,6 +867,54 @@ alistは`(KEY . VALUE)`を、hash-tableは宣言したtestのtableを生成す�
 縮小capabilityは`:none`。
 
 フィールド間制約はplistと同じく既存の`and`・`satisfies`で表現する。
+
+---
+
+# 9.4 フィールド付きobject spec（構造体・CLOS）
+
+実装済みの記法：
+
+```lisp
+(defspec account-view
+  (object-of account
+    (:required (account-owner (object-of owner (:required (owner-id integer))))
+               (account-balance integer))
+    (:optional (account-note (nullable string)))))
+```
+
+`object-of`はクラス名（または構造体type名）のsymbolを1つ取り、続けて`:required`・
+`:optional`句を取る。各entryは`(READER SPEC)`で、`READER`は値に適用する一引数関数を
+名指すsymbolである。フィールドのkeyはreaderそのもので、`:path`・`:field-path`にも
+reader名が入る。子IRの列挙は宣言順である。
+
+値はまず宣言クラスのinstanceかどうかを検査し、違えば`:not-an-instance`を返す。
+その後、各readerを値に適用して観測する。値がNILであることと、
+`slot-value`が`unbound-slot`を通知するunbound slotは区別する。必須フィールドの
+readerが`unbound-slot`を通知した場合は`:unbound-slot`、任意フィールドでは
+「フィールド欠落」として扱う。readerが`unbound-slot`以外のconditionを通知した場合は
+`:reader-errored`とし、`:condition-type`・`:condition-report`を持つ。ただし
+`undefined-function`（reader名の誤り）と`program-error`（引数個数の誤り）は
+著者の誤りなので伝播させる。これは`predicate-spec`の扱いと同じ規則である。
+
+`closed`は受理しない。readerで観測する限りクラスの未宣言slotは列挙できないため、
+closednessは意味を持たない。宣言で`:closed`を書いた場合も、programmaticに
+`:closed-p t`を渡した場合も`invalid-spec-form`とする。`:test`も受理しない（キー比較は
+存在しない）。MOPによるslot列挙・initarg推論は行わない。
+
+既存の`field-spec`・`field-definition`を土台にし、`object-spec`が`class-name`だけを
+加える。readerの設計atorはsymbol（検証時に`fdefinition`で解決するので前方参照を許す）
+または関数objectである。初期化・再初期化の変更前に、クラス名・reader設計ator・
+readerの重複を検査する。
+
+`spec-data`は`:kind`・`:class-name`・`:closed`・`:fields`を返す。digestは`:class`と
+reader名を含むため、クラス・reader・requiredness・子specの違いで異なる。
+expected descriptorは`:kind :object`・`:class`・`:fields`を持つ。
+
+readerは観測だけを行い、instanceの構築方法は持たない。したがってcheck-it backendは
+`object-of`の生成を`generator-unavailable`として拒否し、capabilityは
+`:generation :unavailable`となる。instanceを生成したい場合は定義に
+`(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
+constructorとinitargを知るのは著者だけだからである。縮小も同じgenerator/shrinkerに従う。
 
 ---
 
@@ -1755,7 +1804,8 @@ Malliのstructured explain / humanize分離を参考にするが、cl-specでは
 
 # 23. CLOS integration
 
-> **位置付け:** 一部実装。instance-of以外の専用generic仕様・統合inspectionは将来構想。
+> **位置付け:** 一部実装。`instance-of`に加え、明示readerでフィールドを観測する
+> `object-of`（§9.4）を実装。専用generic仕様・統合inspection・MOPによるslot推論は将来構想。
 
 CLOSはCommon Lispのsemantic structureとして積極的に利用する。
 
@@ -4245,8 +4295,10 @@ A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 `list-of`/`vector-of`の長さ・一意性制約は実装済み（§9、§68.1）。alist/hash-tableの
 フィールド仕様も実装済みで、`:test`によるキー比較、キー欠落とNIL値の区別、
-alistの重複キー拒否を意味論として固定した（§9.3）。タグ付きunionは、
-field-specと`definition-constraints`を土台にした次の拡張である。
+alistの重複キー拒否を意味論として固定した（§9.3）。構造体・CLOSのフィールド仕様は
+明示readerで観測する`object-of`として実装済み（§9.4）で、生成は
+`(:generator NAME)`に委ねる。タグ付きunionは、field-specと
+`definition-constraints`を土台にした次の拡張である。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 

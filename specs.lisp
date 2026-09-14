@@ -30,10 +30,14 @@
 
 (in-package #:cl-spec/specs)
 
+(defclass self-object-sample ()
+  ((id :initarg :id :reader self-object-sample-id))
+  (:documentation "Fixture that the OBJECT-OF normalization laws observe through a reader."))
+
 (defun draw-form ()
   "Draw a finite DSL example spanning scalar and composite specs."
   (let ((bound (1+ (random 20))))
-    (case (random 16)
+    (case (random 17)
       (0 'integer) (1 'string) (2 `(range integer ,(- bound) ,bound))
       (3 `(and integer (range ,(- bound) ,bound)))
       (4 '(or integer string)) (5 '(not integer))
@@ -47,7 +51,8 @@
       (13 '(list-of integer :min-length 1 :max-length 3))
       (14 '(alist (:test equal) (:required (:id integer)) (:closed t)))
       (15 '(hash-table (:test eql) (:required (:id integer))
-                       (:optional (:nickname (nullable string))))))))
+                       (:optional (:nickname (nullable string)))))
+      (16 '(object-of self-object-sample (:required (self-object-sample-id integer)))))))
 
 (defparameter *sampled-dsl-forms*
   (append '(integer string (or integer string) (not integer) (nullable integer)
@@ -59,7 +64,8 @@
             (list-of integer :min-length 1 :max-length 3)
             (alist (:test equal) (:required (:id integer)) (:closed t))
             (hash-table (:test eql) (:required (:id integer))
-                        (:optional (:nickname (nullable string)))))
+                        (:optional (:nickname (nullable string))))
+            (object-of self-object-sample (:required (self-object-sample-id integer))))
           (loop for bound from 1 to 20
                 append (list `(range integer ,(- bound) ,bound)
                              `(and integer (range ,(- bound) ,bound)))))

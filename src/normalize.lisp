@@ -13,7 +13,8 @@
                 #:range-spec #:instance-of-spec #:and-spec #:or-spec #:not-spec
                 #:list-of-spec #:vector-of-spec #:tuple-spec #:nullable-spec)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:alist-spec #:hash-table-spec #:make-field-definition
+                #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
+                #:make-field-definition #:reader-designator-p
                 #:key-test-designator #:key-test-designator-p #:key-test-function)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
@@ -24,6 +25,7 @@
 (defparameter *spec-primitives*
   '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
     "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "ALIST" "HASH-TABLE"
+    "OBJECT-OF"
     "INSTANCE-OF")
   "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
 
@@ -111,37 +113,33 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
              :maximum (bound maximum)
              (spec-initargs form name source-location generator)))))
 
-(defun normalize-field-spec (form name source-location generator class
-                             key-predicate allow-test-p)
-  "Normalize field clauses in a form whose outer list was checked by NORMALIZE-COMPOUND.
+(defun normalize-field-spec (form clauses name source-location generator class
+                             key-predicate allowed-clauses entry-description
+                             &optional class-name)
+  "Normalize field CLAUSES into an instance of CLASS.
 
-CLASS is PLIST-SPEC, ALIST-SPEC or HASH-TABLE-SPEC.  KEY-PREDICATE accepts one
-declared key; ALLOW-TEST-P enables the (:test ...) clause that fixes the key
-comparison for the keyed representations, which PLIST-SPEC refuses because it
-always compares keywords with EQL.  Clauses and entries are collected first and
-the key test applied last, so a (:test ...) written after a field still decides
-that field's duplicate check."
+CLAUSES is the clause tail of FORM, which is the whole source form kept for
+diagnostics.  ALLOWED-CLAUSES are the clause heads this representation accepts;
+KEY-PREDICATE accepts one declared key and ENTRY-DESCRIPTION names the accepted
+entry shape.  When :TEST is allowed the (:test ...) clause fixes the key
+comparison for the keyed representations, and CLASS-NAME carries the class a
+STRUCT/CLOS representation observes.
+
+Clauses and entries are collected first and the key test applied last, so a
+(:test ...) written after a field still decides that field's duplicate check."
   (let ((seen-clauses nil)
         (raw-fields nil)
         (fields nil)
         (closed-p nil)
         (key-test :eql))
     (flet ((refuse (reason)
-             (error 'invalid-spec-form :form form :reason reason))
-           (known-clause-p (clause-name)
-             (if allow-test-p
-                 (member clause-name '(:required :optional :closed :test))
-                 (member clause-name '(:required :optional :closed)))))
-      (dolist (clause (rest form))
+             (error 'invalid-spec-form :form form :reason reason)))
+      (dolist (clause clauses)
         (unless (and (consp clause) (finite-list-p clause)
-                     (known-clause-p (first clause)))
-          (refuse (if allow-test-p
-                      "field clauses are :required, :optional, :closed or :test"
-                      "PLIST clauses are :required, :optional or :closed")))
+                     (member (first clause) allowed-clauses))
+          (refuse (format nil "field clauses are ~{~S~^, ~}" allowed-clauses)))
         (when (member (first clause) seen-clauses)
-          (refuse (if allow-test-p
-                      "field clauses must not repeat"
-                      "PLIST clauses must not repeat")))
+          (refuse "field clauses must not repeat"))
         (push (first clause) seen-clauses)
         (case (first clause)
           (:closed
@@ -157,19 +155,15 @@ that field's duplicate check."
              (dolist (entry (rest clause))
                (unless (and (finite-list-p entry) (= 2 (length entry))
                             (funcall key-predicate (first entry)))
-                 (refuse (if allow-test-p
-                             "field entries must be (KEY SPEC) pairs with an admissible key"
-                             "PLIST fields must be (:keyword spec) pairs")))
+                 (refuse entry-description))
                (push (list (first entry) (second entry) required-p)
                      raw-fields))))))
       (let ((seen-keys nil)
-            (test (if allow-test-p (key-test-function key-test) #'eq)))
+            (test (if (member :test allowed-clauses) (key-test-function key-test) #'eq)))
         (dolist (raw (nreverse raw-fields))
           (destructuring-bind (key value-form required-p) raw
             (when (member key seen-keys :test test)
-              (refuse (if allow-test-p
-                          "field keys must be unique under the declared test"
-                          "PLIST field keys must be unique across required and optional")))
+              (refuse "field keys must be unique under the declared comparison"))
             (push key seen-keys)
             (push (make-field-definition
                    :key key
@@ -178,7 +172,8 @@ that field's duplicate check."
                   fields))))
       (apply #'make-instance class
              (append (list :fields (nreverse fields) :closed-p closed-p)
-                     (when allow-test-p (list :key-test key-test))
+                     (when (member :test allowed-clauses) (list :key-test key-test))
+                     (when class-name (list :class-name class-name))
                      (spec-initargs form name source-location generator))))))
 
 (defun normalize-collection-options (options form)
@@ -248,14 +243,30 @@ other compound heads do."
     (let ((head-name (symbol-name head)))
       (cond
         ((string= head-name "PLIST")
-         (normalize-field-spec form name source-location generator
-                               'plist-spec #'keywordp nil))
+         (normalize-field-spec form (rest form) name source-location generator
+                               'plist-spec #'keywordp '(:required :optional :closed)
+                               "PLIST fields must be (:keyword spec) pairs"))
         ((string= head-name "ALIST")
-         (normalize-field-spec form name source-location generator
-                               'alist-spec (constantly t) t))
+         (normalize-field-spec form (rest form) name source-location generator
+                               'alist-spec (constantly t)
+                               '(:required :optional :closed :test)
+                               "field entries must be (KEY SPEC) pairs with an admissible key"))
         ((string= head-name "HASH-TABLE")
-         (normalize-field-spec form name source-location generator
-                               'hash-table-spec (constantly t) t))
+         (normalize-field-spec form (rest form) name source-location generator
+                               'hash-table-spec (constantly t)
+                               '(:required :optional :closed :test)
+                               "field entries must be (KEY SPEC) pairs with an admissible key"))
+        ((string= head-name "OBJECT-OF")
+         (let ((class-name (first args)))
+           (unless (and (symbolp class-name) (not (null class-name)))
+             (error 'invalid-spec-form
+                    :form form
+                    :reason "OBJECT-OF takes a class name symbol followed by field clauses"))
+           (normalize-field-spec form (rest args) name source-location generator
+                                 'object-spec #'reader-designator-p
+                                 '(:required :optional)
+                                 "object fields must be (READER SPEC) pairs naming a reader"
+                                 class-name)))
         ((string= head-name "TYPE")
          (apply #'make-instance 'type-spec
                 :type-specifier (first (require-arity args 1 form))
