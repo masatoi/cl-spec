@@ -359,3 +359,29 @@ returns the last one even when the callback rejected it."))
                                     *shrink-candidates*)))
           (ok (= 2 (length later)))
           (ok (every (lambda (candidate) (eql 10 (first candidate))) later)))))))
+
+(deftest unique-empty-domains-generate-the-empty-collection
+  (testing "an empty finite domain with MIN-LENGTH 0 admits exactly the empty collection"
+    (let ((lists (sample (normalize-spec-form '(list-of (member) :unique t)) :count 3 :seed 2))
+          (vectors (sample (normalize-spec-form '(vector-of (or) :unique t)) :count 3 :seed 2)))
+      (ok (equal '(nil nil nil) lists))
+      (ok (every #'zerop (mapcar #'length vectors))))
+    (testing "a positive MIN-LENGTH over an empty domain is still refused"
+      (ok (signals (sample (normalize-spec-form '(list-of (member) :min-length 1 :unique t))
+                           :count 1)
+                   'generator-unavailable)))))
+
+(deftest unique-wide-ranges-bind-the-collection-size-sparsely
+  (testing "a range too wide to materialize does not widen the collection length"
+    ;; Kept at 100000 rather than a billion so that the pre-fix path, which used
+    ;; the width as the generation size, stays bounded while it fails this test.
+    (let* ((spec (normalize-spec-form
+                  '(list-of (range integer 0 100000) :min-length 2 :unique t)))
+           (compiled (cl-spec:generator-for spec)))
+      (ok (<= (cl-spec/src/backends/check-it::compiled-generator-size compiled) 10))
+      (let ((samples (sample spec :count 5 :seed 1)))
+        (ok (every (lambda (items)
+                     (and (<= 2 (length items) 10)
+                          (= (length items)
+                             (length (remove-duplicates items :test #'eql)))))
+                   samples))))))

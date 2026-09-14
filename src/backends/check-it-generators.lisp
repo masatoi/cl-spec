@@ -344,50 +344,58 @@ shifted width or half the declared range goes unreachable."
   "Largest finite element domain ENUMERABLE-VALUES materializes for UNIQUE.")
 
 (defgeneric enumerable-values (spec context)
-  (:documentation "Return a finite list of the values SPEC admits, or NIL when unbounded.
+  (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
+
+VALUES is a finite list of the values SPEC admits and ENUMERABLE-P says whether
+that list is the whole domain -- so an empty domain is (VALUES NIL T) and stays
+distinguishable from a spec that cannot be enumerated at all.
 
 UNIQUE generation draws distinct elements from this list; a spec without a finite
 enumeration refuses UNIQUE rather than retrying collisions forever through
 check-it's guard generator, which recurses with no depth limit.")
   (:method ((spec spec) context)
     (declare (ignore context))
-    nil))
+    (values nil nil)))
 
 (defmethod enumerable-values ((spec member-spec) context)
   (declare (ignore context))
-  (remove-duplicates (copy-list (member-spec-values spec)) :test #'eql))
+  (values (remove-duplicates (copy-list (member-spec-values spec)) :test #'eql) t))
 
 (defmethod enumerable-values ((spec type-spec) context)
   (declare (ignore context))
   (case (type-spec-type-specifier spec)
-    ((null) (list nil))
-    ((boolean) (list t nil))
-    (t nil)))
+    ((null) (values (list nil) t))
+    ((boolean) (values (list t nil) t))
+    (t (values nil nil))))
 
 (defmethod enumerable-values ((spec nullable-spec) context)
-  (let ((inner (enumerable-values (nullable-spec-inner-spec spec) context)))
-    ;; ADJOIN rather than CONS: a boolean or member inner domain already holds
-    ;; NIL, and an EQL-duplicated domain would overstate the finite size and let
-    ;; UNIQUE draw a repeated NIL.
-    (when inner (adjoin nil (copy-list inner) :test #'eql))))
+  (multiple-value-bind (inner enumerable-p)
+      (enumerable-values (nullable-spec-inner-spec spec) context)
+    (if (not enumerable-p)
+        (values nil nil)
+        ;; ADJOIN rather than CONS: a boolean or member inner domain already holds
+        ;; NIL, and an EQL-duplicated domain would overstate the finite size and let
+        ;; UNIQUE draw a repeated NIL.
+        (values (adjoin nil (copy-list inner) :test #'eql) t))))
 
 (defmethod enumerable-values ((spec range-spec) context)
   (declare (ignore context))
   (let ((minimum (range-spec-minimum spec))
         (maximum (range-spec-maximum spec)))
-    (when (and (eq (range-spec-base-type spec) 'integer)
-               (integerp minimum) (integerp maximum)
-               (<= minimum maximum)
-               (<= (- maximum minimum) *enumeration-limit*))
-      (loop for value from minimum to maximum collect value))))
+    (if (and (eq (range-spec-base-type spec) 'integer)
+             (integerp minimum) (integerp maximum)
+             (<= minimum maximum)
+             (<= (- maximum minimum) *enumeration-limit*))
+        (values (loop for value from minimum to maximum collect value) t)
+        (values nil nil))))
 
 (defmethod enumerable-values ((spec or-spec) context)
   (let ((values nil))
     (dolist (child (or-spec-children spec))
-      (let ((child-values (enumerable-values child context)))
-        (unless child-values (return-from enumerable-values nil))
+      (multiple-value-bind (child-values child-p) (enumerable-values child context)
+        (unless child-p (return-from enumerable-values (values nil nil)))
         (setf values (union values child-values :test #'eql))))
-    values))
+    (values values t)))
 
 (defmethod enumerable-values ((spec reference-spec) context)
   "Resolve a named spec so a finite domain reached by name stays enumerable.
@@ -434,9 +442,9 @@ generation even though the target is one of the enumerable domains."
       (unless (spec-generator-name resolved)
         (finite-integer-range resolved context)))))
 
-(defun shuffle-list (list)
-  "Return a fresh copy of LIST in random order (Fisher-Yates)."
-  (let ((copy (coerce list 'vector)))
+(defun shuffle-list (sequence)
+  "Return a fresh copy of SEQUENCE in random order (Fisher-Yates)."
+  (let ((copy (copy-seq (coerce sequence 'vector))))
     (loop for index from (1- (length copy)) downto 1
           for other = (random (1+ index))
           do (rotatef (aref copy index) (aref copy other)))
@@ -488,7 +496,9 @@ report whether element-wise shrinking is possible.")
    (unique-p :initarg :unique-p :reader bounded-generator-unique-p)
    (vector-p :initarg :vector-p :reader bounded-generator-vector-p)
    (enumerated :initarg :enumerated :initform nil :reader bounded-generator-enumerated
-               :documentation "Finite element domain when UNIQUE-P, else NIL.")
+               :documentation "Finite element domain as a vector when UNIQUE-P, else NIL.
+A present but empty vector means the domain is empty, which is different from
+having no finite domain at all.")
    (distinct-range :initarg :distinct-range :initform nil
                    :reader bounded-generator-distinct-range
                    :documentation "Inclusive integer bounds when UNIQUE-P samples a range
@@ -507,11 +517,13 @@ too wide to materialize, else NIL.")
   "Return the finite UNIQUE domain size of GENERATOR, or NIL when it draws elements.
 
 Generation truncates a requested length to this size, so capability reporting and
-removal shrinking both need it."
-  (or (let ((enumerated (bounded-generator-enumerated generator)))
-        (and enumerated (length enumerated)))
-      (let ((range (bounded-generator-distinct-range generator)))
-        (and range (1+ (- (cdr range) (car range)))))))
+removal shrinking both need it.  An empty enumerated domain is present, so it
+reports 0 rather than falling through to the element generators."
+  (let ((enumerated (bounded-generator-enumerated generator)))
+    (if enumerated
+        (length enumerated)
+        (let ((range (bounded-generator-distinct-range generator)))
+          (and range (1+ (- (cdr range) (car range))))))))
 
 (defmethod generate ((generator bounded-collection-generator))
   (let* ((minimum (bounded-generator-min-length generator))
@@ -532,7 +544,7 @@ removal shrinking both need it."
                                                           (cdr distinct-range)
                                                           count))))
       (enumerated
-       (let* ((pool (shuffle-list (copy-list enumerated)))
+       (let* ((pool (shuffle-list enumerated))
               (items (subseq pool 0 (min count (length pool)))))
          (setf (bounded-generator-children generator) nil
                (cached-value generator) (bounded-candidate generator items))))
@@ -644,7 +656,7 @@ domain would silently replace it."
       (error 'generator-unavailable
              :spec spec
              :reason "UNIQUE cannot enumerate a spec whose custom generator owns its distribution"))
-    (let ((probe (spec-generator element context))
+    (let ((probe nil)
           (enumerated nil)
           (distinct-range nil))
       (when unique
@@ -660,23 +672,32 @@ domain would silently replace it."
                          :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
                                          width minimum)))
                 (setf distinct-range (cons range-minimum range-maximum)))
-              (progn
-                (setf enumerated (enumerable-values element context))
-                (when (null enumerated)
+              (multiple-value-bind (values enumerable-p) (enumerable-values element context)
+                (unless enumerable-p
                   (error 'generator-unavailable
                          :spec spec
                          :reason "UNIQUE needs a finite element domain to draw distinct values"))
-                (when (> (length enumerated) *enumeration-limit*)
+                (when (> (length values) *enumeration-limit*)
                   (error 'generator-unavailable
                          :spec spec
                          :reason (format nil "UNIQUE domain has ~D values, more than the ~D ~
                                               the enumeration limit allows"
-                                         (length enumerated) *enumeration-limit*)))
-                (when (< (length enumerated) minimum)
+                                         (length values) *enumeration-limit*)))
+                (when (< (length values) minimum)
                   (error 'generator-unavailable
                          :spec spec
                          :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
-                                         (length enumerated) minimum)))))))
+                                         (length values) minimum)))
+                ;; A vector keeps an empty domain distinct from "no domain": the
+                ;; empty collection is then the one admissible value of a
+                ;; MIN-LENGTH 0 collection.
+                (setf enumerated (coerce values 'vector))))))
+      ;; A UNIQUE collection draws from its domain, keeps no element generators
+      ;; and reports shrinking from the domain size, so the eager probe would only
+      ;; raise *REQUIRED-SIZE* to the element range's width and make GENERATE try
+      ;; to build a collection that wide.
+      (unless unique
+        (setf probe (spec-generator element context)))
       (setf *required-size* (max *required-size* minimum))
       (make-instance 'bounded-collection-generator
                      :element-generator (lambda () (spec-generator element context))

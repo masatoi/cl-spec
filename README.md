@@ -273,14 +273,16 @@ explains as `:duplicate-element` at the later element's `:path`, with
 The constraints reach generation and shrinking: lengths are drawn inside the
 declared range, and a shrink never removes past `:min-length`. `:unique`
 generation draws distinct elements from a finite element domain. A finite
-integer `range` is sampled directly, so any width works; `member`,
+integer `range` is sampled directly, so any width works and does not widen the
+generated collection length; `member`,
 `boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
 1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
 element spec with no finite enumeration, or one whose custom generator owns its
 distribution — including a custom generator nested inside a `nullable` or `or`
 node — signals `generator-unavailable` rather than retrying collisions
 forever. A collection whose `:max-length` is 0 generates
-the empty collection without compiling its element spec. Element-wise shrinking
+the empty collection without compiling its element spec, and so does a `:unique`
+collection whose finite element domain is empty when `:min-length` is 0. Element-wise shrinking
 replaces an element only with a value the element shrinker reported through the
 shrink callback, so a value that passes the property or fails the element spec
 never becomes part of the recorded counterexample.

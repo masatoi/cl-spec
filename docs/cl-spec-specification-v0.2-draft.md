@@ -678,9 +678,12 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:maximum-length`と`:actual-length`を、重複は2個目の要素の`:path`と最初の出現位置
 `:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
 `:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
-有限な整数`range`は列挙せず直接samplingするため幅の上限はない。`member`、
+有限な整数`range`は列挙せず直接samplingするため幅の上限はない。この場合も生成される
+コレクション長は要素rangeの幅ではなく通常のsizeから抽選し、幅を長さへ流用しない。
+`member`、
 `boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
-超える場合は`generator-unavailable`を通知する。
+超える場合は`generator-unavailable`を通知する。空の有限domainは「列挙不能」と区別し、
+`:min-length`が0なら空コレクションを生成する。
 縮小可能性の判定は要素domainの要素数も見て、実効的な最大長が`:min-length`以下なら
 要素除去の余地なしとして報告する。要素単位の縮小はshrinkerがcallbackで報告した値だけを採用し、
 propertyを通る値や要素specに違反する値をcounterexampleへ混入させない。
