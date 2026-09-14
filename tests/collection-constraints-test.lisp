@@ -283,3 +283,79 @@
                                   (lambda (candidate)
                                     (declare (ignore candidate))
                                     nil)))))))
+
+(deftest unique-domain-cardinality-boundaries
+  (let ((smaller (normalize-spec-form '(list-of (member 1 2) :min-length 3 :unique t)))
+        (equal-domain (normalize-spec-form
+                       '(list-of (member 1 2) :min-length 2 :max-length 2 :unique t)))
+        (larger (normalize-spec-form
+                 '(list-of (member 1 2 3) :min-length 2 :max-length 3 :unique t))))
+    (testing "a domain below MIN-LENGTH is refused instead of retried"
+      (ok (signals (sample smaller :count 1) 'generator-unavailable)))
+    (testing "a domain equal to MIN-LENGTH still fills the fixed length"
+      (let ((samples (sample equal-domain :count 20 :seed 5)))
+        (ok (every (lambda (items) (equal '(1 2) (sort (copy-list items) #'<))) samples))))
+    (testing "a larger domain fills the declared range with distinct elements"
+      (let ((samples (sample larger :count 30 :seed 5)))
+        (ok (every (lambda (items)
+                     (and (<= 2 (length items) 3)
+                          (= (length items)
+                             (length (remove-duplicates items :test #'eql)))))
+                   samples))))))
+
+(deftest nested-programmatic-collection-constraints-are-validated
+  (testing "the validation walk reaches a malformed child of a programmatic parent"
+    (let* ((child (make-instance 'vector-of-spec
+                                 :element-spec (normalize-spec-form 'integer)
+                                 :min-length 3
+                                 :max-length -1))
+           (parent (make-instance 'list-of-spec :element-spec child)))
+      (ok (signals (sample parent :count 1) 'invalid-spec-form)))))
+
+(defclass rejecting-terminal-generator (check-it:generator)
+  ((values :initarg :values :reader rejecting-terminal-values))
+  (:documentation "A generator that offers each value to the callback and then
+returns the last one even when the callback rejected it."))
+
+(defmethod check-it:generate ((generator rejecting-terminal-generator))
+  (first (rejecting-terminal-values generator)))
+
+(defmethod check-it:shrink ((generator rejecting-terminal-generator) test)
+  (let ((last nil))
+    (dolist (value (rest (rejecting-terminal-values generator)))
+      (setf last value)
+      (funcall test value))
+    last))
+
+(defvar *shrink-candidates* nil
+  "Whole-collection candidates offered to the element shrink callback.")
+
+(deftest collection-element-shrinks-build-on-accepted-values-only
+  (testing "a rejected terminal value never becomes the base of later shrinks"
+    (let* ((count 0)
+           (*shrink-candidates* nil)
+           (generator (make-instance
+                       'cl-spec/src/backends/check-it-generators:bounded-collection-generator
+                       :element-generator
+                       (lambda ()
+                         (incf count)
+                         (make-instance 'rejecting-terminal-generator
+                                        :values (if (= count 1) '(20 10 99) '(30 5 77))))
+                       :element-validator (constantly t)
+                       :element-probe nil
+                       :min-length 2
+                       :max-length 2
+                       :unique-p nil
+                       :vector-p nil)))
+      (ok (equal '(20 30) (check-it:generate generator)))
+      (check-it:shrink generator
+                       (lambda (candidate)
+                         (push (copy-list candidate) *shrink-candidates*)
+                         (if (equal candidate '(10 30)) nil t)))
+      (ok (equal '(10 30) (check-it:cached-value generator)))
+      (testing "later element shrinks were offered from the accepted reduction"
+        (let ((later (remove-if-not (lambda (candidate)
+                                      (member (second candidate) '(5 77)))
+                                    *shrink-candidates*)))
+          (ok (= 2 (length later)))
+          (ok (every (lambda (candidate) (eql 10 (first candidate))) later)))))))

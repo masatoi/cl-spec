@@ -3624,7 +3624,9 @@ introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
 
 通常profileは各Property 50試行、smokeは10試行。
 `tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-27関数契約と22 Propertyをseed 1・42・2026、各50試行で実行する。
+27関数契約と24 Propertyをseed 1・42・2026、各50試行で実行する。
+このうち2 Propertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
+保持された縮小反例が引数schemaを満たし再検査で同一失敗を維持することを検査する。
 任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
 install/uninstall往復・未契約拒否の2 Property)は別途登録し、専用テストで実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
@@ -4378,6 +4380,10 @@ restとkeyの共存では、注釈なしの正確な(list-of t)をkeyword genera
 宣言keyを再利用する（raw callでは重複keyが許され、最初の出現だけが束縛される）。
 宣言keyが無い空の`&key`節でも`:allow-other-keys`制御pairを使えば充足できるため、
 生成不能とはせず制御pairで埋める（未知keywordの新規生成＝runtime interningは行わない）。
+宣言key・制御pairとも同じ生成プロトコルで値を得るので、値specが定数へcompileされる場合
+（`null`、`(member nil)`、その名前参照など）はその定数を渡す。NILを「生成器なし」の
+センチネルとして流用しない。keyword pairの除去は宣言keyと制御pairの双方を対象とし、
+全引数schemaを満たす候補だけを採用する。
 それ以外はrest generatorから最大100候補callを
 生成し、全引数schemaで交差条件を検査する。
 上限まで適合しなければgenerator-unavailableとする。custom generator注釈も検証を迂回せず、

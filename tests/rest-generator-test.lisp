@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/tests/rest-generator-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok #:testing)
+  (:import-from #:rove #:deftest #:ok #:testing #:signals)
   (:import-from #:cl-spec/main)
   (:import-from #:cl-spec/src/backends/check-it))
 
@@ -255,3 +255,176 @@
                           (loop for (key value) on tail by #'cddr
                                 always (and (eq key :allow-other-keys) (eq value t)))))
                    *control-keyword-tails*))))))
+
+(defvar *keyword-value-observations* nil
+  "Raw rest tail and effective :A binding observed by KEYWORD-VALUE-TARGET.")
+
+(defun keyword-value-target (&rest raw &key a)
+  "Collect the raw rest tail and the effective first-occurrence :A binding."
+  (push (list (copy-list raw) a) *keyword-value-observations*)
+  (list raw))
+
+(defun keyword-value-contract (rest-spec value-spec)
+  "A contract over REST-SPEC whose sole declared keyword :A takes VALUE-SPEC."
+  (make-instance 'cl-spec:function-spec
+                 :name 'keyword-value-target
+                 :argument-specs `(&rest (raw ,rest-spec)
+                                  &key ((:a a) ,value-spec))
+                 :return-spec 'list))
+
+(deftest constrained-keyword-values-follow-their-value-spec
+  (testing "a constant value spec reaches the call as its constant, not as T"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec nothing null)
+      (dolist (entry '((null nil) ((member nil) nil) (nothing nil) ((member t) t)))
+        (destructuring-bind (value-spec expected) entry
+          (let ((*keyword-value-observations* nil))
+            (testing (format nil "value spec ~S" value-spec)
+              (let ((result (cl-spec:check-function
+                             (keyword-value-contract
+                              '(list-of t :min-length 2 :max-length 2) value-spec)
+                             :trials 10 :seed 3)))
+                (ok (eq :passed (cl-spec:property-result-status result)))
+                (ok (zerop (cl-spec:property-result-rejected result)))
+                (ok (= 10 (length *keyword-value-observations*)))
+                (ok (every (lambda (observation)
+                             (and (equal (list :a expected) (first observation))
+                                  (eq expected (second observation))))
+                           *keyword-value-observations*))))))))))
+
+(deftest constrained-keyword-tails-repeat-keys-with-their-values
+  (testing "a reused keyword repeats both the key and its generated value"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*keyword-value-observations* nil))
+      (cl-spec:defspec nothing null)
+      (let ((result (cl-spec:check-function
+                     (keyword-value-contract '(list-of t :min-length 4) 'nothing)
+                     :trials 10 :seed 5)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (zerop (cl-spec:property-result-rejected result)))
+        (ok (= 10 (length *keyword-value-observations*)))
+        (ok (every (lambda (observation)
+                     (equal '(:a nil :a nil) (first observation)))
+                   *keyword-value-observations*))
+        (ok (every (lambda (observation) (null (second observation)))
+                   *keyword-value-observations*))))))
+
+(defun bare-keyword-call-generator (rest-spec)
+  "Compile the call generator for an empty &key section over REST-SPEC."
+  (cl-spec/src/backends/check-it-generators:spec-generator
+   (cl-spec:function-spec-argument-schema
+    (make-instance 'cl-spec:function-spec
+                   :name 'keyword-value-target
+                   :argument-specs `(&rest (raw ,rest-spec) &key)
+                   :return-spec 'list))
+   (list :registry cl-spec:*registry*)))
+
+(deftest bare-keyword-tails-report-and-propose-pair-removal
+  (testing "an empty &key tail is removable exactly when removal is proposed"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (testing "a bounded control tail can grow, so a pair is removable"
+        (let ((generator (bare-keyword-call-generator
+                          '(list-of t :min-length 0 :max-length 2))))
+          (ok (cl-spec/src/backends/call-generators:call-generator-removable-p generator))
+          (setf (check-it:cached-value generator) '(:allow-other-keys t))
+          (ok (null (check-it:shrink generator
+                                     (lambda (candidate)
+                                       (declare (ignore candidate))
+                                       nil))))))
+      (testing "a fixed-length control tail advertises no removal"
+        (ok (not (cl-spec/src/backends/call-generators:call-generator-removable-p
+                  (bare-keyword-call-generator
+                   '(list-of t :min-length 2 :max-length 2)))))))))
+
+(defun bare-keyword-fixed-target (&rest raw &key)
+  "Return the raw tail; its contract's postcondition always fails."
+  raw)
+
+(defun bare-keyword-flexible-target (&rest raw &key)
+  "Return the raw tail; its contract's postcondition always fails."
+  raw)
+
+(deftest fixed-control-keyword-tails-keep-a-valid-counterexample
+  (testing "a fixed-length control tail cannot shrink out of its schema"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec-function bare-keyword-fixed-target
+        (:args &rest (raw (list-of t :min-length 2 :max-length 2)) &key)
+        (:returns list)
+        (:post (and result (not result))))
+      (let* ((result (cl-spec:check-function 'bare-keyword-fixed-target :trials 10 :seed 2))
+             (evidence (or (cl-spec:property-result-shrunk-evidence result)
+                           (cl-spec:property-result-failure-evidence result)))
+             (arguments (cl-spec:trial-observation-arguments evidence)))
+        (ok (eq :failed (cl-spec:property-result-status result)))
+        (ok (eq :none (cl-spec:property-result-shrunk-outcome result)))
+        (ok (= 2 (length arguments)))
+        (ok (eq :allow-other-keys (first arguments)))
+        (ok (eq t (second arguments)))
+        (ok (eq :same-failure
+                (getf (cl-spec:recheck-counterexample
+                       (cl-spec:make-counterexample-artifact result)
+                       :state-policy :stateless)
+                      :status)))))))
+
+(deftest bounded-control-keyword-tails-stay-schema-valid
+  (testing "shrinking a bounded control tail never leaves the declared schema"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec-function bare-keyword-flexible-target
+        (:args &rest (raw (list-of t :min-length 0 :max-length 2)) &key)
+        (:returns list)
+        (:post (and result (not result))))
+      (let* ((contract (cl-spec:find-function-spec 'bare-keyword-flexible-target))
+             (result (cl-spec:check-function 'bare-keyword-flexible-target
+                                             :trials 10 :seed 2))
+             (evidence (or (cl-spec:property-result-shrunk-evidence result)
+                           (cl-spec:property-result-failure-evidence result)))
+             (arguments (cl-spec:trial-observation-arguments evidence)))
+        (ok (eq :failed (cl-spec:property-result-status result)))
+        (ok (cl-spec:validp (cl-spec:function-spec-argument-schema contract) arguments))
+        (ok (evenp (length arguments)))
+        (ok (<= (length arguments) 2))
+        (ok (eq :same-failure
+                (getf (cl-spec:recheck-counterexample
+                       (cl-spec:make-counterexample-artifact result)
+                       :state-policy :stateless)
+                      :status)))))))
+
+(defvar *unsatisfiable-keyword-calls* 0
+  "Number of times UNSATISFIABLE-KEYWORD-TARGET was called.")
+
+(defun unsatisfiable-keyword-target (&rest raw &key a)
+  "Count calls; an unsatisfiable keyword tail must never reach it."
+  (declare (ignore raw a))
+  (incf *unsatisfiable-keyword-calls*)
+  t)
+
+(deftest unsatisfiable-keyword-lengths-refuse-without-calling-the-target
+  (testing "an odd fixed tail length is refused before the target runs"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*unsatisfiable-keyword-calls* 0))
+      (cl-spec:defspec-function unsatisfiable-keyword-target
+        (:args &rest (raw (list-of t :min-length 3 :max-length 3))
+               &key ((:a a) integer))
+        (:returns t))
+      (ok (signals (cl-spec:check-function 'unsatisfiable-keyword-target
+                                           :trials 5 :seed 1)
+                   'cl-spec:generator-unavailable))
+      (ok (zerop *unsatisfiable-keyword-calls*)))))
+
+(deftest repeated-keyword-binds-the-first-occurrence
+  (testing "the raw rest keeps both pairs and the binding takes the first value"
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (*keyword-value-observations* nil))
+      (let ((result (cl-spec:check-function
+                     (keyword-value-contract '(list-of t :min-length 4) '(member 1 2))
+                     :trials 20 :seed 8)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (zerop (cl-spec:property-result-rejected result)))
+        (ok (= 20 (length *keyword-value-observations*)))
+        (ok (every (lambda (observation)
+                     (let ((raw (first observation)))
+                       (and (equal '(:a :a)
+                                   (loop for tail on raw by #'cddr collect (car tail)))
+                            (member (second raw) '(1 2))
+                            (eql (second observation) (second raw)))))
+                   *keyword-value-observations*))))))

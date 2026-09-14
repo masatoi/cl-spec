@@ -131,7 +131,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
     malformed-declarations-are-refused
     run-property-is-reproducible-from-its-seed
     failure-identities-match-reflexively counterexample-artifacts-round-trip
-    collection-constraints-are-enforced))
+    collection-constraints-are-enforced
+    generated-values-satisfy-their-specs retained-counterexamples-stay-valid))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -241,6 +242,29 @@ system itself, so every instrumentation symbol is resolved here by name."
                      (progn (funcall refresh 'self-uncontracted-target) nil)
                    (error (condition) (typep condition unsupported)))))))
         name))))
+
+(defparameter *generation-corpus*
+  (mapcar #'cl-spec:normalize-spec-form
+          '(integer string (range integer -5 5) (member 1 2 3) (member nil)
+            (nullable integer) (or integer string)
+            (list-of integer :min-length 1 :max-length 3)
+            (vector-of (member 1 2 3) :min-length 1 :max-length 2 :unique t)
+            (tuple integer string)
+            (plist (:required (:id integer)))))
+  "Small built-in spec corpus for the generation-soundness law.
+
+Built once at load time.  The entries are anonymous spec objects, so the law
+needs no registry beyond the one the runner binds, and it stays independent of
+the definitions REGISTER-SPECIFICATIONS installs.")
+
+(defun self-collection-counterexample-target (items)
+  "Identity target for the retained-counterexample law's collection contract."
+  items)
+
+(defun self-keyword-counterexample-target (&rest raw &key a)
+  "Identity target for the retained-counterexample law's keyword contract."
+  (declare (ignore a))
+  raw)
 
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
@@ -1000,6 +1024,48 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
            (eq :too-short (getf (first (getf (explain-data bounded '(1)) :errors)) :kind))
            (eq :duplicate-element
                (getf (first (getf (explain-data distinct '(1 1)) :errors)) :kind)))))
+  (defproperty generated-values-satisfy-their-specs ()
+    "Every value a built-in generator draws satisfies the spec it came from (§9, §12)."
+    (:about cl-spec:sample cl-spec:generator-for)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 5 :normal 50))
+    (every (lambda (spec)
+             (every (lambda (value) (validp spec value))
+                    (cl-spec:sample spec :count 10)))
+           *generation-corpus*))
+  (defproperty retained-counterexamples-stay-valid ((seed (range integer 0 1000)))
+    "A retained shrunk counterexample is schema-valid and still fails identically (§14, §15)."
+    (:about cl-spec:make-counterexample-artifact cl-spec:recheck-counterexample)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 5 :normal 50))
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec-function self-collection-counterexample-target
+        (:args (items (list-of (member 1 2 3) :min-length 2 :max-length 3 :unique t)))
+        (:returns list)
+        (:post (and result (not result))))
+      (cl-spec:defspec-function self-keyword-counterexample-target
+        (:args &rest (raw (list-of t :min-length 2 :max-length 2))
+               &key ((:a a) null))
+        (:returns list)
+        (:post (and result (not result))))
+      (every (lambda (name)
+               (let* ((contract (cl-spec:find-function-spec name))
+                      (result (cl-spec:check-function name :trials 5 :seed seed))
+                      (arguments
+                        (cl-spec:trial-observation-arguments
+                         (or (cl-spec:property-result-shrunk-evidence result)
+                             (cl-spec:property-result-failure-evidence result)))))
+                 (and (eq :failed (cl-spec:property-result-status result))
+                      (cl-spec:validp (cl-spec:function-spec-argument-schema contract)
+                                      arguments)
+                      (eq :same-failure
+                          (getf (cl-spec:recheck-counterexample
+                                 (cl-spec:make-counterexample-artifact result)
+                                 :registry cl-spec:*registry*
+                                 :state-policy :stateless)
+                                :status)))))
+             '(self-collection-counterexample-target
+               self-keyword-counterexample-target))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

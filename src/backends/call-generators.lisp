@@ -48,26 +48,44 @@ invent duplicates it does not need."
               (max lowest natural)
               (min maximum (max lowest natural))))))
 
-(defun keyword-pair-count (bindings)
+(defun keyword-tail-pool-size (bindings)
   "Return how many distinct keyword pairs a tail may draw from BINDINGS.
 
-An empty &key section is still a keyword call: the standard :ALLOW-OTHER-KEYS
-control pair is accepted, so a key-p layout always has at least one pair to draw."
+This is the length KEYWORD-TAIL-POOL returns for the same bindings: an empty &key
+section is still a keyword call, because the standard :ALLOW-OTHER-KEYS control
+pair is accepted, so a key-p layout always has at least one pair to draw.
+Capability reporting uses it without compiling the value generators."
   (max 1 (count-if (lambda (binding) (eq :key (argument-binding-kind binding)))
                    bindings)))
+
+(defun keyword-tail-keywords (layout)
+  "Return the keywords a generated keyword tail may contain.
+
+Declared keywords come from the layout's :KEY bindings.  A keyword section that
+declares none still draws the :ALLOW-OTHER-KEYS control pair, and shrinking must
+be able to propose removing that pair, since generation advertises it as
+removable whenever the tail may be longer than its minimum."
+  (let ((declared (loop for binding in (call-layout-bindings layout)
+                        when (eq :key (argument-binding-kind binding))
+                          collect (argument-binding-keyword binding))))
+    (or declared (list :allow-other-keys))))
 
 (defun keyword-tail-pool (bindings children)
   "Return the (KEYWORD . CHILD) pairs a keyword tail may draw from, never empty.
 
-A CHILD of NIL means the pair's value is the literal T, which is how the
-:ALLOW-OTHER-KEYS control pair is written: generating fresh unknown keywords
-would require runtime interning, which the keyword DSL deliberately avoids."
+CHILD is whatever SPEC-GENERATOR produced for the keyword's value spec: a
+generator object, or a value that CHECK-IT:GENERATE returns as a constant.  A NIL
+child therefore means the constant NIL -- (member nil) and (type null) both
+compile to it -- not \"no generator\".  The empty &key fallback uses the constant
+T for the :ALLOW-OTHER-KEYS control pair instead of a separate sentinel, so every
+pair is drawn through the same GENERATE call.  Its length is
+KEYWORD-TAIL-POOL-SIZE for the same bindings."
   (let ((declared (loop for binding in bindings
                         for child in children
                         when (eq :key (argument-binding-kind binding))
                           collect (cons (argument-binding-keyword binding) child))))
     (or declared
-        (list (cons :allow-other-keys nil)))))
+        (list (cons :allow-other-keys t)))))
 
 (defun call-generator-removable-p (generator)
   "Return true when optional positional or generated keyword arguments can be omitted."
@@ -79,7 +97,7 @@ would require runtime interning, which the keyword DSL deliberately avoids."
                  ;; A keyword pair is removable only while the rest tail may still
                  ;; be longer than the minimum the rest spec declares.
                  (>= (cdr (keyword-tail-span
-                           (keyword-pair-count (call-layout-bindings layout))
+                           (keyword-tail-pool-size (call-layout-bindings layout))
                            (car rest-length) (cdr rest-length)))
                      (+ (car rest-length) 2))
                  (some (lambda (binding) (eq :key (argument-binding-kind binding)))
@@ -114,7 +132,7 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
                  (setf remaining (append (subseq remaining 0 index)
                                          (subseq remaining (1+ index))))))
       (loop for (keyword . child) in (nreverse chosen)
-            append (list keyword (if child (generate child) t))))))
+            append (list keyword (generate child))))))
 
 (defmethod generate ((generator call-arguments-generator))
   (let* ((layout (call-generator-layout generator))
@@ -162,13 +180,11 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
   (let* ((layout (call-generator-layout generator))
          (positional (call-layout-positional-count layout)))
     (unless (call-generator-rest-driven-p generator)
-      (loop for binding in (call-layout-bindings layout)
-            when (eq :key (argument-binding-kind binding))
-              do (multiple-value-bind (candidate removed)
-                     (remove-call-key (cached-value generator) positional
-                                      (argument-binding-keyword binding))
-                   (when (and removed (not (funcall test candidate)))
-                     (setf (cached-value generator) candidate)))))
+      (dolist (keyword (keyword-tail-keywords layout))
+        (multiple-value-bind (candidate removed)
+            (remove-call-key (cached-value generator) positional keyword)
+          (when (and removed (not (funcall test candidate)))
+            (setf (cached-value generator) candidate)))))
     ;; Removing an optional argument must not consume a value from the remaining tail.
     (when (<= (length (cached-value generator)) positional)
       (loop for count from (call-layout-required-count layout)
