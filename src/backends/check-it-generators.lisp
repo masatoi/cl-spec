@@ -941,21 +941,22 @@ rather than binding it here lets one binding cover a whole trial loop."
     (values (spec-generator spec context) *required-size*)))
 
 (defun merge-base-type (current new spec)
-  "Return the base type implied by both CURRENT and NEW, or NIL when none does.
+  "Return the base type implied by both CURRENT and NEW, or :NO-BASE when none does.
 
 The numeric fold is only an optimisation.  Related types keep the narrower one;
-unrelated or merely overlapping types are left to declaration-order source
-selection and the whole-AND filter, so two type conjuncts never refuse an AND at
-construction merely because they differ -- (and (type null) (type boolean))
-admits NIL and must reach a source."
+unrelated or merely overlapping types collapse to the sticky :NO-BASE state, so a
+later conjunct cannot restart a fresh fold and hide the earlier conflict.  An AND
+whose fold is :NO-BASE is left to declaration-order source selection and the
+whole-AND filter."
   (declare (ignore spec))
-  (cond ((null current) new)
+  (cond ((eq current :no-base) :no-base)
+        ((null current) new)
         ((null new) current)
         ((eq current new) current)
         ((and (member current '(integer real)) (member new '(integer real))) 'integer)
         ((subtypep current new) current)
         ((subtypep new current) new)
-        (t nil)))
+        (t :no-base)))
 
 (defun tighter-minimum (current new)
   "Return the greater of two lower bounds, treating :UNBOUNDED as no bound."
@@ -1168,22 +1169,25 @@ enforced too."
          (multiple-value-bind (base-type minimum maximum leftovers)
              (fold-and-children (and-spec-children spec) context spec
                                 nil :unbounded :unbounded '())
-           (if (and base-type (member base-type '(integer real character string
-                                                   null boolean)))
+           ;; An empty folded range is a construction-time fact independent of
+           ;; which source the fold settles on, so it is diagnosed before P2/P3.
+           (when (and (not (eq minimum :unbounded))
+                      (not (eq maximum :unbounded))
+                      (> minimum maximum))
+             (error 'generator-unavailable
+                    :spec spec :reason "the folded range is empty"))
+           (if (and base-type
+                    (not (eq base-type :no-base))
+                    (member base-type '(integer real character string null boolean)))
                ;; P2: supported numeric/primitive folding stays a fast path.
-               (let ((bounded-p (not (and (eq minimum :unbounded)
-                                          (eq maximum :unbounded)))))
-                 (when (and (not (eq minimum :unbounded))
-                            (not (eq maximum :unbounded))
-                            (> minimum maximum))
-                   (error 'generator-unavailable
-                          :spec spec :reason "the folded range is empty"))
-                 (let ((base (if bounded-p
-                                 (bounded-generator base-type minimum maximum spec)
-                                 (type-specifier-generator base-type spec))))
-                   (if leftovers
-                       (filtered base nil)
-                       base)))
+               (let* ((bounded-p (not (and (eq minimum :unbounded)
+                                           (eq maximum :unbounded))))
+                      (base (if bounded-p
+                                (bounded-generator base-type minimum maximum spec)
+                                (type-specifier-generator base-type spec))))
+                 (if leftovers
+                     (filtered base nil)
+                     base))
                ;; P3: first ordinary conjunct whose construction succeeds.
                (multiple-value-bind (source entry) (constructible ordinaries)
                  (if entry

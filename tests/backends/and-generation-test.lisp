@@ -216,6 +216,13 @@
       (ok (generation-report-p report))
       (ok (= 3 (getf report :generated-values))))))
 
+(deftest a-tangled-type-fold-is-not-returned-unfiltered
+  (testing "a conflicted fold stays inapplicable across later type conjuncts"
+    (let ((values (sample-spec '(and (type (integer 0 5)) (type (integer 3 8)) integer)
+                               :count 20 :seed 1)))
+      (ok (plusp (length values)))
+      (ok (every (lambda (value) (and (integerp value) (<= 3 value 5))) values)))))
+
 (deftest shrink-validates-before-invoking-the-target-callback
   (let* ((sub (make-instance 'callback-probing-shrink-generator))
          (filter (make-instance 'bounded-filter-generator
