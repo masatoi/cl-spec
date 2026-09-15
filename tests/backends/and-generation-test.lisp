@@ -73,6 +73,18 @@
   (setf (mutable-probe-v object) "mutated")
   t)
 
+(defun mutate-hash-list (table)
+  "Mutate the first element of the list stored at :V and return true."
+  (let ((items (gethash :v table)))
+    (when (consp items)
+      (setf (car items) "mutated")))
+  t)
+
+(defun accept-object (object)
+  "Return true without touching OBJECT, so a legitimate value is not rejected."
+  (declare (ignore object))
+  t)
+
 (defun register-counting-spec (registry spec-name generator-name sequence)
   "Register GENERATOR-NAME drawing SEQUENCE in order, then repeating its last value."
   (let ((remaining (copy-list sequence)))
@@ -315,6 +327,48 @@
                                        :options (list :trials 0))
                    nil)
           (generation-budget-exhausted () t)))))
+
+(deftest nested-mutation-inside-a-hash-table-is-rejected
+  (testing "a mutation of data nested in a hash-table entry is detected"
+    (ok (handler-case
+            (progn (sample-spec '(and (hash-table
+                                       (:required (:v (list-of integer :min-length 1))))
+                                      (satisfies mutate-hash-list))
+                                :count 1 :generation-budget 5 :seed 1)
+                   nil)
+          (generation-budget-exhausted () t)))))
+
+(deftest a-keyword-valued-slot-is-not-mistaken-for-unbound
+  (let ((*registry* (make-hash-table-registry)))
+    (registry-register-generator
+     *registry* 'unbound-keyword-gen
+     (make-instance 'custom-generator :name 'unbound-keyword-gen
+                    :function (lambda () (make-instance 'mutable-probe :v :unbound))))
+    (registry-register-spec
+     *registry* 'unbound-keyword-spec
+     (normalize-spec-form '(object-of mutable-probe (:required (mutable-probe-v t)))
+                          :name 'unbound-keyword-spec :generator 'unbound-keyword-gen))
+    (multiple-value-bind (values report)
+        (sample-spec '(and unbound-keyword-spec (satisfies accept-object))
+                     :count 1 :generation-budget 5 :seed 1)
+      (ok (= 1 (length values)))
+      (ok (eq :completed (getf report :termination))))))
+
+(deftest check-function-replay-restores-the-recorded-generation-budget
+  (let ((*registry* (make-hash-table-registry)))
+    (defun impossible-identity (x) x)
+    (defspec-function impossible-identity
+      (:args (x (and (member 1) (satisfies evenp))))
+      (:returns integer))
+    (let* ((result (check-function 'impossible-identity :trials 5 :seed 1
+                                   :options '(:generation-budget 8)))
+           (replay (check-function 'impossible-identity :seed result))
+           (report (property-result-generation-report replay)))
+      (ok (eq :error (property-result-status result)))
+      (ok (eq :error (property-result-status replay)))
+      (testing "the function-checker replay reuses the recorded explicit budget"
+        (ok (= 8 (getf report :budget)))
+        (ok (eq :explicit (getf report :budget-source)))))))
 
 (deftest shrink-validates-before-invoking-the-target-callback
   (let* ((sub (make-instance 'callback-probing-shrink-generator))

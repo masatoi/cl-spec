@@ -995,50 +995,37 @@ request that runs out signals GENERATION-BUDGET-EXHAUSTED with its report.
 Request budgets and counters live in that request, never on this reusable object."))
 
 (defun candidate-snapshot (value)
-  "Return a snapshot of VALUE that notices in-place validation writes.
+  "Return a deep snapshot of VALUE that notices in-place validation writes.
 
-SNAPSHOT-VALUE copies conses and arrays but keeps every other object by identity,
-so a hash-table or instance write would compare equal to itself.  This records a
-hash table's test and entries, and an instance's slot values, so a validator that
-mutates its candidate is detected.  Opaque application state is still not
-checkpointed."
+SNAPSHOT-VALUE copies conses and arrays but keeps other objects by identity, so a
+hash-table or instance write would compare equal to itself.  This recursively
+snapshots a hash table's test and entries and an instance's slot values -- with
+boundness recorded separately from the value, so a legitimate :UNBOUND value is
+not mistaken for an unbound slot -- and leaves opaque application state alone."
   (cond
     ((hash-table-p value)
      (let ((entries nil))
-       (maphash (lambda (key item) (push (cons key item) entries)) value)
-       (cons (hash-table-test value) entries)))
+       (maphash (lambda (key item)
+                  (push (cons (candidate-snapshot key) (candidate-snapshot item))
+                        entries))
+                value)
+       (list :hash-table (hash-table-test value) entries)))
     ((or (typep value 'standard-object) (typep value 'structure-object))
-     (loop for slot in (class-slots (class-of value))
-           collect (let ((name (slot-definition-name slot)))
-                     (cons name (if (slot-boundp value name)
-                                    (slot-value value name)
-                                    :unbound)))))
+     (list :instance
+           (loop for slot in (class-slots (class-of value))
+                 for name = (slot-definition-name slot)
+                 collect (cons name
+                               (if (slot-boundp value name)
+                                   (list :bound (candidate-snapshot (slot-value value name)))
+                                   (list :unbound))))))
     (t (snapshot-value value))))
 
 (defun candidate-mutated-p (snapshot value)
-  "Return true when VALUE differs from SNAPSHOT after validation ran."
-  (cond
-    ((hash-table-p value)
-     (let ((test (car snapshot))
-           (entries (cdr snapshot)))
-       (or (not (eq test (hash-table-test value)))
-           (/= (hash-table-count value) (length entries))
-           (loop for (key . item) in entries
-                 thereis (multiple-value-bind (current present-p) (gethash key value)
-                           (or (not present-p)
-                               (not (same-value-p item current))))))))
-    ((or (typep value 'standard-object) (typep value 'structure-object))
-     (let ((slots (class-slots (class-of value))))
-       (or (/= (length slots) (length snapshot))
-           (loop for slot in slots
-                 for (name . item) in snapshot
-                 thereis (or (not (eq name (slot-definition-name slot)))
-                             (if (eq item :unbound)
-                                 (slot-boundp value name)
-                                 (or (not (slot-boundp value name))
-                                     (not (same-value-p item
-                                                        (slot-value value name))))))))))
-    (t (not (same-value-p snapshot value)))))
+  "Return true when a fresh snapshot of VALUE differs from SNAPSHOT.
+
+Both sides are cons/atom trees produced by CANDIDATE-SNAPSHOT, so the shared
+graph comparison suffices."
+  (not (same-value-p snapshot (candidate-snapshot value))))
 
 (defmethod generate ((generator bounded-filter-generator))
   "Reserve a candidate, draw once, and validate against the whole AND.
