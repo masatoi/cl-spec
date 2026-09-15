@@ -39,7 +39,10 @@ numeric folding, or the first ordinarily constructible conjunct — and enforces
 the remaining conjuncts through a request-shared bounded filter whose attempts,
 rejections and exhaustion are reported. Exhausting the finite budget signals
 `generation-budget-exhausted` and is never a claim that the spec is
-unsatisfiable. The `describe-*` printers remain stubs. The cl-mcp adapter lives
+unsatisfiable. Validation predicates and readers are contractually
+non-destructive — they must not modify their input or anything reachable from it
+— and cl-spec neither detects nor restores a violation. The `describe-*` printers
+remain stubs. The cl-mcp adapter lives
 in cl-mcp, not here.
 
 ## Development With cl-mcp

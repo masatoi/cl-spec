@@ -248,7 +248,10 @@ budget does not itself fail the accepted draw: exhaustion is signaled only when
 another candidate reservation is required. There is no extra draw after budget
 exhaustion and no random-state consumption merely to report it.
 
-Every draw returned by this wrapper satisfies the whole-AND validator. This
+Every draw returned by this wrapper satisfies the whole-AND validator, **provided
+the validator's predicates and readers honor the non-destructiveness contract in
+§4.8**: a candidate is returned only after the validator returned true, and this
+wrapper neither detects nor repairs a predicate that changed its input. This
 claim is local to the new wrapper, not a stronger guarantee for every existing
 custom-generator entry point. Shared mutable compiled generators are not made
 thread-safe by moving counters into a request context.
@@ -609,6 +612,47 @@ custom-value shrinking support merely because a custom generator is now eligible
 as an AND source. Global minimality, restoration of arbitrary objects, and external
 state rollback remain outside this change.
 
+### 4.8 Validator non-destructiveness is an author contract
+
+**Decision (maintainer, 2026-09-16).** A predicate or reader used for
+specification validation MUST NOT modify the value it is handed, nor any mutable
+object reachable from it. This covers, for example, destructive plist/alist
+edits, hash-table entry writes, array or vector element writes, CLOS or structure
+slot writes, and writes into a mutable object shared inside the input.
+
+cl-spec neither detects a violation of this contract nor restores a modified
+value. In particular the bounded wrapper adds no snapshot, deep copy, digest,
+slot monitor, re-validation, mutation condition, or optional/debug mutation
+check, and `generate`/`shrink`/`regenerate` do not compare the candidate before
+and after validation. When the contract is violated, the admissibility of
+generated values, any shrink result, and any reproducibility that depends on that
+validation are not guaranteed, and no particular condition is promised.
+
+The contract does not forbid:
+
+- a generator constructing or initializing a fresh object;
+- the target function making its intended state change;
+- the runner or backend updating its own counters;
+- an existing property body that deliberately tests stateful behaviour.
+
+This is not a general side-effect ban or a purity requirement. Replay determinism
+with respect to time, random state and external state keeps its existing
+guarantees; non-destructiveness alone is not claimed to make a run reproducible.
+
+Consequences:
+
+- The bounded filter returns a candidate after the whole-AND validator returns
+  true. "The returned candidate satisfies the whole AND" is conditional on the
+  validator honoring this contract.
+- Shrink and regeneration call the whole-AND validator before the target-facing
+  callback and adopt only callback-observed values, but they do not inspect
+  whether validation changed a candidate. A destructive predicate can therefore
+  corrupt a candidate or the retained evidence; that is a contract violation, not
+  a gap this PR is scoped to close.
+- Reintroducing an input-mutation detector is a separate decision. It must not be
+  justified solely by the fact that a destructive predicate currently goes
+  undetected.
+
 ## 5. Non-goals
 
 - No constraint solver, propagation, automatic cross-field narrowing, adaptive
@@ -789,6 +833,17 @@ These proposed interfaces must be checked against the implementation baseline
 before coding. Any incompatibility should produce an explicit revision of the
 corresponding contract and tests, not a silent fallback to the original open
 questions, per-value retry budgets, or evidence-free target-error results.
+
+### 9.3 Maintainer decision: validator non-destructiveness (2026-09-16)
+
+The maintainer fixed the guarantee boundary for this PR: validation predicates
+and readers must not modify their input or anything reachable from it, and
+cl-spec does not detect or repair a violation (§4.8). The input-mutation
+detection that an earlier round of review prompted in the AND wrapper is removed;
+no replacement detection mechanism is added. This is a settled contract, not a
+deferred item. "The candidate satisfies the whole AND" is stated subject to this
+contract, and defensible shrink safety and report accuracy for conforming
+predicates are unchanged.
 
 The intended invariant across all of them is:
 

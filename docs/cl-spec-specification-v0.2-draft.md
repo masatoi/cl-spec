@@ -814,6 +814,9 @@ check-it backendは必須キーを常に生成し、任意キーは各drawで独
 件数・終了理由を報告する。予算切れは、この生成戦略が適用予算内に値を
 得られなかったことを示すものであり、仕様の充足不能を意味しない。
 生成元として競合する連言のcustom generator指定の扱いは§73.4に定める。
+AND全体のvalidatorが呼ぶ述語とreaderは、検証対象の入力とそこから到達可能な
+可変オブジェクトを変更してはならない。cl-specはその違反の検出も復元も行わない
+（§73.5 addendumの「検証述語の非破壊性」）。
 
 ---
 
@@ -4276,7 +4279,9 @@ AND全体のvalidatorを適用する。複数の競合するcustom生成元が�
 aliasや入れ子のANDを処理する際にcustom generatorの指定を失わせてはならない。
 collection内部のfield用generatorは、それだけで外側のANDの競合生成元とはしない。
 無制限の再生成は採用しない。予算切れは`generation-budget-exhausted`とし、
-件数・枯渇フェーズ・位置を報告する。
+件数・枯渇フェーズ・位置を報告する。このときAND全体のvalidatorが呼ぶ述語と
+readerは入力を変更してはならず、cl-specはその違反を検出・復元しない
+（§73.5 addendumの「検証述語の非破壊性」）。
 
 `:post`の複数形式は、先頭から短絡評価し、最初に偽を返した形式の位置を内部の分類に使う。
 別形式を破る縮小候補は`:different-failure`として棄却する。公開スロットは追加せず、DSLが
@@ -4667,7 +4672,8 @@ cannot reserve signals `generation-budget-exhausted`. Reservation precedes the
 source call, so a propagated error is not a rejection. The last permitted
 candidate may succeed; exhaustion is signalled only when another reservation is
 required, and consumes no extra draw or random number. Every candidate the
-wrapper returns satisfies the whole AND.
+wrapper returns satisfies the whole AND, provided the predicates and readers the
+validator calls honor the non-destructiveness contract below.
 
 One request is one `sample` call or one `run-generated-test` invocation. Its
 budget is shared by all structural descendant and sibling filters and by
@@ -4682,6 +4688,31 @@ default coefficient, and source-policy identifier `:and-single-source-v1` are
 recorded before execution. A public single-value draw without an active request
 gets an implicit request with N = 1; internal retry and recursive descent never
 create a fresh budget. Finite candidate counts are not a wall-clock timeout.
+
+### 検証述語の非破壊性（作者の契約）
+
+仕様検証に用いる述語とreaderは、渡された値、およびそこから到達可能な可変
+オブジェクトを変更してはならない。plist/alistの破壊的変更、hash-tableのentry
+変更、配列・vectorの要素変更、CLOS・構造体のslot変更、入力内部で共有された
+可変オブジェクトの変更がこれに含まれる。
+
+cl-specはこの契約違反の検出も、変更の復元も行わない。AND wrapperはsnapshot・
+deep copy・digest・slot監視・validator再実行・mutation専用condition・
+optional/debugモードでの検出を追加しない。`generate`/`shrink`/`regenerate`は
+validator実行の前後で候補を比較しない。違反があった場合、その検証結果に依存する
+生成値の適合性、縮小結果、再現性は保証せず、特定のconditionが通知されることも
+保証しない。
+
+この契約は次を禁止しない：generatorによる新規オブジェクトの構築・初期化、
+対象関数の意図した状態変更、runner/backendのカウンタ更新、既存Property本体に
+よる状態を伴うテスト。一般的な副作用禁止や純粋性の強制ではなく、時刻・乱数・
+外部状態に依存するreplayの決定性は既存の保証条件のままである。
+
+したがって「返された候補はAND全体を満たす」は、検証述語とreaderがこの契約を
+守ることを前提とする。縮小・再生成もvalidatorを対象callbackより先に呼び、
+callbackで観測した候補だけを採用するが、検証が候補を変更したかは検査しない。
+入力変更の検出機構を再導入するかは別の判断であり、破壊的述語を検出できない
+ことだけを理由に本PRの範囲へ戻さない。
 
 ### Generation report
 

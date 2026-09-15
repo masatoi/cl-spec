@@ -54,36 +54,24 @@
   "The inter-field constraint the README-style period example adds to a plist."
   (<= (getf plist :start) (getf plist :end)))
 
-(defun mutate-plist-value (plist)
-  "Replace :V with a string and return true, so validation pollutes its input."
-  (setf (getf plist :v) "mutated")
-  t)
-
 (defclass mutable-probe ()
   ((v :initarg :v :accessor mutable-probe-v))
   (:documentation "A test class observed through MUTABLE-PROBE-V."))
-
-(defun mutate-hash-entry (table)
-  "Replace the :V entry with a string and return true."
-  (setf (gethash :v table) "mutated")
-  t)
-
-(defun mutate-object (object)
-  "Replace the V slot with a string and return true."
-  (setf (mutable-probe-v object) "mutated")
-  t)
-
-(defun mutate-hash-list (table)
-  "Mutate the first element of the list stored at :V and return true."
-  (let ((items (gethash :v table)))
-    (when (consp items)
-      (setf (car items) "mutated")))
-  t)
 
 (defun accept-object (object)
   "Return true without touching OBJECT, so a legitimate value is not rejected."
   (declare (ignore object))
   t)
+
+(defun positive-hash-v-p (table)
+  "Return true when TABLE's :V entry is a positive integer, without changing it."
+  (let ((value (gethash :v table)))
+    (and (integerp value) (plusp value))))
+
+(defun positive-alist-v-p (alist)
+  "Return true when ALIST's :V value is a positive integer, without changing it."
+  (let ((value (cdr (assoc :v alist))))
+    (and (integerp value) (plusp value))))
 
 (defun make-cyclic-hash-table ()
   "A hash table whose :SELF entry points back to the table."
@@ -209,6 +197,36 @@
         (ok (eq :completed (getf report :termination)))
         (ok (= 30 (getf report :generated-values)))))))
 
+(deftest non-destructive-predicates-compose-with-structured-sources
+  (dolist (form '((and (plist (:required (:start integer) (:end integer)))
+                       (satisfies ordered-period-p))
+                  (and (hash-table (:required (:v (range integer 1 100))))
+                       (satisfies positive-hash-v-p))
+                  (and (alist (:required (:v (range integer 1 100))))
+                       (satisfies positive-alist-v-p))))
+    (let* ((spec (normalize-spec-form form))
+           (values (sample spec :count 20 :seed 1)))
+      (ok (plusp (length values)) (format nil "~S samples" form))
+      (ok (every (lambda (value) (validp spec value)) values)
+          (format nil "~S values satisfy the whole AND" form)))))
+
+(deftest non-destructive-predicates-compose-with-an-object-source
+  (let ((*registry* (make-hash-table-registry)))
+    (registry-register-generator
+     *registry* 'probe-gen
+     (make-instance 'custom-generator :name 'probe-gen
+                    :function (lambda () (make-instance 'mutable-probe :v 1))))
+    (registry-register-spec
+     *registry* 'probe-spec
+     (normalize-spec-form '(object-of mutable-probe (:required (mutable-probe-v integer)))
+                          :name 'probe-spec :generator 'probe-gen))
+    (multiple-value-bind (values report)
+        (sample-spec '(and probe-spec (satisfies accept-object))
+                     :count 3 :generation-budget 20 :seed 1)
+      (ok (= 3 (length values)))
+      (ok (every (lambda (object) (eql 1 (mutable-probe-v object))) values))
+      (ok (eq :completed (getf report :termination))))))
+
 (deftest numeric-folding-regressions-hold
   (testing "an unbounded upper bound still folds without a type error"
     (ok (every (lambda (value) (and (integerp value) (>= value 1)))
@@ -275,41 +293,6 @@
       (ok (plusp (length values)))
       (ok (every (lambda (value) (and (integerp value) (<= 3 value 5))) values)))))
 
-(deftest mutating-validation-never-produces-a-mutated-value
-  (testing "a candidate validation mutates is rejected, not sampled"
-    (ok (handler-case
-            (progn (sample-spec '(and (plist (:required (:v integer)))
-                                      (satisfies mutate-plist-value))
-                                :count 1 :generation-budget 5 :seed 1)
-                   nil)
-          (generation-budget-exhausted () t)))))
-
-(deftest mutating-validation-of-a-hash-table-is-rejected
-  (testing "an in-place hash-table write during validation is detected"
-    (ok (handler-case
-            (progn (sample-spec '(and (hash-table (:required (:v integer)))
-                                      (satisfies mutate-hash-entry))
-                                :count 1 :generation-budget 5 :seed 1)
-                   nil)
-          (generation-budget-exhausted () t)))))
-
-(deftest mutating-validation-of-an-instance-is-rejected
-  (testing "an in-place instance slot write during validation is detected"
-    (let ((*registry* (make-hash-table-registry)))
-      (registry-register-generator
-       *registry* 'mutable-probe-gen
-       (make-instance 'custom-generator :name 'mutable-probe-gen
-                      :function (lambda () (make-instance 'mutable-probe :v 1))))
-      (registry-register-spec
-       *registry* 'mutable-probe-spec
-       (normalize-spec-form '(object-of mutable-probe (:required (mutable-probe-v integer)))
-                            :name 'mutable-probe-spec :generator 'mutable-probe-gen))
-      (ok (handler-case
-              (progn (sample-spec '(and mutable-probe-spec (satisfies mutate-object))
-                                  :count 1 :generation-budget 5 :seed 1)
-                     nil)
-            (generation-budget-exhausted () t))))))
-
 (deftest replay-restores-the-recorded-generation-budget
   (let ((*registry* (make-hash-table-registry)))
     (defproperty impossible-law
@@ -335,32 +318,6 @@
                    nil)
           (generation-budget-exhausted () t)))))
 
-(deftest nested-mutation-inside-a-hash-table-is-rejected
-  (testing "a mutation of data nested in a hash-table entry is detected"
-    (ok (handler-case
-            (progn (sample-spec '(and (hash-table
-                                       (:required (:v (list-of integer :min-length 1))))
-                                      (satisfies mutate-hash-list))
-                                :count 1 :generation-budget 5 :seed 1)
-                   nil)
-          (generation-budget-exhausted () t)))))
-
-(deftest a-keyword-valued-slot-is-not-mistaken-for-unbound
-  (let ((*registry* (make-hash-table-registry)))
-    (registry-register-generator
-     *registry* 'unbound-keyword-gen
-     (make-instance 'custom-generator :name 'unbound-keyword-gen
-                    :function (lambda () (make-instance 'mutable-probe :v :unbound))))
-    (registry-register-spec
-     *registry* 'unbound-keyword-spec
-     (normalize-spec-form '(object-of mutable-probe (:required (mutable-probe-v t)))
-                          :name 'unbound-keyword-spec :generator 'unbound-keyword-gen))
-    (multiple-value-bind (values report)
-        (sample-spec '(and unbound-keyword-spec (satisfies accept-object))
-                     :count 1 :generation-budget 5 :seed 1)
-      (ok (= 1 (length values)))
-      (ok (eq :completed (getf report :termination))))))
-
 (deftest check-function-replay-restores-the-recorded-generation-budget
   (let ((*registry* (make-hash-table-registry)))
     (defun impossible-identity (x) x)
@@ -377,7 +334,7 @@
         (ok (= 8 (getf report :budget)))
         (ok (eq :explicit (getf report :budget-source)))))))
 
-(deftest a-cyclic-structured-source-does-not-overflow-the-snapshot
+(deftest a-cyclic-structured-source-samples-with-a-non-destructive-validator
   (let ((*registry* (make-hash-table-registry)))
     (registry-register-generator
      *registry* 'cyclic-hash-gen
