@@ -101,6 +101,17 @@
       (ok (handler-case (progn (validp spec '(:kind :returned :values ())) nil)
             (undefined-function () t))))))
 
+(deftest tagged-by-keyword-reader-terminates-on-a-circular-plist
+  (let ((spec (normalize-spec-form (outcome-union-form)))
+        (circular (list :other :value)))
+    (setf (cddr circular) circular)
+    (testing "a circular plist that lacks the tag is a structured failure, not a hang"
+      (let ((datum (first (getf (explain-data spec circular) :errors))))
+        (ok (eq :reader-errored (getf datum :kind)))
+        (ok (getf datum :condition-type))))
+    (testing "VALIDP terminates and agrees with EXPLAIN-DATA"
+      (ok (not (validp spec circular))))))
+
 (deftest tagged-by-refuses-malformed-declarations
   (dolist (form '((tagged-by)
                   (tagged-by :kind)

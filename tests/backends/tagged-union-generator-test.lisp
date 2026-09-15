@@ -44,6 +44,9 @@
                          (sample spec :count 20 :seed 7 :branch :returned)))))
     (testing "an unknown branch is refused"
       (ok (handler-case (progn (sample spec :count 1 :branch :missing) nil)
+            (invalid-spec-form () t))))
+    (testing "an explicitly supplied NIL branch is refused, not read as omission"
+      (ok (handler-case (progn (sample spec :count 1 :branch nil) nil)
             (invalid-spec-form () t))))))
 
 (deftest tagged-union-named-spec-branch-targeting

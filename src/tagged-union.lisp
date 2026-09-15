@@ -61,10 +61,19 @@ A keyword is the plist shorthand; anything else must be a reader designator."
   "Return the tag READ from VALUE by DESIGNATOR.
 
 A keyword reads the plist entry with GETF; anything else is called as a
-one-argument reader.  A signalling reader is not caught here, so the explainer
-can report it as a fact about the value."
+one-argument reader.  GETF walks forever on a circular tail that never
+associates the key, so the keyword path first checks that VALUE is a finite
+proper list and signals otherwise, which the explainer reports as a structured
+:READER-ERRORED datum instead of hanging.  A signalling reader is not caught
+here, so the explainer can report it as a fact about the value."
   (if (keywordp designator)
-      (getf value designator)
+      (progn
+        (unless (finite-list-p value)
+          ;; The offending value is described by its type rather than printed:
+          ;; a circular list has no finite printed representation here.
+          (error "The tag reader ~S needs a finite proper plist, not a ~S."
+                 designator (type-of value)))
+        (getf value designator))
       (funcall (reader-function designator) value)))
 
 (defun find-branch (spec tag)
