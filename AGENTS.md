@@ -22,7 +22,16 @@ CLOS field specs (`object-of`) observe instances through explicit readers; they
 validate and introspect but need a custom generator to construct values. Tagged
 unions (`tagged-by`) dispatch on an explicit tag reader, validate only the
 matching branch, name it in errors, and let `sample :branch` target one branch.
-The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
+AND generation selects one source by a fixed policy — a unique custom conjunct,
+numeric folding, or the first ordinarily constructible conjunct — and enforces
+the remaining conjuncts through a request-shared bounded filter whose attempts,
+rejections and exhaustion are reported. Exhausting the finite budget signals
+`generation-budget-exhausted` and is never a claim that the spec is
+unsatisfiable. Validation predicates and readers are contractually
+non-destructive — they must not modify their input or anything reachable from it
+— and cl-spec neither detects nor restores a violation. The `describe-*` printers
+remain stubs. The cl-mcp adapter lives
+in cl-mcp, not here.
 
 ## Project Structure & Module Organization
 
@@ -77,7 +86,11 @@ section they implement.
 `cl-spec/instrument` rewrites fdefinitions; it is a separate system so that
 production images can load cl-spec without that capability. Property bodies and
 generators run arbitrary user code — treat a registry populated from untrusted
-input as untrusted code (specification §45, §49).
+input as untrusted code (specification §45, §49). Specification-validation
+predicates and readers are held to the non-destructive contract: they must not
+modify their input or anything reachable from it, and cl-spec neither detects nor
+repairs a violation, so a generated value's admissibility, a shrink result, and
+replay determinism are not guaranteed after one.
 
 
 ## Verification protocol additions

@@ -55,6 +55,14 @@
                 #:generator-unavailable
                 #:generator-unavailable-spec
                 #:generator-unavailable-reason
+                #:generation-budget-exhausted
+                #:generation-budget-exhausted-report
+                #:generation-budget-exhausted-request
+                #:generation-budget-exhausted-attempts
+                #:generation-budget-exhausted-rejections
+                #:generation-budget-exhausted-budget
+                #:generation-budget-exhausted-phase
+                #:generation-budget-exhausted-path
                 #:unsupported-seed)
   (:import-from #:cl-spec/src/ir
                 #:spec
@@ -161,6 +169,7 @@
                 #:property-result-failure-evidence
                 #:property-result-shrunk-evidence
                 #:property-result-shrunk-outcome #:property-result-shrink-report
+                #:property-result-generation-report #:property-result-failure-phase
                 #:property-result-rejected
                 #:property-result-failure-reason
                 #:property-result-failure-signature
@@ -261,6 +270,14 @@
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
+           #:generation-budget-exhausted
+           #:generation-budget-exhausted-report
+           #:generation-budget-exhausted-request
+           #:generation-budget-exhausted-attempts
+           #:generation-budget-exhausted-rejections
+           #:generation-budget-exhausted-budget
+           #:generation-budget-exhausted-phase
+           #:generation-budget-exhausted-path
            #:unsupported-seed
            #:invalid-backend-result #:invalid-backend-result-reason
            ;; Semantic IR
@@ -363,6 +380,7 @@
            #:property-result-failure-evidence
            #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-shrink-report
+           #:property-result-generation-report #:property-result-failure-phase
            #:property-result-rejected
            #:property-result-failure-reason
            #:property-result-failure-signature

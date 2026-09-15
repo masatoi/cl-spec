@@ -11,7 +11,14 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:no-generator-backend
-                #:invalid-backend-result)
+                #:invalid-backend-result
+                #:generation-budget-exhausted)
+  (:import-from #:cl-spec/src/generation-request
+                #:make-generation-request
+                #:*generation-request*
+                #:generation-request-report
+                #:generation-report-p
+                #:record-generated-value)
   (:import-from #:cl-spec/src/property #:property-call-arguments-p)
   (:import-from #:cl-spec/src/execution
                 #:*trial-observations* #:observation-from-current-run-p #:trial-observation-status
@@ -37,7 +44,8 @@
            #:run-generated-test
            #:generator-for
            #:sample
-           #:backend-default-trials #:backend-capabilities))
+           #:backend-default-trials #:backend-capabilities
+           #:backend-reports-generation))
 
 (in-package #:cl-spec/src/generator)
 
@@ -69,6 +77,20 @@ everything except BACKEND and GENERATE-VALUE."))
   (:documentation "Produce one value from COMPILED-GENERATOR using BACKEND.
 
 SEED, when supplied, makes the value reproducible (specification §15)."))
+
+(defmethod generate-value :around (backend compiled-generator &key seed)
+  "Own an implicit single-value request for a bare draw.
+
+A caller that already owns a request (SAMPLE, a runner) keeps it, so the budget
+is shared across the request's values.  Root counting belongs to those request
+boundaries -- the runner and SAMPLE record their own roots -- so a nested
+GENERATE-VALUE call made by user code inside a run does not inflate the root
+count past the planned value count."
+  (declare (ignore seed))
+  (if *generation-request*
+      (call-next-method)
+      (let ((*generation-request* (make-generation-request :planned 1)))
+        (call-next-method))))
 
 (defgeneric run-generated-test (backend property &key options)
   (:documentation "Run PROPERTY and return a validated backend outcome plist.
@@ -124,6 +146,24 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
            (<= (getf report :candidates) (getf report :budget))
            (keywordp (getf report :termination)))))
 
+(defun generation-only-outcome-p (outcome)
+  "Recognize the narrow generation-only error branch with no target evidence.
+
+It requires a validated request-owned exhaustion report for the generation phase,
+and no target failure observation, counterexample input, or shrink disposition.
+Relaxing evidence requirements is confined to this shape."
+  (let ((report (getf outcome :generation-report)))
+    (and (eq :error (getf outcome :status))
+         (eq :generation-budget-exhausted (getf outcome :failure-reason))
+         (eq :generation (getf outcome :failure-phase))
+         (typep (getf outcome :condition) 'generation-budget-exhausted)
+         (generation-report-p report)
+         (eq :budget-exhausted (getf report :termination))
+         (eq :generation (getf report :exhaustion-phase))
+         (null (getf outcome :failure))
+         (null (getf outcome :shrunk-failure))
+         (null (getf outcome :shrunk-outcome)))))
+
 (defun validate-backend-outcome (outcome property budget)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
@@ -140,6 +180,9 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                (setf tail (cddr tail))))
     (unless (shrink-report-p (getf outcome :shrink-report))
       (refuse ":shrink-report requires bounded candidate counts and a termination keyword"))
+    (when (and (getf outcome :generation-report)
+               (not (generation-report-p (getf outcome :generation-report))))
+      (refuse ":generation-report requires a coherent bounded-filter report"))
     (when (and (getf outcome :capabilities)
                (not (capability-report-p (getf outcome :capabilities))))
       (refuse ":capabilities must report valid generation and shrinking states"))
@@ -157,6 +200,9 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
       (unless (member status '(:passed :failed :error :skipped))
         (refuse "unknown or missing :status"))
       (cond
+        ((generation-only-outcome-p outcome)
+         (when (or original shrunk disposition)
+           (refuse "a generation-only error cannot carry target failure evidence")))
         ((member status '(:passed :skipped))
          (when (or original shrunk disposition)
            (refuse "a nonfailing outcome cannot carry failure evidence"))
@@ -194,13 +240,41 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
            (refuse "status must describe the selected counterexample"))))
       outcome)))
 
+(defgeneric backend-reports-generation (backend)
+  (:documentation "Return true when BACKEND participates in the bounded-filter accounting.
+
+Only a participating backend's run receives the request's synthesized generation
+report.  A backend that never calls the accounting hooks leaves the report
+:NOT-COLLECTED rather than publishing a fabricated zero-work report.")
+  (:method ((backend t))
+    (declare (ignore backend))
+    nil))
+
 (defmethod run-generated-test :around (backend property &key options)
-  "Enforce the backend count and observation protocol at its public boundary."
+  "Own one generation request and enforce the backend outcome protocol.
+
+The request's candidate budget is shared by every bounded AND filter the run
+reaches.  An explicit :GENERATION-BUDGET option is validated before execution;
+otherwise the default coefficient applies.  The effective generation report is
+attached to the outcome before validation.  A participating backend converts its
+own request-owned exhaustion into the narrow generation-only error branch with
+the trial and precondition counts it collected; this boundary never fabricates
+`:trials 0` for an exhaustion that generated roots."
   (let ((budget (getf options :trials :missing))
         (*trial-observations* (list nil)))
     (unless (and (integerp budget) (not (minusp budget)))
       (error 'type-error :datum budget :expected-type '(integer 0 *)))
-    (validate-backend-outcome (call-next-method) property budget)))
+    (let* ((explicit (getf options :generation-budget :missing))
+           (request (if (eq explicit :missing)
+                        (make-generation-request :planned budget)
+                        (make-generation-request :planned budget :budget explicit)))
+           (*generation-request* request)
+           (outcome (call-next-method)))
+      (validate-backend-outcome
+       (if (backend-reports-generation backend)
+           (list* :generation-report (generation-request-report request) outcome)
+           outcome)
+       property budget))))
 
 (defgeneric backend-capabilities (backend spec &key registry)
   (:documentation "Describe generation and shrinking without drawing or invoking user predicates."))
@@ -245,23 +319,35 @@ The result is opaque to everything but the backend and GENERATE-VALUE."
                        :options options)))
 
 (defun sample (spec-designator &key (count 10) seed (branch nil branch-p)
+                                (generation-budget nil generation-budget-p)
                                 (registry *registry*))
-  "Return a list of COUNT values generated from SPEC-DESIGNATOR.
+  "Return (VALUES VALUES REPORT) for COUNT values generated from SPEC-DESIGNATOR.
+
+VALUES is the sampled list.  REPORT is the generation report for this one
+request: the bounded-filter candidate budget, attempts, rejections and phases.
 
 SEED, when supplied, makes the whole sequence reproducible.  BRANCH, when
 supplied, samples only the named branch of a tagged union, which is how a caller
 aims generation at one alternative; an explicitly supplied NIL is an unknown
 branch and is refused rather than read as \"no branch requested\", so a caller
-forwarding a computed branch value is told when it is bad.  Intended for
-inspecting what a spec admits, from the REPL or from an agent."
+forwarding a computed branch value is told when it is bad.  GENERATION-BUDGET,
+when supplied, is the request-wide bounded-filter candidate budget; explicit zero
+is not an omission.  Intended for inspecting what a spec admits, from the REPL or
+from an agent."
   (let* ((backend (current-generator-backend))
          (spec (if branch-p
                    (tagged-union-branch (resolve-spec spec-designator registry) branch)
                    spec-designator))
-         (generator (generator-for spec :registry registry)))
+         (generator (generator-for spec :registry registry))
+         (request (if generation-budget-p
+                      (make-generation-request :planned count :budget generation-budget)
+                      (make-generation-request :planned count)))
+         (*generation-request* request))
     (flet ((draw ()
-             (loop repeat count collect (generate-value backend generator))))
+             (loop repeat count
+                   collect (prog1 (generate-value backend generator)
+                             (record-generated-value)))))
       (if seed
           (let ((*random-state* (seed->random-state seed)))
-            (draw))
-          (draw)))))
+            (values (draw) (generation-request-report request)))
+          (values (draw) (generation-request-report request))))))

@@ -81,7 +81,7 @@
     (eval '(cl-spec/src/dsl:defproperty stays-under-ten ((x small))
              (:trials (:normal 200))
              (< x 10)))
-    (let* ((result (run-property 'stays-under-ten))
+    (let* ((result (run-property 'stays-under-ten :seed 1))
            (original (getf (property-result-counterexample result) 'x))
            (shrunk (getf (property-result-shrunk-counterexample result) 'x)))
       (testing "the property does fail"

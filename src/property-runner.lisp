@@ -32,6 +32,7 @@
                 #:seed->random-state)
   (:export #:property-result-shrink-report #:property-result-options #:property-result-provenance
            #:result-data #:property-result-schema-metadata #:property-result-budget
+           #:property-result-generation-report #:property-result-failure-phase
            #:property-result-entity-kind
            #:property-result-failure-evidence #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-rejected
@@ -57,6 +58,18 @@
   ((shrink-report :initarg :shrink-report :initform :not-collected
                   :reader property-result-shrink-report
                   :documentation "Candidate count, budget and termination captured by the backend.")
+   (generation-report :initarg :generation-report :initform :not-collected
+                      :reader property-result-generation-report
+                      :documentation "Bounded-filter generation report captured by the backend,
+or :NOT-COLLECTED when the backend did not collect one.")
+   (failure-phase :initarg :failure-phase :initform nil
+                  :reader property-result-failure-phase
+                  :documentation ":GENERATION when the run stopped in generation infrastructure rather
+than on a target observation, else NIL.")
+   (stored-failure-reason :initarg :failure-reason :initform nil
+                          :reader property-result-stored-failure-reason
+                          :documentation "Failure reason for a result with no target observation,
+such as the generation-only error branch.")
    (options :initarg :options :initform nil :reader property-result-options
             :documentation "Caller options captured before backend execution.")
    (provenance :initarg :provenance
@@ -159,9 +172,10 @@ and the shrunk counterexample are what make a failure actionable."))
       (property-result-failure-evidence result)))
 
 (defun property-result-failure-reason (result)
-  "Return the selected observation's reason, or NIL on success."
-  (let ((evidence (selected-evidence result)))
-    (when evidence (trial-observation-reason evidence))))
+  "Return the selected observation's reason, a stored generation reason, or NIL."
+  (or (property-result-stored-failure-reason result)
+      (let ((evidence (selected-evidence result)))
+        (when evidence (trial-observation-reason evidence)))))
 
 (defun property-result-failure-signature (result)
   "Return the selected observation's failure identity, or NIL on success."
@@ -219,6 +233,9 @@ results without captured metadata have an explicitly incomplete digest."
                    :shrunk-counterexample (property-result-shrunk-counterexample result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
                     :shrink-report (property-result-shrink-report result)
+                   :generation-report (property-result-generation-report result)
+                   :failure-phase (property-result-failure-phase result)
+                   :failure-reason (property-result-failure-reason result)
                    :failure (observation-data (property-result-failure-evidence result))
                    :shrunk-failure (observation-data (property-result-shrunk-evidence result))
                    :elapsed (property-result-elapsed result))))))
@@ -276,15 +293,21 @@ backend."
               (and (integerp seed) (not (minusp seed))))
     (error 'type-error :datum seed
                        :expected-type '(or null property-result (integer 0 *))))
-  (let* ((profile (or profile
+  (let* ((seed-result (and (typep seed 'property-result) seed))
+         (profile (or profile
                       ;; A result stands in for its whole run.  The seed alone
                       ;; is not it: the profile fixes the trial count, so
                       ;; digging out only the seed replayed a 400-trial failure
                       ;; as a 3-trial pass that contradicted the result it was
                       ;; handed.  REPLAY-PROPERTY has always carried both.
-                      (and (typep seed 'property-result)
-                           (property-result-profile seed))))
-         (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
+                      (and seed-result (property-result-profile seed-result))))
+         (seed (if seed-result (property-result-seed seed-result) seed))
+         ;; A result also carries the options its run was given, so an explicit
+         ;; :GENERATION-BUDGET is reused when the caller omits options.  Otherwise
+         ;; a run that exhausted a small budget would pass on replay under the
+         ;; default budget, contradicting the result it was handed.
+         (options (or options
+                      (and seed-result (property-result-options seed-result))))
          (property (resolve-property property-designator registry))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))
@@ -338,6 +361,10 @@ backend."
                    :shrunk-outcome (getf outcome :shrunk-outcome)
                     :shrink-report (snapshot-value (or (getf outcome :shrink-report)
                                                       :not-collected))
+                   :generation-report (snapshot-value
+                                       (or (getf outcome :generation-report) :not-collected))
+                   :failure-phase (getf outcome :failure-phase)
+                   :failure-reason (getf outcome :failure-reason)
                    :rejected (getf outcome :rejected 0)
                    :counterexample (when original
                                      (name-arguments property
@@ -345,7 +372,8 @@ backend."
                    :shrunk-counterexample
                    (when shrunk
                      (name-arguments property (trial-observation-arguments shrunk)))
-                   :condition (when selected (trial-observation-condition selected))
+                   :condition (or (when selected (trial-observation-condition selected))
+                                  (getf outcome :condition))
                    :elapsed elapsed)))
 
 (defun run-properties (property-designators &key profile options (registry *registry*))
@@ -389,5 +417,7 @@ signalled."
                 :profile (or profile
                              (and (typep seed 'property-result)
                                   (property-result-profile seed)))
-                :options options
+                :options (or options
+                             (and (typep seed 'property-result)
+                                  (property-result-options seed)))
                 :registry registry))

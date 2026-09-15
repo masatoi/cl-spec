@@ -1329,21 +1329,40 @@ macro expansions would need the lint exemption that file carries."
       (ok (equal '(0) (getf (first (getf (function-check-result-explanation r)
                                        :errors)) :path))))))
 
-(deftest and-refuses-conjunct-generators
+(deftest and-composes-conjunct-generators-under-a-unique-source-policy
   (let ((*registry* (make-hash-table-registry)))
     (install-always-one *registry*)
     (defspec alias-for-one always-one-spec)
-    (dolist (form '( (and always-one-spec integer)
-                    (and integer (and alias-for-one integer))))
+    (testing "a unique custom conjunct is reused as the source and filtered by the whole AND"
+      (ok (equal '(1 1 1)
+                 (cl-spec/src/generator:sample
+                  (normalize-spec-form '(and always-one-spec integer)) :count 3 :seed 42)))
+      (ok (equal '(1 1 1)
+                 (cl-spec/src/generator:sample
+                  (normalize-spec-form '(and integer (and alias-for-one integer)))
+                  :count 3 :seed 42))))
+    (testing "the custom source wins even when an ordinary conjunct appears earlier"
+      (ok (equal '(1 1 1)
+                 (cl-spec/src/generator:sample
+                  (normalize-spec-form '(and integer always-one-spec)) :count 3 :seed 42))))
+    (testing "competing custom conjuncts are refused rather than silently coalesced"
+      (registry-register-generator
+       *registry* 'always-two
+       (make-instance 'custom-generator :name 'always-two :function (lambda () 2)))
+      (registry-register-spec
+       *registry* 'always-two-spec
+       (normalize-spec-form 'integer :name 'always-two-spec :generator 'always-two))
       (ok (handler-case
               (progn (cl-spec/src/generator:generator-for
-                       (normalize-spec-form form)) nil)
+                      (normalize-spec-form '(and always-one-spec always-two-spec)))
+                     nil)
             (cl-spec/src/conditions:generator-unavailable () t))))
-    (ok (equal '(1 1 1)
-               (cl-spec/src/generator:sample 'always-one-spec :count 3 :seed 42)))
-    (defspec whole-and (and always-one-spec integer) (:generator always-one))
-    (ok (equal '(1 1 1)
-               (cl-spec/src/generator:sample 'whole-and :count 3 :seed 42)))))
+    (testing "a standalone custom generator and a whole-AND override are unchanged"
+      (ok (equal '(1 1 1)
+                 (cl-spec/src/generator:sample 'always-one-spec :count 3 :seed 42)))
+      (defspec whole-and (and always-one-spec integer) (:generator always-one))
+      (ok (equal '(1 1 1)
+                 (cl-spec/src/generator:sample 'whole-and :count 3 :seed 42))))))
 
 (deftest postcondition-evaluates-each-form-once
   (let ((*registry* (make-hash-table-registry))

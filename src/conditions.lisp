@@ -41,6 +41,14 @@
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
+           #:generation-budget-exhausted
+           #:generation-budget-exhausted-report
+           #:generation-budget-exhausted-request
+           #:generation-budget-exhausted-attempts
+           #:generation-budget-exhausted-rejections
+           #:generation-budget-exhausted-budget
+           #:generation-budget-exhausted-phase
+           #:generation-budget-exhausted-path
            #:unsupported-seed))
 
 (in-package #:cl-spec/src/conditions)
@@ -254,6 +262,57 @@ produce values from a body called without the bindings its author wrote."))
                      (generator-unavailable-reason condition))))
   (:documentation
    "Signalled when an IR node has no generation strategy on this backend."))
+
+(define-condition generation-budget-exhausted (generator-unavailable)
+  ((report :initarg :report
+           :initform nil
+           :reader generation-budget-exhausted-report
+           :documentation "Immutable snapshot of the request's generation report
+at the moment the budget was exhausted.")
+   (request :initarg :request
+            :initform nil
+            :reader generation-budget-exhausted-request
+            :documentation "Identity of the generation request whose budget ran out.
+
+Compared by the runner against the request it owns, so an inner public request's
+or a target's condition of the same class is not misread as this request's own
+depletion.  The live object is internal state, never wire metadata."))
+  (:report (lambda (condition stream)
+             (format stream "The selected generation strategy exhausted its ~
+                             candidate budget (~D of ~D attempts, ~D rejected)~
+                             ~@[ at ~S~].  No claim is made that the ~
+                             specification is unsatisfiable."
+                     (generation-budget-exhausted-attempts condition)
+                     (generation-budget-exhausted-budget condition)
+                     (generation-budget-exhausted-rejections condition)
+                     (generation-budget-exhausted-path condition))))
+  (:documentation "Signalled when a request-owned candidate budget is exhausted.
+
+A subclass of GENERATOR-UNAVAILABLE, so a caller that already treats \"this
+generation could not complete\" as one family keeps working, while a caller that
+must tell a static no-strategy refusal from dynamic budget depletion handles this
+type first.  The report and the message state explicitly that exhausting a
+finite budget is not a proof that the spec admits no values."))
+
+(defun generation-budget-exhausted-attempts (condition)
+  "Return the candidate reservations the request made before exhaustion."
+  (getf (generation-budget-exhausted-report condition) :attempts))
+
+(defun generation-budget-exhausted-rejections (condition)
+  "Return the filter rejections the request recorded before exhaustion."
+  (getf (generation-budget-exhausted-report condition) :rejections))
+
+(defun generation-budget-exhausted-budget (condition)
+  "Return the effective candidate budget of the exhausted request."
+  (getf (generation-budget-exhausted-report condition) :budget))
+
+(defun generation-budget-exhausted-phase (condition)
+  "Return :GENERATION or :SHRINKING, the phase that owned the exhausted budget."
+  (getf (generation-budget-exhausted-report condition) :exhaustion-phase))
+
+(defun generation-budget-exhausted-path (condition)
+  "Return the declaration path of the filter whose reservation was denied, or NIL."
+  (getf (generation-budget-exhausted-report condition) :exhausted-at))
 
 (define-condition unsupported-seed (cl-spec-error)
   ()

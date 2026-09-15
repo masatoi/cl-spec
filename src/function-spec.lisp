@@ -57,6 +57,7 @@
                 #:run-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
                 #:property-result-shrunk-outcome #:property-result-shrink-report
+                #:property-result-generation-report #:property-result-failure-phase
                 #:property-result-rejected
                 #:property-result-failure-reason #:property-result-explanation
                 #:property-result-entity-kind)
@@ -789,16 +790,22 @@ are accepted. A run with no admitted trials is :SKIPPED."
               (and (integerp seed) (not (minusp seed))))
     (error 'type-error :datum seed
                       :expected-type '(or null property-result (integer 0 *))))
-  (let* ((budget (or trials
-                     (when (typep seed 'function-check-result)
-                       (function-check-result-budget seed))
+  (let* ((seed-result (and (typep seed 'property-result) seed))
+         (budget (or trials
+                     (when (typep seed-result 'function-check-result)
+                       (function-check-result-budget seed-result))
                      (backend-default-trials (current-generator-backend))))
-         (seed (if (typep seed 'property-result) (property-result-seed seed) seed))
+         (seed (if seed-result (property-result-seed seed-result) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          (property (make-function-check-property contract :budget budget))
          (source (property-source-form property))
-         (result (run-property property :seed seed :options options :registry registry)))
+         (result (run-property property
+                               :seed seed
+                               :options (or options
+                                            (and seed-result
+                                                 (property-result-options seed-result)))
+                               :registry registry)))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)
                    :options (property-result-options result)
@@ -814,6 +821,8 @@ are accepted. A run with no admitted trials is :SKIPPED."
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
                     :shrink-report (property-result-shrink-report result)
+                   :generation-report (property-result-generation-report result)
+                   :failure-phase (property-result-failure-phase result)
                    :condition (property-result-condition result)
                    :elapsed (property-result-elapsed result)
                    :rejected (property-result-rejected result)
