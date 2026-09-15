@@ -64,9 +64,15 @@ This project is developed with cl-mcp's tools:
 | `cl-spec/instrument` | runtime function instrumentation | none |
 | `cl-spec/specs` | optional executable API contracts and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
+| `cl-spec/examples/structured-data` | executable structured-data integration example (inferred subsystem) | `check-it` |
 
 The core system must never load `check-it`. The generator backend is injected
 at load time into `cl-spec:*generator-backend*` by `cl-spec/check-it`.
+
+`cl-spec/examples/structured-data` is not declared in `cl-spec.asd`: ASDF derives
+it from `examples/structured-data.lisp`, and the bare
+`:import-from #:cl-spec/src/backends/check-it` in its `defpackage` is what makes
+loading the example install the generator backend.
 
 The core does not load `cl-spec/specs`. Loading that optional bundle registers its
 contracts, generators and laws in the currently bound `cl-spec:*registry*` without

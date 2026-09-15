@@ -43,10 +43,22 @@ re-exports the public API under the nickname `cl-spec` and contains no logic.
 Tests mirror the sources in `tests/` as `*-test.lisp` and **must** be listed in
 `tests.lisp` — an unlisted suite never runs.
 
-Four systems sit beside the core: `cl-spec/check-it` (generation and
-shrinking), `cl-spec/instrument` (runtime contract wrappers), `cl-spec/specs`
-(executable self-specifications) and `cl-spec/tests`.
+Systems beside the core are `cl-spec/check-it` (generation and shrinking),
+`cl-spec/instrument` (runtime contract wrappers), `cl-spec/specs` (executable
+self-specifications), `cl-spec/tests` and `cl-spec/examples/structured-data`.
 The core system must never load `check-it` or cl-mcp.
+
+`examples/structured-data.lisp` is the executable integration example for the
+structured-data and AND-generation features; its guide is
+`docs/guides/structured-data-walkthrough.md` and its suite is
+`tests/examples-test.lisp`. It is an inferred subsystem of the package-inferred
+primary, not a `cl-spec.asd` entry, and its only dependency beyond `cl-spec/main`
+is the check-it generator backend, declared by the bare
+`:import-from #:cl-spec/src/backends/check-it` in its `defpackage`. Loading the
+example therefore installs the backend while the core system stays free of
+check-it. Loading the example defines functions and one class only: spec
+registration and each demo are explicit entry points that use a dedicated
+registry, so loading it never draws a value, runs a demo or changes `*registry*`.
 
 ## Build, Test, and Development Commands
 

@@ -69,6 +69,8 @@
 | Spec・Propertyのデータ取得 | 実装済み | `spec-data`、`property-data`、`function-spec-data` |
 | symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
+| フィールド付き構造化spec | 実装済み | `plist`・`alist`・`hash-table`・`object-of`・`tagged-by`。`object-of`の生成は`(:generator NAME)`、タグ付きunionは`sample :branch`に対応（§9.2〜9.5） |
+| AND合成の生成 | 実装済み | 生成元を一つ選び、残余の連言を共有予算のbounded filterで課す。既定`1000 × N`、枯渇は`generation-budget-exhausted`で報告する（§10、§73.4、§73.5 addendum） |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
