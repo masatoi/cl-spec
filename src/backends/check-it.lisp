@@ -36,7 +36,8 @@
                 #:compile-generator
                 #:generate-value
                 #:run-generated-test
-                #:backend-default-trials #:backend-capabilities)
+                #:backend-default-trials #:backend-capabilities
+                #:backend-reports-generation)
   (:import-from #:cl-spec/src/generation-request
                 #:record-generated-value
                 #:record-generation-interruption
@@ -179,6 +180,11 @@ distribution no run draws (§73.4 #6)."
   "Return check-it's current default number of trials."
   (declare (ignore backend))
   *num-trials*)
+
+(defmethod backend-reports-generation ((backend check-it-backend))
+  "check-it participates in the request-scoped bounded-filter accounting."
+  (declare (ignore backend))
+  t)
 
 (defun validate-generated-arguments (name validator arguments)
   "Reject invalid whole argument sets before evaluating a contract."

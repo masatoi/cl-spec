@@ -1018,15 +1018,17 @@ or random number."
 The delegated shrinker's return value is not evidence: some check-it shrinkers
 return a transformed value they never presented to TEST.  A candidate may replace
 the cached value only from this callback, and only when it passes the whole AND
-and TEST accepts it as a reduction; otherwise the previous value stands.  Any
-fresh draw a nested bounded filter makes here is charged to :SHRINKING."
+and TEST accepts it as a reduction; otherwise the previous value stands.  The
+whole-AND validator runs first, so a candidate it rejects never reaches TEST and
+cannot make the target observe or record a candidate outside the AND.  Any fresh
+draw a nested bounded filter makes here is charged to :SHRINKING."
   (with-generation-phase (:shrinking)
     (shrink (bounded-filter-sub-generator generator)
             (lambda (candidate)
-              (if (or (funcall test candidate)
-                      (not (funcall (bounded-filter-validator generator) candidate)))
-                  t
-                  (progn (setf (cached-value generator) candidate) nil))))
+              (cond
+                ((not (funcall (bounded-filter-validator generator) candidate)) t)
+                ((funcall test candidate) t)
+                (t (setf (cached-value generator) candidate) nil))))
     (cached-value generator)))
 
 (defmethod regenerate ((generator bounded-filter-generator))

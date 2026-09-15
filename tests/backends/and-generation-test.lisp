@@ -90,6 +90,19 @@
   (declare (ignore generator test))
   (error "shrink machinery failed"))
 
+(defclass callback-probing-shrink-generator (generator)
+  ()
+  (:documentation "A generator whose shrink presents one candidate to the callback."))
+
+(defmethod generate ((generator callback-probing-shrink-generator))
+  (setf (cached-value generator) 5))
+
+(defmethod shrink ((generator callback-probing-shrink-generator) test)
+  "Present one candidate the filter will reject, then return the cached value."
+  (declare (ignore generator))
+  (funcall test 42)
+  5)
+
 (defclass erroring-shrink-spec (spec)
   ()
   (:documentation "A test-only spec whose generator aborts when shrunk."))
@@ -116,6 +129,14 @@
   (declare (ignore property))
   (make-instance 'tuple-spec
                  :element-specs (list (make-instance 'erroring-shrink-spec))))
+
+(defclass non-collecting-backend ()
+  ()
+  (:documentation "A backend that does not participate in bounded-filter accounting."))
+
+(defmethod run-generated-test ((backend non-collecting-backend) property &key options)
+  (declare (ignore backend property options))
+  (list :status :passed :trials 1 :rejected 0))
 
 (defun sample-spec (form &rest args)
   "Return (VALUES VALUES REPORT) for the normalized FORM."
@@ -194,6 +215,29 @@
       (ok (eq :passed (property-result-status result)))
       (ok (generation-report-p report))
       (ok (= 3 (getf report :generated-values))))))
+
+(deftest shrink-validates-before-invoking-the-target-callback
+  (let* ((sub (make-instance 'callback-probing-shrink-generator))
+         (filter (make-instance 'bounded-filter-generator
+                                :sub-generator sub
+                                :filter (lambda (value) (eql value 5))
+                                :spec (normalize-spec-form 'integer)))
+         (*generation-request* (make-generation-request :planned 1))
+         (calls 0))
+    (setf (cached-value filter) 5)
+    (shrink filter (lambda (candidate)
+                     (declare (ignore candidate))
+                     (incf calls)
+                     t))
+    (testing "a candidate the whole AND rejects never reaches the target callback"
+      (ok (= 0 calls)))
+    (ok (= 5 (cached-value filter)))))
+
+(deftest unsupported-backends-have-no-synthesized-generation-report
+  (let ((outcome (run-generated-test (make-instance 'non-collecting-backend) nil
+                                     :options (list :trials 1))))
+    (ok (eq :passed (getf outcome :status)))
+    (ok (null (getf outcome :generation-report)))))
 
 (deftest no-source-still-reports-ordinary-unavailability
   (ok (handler-case

@@ -45,7 +45,8 @@
            #:run-generated-test
            #:generator-for
            #:sample
-           #:backend-default-trials #:backend-capabilities))
+           #:backend-default-trials #:backend-capabilities
+           #:backend-reports-generation))
 
 (in-package #:cl-spec/src/generator)
 
@@ -240,6 +241,16 @@ Relaxing evidence requirements is confined to this shape."
            (refuse "status must describe the selected counterexample"))))
       outcome)))
 
+(defgeneric backend-reports-generation (backend)
+  (:documentation "Return true when BACKEND participates in the bounded-filter accounting.
+
+Only a participating backend's run receives the request's synthesized generation
+report.  A backend that never calls the accounting hooks leaves the report
+:NOT-COLLECTED rather than publishing a fabricated zero-work report.")
+  (:method ((backend t))
+    (declare (ignore backend))
+    nil))
+
 (defmethod run-generated-test :around (backend property &key options)
   "Own one generation request and enforce the backend outcome protocol.
 
@@ -268,7 +279,9 @@ reaches this boundary becomes the narrow generation-only error branch."
                                   :condition condition)
                             (error condition))))))
       (validate-backend-outcome
-       (list* :generation-report (generation-request-report request) outcome)
+       (if (backend-reports-generation backend)
+           (list* :generation-report (generation-request-report request) outcome)
+           outcome)
        property budget))))
 
 (defgeneric backend-capabilities (backend spec &key registry)
