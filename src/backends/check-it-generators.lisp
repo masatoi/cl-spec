@@ -994,30 +994,43 @@ each candidate reservation comes from the active generation request, and a
 request that runs out signals GENERATION-BUDGET-EXHAUSTED with its report.
 Request budgets and counters live in that request, never on this reusable object."))
 
-(defun candidate-snapshot (value)
+(defun candidate-snapshot (value &optional (seen (make-hash-table :test #'eq)))
   "Return a deep snapshot of VALUE that notices in-place validation writes.
 
 SNAPSHOT-VALUE copies conses and arrays but keeps other objects by identity, so a
 hash-table or instance write would compare equal to itself.  This recursively
 snapshots a hash table's test and entries and an instance's slot values -- with
 boundness recorded separately from the value, so a legitimate :UNBOUND value is
-not mistaken for an unbound slot -- and leaves opaque application state alone."
+not mistaken for an unbound slot -- and leaves opaque application state alone.
+SEEN maps already-visited tables and instances to their placeholders, so a shared
+or cyclic graph is snapshotted once instead of recursing forever."
   (cond
     ((hash-table-p value)
-     (let ((entries nil))
-       (maphash (lambda (key item)
-                  (push (cons (candidate-snapshot key) (candidate-snapshot item))
-                        entries))
-                value)
-       (list :hash-table (hash-table-test value) entries)))
+     (or (gethash value seen)
+         (let ((placeholder (list :hash-table (hash-table-test value) nil)))
+           (setf (gethash value seen) placeholder)
+           (let ((entries nil))
+             (maphash (lambda (key item)
+                        (push (cons (candidate-snapshot key seen)
+                                    (candidate-snapshot item seen))
+                              entries))
+                      value)
+             (setf (third placeholder) entries))
+           placeholder)))
     ((or (typep value 'standard-object) (typep value 'structure-object))
-     (list :instance
-           (loop for slot in (class-slots (class-of value))
-                 for name = (slot-definition-name slot)
-                 collect (cons name
-                               (if (slot-boundp value name)
-                                   (list :bound (candidate-snapshot (slot-value value name)))
-                                   (list :unbound))))))
+     (or (gethash value seen)
+         (let ((placeholder (list :instance nil)))
+           (setf (gethash value seen) placeholder)
+           (setf (second placeholder)
+                 (loop for slot in (class-slots (class-of value))
+                       for name = (slot-definition-name slot)
+                       collect (cons name
+                                     (if (slot-boundp value name)
+                                         (list :bound
+                                               (candidate-snapshot (slot-value value name)
+                                                                   seen))
+                                         (list :unbound)))))
+           placeholder)))
     (t (snapshot-value value))))
 
 (defun candidate-mutated-p (snapshot value)

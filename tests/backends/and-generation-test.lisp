@@ -85,6 +85,13 @@
   (declare (ignore object))
   t)
 
+(defun make-cyclic-hash-table ()
+  "A hash table whose :SELF entry points back to the table."
+  (let ((table (make-hash-table :test #'eql)))
+    (setf (gethash :self table) table
+          (gethash :v table) 1)
+    table))
+
 (defun register-counting-spec (registry spec-name generator-name sequence)
   "Register GENERATOR-NAME drawing SEQUENCE in order, then repeating its last value."
   (let ((remaining (copy-list sequence)))
@@ -369,6 +376,23 @@
       (testing "the function-checker replay reuses the recorded explicit budget"
         (ok (= 8 (getf report :budget)))
         (ok (eq :explicit (getf report :budget-source)))))))
+
+(deftest a-cyclic-structured-source-does-not-overflow-the-snapshot
+  (let ((*registry* (make-hash-table-registry)))
+    (registry-register-generator
+     *registry* 'cyclic-hash-gen
+     (make-instance 'custom-generator :name 'cyclic-hash-gen
+                    :function #'make-cyclic-hash-table))
+    (registry-register-spec
+     *registry* 'cyclic-hash-spec
+     (normalize-spec-form '(hash-table (:required (:v integer)))
+                          :name 'cyclic-hash-spec :generator 'cyclic-hash-gen))
+    (multiple-value-bind (values report)
+        (sample-spec '(and cyclic-hash-spec (satisfies accept-object))
+                     :count 1 :generation-budget 5 :seed 1)
+      (ok (= 1 (length values)))
+      (ok (eq :completed (getf report :termination)))
+      (ok (eq (gethash :self (first values)) (first values))))))
 
 (deftest shrink-validates-before-invoking-the-target-callback
   (let* ((sub (make-instance 'callback-probing-shrink-generator))
