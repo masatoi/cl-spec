@@ -57,6 +57,7 @@
                 #:run-property
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
                 #:property-result-shrunk-outcome #:property-result-shrink-report
+                #:property-result-generation-report #:property-result-failure-phase
                 #:property-result-rejected
                 #:property-result-failure-reason #:property-result-explanation
                 #:property-result-entity-kind)
@@ -814,6 +815,8 @@ are accepted. A run with no admitted trials is :SKIPPED."
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
                     :shrink-report (property-result-shrink-report result)
+                   :generation-report (property-result-generation-report result)
+                   :failure-phase (property-result-failure-phase result)
                    :condition (property-result-condition result)
                    :elapsed (property-result-elapsed result)
                    :rejected (property-result-rejected result)

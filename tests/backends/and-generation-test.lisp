@@ -26,7 +26,8 @@
                 #:generation-budget-exhausted-path)
   (:import-from #:cl-spec/src/generation-request
                 #:generation-report-p #:make-generation-request #:generation-request-report)
-  (:import-from #:cl-spec/src/dsl #:defproperty)
+  (:import-from #:cl-spec/src/dsl #:defproperty #:defspec-function)
+  (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
                 #:run-property #:property-result-status #:property-result
                 #:property-result-generation-report #:property-result-failure-phase
@@ -289,3 +290,17 @@
         (when shrunk
           (ok (validp spec shrunk))
           (ok (>= shrunk 50)))))))
+
+(deftest function-check-exposes-the-generation-report
+  (let ((*registry* (make-hash-table-registry)))
+    (defun self-identity-int (n) n)
+    (defspec-function self-identity-int
+      (:args (n (range integer 1 10)))
+      (:returns (range integer 1 10)))
+    (let* ((result (check-function 'self-identity-int :trials 5 :seed 4
+                                   :options '(:generation-budget 0)))
+           (report (property-result-generation-report result)))
+      (ok (eq :passed (property-result-status result)))
+      (ok (generation-report-p report))
+      (ok (= 0 (getf report :budget)))
+      (ok (eq :explicit (getf report :budget-source))))))
