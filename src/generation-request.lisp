@@ -27,6 +27,7 @@
            #:reserve-generation-candidate
            #:record-generation-rejection
            #:record-generated-value
+           #:record-generation-interruption
            #:with-generation-phase
            #:owned-generation-exhaustion-p))
 
@@ -222,6 +223,17 @@ reach here; a pure shrink-candidate validation failure never does."
   "Record one root value returned normally by a top-level generator."
   (when *generation-request*
     (incf (generation-request-generated-values *generation-request*))))
+
+(defun record-generation-interruption ()
+  "Mark the active request's generator subsystem interrupted.
+
+An error that aborts generation or shrink-time regeneration without depleting
+this request's budget is neither a completion nor an owned exhaustion, so the
+report says so instead of claiming the subsystem completed.  A more specific
+owned exhaustion already recorded is preserved."
+  (let ((request *generation-request*))
+    (when (and request (eq :completed (generation-request-termination request)))
+      (setf (generation-request-termination request) :interrupted))))
 
 (defmacro with-generation-phase ((phase) &body body)
   "Run BODY with the active request's phase set to PHASE, restoring it after."

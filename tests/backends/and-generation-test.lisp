@@ -12,11 +12,14 @@
                 #:*registry* #:make-hash-table-registry
                 #:registry-register-spec #:registry-register-generator)
   (:import-from #:cl-spec/src/generator-definition #:custom-generator)
+  (:import-from #:cl-spec/src/ir #:spec #:tuple-spec #:spec-kind)
+  (:import-from #:cl-spec/src/explain #:compile-node)
+  (:import-from #:cl-spec/src/property #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/generator
-                #:sample #:backend-capabilities)
+                #:sample #:backend-capabilities #:run-generated-test)
   (:import-from #:cl-spec/src/backends/check-it #:check-it-backend)
   (:import-from #:cl-spec/src/backends/check-it-generators
-                #:compile-spec-generator #:bounded-filter-generator)
+                #:compile-spec-generator #:bounded-filter-generator #:spec-generator)
   (:import-from #:check-it #:generator #:generate #:shrink #:regenerate #:cached-value)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable
@@ -29,7 +32,8 @@
                 #:generation-budget-exhausted-path)
   (:import-from #:cl-spec/src/generation-request
                 #:generation-report-p #:make-generation-request #:generation-request-report
-                #:*generation-request* #:*generation-budget-coefficient*)
+                #:*generation-request* #:*generation-budget-coefficient*
+                #:record-generation-interruption #:reserve-generation-candidate)
   (:import-from #:cl-spec/src/dsl #:defproperty #:defspec-function)
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
@@ -73,6 +77,44 @@
   "Return a transformed value without ever presenting it to TEST."
   (declare (ignore test))
   (unobserved-shrink-value generator))
+
+(defclass erroring-shrink-generator (generator)
+  ((value :initarg :value :reader erroring-shrink-value))
+  (:documentation "A generator whose shrink aborts the shrink machinery."))
+
+(defmethod generate ((generator erroring-shrink-generator))
+  (setf (cached-value generator) (erroring-shrink-value generator)))
+
+(defmethod shrink ((generator erroring-shrink-generator) test)
+  (declare (ignore generator test))
+  (error "shrink machinery failed"))
+
+(defclass erroring-shrink-spec (spec)
+  ()
+  (:documentation "A test-only spec whose generator aborts when shrunk."))
+
+(defmethod spec-kind ((spec erroring-shrink-spec))
+  (declare (ignore spec))
+  :erroring-shrink)
+
+(defmethod compile-node ((spec erroring-shrink-spec) context)
+  (declare (ignore spec context))
+  (lambda (value path)
+    (declare (ignore value path))
+    nil))
+
+(defmethod spec-generator ((spec erroring-shrink-spec) context)
+  (declare (ignore spec context))
+  (make-instance 'erroring-shrink-generator :value 5))
+
+(defclass erroring-shrink-property (property)
+  ()
+  (:documentation "A property whose single argument draws through the erroring generator."))
+
+(defmethod property-argument-schema ((property erroring-shrink-property))
+  (declare (ignore property))
+  (make-instance 'tuple-spec
+                 :element-specs (list (make-instance 'erroring-shrink-spec))))
 
 (defun sample-spec (form &rest args)
   "Return (VALUES VALUES REPORT) for the normalized FORM."
@@ -121,7 +163,11 @@
     (let ((values (sample-spec '(and (type list) (type sequence) (list-of integer))
                                :count 20 :seed 1)))
       (ok (plusp (length values)))
-      (ok (every (lambda (value) (and (listp value) (every #'integerp value))) values)))))
+      (ok (every (lambda (value) (and (listp value) (every #'integerp value))) values))))
+  (testing "a supported type beside an unsupported subtype falls through to the supported one"
+    (let ((values (sample-spec '(and (type real) (type float)) :count 20 :seed 1)))
+      (ok (plusp (length values)))
+      (ok (every #'floatp values)))))
 
 (deftest no-source-still-reports-ordinary-unavailability
   (ok (handler-case
@@ -369,3 +415,32 @@
     (let ((report (generation-request-report request)))
       (ok (= 30 (getf report :budget)))
       (ok (= 10 (getf report :default-coefficient))))))
+
+(deftest shrink-side-generation-errors-mark-the-request-interrupted
+  (let* ((property (make-instance 'erroring-shrink-property
+                                  :name 'erroring-shrink-law
+                                  :arguments (list (list 'x (normalize-spec-form 'integer)))
+                                  :trials '(:normal 3)
+                                  :function (lambda (x) (< x 3))))
+         (outcome (run-generated-test (make-instance 'check-it-backend)
+                                      property :options (list :trials 3)))
+         (report (getf outcome :generation-report)))
+    (testing "the original target failure is preserved"
+      (ok (eq :failed (getf outcome :status))))
+    (testing "the aborted shrink is reported as interrupted, not completed"
+      (ok (eq :interrupted (getf report :termination)))
+      (ok (null (getf report :exhaustion-phase))))))
+
+(deftest generation-interruption-is-recorded-without-overwriting-exhaustion
+  (let ((request (make-generation-request :planned 1)))
+    (let ((*generation-request* request))
+      (record-generation-interruption))
+    (ok (eq :interrupted (getf (generation-request-report request) :termination))))
+  (let ((request (make-generation-request :planned 1 :budget 1)))
+    (let ((*generation-request* request))
+      (handler-case
+          (progn (reserve-generation-candidate nil nil)
+                 (reserve-generation-candidate nil nil))
+        (generation-budget-exhausted () nil))
+      (record-generation-interruption))
+    (ok (eq :budget-exhausted (getf (generation-request-report request) :termination)))))

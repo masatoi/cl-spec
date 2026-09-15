@@ -39,6 +39,7 @@
                 #:backend-default-trials #:backend-capabilities)
   (:import-from #:cl-spec/src/generation-request
                 #:record-generated-value
+                #:record-generation-interruption
                 #:with-generation-phase
                 #:owned-generation-exhaustion-p)
   (:import-from #:cl-spec/src/execution
@@ -369,8 +370,11 @@ calling user code, and keep existing evidence if shrinking itself fails."
                                (generation-budget-exhausted (condition)
                                  (if (owned-generation-exhaustion-p condition :shrinking)
                                      (error condition)
-                                     (setf different t)))
-                               (error () (setf different t)))))
+                                     (progn (record-generation-interruption)
+                                            (setf different t))))
+                               (error ()
+                                 (record-generation-interruption)
+                                 (setf different t)))))
                        (generation-budget-exhausted (condition)
                          (if (owned-generation-exhaustion-p condition :shrinking)
                              (when report
