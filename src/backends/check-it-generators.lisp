@@ -940,15 +940,29 @@ rather than binding it here lets one binding cover a whole trial loop."
   (let ((*required-size* 0))
     (values (spec-generator spec context) *required-size*)))
 
+(defun supported-type-specifier-p (type-specifier spec)
+  "Return true when TYPE-SPECIFIER-GENERATOR can build a base for TYPE-SPECIFIER."
+  (handler-case (progn (type-specifier-generator type-specifier spec) t)
+    (generator-unavailable () nil)))
+
 (defun merge-base-type (current new spec)
-  "Return the base type implied by both CURRENT and NEW, signalling on conflict."
+  "Return the base type implied by both CURRENT and NEW.
+
+Two unequal types that both name a supported generator are a genuine conflict and
+signal.  Two unequal unsupported (typically nonnumeric) types have no numeric
+fold to contribute, so they merge to NIL and declaration-order source selection
+can still consider a structured conjunct, as in
+\(and (type list) (type sequence) (list-of integer))."
   (cond ((null current) new)
         ((null new) current)
         ((eq current new) current)
         ((and (member current '(integer real)) (member new '(integer real))) 'integer)
-        (t (error 'generator-unavailable
-                  :spec spec
-                  :reason (format nil "conflicting base types ~S and ~S" current new)))))
+        ((or (supported-type-specifier-p current spec)
+             (supported-type-specifier-p new spec))
+         (error 'generator-unavailable
+                :spec spec
+                :reason (format nil "conflicting base types ~S and ~S" current new)))
+        (t nil)))
 
 (defun tighter-minimum (current new)
   "Return the greater of two lower bounds, treating :UNBOUNDED as no bound."
@@ -1008,34 +1022,36 @@ or random number."
 (defmethod shrink ((generator bounded-filter-generator) test)
   "Shrink the source, never adopting a candidate the whole AND rejects.
 
-Mirrors check-it's GUARD-GENERATOR callback so the source's own shrinker keeps
-working, but a rejected candidate can never replace the cached evidence.  Any
+The delegated shrinker's return value is not evidence: some check-it shrinkers
+return a transformed value they never presented to TEST.  A candidate may replace
+the cached value only from this callback, and only when it passes the whole AND
+and TEST accepts it as a reduction; otherwise the previous value stands.  Any
 fresh draw a nested bounded filter makes here is charged to :SHRINKING."
   (with-generation-phase (:shrinking)
-    (let ((previous (cached-value generator)))
-      (let ((result (shrink (bounded-filter-sub-generator generator)
-                            (lambda (candidate)
-                              (or (funcall test candidate)
-                                  (not (funcall (bounded-filter-validator generator)
-                                                candidate)))))))
-        (setf (cached-value generator)
-              (if (funcall (bounded-filter-validator generator) result)
-                  result
-                  previous))))))
+    (shrink (bounded-filter-sub-generator generator)
+            (lambda (candidate)
+              (if (or (funcall test candidate)
+                      (not (funcall (bounded-filter-validator generator) candidate)))
+                  t
+                  (progn (setf (cached-value generator) candidate) nil))))
+    (cached-value generator)))
 
 (defmethod regenerate ((generator bounded-filter-generator))
   "Draw a fresh whole-AND valid candidate, charging the shrinking phase.
 
 Unlike check-it's GUARD-GENERATOR delegation, regeneration validates before
-returning, so a regenerated shrink candidate can never violate the AND."
+returning, so a regenerated shrink candidate can never violate the AND.  A draw
+the filter rejects is counted as a shrinking rejection as well as an attempt, or
+the report would understate the work an exhaustion consumed."
   (with-generation-phase (:shrinking)
     (setf (cached-value generator)
           (loop
             (reserve-generation-candidate (bounded-filter-path generator)
                                           (bounded-filter-spec generator))
             (let ((candidate (generate (bounded-filter-sub-generator generator))))
-              (when (funcall (bounded-filter-validator generator) candidate)
-                (return candidate)))))))
+              (if (funcall (bounded-filter-validator generator) candidate)
+                  (return candidate)
+                  (record-generation-rejection)))))))
 
 (defun fold-and-children (children context spec base-type minimum maximum leftovers)
   "Return (VALUES BASE-TYPE MINIMUM MAXIMUM LEFTOVERS), folding CHILDREN into the

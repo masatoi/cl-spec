@@ -15,6 +15,9 @@
   (:import-from #:cl-spec/src/generator
                 #:sample #:backend-capabilities)
   (:import-from #:cl-spec/src/backends/check-it #:check-it-backend)
+  (:import-from #:cl-spec/src/backends/check-it-generators
+                #:compile-spec-generator #:bounded-filter-generator)
+  (:import-from #:check-it #:generator #:generate #:shrink #:regenerate #:cached-value)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable
                 #:generator-unavailable-reason
@@ -25,7 +28,8 @@
                 #:generation-budget-exhausted-phase
                 #:generation-budget-exhausted-path)
   (:import-from #:cl-spec/src/generation-request
-                #:generation-report-p #:make-generation-request #:generation-request-report)
+                #:generation-report-p #:make-generation-request #:generation-request-report
+                #:*generation-request* #:*generation-budget-coefficient*)
   (:import-from #:cl-spec/src/dsl #:defproperty #:defspec-function)
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
@@ -57,6 +61,18 @@
     (registry-register-spec
      registry spec-name
      (normalize-spec-form 'integer :name spec-name :generator generator-name))))
+
+(defclass unobserved-shrink-generator (generator)
+  ((value :initarg :value :reader unobserved-shrink-value))
+  (:documentation "A generator whose shrinker returns a value it never presented to TEST."))
+
+(defmethod generate ((generator unobserved-shrink-generator))
+  (setf (cached-value generator) (unobserved-shrink-value generator)))
+
+(defmethod shrink ((generator unobserved-shrink-generator) test)
+  "Return a transformed value without ever presenting it to TEST."
+  (declare (ignore test))
+  (unobserved-shrink-value generator))
 
 (defun sample-spec (form &rest args)
   "Return (VALUES VALUES REPORT) for the normalized FORM."
@@ -100,7 +116,12 @@
 (deftest nonnumeric-type-does-not-block-a-structured-source
   (let ((values (sample-spec '(and (type list) (list-of integer)) :count 20 :seed 1)))
     (ok (plusp (length values)))
-    (ok (every (lambda (value) (and (listp value) (every #'integerp value))) values))))
+    (ok (every (lambda (value) (and (listp value) (every #'integerp value))) values)))
+  (testing "incompatible nonnumeric type conjuncts fall through to a structured source"
+    (let ((values (sample-spec '(and (type list) (type sequence) (list-of integer))
+                               :count 20 :seed 1)))
+      (ok (plusp (length values)))
+      (ok (every (lambda (value) (and (listp value) (every #'integerp value))) values)))))
 
 (deftest no-source-still-reports-ordinary-unavailability
   (ok (handler-case
@@ -304,3 +325,47 @@
       (ok (generation-report-p report))
       (ok (= 0 (getf report :budget)))
       (ok (eq :explicit (getf report :budget-source))))))
+
+(deftest regeneration-counts-rejected-draws
+  (let ((*registry* (make-hash-table-registry)))
+    (register-counting-spec *registry* 'regen-down 'regen-down-gen '(0 0 1))
+    (let* ((generator (nth-value 0 (compile-spec-generator
+                                    (normalize-spec-form '(and regen-down (satisfies plusp)))
+                                    nil)))
+           (request (make-generation-request :planned 1 :budget 10))
+           (*generation-request* request))
+      (ok (eql 1 (regenerate generator)))
+      (let ((shrinking (getf (getf (generation-request-report request) :phases) :shrinking)))
+        (ok (= 3 (getf shrinking :attempts)))
+        (ok (= 2 (getf shrinking :rejections)))))))
+
+(deftest shrink-adopts-only-callback-approved-values
+  (let* ((sub (make-instance 'unobserved-shrink-generator :value 999))
+         (filter (make-instance 'bounded-filter-generator
+                                :sub-generator sub
+                                :filter (lambda (value) (< value 1000))
+                                :spec (normalize-spec-form 'integer)))
+         (*generation-request* (make-generation-request :planned 1)))
+    (setf (cached-value filter) 5)
+    (shrink filter (constantly t))
+    (ok (= 5 (cached-value filter)))))
+
+(deftest report-validator-refuses-a-malformed-phase-shape
+  (let ((valid (generation-request-report (make-generation-request :planned 2))))
+    (flet ((broken (phases)
+             (let ((copy (copy-list valid)))
+               (setf (getf copy :phases) phases)
+               copy)))
+      (ok (not (generation-report-p (broken 1))))
+      (ok (not (generation-report-p (broken :generation))))
+      (ok (not (generation-report-p (broken (list :generation 5 :shrinking 6)))))
+      (ok (not (generation-report-p
+                (broken (list :generation '(:attempts 0 :rejections 0)
+                              :shrinking 5))))))))
+
+(deftest report-snapshots-the-default-coefficient
+  (let ((request (let ((*generation-budget-coefficient* 10))
+                   (make-generation-request :planned 3))))
+    (let ((report (generation-request-report request)))
+      (ok (= 30 (getf report :budget)))
+      (ok (= 10 (getf report :default-coefficient))))))

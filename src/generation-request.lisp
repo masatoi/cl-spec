@@ -20,6 +20,7 @@
            #:generation-request-budget
            #:generation-request-planned
            #:generation-request-budget-source
+           #:generation-request-coefficient
            #:generation-request-policy
            #:generation-request-report
            #:generation-report-p
@@ -41,7 +42,8 @@ impossible filter still consumes more work as the budget grows.")
 
 (defstruct (generation-request
              (:constructor %make-generation-request
-                 (&key (planned 0) (budget 0) (budget-source :default)))
+                 (&key (planned 0) (budget 0) (budget-source :default)
+                       (coefficient 1000)))
              (:conc-name generation-request-))
   "One generation request's shared bounded-filter budget and counters.
 
@@ -51,6 +53,7 @@ counters.  The struct is mutable by design; the report is an immutable snapshot.
   (planned 0 :read-only t)
   (budget 0 :read-only t)
   (budget-source :default :read-only t)
+  (coefficient 1000 :read-only t)
   (policy :and-single-source-v1 :read-only t)
   (phase :generation)
   (attempts 0)
@@ -91,7 +94,8 @@ draw that uses no such filter."
     (%make-generation-request
      :planned planned
      :budget effective
-     :budget-source (if budget-p :explicit :default))))
+     :budget-source (if budget-p :explicit :default)
+     :coefficient *generation-budget-coefficient*)))
 
 (defun generation-request-report (request)
   "Return REQUEST's immutable generation report as ordinary Lisp data."
@@ -101,7 +105,7 @@ draw that uses no such filter."
           :policy (generation-request-policy request)
           :budget (generation-request-budget request)
           :budget-source (generation-request-budget-source request)
-          :default-coefficient *generation-budget-coefficient*
+          :default-coefficient (generation-request-coefficient request)
           :requested-values (generation-request-planned request)
           :generated-values (generation-request-generated-values request)
           :attempts (generation-request-attempts request)
@@ -115,6 +119,19 @@ draw that uses no such filter."
           :termination (generation-request-termination request)
           :exhaustion-phase (generation-request-exhaustion-phase request)
           :exhausted-at (generation-request-exhausted-at request))))
+
+(defun phase-counts-p (plist)
+  "Recognize a :GENERATION or :SHRINKING phase plist with nonnegative counts.
+
+The shape is checked before any GETF so a malformed backend report is refused as
+INVALID-BACKEND-RESULT rather than escaping as an incidental sequence error."
+  (and (finite-list-p plist)
+       (evenp (length plist))
+       (let ((keys (loop for key in plist by #'cddr collect key)))
+         (and (every #'keywordp keys)
+              (= (length keys) (length (remove-duplicates keys)))))
+       (typep (getf plist :attempts) '(integer 0 *))
+       (typep (getf plist :rejections) '(integer 0 *))))
 
 (defun generation-report-p (report)
   "Recognize a coherent generation report.
@@ -142,23 +159,21 @@ permitted candidate sufficed."
        (typep (getf report :rejections) '(integer 0 *))
        (<= (getf report :rejections) (getf report :attempts))
        (<= (getf report :attempts) (getf report :budget))
-       (let* ((phases (getf report :phases))
-              (generation (second phases))
-              (shrinking (fourth phases)))
+       (let ((phases (getf report :phases)))
          (and (finite-list-p phases)
               (= 4 (length phases))
               (eq :generation (first phases))
               (eq :shrinking (third phases))
-              (typep (getf generation :attempts) '(integer 0 *))
-              (typep (getf generation :rejections) '(integer 0 *))
-              (typep (getf shrinking :attempts) '(integer 0 *))
-              (typep (getf shrinking :rejections) '(integer 0 *))
-              (<= (getf generation :rejections) (getf generation :attempts))
-              (<= (getf shrinking :rejections) (getf shrinking :attempts))
-              (= (+ (getf generation :attempts) (getf shrinking :attempts))
-                 (getf report :attempts))
-              (= (+ (getf generation :rejections) (getf shrinking :rejections))
-                 (getf report :rejections))))
+              (phase-counts-p (second phases))
+              (phase-counts-p (fourth phases))
+              (let ((generation (second phases))
+                    (shrinking (fourth phases)))
+                (and (<= (getf generation :rejections) (getf generation :attempts))
+                     (<= (getf shrinking :rejections) (getf shrinking :attempts))
+                     (= (+ (getf generation :attempts) (getf shrinking :attempts))
+                        (getf report :attempts))
+                     (= (+ (getf generation :rejections) (getf shrinking :rejections))
+                        (getf report :rejections))))))
        (member (getf report :termination) '(:completed :budget-exhausted :interrupted))
        (if (eq :budget-exhausted (getf report :termination))
            (and (= (getf report :attempts) (getf report :budget))
