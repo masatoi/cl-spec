@@ -13,7 +13,11 @@
                 #:range-spec #:instance-of-spec #:and-spec #:or-spec #:not-spec
                 #:list-of-spec #:vector-of-spec #:tuple-spec #:nullable-spec)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:make-field-definition)
+                #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
+                #:make-field-definition #:reader-designator-p
+                #:key-test-designator #:key-test-designator-p #:key-test-function)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:make-branch-definition)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
@@ -22,7 +26,8 @@
 
 (defparameter *spec-primitives*
   '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
-    "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST"
+    "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "ALIST" "HASH-TABLE"
+    "OBJECT-OF" "TAGGED-BY"
     "INSTANCE-OF")
   "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
 
@@ -110,40 +115,103 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
              :maximum (bound maximum)
              (spec-initargs form name source-location generator)))))
 
-(defun normalize-plist (form name source-location generator)
-  "Normalize field clauses in a form whose outer list was checked by NORMALIZE-COMPOUND."
+(defun normalize-field-spec (form clauses name source-location generator class
+                             key-predicate allowed-clauses entry-description
+                             &optional class-name)
+  "Normalize field CLAUSES into an instance of CLASS.
+
+CLAUSES is the clause tail of FORM, which is the whole source form kept for
+diagnostics.  ALLOWED-CLAUSES are the clause heads this representation accepts;
+KEY-PREDICATE accepts one declared key and ENTRY-DESCRIPTION names the accepted
+entry shape.  When :TEST is allowed the (:test ...) clause fixes the key
+comparison for the keyed representations, and CLASS-NAME carries the class a
+STRUCT/CLOS representation observes.
+
+Clauses and entries are collected first and the key test applied last, so a
+(:test ...) written after a field still decides that field's duplicate check."
   (let ((seen-clauses nil)
-        (seen-keys nil)
+        (raw-fields nil)
         (fields nil)
-        (closed-p nil))
+        (closed-p nil)
+        (key-test :eql))
     (flet ((refuse (reason)
              (error 'invalid-spec-form :form form :reason reason)))
-      (dolist (clause (rest form))
+      (dolist (clause clauses)
         (unless (and (consp clause) (finite-list-p clause)
-                     (member (first clause) '(:required :optional :closed)))
-          (refuse "PLIST clauses are :required, :optional or :closed"))
+                     (member (first clause) allowed-clauses))
+          (refuse (format nil "field clauses are ~{~S~^, ~}" allowed-clauses)))
         (when (member (first clause) seen-clauses)
-          (refuse "PLIST clauses must not repeat"))
+          (refuse "field clauses must not repeat"))
         (push (first clause) seen-clauses)
-        (if (eq (first clause) :closed)
-            (progn
-              (unless (and (= 2 (length clause)) (typep (second clause) 'boolean))
-                (refuse ":closed takes exactly one boolean"))
-              (setf closed-p (second clause)))
-            (dolist (entry (rest clause))
-              (unless (and (finite-list-p entry) (= 2 (length entry))
-                           (keywordp (first entry)))
-                (refuse "PLIST fields must be (:keyword spec) pairs"))
-              (when (member (first entry) seen-keys)
-                (refuse "PLIST field keys must be unique across required and optional"))
-              (push (first entry) seen-keys)
-              (push (make-field-definition
-                     :key (first entry)
-                     :value-spec (normalize-spec-form (second entry))
-                     :required-p (eq (first clause) :required))
-                    fields)))))
-    (apply #'make-instance 'plist-spec :fields (nreverse fields) :closed-p closed-p
-           (spec-initargs form name source-location generator))))
+        (case (first clause)
+          (:closed
+           (unless (and (= 2 (length clause)) (typep (second clause) 'boolean))
+             (refuse ":closed takes exactly one boolean"))
+           (setf closed-p (second clause)))
+          (:test
+           (unless (and (= 2 (length clause)) (key-test-designator-p (second clause)))
+             (refuse ":test takes one of EQ, EQL, EQUAL or EQUALP"))
+           (setf key-test (key-test-designator (second clause))))
+          (t
+           (let ((required-p (eq (first clause) :required)))
+             (dolist (entry (rest clause))
+               (unless (and (finite-list-p entry) (= 2 (length entry))
+                            (funcall key-predicate (first entry)))
+                 (refuse entry-description))
+               (push (list (first entry) (second entry) required-p)
+                     raw-fields))))))
+      (let ((seen-keys nil)
+            (test (if (member :test allowed-clauses) (key-test-function key-test) #'eq)))
+        (dolist (raw (nreverse raw-fields))
+          (destructuring-bind (key value-form required-p) raw
+            (when (member key seen-keys :test test)
+              (refuse "field keys must be unique under the declared comparison"))
+            (push key seen-keys)
+            (push (make-field-definition
+                   :key key
+                   :value-spec (normalize-spec-form value-form)
+                   :required-p required-p)
+                  fields))))
+      (apply #'make-instance class
+             (append (list :fields (nreverse fields) :closed-p closed-p)
+                     (when (member :test allowed-clauses) (list :key-test key-test))
+                     (when class-name (list :class-name class-name))
+                     (spec-initargs form name source-location generator))))))
+
+(defun normalize-tagged-union (args form name source-location generator)
+  "Normalize (TAGGED-BY TAG-READER (NAME SPEC) ...) into a TAGGED-UNION-SPEC.
+
+The branch NAME is both the label reported in diagnostics and the EQL tag value
+the reader is matched against, so the two can never drift apart."
+  (let ((tag-reader (first args))
+        (clauses (rest args)))
+    (unless (and tag-reader (symbolp tag-reader))
+      (error 'invalid-spec-form
+             :form form
+             :reason "TAGGED-BY takes a keyword tag key or a reader symbol"))
+    (when (null clauses)
+      (error 'invalid-spec-form :form form
+                                :reason "TAGGED-BY needs at least one (NAME SPEC) branch"))
+    (let ((branches nil)
+          (seen nil))
+      (dolist (clause clauses)
+        (unless (and (finite-list-p clause) (= 2 (length clause))
+                     (symbolp (first clause)) (first clause))
+          (error 'invalid-spec-form
+                 :form form
+                 :reason "TAGGED-BY branches are (NAME SPEC) pairs with a non-NIL symbol name"))
+        (when (member (first clause) seen)
+          (error 'invalid-spec-form :form form
+                                    :reason "TAGGED-BY branch names must be unique"))
+        (push (first clause) seen)
+        (push (make-branch-definition
+               :name (first clause)
+               :spec (normalize-spec-form (second clause)))
+              branches))
+      (apply #'make-instance 'tagged-union-spec
+             :tag-reader tag-reader
+             :branches (nreverse branches)
+             (spec-initargs form name source-location generator)))))
 
 (defun normalize-collection-options (options form)
   "Return (values MIN-LENGTH MAX-LENGTH UNIQUE) for a collection's OPTIONS.
@@ -212,7 +280,32 @@ other compound heads do."
     (let ((head-name (symbol-name head)))
       (cond
         ((string= head-name "PLIST")
-         (normalize-plist form name source-location generator))
+         (normalize-field-spec form (rest form) name source-location generator
+                               'plist-spec #'keywordp '(:required :optional :closed)
+                               "PLIST fields must be (:keyword spec) pairs"))
+        ((string= head-name "ALIST")
+         (normalize-field-spec form (rest form) name source-location generator
+                               'alist-spec (constantly t)
+                               '(:required :optional :closed :test)
+                               "field entries must be (KEY SPEC) pairs with an admissible key"))
+        ((string= head-name "HASH-TABLE")
+         (normalize-field-spec form (rest form) name source-location generator
+                               'hash-table-spec (constantly t)
+                               '(:required :optional :closed :test)
+                               "field entries must be (KEY SPEC) pairs with an admissible key"))
+        ((string= head-name "OBJECT-OF")
+         (let ((class-name (first args)))
+           (unless (and (symbolp class-name) (not (null class-name)))
+             (error 'invalid-spec-form
+                    :form form
+                    :reason "OBJECT-OF takes a class name symbol followed by field clauses"))
+           (normalize-field-spec form (rest args) name source-location generator
+                                 'object-spec #'reader-designator-p
+                                 '(:required :optional)
+                                 "object fields must be (READER SPEC) pairs naming a reader"
+                                 class-name)))
+        ((string= head-name "TAGGED-BY")
+         (normalize-tagged-union args form name source-location generator))
         ((string= head-name "TYPE")
          (apply #'make-instance 'type-spec
                 :type-specifier (first (require-arity args 1 form))

@@ -25,6 +25,7 @@
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children
+                #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
                 #:bounded-collection-generator #:bounded-generator-min-length
                 #:bounded-generator-max-length #:bounded-generator-domain-size
                 #:bounded-generator-element-probe)
@@ -373,6 +374,13 @@ Lists can shrink in length even when their element generator cannot shrink."
                   (and (typep child 'check-it:generator)
                        (generator-shrink-strategy-p child)))
                 (plist-generator-children generator))))
+    (keyed-value-generator
+     (or (some (lambda (field) (not (field-required-p field)))
+               (keyed-generator-fields generator))
+         (some (lambda (child)
+                 (and (typep child 'check-it:generator)
+                      (generator-shrink-strategy-p child)))
+               (keyed-generator-children generator))))
     (bounded-collection-generator
      (let* ((minimum (bounded-generator-min-length generator))
             (maximum (bounded-generator-max-length generator))

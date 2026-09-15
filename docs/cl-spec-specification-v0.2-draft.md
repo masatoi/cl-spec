@@ -661,6 +661,10 @@ cons-of
 tuple
 nullable
 plist
+alist
+hash-table
+object-of
+tagged-by
 instance-of
 
 ```
@@ -770,8 +774,8 @@ Tでは拒否する。不正宣言は`invalid-spec-form`とし、登録前に拒
 `src/field-spec.lisp`に格納形式非依存の`field-definition`
 （key・value-spec・required-p）と`field-spec`（fields・closed-p）を置く。
 `plist-spec`がkeywordキーとplistの構造を扱う。子IRの列挙は宣言順である。
-内部フィールドのkey表現をkeywordに限定せず、将来のalist/hash-tableが独自の
-キー比較規則を持てる境界とする。これらのDSLと共通変換APIは未実装。
+内部フィールドのkey表現をkeywordに限定せず、alist/hash-tableが独自の
+キー比較規則を持てる境界とする。これらは§9.3で実装済み（共通の変換APIは提供しない）。
 共通のfinite field list・field-definition要素・boolean closed flagはfield-specで検査し、
 plist-specはkeywordと重複キーの制約を加える。初期化・再初期化の変更前に拒否する。
 
@@ -804,6 +808,170 @@ check-it backendは必須キーを常に生成し、任意キーは各drawで独
 
 フィールド間制約は既存の`and`・`satisfies`で表現する。
 制約solverやAND生成の一般化は導入しない。
+
+---
+
+# 9.3 フィールド付きalist / hash-table spec
+
+実装済みの記法：
+
+```lisp
+(defspec user-alist
+  (alist
+    (:test equal)
+    (:required ("id" integer))
+    (:optional ("nickname" (nullable string)))
+    (:closed t)))
+
+(defspec user-table
+  (hash-table
+    (:test equal)
+    (:required ("id" integer))
+    (:optional ("nickname" (nullable string)))
+    (:closed t)))
+```
+
+`alist`と`hash-table`は§9.2の`plist`と同じ`:required`・`:optional`・`:closed`句を取る。
+加えて`:test`句がキー比較を固定する。値は`eq`・`eql`・`equal`・`equalp`
+（keywordでも通常のsymbolでもよい）で、省略時は`eql`。plistはkeywordをEQLで比較するため
+`:test`句を受けず、`:test`を書いたplist宣言は拒否する。
+
+`alist`の値はproper listで、各要素は`(KEY . VALUE)`のconsである。キーは`car`、値は`cdr`で、
+`assoc`と同じ読み方をする。したがって`(:id . nil)`はキーが存在し値がNILであり、
+キー欠落とは区別する。各要素がconsでない場合は`:bad-association`、listでない場合は
+`:not-an-alist`、宣言した`:test`で重複するキーは`:duplicate-key`として拒否する。
+重複の`:path`は2個目の出現位置を持つ。
+
+`hash-table`の値はhash tableであり、そのtestは宣言した`:test`と一致しなければならない。
+一致しない場合は`:wrong-key-test`（`:actual-test`に実際のtest）として拒否する。
+これにより「宣言したキー比較」と「値が実際に使う比較」が食い違わない。
+キーの有無は`gethash`の第2返り値で判定するため、値NILとキー欠落を区別する。
+closedなspecの未宣言キーは`:unknown-key`で、`maphash`の順序のまま報告する。
+validation中に任意のキーを印字しない（利用者の`print-object`が通知・停止しうるため）。
+`:unknown-key`はどのキーでも同じfailure shapeなので、順序が不定でもidentityは変わらない。
+
+キーはkeywordに限らない。`field-definition`のkeyは任意のobjectで、宣言時のキー重複判定と
+実行時の照合はどちらも`:test`を使う。既存の`field-spec`・`field-definition`をそのまま
+土台にし、`keyed-field-spec`が`key-test`だけを加える。子IRの列挙は宣言順である。
+
+構造検査は子specの述語より前に行う。フィールドの`:path`はキーを含み、
+`:field-path`は宣言フィールドのキー列だけを持つ。したがってalist/hash-tableでも
+Function Specのfailure identityがフィールド間の違反を区別できる。
+
+`spec-data`は`:kind`・`:test`・`:closed`・`:fields`を返す。digestは`:test`を
+含むため、同じフィールドでもalistとhash-table、`:test`の違いで異なる。
+plistの`spec-data`とdigestは変更しない（`:test`句を持たないため）。
+
+check-it backendはplistと同じく必須キーを常に生成し、任意キーを各drawで独立に選ぶ。
+alistは`(KEY . VALUE)`を、hash-tableは宣言したtestのtableを生成する。
+縮小は任意キーの削除と値の縮小を行い、必須キーと宣言したtestを保つ。
+未対応の子specは`generator-unavailable`、空のspecや定数のみのspecの
+縮小capabilityは`:none`。
+
+フィールド間制約はplistと同じく既存の`and`・`satisfies`で表現する。
+
+---
+
+# 9.4 フィールド付きobject spec（構造体・CLOS）
+
+実装済みの記法：
+
+```lisp
+(defspec account-view
+  (object-of account
+    (:required (account-owner (object-of owner (:required (owner-id integer))))
+               (account-balance integer))
+    (:optional (account-note (nullable string)))))
+```
+
+`object-of`はクラス名（または構造体type名）のsymbolを1つ取り、続けて`:required`・
+`:optional`句を取る。各entryは`(READER SPEC)`で、`READER`は値に適用する一引数関数を
+名指すsymbolである。フィールドのkeyはreaderそのもので、`:path`・`:field-path`にも
+reader名が入る。子IRの列挙は宣言順である。
+
+値はまず宣言クラスのinstanceかどうかを検査し、違えば`:not-an-instance`を返す。
+その後、各readerを値に適用して観測する。値がNILであることと、
+`slot-value`が`unbound-slot`を通知するunbound slotは区別する。必須フィールドの
+readerが`unbound-slot`を通知した場合は`:unbound-slot`、任意フィールドでは
+「フィールド欠落」として扱う。readerが`unbound-slot`以外のconditionを通知した場合は
+`:reader-errored`とし、`:condition-type`・`:condition-report`を持つ。ただし
+`undefined-function`（reader名の誤り）と`program-error`（引数個数の誤り）は
+著者の誤りなので伝播させる。これは`predicate-spec`の扱いと同じ規則である。
+
+`closed`は受理しない。readerで観測する限りクラスの未宣言slotは列挙できないため、
+closednessは意味を持たない。宣言で`:closed`を書いた場合も、programmaticに
+`:closed-p t`を渡した場合も`invalid-spec-form`とする。`:test`も受理しない（キー比較は
+存在しない）。MOPによるslot列挙・initarg推論は行わない。
+
+既存の`field-spec`・`field-definition`を土台にし、`object-spec`が`class-name`だけを
+加える。readerの設計atorはsymbol（検証時に`fdefinition`で解決するので前方参照を許す）
+または関数objectである。初期化・再初期化の変更前に、クラス名・reader設計ator・
+readerの重複を検査する。
+
+`spec-data`は`:kind`・`:class-name`・`:closed`・`:fields`を返す。digestは`:class`と
+reader名を含むため、クラス・reader・requiredness・子specの違いで異なる。
+expected descriptorは`:kind :object`・`:class`・`:fields`を持つ。
+
+readerは観測だけを行い、instanceの構築方法は持たない。したがってcheck-it backendは
+`object-of`の生成を`generator-unavailable`として拒否し、capabilityは
+`:generation :unavailable`となる。instanceを生成したい場合は定義に
+`(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
+constructorとinitargを知るのは著者だけだからである。縮小も同じgenerator/shrinkerに従う。
+
+---
+
+# 9.5 タグ付きunion（dispatch付きunion）
+
+実装済みの記法：
+
+```lisp
+(defspec target-outcome-data
+  (tagged-by :kind
+    (:returned (plist (:required (:kind (member :returned)) (:values (list-of t)))
+                      (:closed t)))
+    (:signaled (plist (:required (:kind (member :signaled))
+                                 (:condition-type t)
+                                 (:condition-report (nullable string)))
+                      (:closed t)))))
+```
+
+`tagged-by`はtag readerを1つ取り、続けて`(NAME SPEC)`のbranchを取る。
+`NAME`は非NILのsymbolで、診断に返す分岐名であると同時に、readerが返したtagと
+EQLで照合する値でもある。branch名とtag値がずれない。branch名は一意でなければならず、
+branchは1つ以上必要である。SPECは通常のspec formで、子IRとして宣言順に並ぶ。
+
+tag readerは、keywordなら値のplist entryを`getf`で読む。それ以外のsymbol/関数は
+object readerと同じく一引数readerとして値に適用する。tag readerが
+`unbound-slot`以外のconditionを通知した場合は`:reader-errored`とし、
+`undefined-function`・`program-error`は著者の誤りとして伝播させる（§9.4と同じ規則）。
+
+意味論は「tagで分岐を選び、その分岐だけを検証する」である。tagがbranch名と一致すれば
+そのbranchのSPECだけを検証し、返るエラーには`:branch NAME`を付ける。どのbranchにも
+一致しなければ`:no-branch`とし、`:observed-tag`と`:known-tags`を持つ。`or`が
+全branchのエラーを`:no-branch-matched`に並べるのに対し、tag付きunionは該当branchに
+エラーを絞り、分岐名を機械可読に返す。表現力を増やすのではなく、`or`+`plist`で
+書ける仕様を機械が扱いやすくする拡張である。unionが入れ子になっても、`:branch`は
+最も内側の選択を保ち、`:branch-path`が囲むbranch名を外側から順に蓄積する
+（fieldの`:field-path`と同じ規則）。
+
+branch SPECは値全体を記述する。tagはunionが読み取るだけで注入しないため、
+`:closed t`のplist branchでは`:kind`フィールドも宣言する。branch SPECがtagを
+含まない場合、その値はunionの検証に失敗しうる（生成値も同じ）。
+
+`spec-data`は`:tag-reader`と`:branches`（`(:name NAME :child-index INDEX)`）を返す。
+digestはtag readerとbranch名の並びを含み、branch SPECは子IRとして覆われる。
+expected descriptorは`:kind :tagged-union`・`:tag-reader`・`:branches`を持ち、
+各branchが`:name`と子の`:expected`を持つ。
+
+生成は全branchを`or-generator`で覆い、どのbranchも到達可能にする。加えて
+`sample`は`:branch NAME`を受け取り、そのbranchだけを抽選する。
+`tagged-union-branch`はbranch SPECを返し、`spec-data`と合わせてLLMが分岐を
+選んで生成・検査できる。branch名が不正な場合は既知branchを添えて拒否する。
+
+failure identityは`:branch`・`:branch-path`・`:known-tags`をspec由来のkeyとして保持し、
+`:observed-tag`は入力由来なので保持しない。同じbranchの同じ違反は一致し、
+別branchの違反やno-branchとは区別される。入れ子のunionでも内側のbranch選択が
+`:branch`・`:branch-path`に残るため、内側の分岐違いは一致しない。
 
 ---
 
@@ -1693,7 +1861,8 @@ Malliのstructured explain / humanize分離を参考にするが、cl-specでは
 
 # 23. CLOS integration
 
-> **位置付け:** 一部実装。instance-of以外の専用generic仕様・統合inspectionは将来構想。
+> **位置付け:** 一部実装。`instance-of`に加え、明示readerでフィールドを観測する
+> `object-of`（§9.4）を実装。専用generic仕様・統合inspection・MOPによるslot推論は将来構想。
 
 CLOSはCommon Lispのsemantic structureとして積極的に利用する。
 
@@ -4182,7 +4351,11 @@ generic function instrumentationは、
 A〜Cの意味論と結果protocolが固まってから追加する。
 引数間参照DSLや制約solverは、実装済みのfunction-level argument-set generatorとは別の拡張である。
 `list-of`/`vector-of`の長さ・一意性制約は実装済み（§9、§68.1）。alist/hash-tableの
-フィールド仕様とタグ付きunionは、field-specと`definition-constraints`を土台にした次の拡張である。
+フィールド仕様も実装済みで、`:test`によるキー比較、キー欠落とNIL値の区別、
+alistの重複キー拒否を意味論として固定した（§9.3）。構造体・CLOSのフィールド仕様は
+明示readerで観測する`object-of`として実装済み（§9.4）で、生成は
+`(:generator NAME)`に委ねる。タグ付きunionは`tagged-by`として実装済み（§9.5）で、
+tag readerで分岐を選び、該当branchだけを検証して分岐名を返す。
 describe-*は人間向け補助として継続するが、structured dataを利用するLLM検証経路のblockerではない。
 
 

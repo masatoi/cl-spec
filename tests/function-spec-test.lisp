@@ -1393,6 +1393,13 @@ macro expansions would need the lint exemption that file carries."
                 (signature form '(("bad" 1)))
                 (signature form '((1 "bad")))))))))
 
+(defun hash-table-with (test entries)
+  "Build a hash table with TEST holding (KEY . VALUE) ENTRIES."
+  (let ((table (make-hash-table :test test)))
+    (loop for (key . value) in entries
+          do (setf (gethash key table) value))
+    table))
+
 (deftest every-explained-error-key-is-classified
   (testing "a new EXPLAIN-DATA key cannot slip past the failure shape unclassified"
     ;; FAILURE-SHAPE keeps a whitelist, so a key nobody has classified is dropped --
@@ -1403,18 +1410,41 @@ macro expansions would need the lint exemption that file carries."
     (let ((seen '())
           (kept (append cl-spec/src/function-spec::*failure-shape-keys*
                         cl-spec/src/function-spec::*failure-shape-containers*))
-          (value-derived '(:actual :actual-length :path :condition-report :key)))
+          (value-derived '(:actual :actual-length :path :condition-report :key
+                           :actual-test :observed-tag)))
       (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
                       (satisfies demo-noisy-predicate) (list-of integer)
                       (vector-of integer) (tuple integer string) (not integer)
                       (nullable integer) (or integer string)
                       (and integer (range 0 10)) (instance-of standard-object)
                       (plist (:required (:a integer)) (:optional (:b string)) (:closed t))
-                      (plist (:required (:a (plist (:required (:b integer))))))))
+                      (plist (:required (:a (plist (:required (:b integer))))))
+                      (alist (:test equal) (:required (:a integer))
+                             (:optional (:b string)) (:closed t))
+                      (alist (:required (:a (alist (:required (:b integer))))))
+                      (hash-table (:test equal) (:required (:a integer))
+                                  (:optional (:b string)) (:closed t))
+                      (hash-table (:required (:a (hash-table (:required (:b integer))))))
+                      (tagged-by :kind
+                        (:left (plist (:required (:kind (member :left)) (:value integer))
+                                      (:closed t)))
+                        (:right (plist (:required (:kind (member :right)) (:value string))
+                                       (:closed t))))))
         (let ((spec (normalize-spec-form form)))
           (dolist (value (list 1 -1 3.5 "s" nil #\a '(1 "a") '(1) #(1) '(:a 1)
                               '(:a "bad") '(:a 1 :a 2) '(:a 1 :extra nil)
-                              '(:a (:b "bad"))))
+                              '(:a (:b "bad"))
+                              '((:a . 1)) '((:a . "bad")) '((:a . 1) (:a . 2))
+                              '((:a . 1) (:extra . nil)) '((:a . (:b . "bad")))
+                              '((:a . 1) . 2) '((:a . 1) :atom)
+                              '(:kind :left :value "bad") '(:kind :right :value 1)
+                              '(:kind :other :value 1)
+                              (make-hash-table :test 'eql)
+                              (hash-table-with 'eql '((:a . 1)))
+                              (hash-table-with 'eql '((:a . "bad")))
+                              (hash-table-with 'eql '((:a . 1) (:extra . nil)))
+                              (hash-table-with 'equal '((:a . 1)))
+                              (hash-table-with 'eql '((:a . ((:b . "bad")))))))
             (dolist (datum (getf (explain-data spec value) :errors))
               (setf seen (explained-error-keys datum seen))))))
       (let ((spec (function-spec-argument-schema

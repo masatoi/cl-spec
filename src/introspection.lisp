@@ -13,7 +13,10 @@
                 #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
                 #:argument-binding-kind #:argument-binding-supplied-name #:argument-binding-keyword)
   (:import-from #:cl-spec/src/field-spec
-                #:field-spec #:field-spec-closed-p #:field-descriptions)
+                #:field-spec #:keyed-field-spec #:object-spec #:object-spec-class-name
+                #:field-spec-closed-p #:field-key-test #:field-descriptions)
+  (:import-from #:cl-spec/src/tagged-union
+                #:tagged-union-spec #:tagged-union-tag-reader #:branch-descriptions)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
@@ -138,6 +141,17 @@ SPEC->DATA, where the definition-level attributes live (PR review)."))
 
 (defmethod node-attributes ((spec field-spec))
   (list* :closed (field-spec-closed-p spec) :fields (field-descriptions spec)
+         (call-next-method)))
+
+(defmethod node-attributes ((spec keyed-field-spec))
+  (list* :test (field-key-test spec) (call-next-method)))
+
+(defmethod node-attributes ((spec object-spec))
+  (list* :class-name (object-spec-class-name spec) (call-next-method)))
+
+(defmethod node-attributes ((spec tagged-union-spec))
+  (list* :tag-reader (tagged-union-tag-reader spec)
+         :branches (branch-descriptions spec)
          (call-next-method)))
 
 (defun spec->data (spec &optional (registry *registry*) envelope-p)

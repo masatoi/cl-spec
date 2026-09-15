@@ -8,6 +8,13 @@
   (:export #:field-definition #:make-field-definition
            #:field-key #:field-value-spec #:field-required-p
            #:field-spec #:field-spec-fields #:field-spec-closed-p
+           #:keyed-field-spec #:field-key-test
+           #:key-test-designator #:key-test-designator-p #:key-test-name
+           #:key-test-function
+           #:alist-spec #:alist-structure-error
+           #:hash-table-spec #:hash-table-structure-error
+           #:object-spec #:object-spec-class-name
+           #:reader-designator-p #:reader-function
            #:plist-spec #:plist-structure-error #:field-descriptions))
 
 (in-package #:cl-spec/src/field-spec)
@@ -37,17 +44,112 @@
 (defmethod spec-kind ((spec plist-spec))
   :plist)
 
-(defgeneric validate-field-layout (spec fields closed-p)
-  (:documentation "Check common field layout and representation-specific invariants."))
+(defparameter +key-tests+
+  '((:eq . eq) (:eql . eql) (:equal . equal) (:equalp . equalp))
+  "The key comparison tests a keyed field spec accepts, as (KEYWORD . FUNCTION-NAME).")
 
-(defmethod validate-field-layout ((spec field-spec) fields closed-p)
+(defun key-test-designator (object)
+  "Return the canonical key-test keyword named by OBJECT, or NIL.
+
+Both a keyword and a plain symbol are accepted, matched by name: a DSL form is
+read in the user's package, so the EQL of (:test eql) is not EQ to the EQL
+interned here."
+  (when (symbolp object)
+    (car (find (symbol-name object) +key-tests+
+               :key (lambda (entry) (symbol-name (car entry)))
+               :test #'string=))))
+
+(defun key-test-designator-p (object)
+  "Return true when OBJECT names an accepted key comparison test."
+  (not (null (key-test-designator object))))
+
+(defun key-test-name (test)
+  "Return the COMMON-LISP function name for the canonical key-test keyword TEST."
+  (or (cdr (assoc test +key-tests+))
+      (error 'invalid-spec-form :form test :reason "unknown key test")))
+
+(defun key-test-function (test)
+  "Return the comparison function for the canonical key-test keyword TEST."
+  (symbol-function (key-test-name test)))
+
+(defclass keyed-field-spec (field-spec)
+  ((key-test :initarg :key-test
+             :initform :eql
+             :reader keyed-field-spec-key-test
+             :documentation "Canonical keyword naming the comparison used for keys."))
+  (:documentation "Base IR for field records whose keys are compared by a declared test."))
+
+(defgeneric field-key-test (spec)
+  (:documentation "Return SPEC's canonical key comparison keyword, or NIL when it declares none.")
+  (:method ((spec field-spec)) nil)
+  (:method ((spec keyed-field-spec)) (keyed-field-spec-key-test spec)))
+
+(defclass alist-spec (keyed-field-spec)
+  ()
+  (:documentation "An association list of (KEY . VALUE) pairs with unique keys."))
+
+(defmethod spec-kind ((spec alist-spec))
+  :alist)
+
+(defclass hash-table-spec (keyed-field-spec)
+  ()
+  (:documentation "A hash table whose key comparison and named fields are declared."))
+
+(defmethod spec-kind ((spec hash-table-spec))
+  :hash-table)
+
+(defun reader-designator-p (object)
+  "Return true when OBJECT can be called as a one-argument field reader.
+
+A symbol names a reader function resolved at validation time so a forward
+reference is allowed; a function object is already resolved.  NIL names nothing."
+  (or (and (symbolp object) (not (null object)))
+      (functionp object)))
+
+(defun reader-function (designator)
+  "Return the one-argument function DESIGNATOR names.
+
+Signals UNDEFINED-FUNCTION for an unbound symbol and PROGRAM-ERROR for a
+non-function, so an authoring mistake points at the spec rather than at the
+value being validated."
+  (if (symbolp designator)
+      (fdefinition designator)
+      designator))
+
+(defclass object-spec (field-spec)
+  ((class-name :initarg :class-name
+               :initform nil
+               :reader object-spec-class-name
+               :documentation "Symbol naming the class or structure type the value must be an instance of."))
+  (:documentation "A struct or CLOS instance observed through explicit reader functions.
+
+Each field key names a one-argument reader called on the value; the reader is the
+only way the object is inspected, so no MOP or slot enumeration is involved.
+An optional field whose reader signals UNBOUND-SLOT is absent, while a reader
+returning NIL is a present field with value NIL."))
+
+(defmethod spec-kind ((spec object-spec))
+  :object)
+
+(defgeneric validate-field-layout (spec fields closed-p &key key-test class-name)
+  (:documentation "Check common field layout and representation-specific invariants.
+
+KEY-TEST and CLASS-NAME are the values the caller is about to store.  They are
+threaded through rather than read from SPEC because reinitialization validates
+before the slots change."))
+
+(defmethod validate-field-layout ((spec field-spec) fields closed-p
+                                  &key key-test class-name)
+  (declare (ignore key-test class-name))
   (unless (and (typep closed-p 'boolean)
                (finite-list-p fields)
                (every (lambda (field) (typep field 'field-definition)) fields))
     (error 'invalid-spec-form :form (list :fields fields :closed-p closed-p)
            :reason "Fields must be a finite list of field definitions; closed-p must be boolean.")))
 
-(defmethod validate-field-layout ((spec plist-spec) fields closed-p)
+(defmethod validate-field-layout ((spec plist-spec) fields closed-p
+                                  &key key-test class-name)
+  (declare (ignore key-test class-name))
   (call-next-method)
   (let ((seen (make-hash-table :test #'eq)))
     (dolist (field fields)
@@ -56,18 +158,80 @@
                :reason "Plist field keys must be unique keywords."))
       (setf (gethash (field-key field) seen) t))))
 
+(defmethod validate-field-layout ((spec keyed-field-spec) fields closed-p
+                                  &key key-test class-name)
+  (declare (ignore class-name))
+  (call-next-method)
+  (let ((canonical (key-test-designator key-test)))
+    (unless canonical
+      (error 'invalid-spec-form
+             :form (list :fields fields :closed-p closed-p :key-test key-test)
+             :reason "The key test must name EQ, EQL, EQUAL or EQUALP."))
+    (let ((test (key-test-function canonical))
+          (seen nil))
+      (dolist (field fields)
+        (when (member (field-key field) seen :test test)
+          (error 'invalid-spec-form
+                 :form (list :fields fields :closed-p closed-p :key-test key-test)
+                 :reason "Field keys must be unique under the declared key test."))
+        (push (field-key field) seen)))))
+
+(defmethod validate-field-layout ((spec object-spec) fields closed-p
+                                  &key class-name key-test)
+  (declare (ignore key-test))
+  (call-next-method)
+  (when closed-p
+    (error 'invalid-spec-form
+           :form (list :fields fields :closed-p closed-p)
+           :reason "An object spec observes fields through readers; closedness is not observable."))
+  (unless (and (symbolp class-name) (not (null class-name)))
+    (error 'invalid-spec-form
+           :form (list :fields fields :class-name class-name)
+           :reason "An object spec requires a class name symbol."))
+  (let ((seen nil))
+    (dolist (field fields)
+      (unless (reader-designator-p (field-key field))
+        (error 'invalid-spec-form
+               :form (list :fields fields)
+               :reason "Object field keys must name a one-argument reader."))
+      (when (member (field-key field) seen)
+        (error 'invalid-spec-form
+               :form (list :fields fields)
+               :reason "Object field readers must be unique."))
+      (push (field-key field) seen))))
+
 (defmethod shared-initialize :around
     ((spec field-spec) slot-names &rest initargs
-     &key (fields nil fields-p) (closed-p nil closed-p-p))
-  "Validate common and concrete field semantics before changing SPEC."
+     &key (fields nil fields-p) (closed-p nil closed-p-p)
+          (key-test nil key-test-p) (class-name nil class-name-p))
+  "Validate common and concrete field semantics before changing SPEC.
+
+The candidate KEY-TEST and CLASS-NAME are threaded to VALIDATE-FIELD-LAYOUT
+because reinitialization must refuse a bad value before the slots change; reading
+the slots here would see the previous values.  A keyed spec then stores the
+canonical keyword rather than the plain symbol a caller may have written, so
+every later consumer -- introspection, digest, explainer and generator -- sees
+one designator."
   (declare (ignore slot-names initargs))
-  (validate-field-layout
-   spec
-   (if fields-p fields
-       (when (slot-boundp spec 'fields) (field-spec-fields spec)))
-   (if closed-p-p closed-p
-       (when (slot-boundp spec 'closed-p) (field-spec-closed-p spec))))
-  (call-next-method))
+  (let ((candidate-key-test
+          (cond (key-test-p key-test)
+                ((and (typep spec 'keyed-field-spec) (slot-boundp spec 'key-test))
+                 (slot-value spec 'key-test))
+                (t :eql))))
+    (validate-field-layout
+     spec
+     (if fields-p fields
+         (when (slot-boundp spec 'fields) (field-spec-fields spec)))
+     (if closed-p-p closed-p
+         (when (slot-boundp spec 'closed-p) (field-spec-closed-p spec)))
+     :key-test candidate-key-test
+     :class-name (cond (class-name-p class-name)
+                       ((and (typep spec 'object-spec) (slot-boundp spec 'class-name))
+                        (slot-value spec 'class-name))
+                       (t nil)))
+    (prog1 (call-next-method)
+      (when (typep spec 'keyed-field-spec)
+        (setf (slot-value spec 'key-test) (key-test-designator candidate-key-test))))))
 
 (defun plist-structure-error (value)
   "Return (values KIND KEY INDEX KEYS) after checking a keyword plist.
@@ -86,6 +250,39 @@ and KEYS retains their input order. Callers can reuse the checked index."
              (setf (gethash key index) (second tail))
              (push key keys))
     (values nil nil index (nreverse keys))))
+
+(defun alist-structure-error (value key-test)
+  "Return (values KIND KEY) after checking that VALUE is a well-formed alist.
+
+KIND and KEY describe malformed structure and are NIL on success.  An entry is a
+cons whose CAR is the key and whose CDR is the value, so the value of (:id . NIL)
+is present but NIL, exactly as ASSOC reads it.  Keys are unique under KEY-TEST."
+  (unless (finite-list-p value)
+    (return-from alist-structure-error (values :not-an-alist nil)))
+  (let ((test (key-test-function (key-test-designator key-test)))
+        (seen nil))
+    (dolist (entry value)
+      (unless (consp entry)
+        (return-from alist-structure-error (values :bad-association entry)))
+      (let ((key (car entry)))
+        (when (member key seen :test test)
+          (return-from alist-structure-error (values :duplicate-key key)))
+        (push key seen)))
+    (values nil nil)))
+
+(defun hash-table-structure-error (value key-test)
+  "Return (values KIND ACTUAL) after checking that VALUE is a hash table.
+
+KIND is NIL on success.  A table whose test does not match the declared KEY-TEST
+is :WRONG-KEY-TEST with the table's test as ACTUAL, so the key comparison the
+spec declares is the comparison the value actually uses."
+  (unless (hash-table-p value)
+    (return-from hash-table-structure-error (values :not-a-hash-table nil)))
+  (let ((declared (key-test-designator key-test))
+        (actual (key-test-designator (hash-table-test value))))
+    (if (and actual (eq actual declared))
+        (values nil nil)
+        (values :wrong-key-test (hash-table-test value)))))
 
 (defun field-descriptions (spec)
   "Describe field-to-child associations without duplicating the child IR."
