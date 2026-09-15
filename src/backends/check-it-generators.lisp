@@ -67,6 +67,8 @@
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
+  (:import-from #:cl-spec/src/execution
+                #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/generation-request
                 #:*generation-request*
                 #:make-generation-request
@@ -997,13 +999,15 @@ Request budgets and counters live in that request, never on this reusable object
 Reservation precedes the source call, so a source error propagates without
 becoming a rejection.  The final permitted candidate may succeed; exhaustion is
 signalled only when another reservation is required, and consumes no extra draw
-or random number."
+or random number.  A candidate the validator mutates is rejected, never returned."
   (let ((draw (lambda ()
                 (loop
                   (reserve-generation-candidate (bounded-filter-path generator)
                                                 (bounded-filter-spec generator))
-                  (let ((candidate (generate (bounded-filter-sub-generator generator))))
-                    (if (funcall (bounded-filter-validator generator) candidate)
+                  (let* ((candidate (generate (bounded-filter-sub-generator generator)))
+                         (before (snapshot-value candidate)))
+                    (if (and (funcall (bounded-filter-validator generator) candidate)
+                             (same-value-p before candidate))
                         (return (setf (cached-value generator) candidate))
                         (record-generation-rejection)))))))
     (if *generation-request*
@@ -1019,33 +1023,39 @@ or random number."
 The delegated shrinker's return value is not evidence: some check-it shrinkers
 return a transformed value they never presented to TEST.  A candidate may replace
 the cached value only from this callback, and only when it passes the whole AND
-and TEST accepts it as a reduction; otherwise the previous value stands.  The
-whole-AND validator runs first, so a candidate it rejects never reaches TEST and
-cannot make the target observe or record a candidate outside the AND.  Any fresh
-draw a nested bounded filter makes here is charged to :SHRINKING."
+without being mutated by validation and TEST accepts it as a reduction; otherwise
+the previous value stands.  The whole-AND validator runs first, so a candidate it
+rejects never reaches TEST and cannot make the target observe or record a
+candidate outside the AND.  Any fresh draw a nested bounded filter makes here is
+charged to :SHRINKING."
   (with-generation-phase (:shrinking)
     (shrink (bounded-filter-sub-generator generator)
             (lambda (candidate)
-              (cond
-                ((not (funcall (bounded-filter-validator generator) candidate)) t)
-                ((funcall test candidate) t)
-                (t (setf (cached-value generator) candidate) nil))))
+              (let ((before (snapshot-value candidate)))
+                (cond
+                  ((not (funcall (bounded-filter-validator generator) candidate)) t)
+                  ((not (same-value-p before candidate)) t)
+                  ((funcall test candidate) t)
+                  (t (setf (cached-value generator) candidate) nil)))))
     (cached-value generator)))
 
 (defmethod regenerate ((generator bounded-filter-generator))
   "Draw a fresh whole-AND valid candidate, charging the shrinking phase.
 
 Unlike check-it's GUARD-GENERATOR delegation, regeneration validates before
-returning, so a regenerated shrink candidate can never violate the AND.  A draw
-the filter rejects is counted as a shrinking rejection as well as an attempt, or
-the report would understate the work an exhaustion consumed."
+returning, so a regenerated shrink candidate can never violate the AND or be a
+value validation mutated.  A draw the filter rejects or validation mutates is
+counted as a shrinking rejection as well as an attempt, or the report would
+understate the work an exhaustion consumed."
   (with-generation-phase (:shrinking)
     (setf (cached-value generator)
           (loop
             (reserve-generation-candidate (bounded-filter-path generator)
                                           (bounded-filter-spec generator))
-            (let ((candidate (generate (bounded-filter-sub-generator generator))))
-              (if (funcall (bounded-filter-validator generator) candidate)
+            (let* ((candidate (generate (bounded-filter-sub-generator generator)))
+                   (before (snapshot-value candidate)))
+              (if (and (funcall (bounded-filter-validator generator) candidate)
+                       (same-value-p before candidate))
                   (return candidate)
                   (record-generation-rejection)))))))
 

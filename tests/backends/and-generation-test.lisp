@@ -52,6 +52,11 @@
   "The inter-field constraint the README-style period example adds to a plist."
   (<= (getf plist :start) (getf plist :end)))
 
+(defun mutate-plist-value (plist)
+  "Replace :V with a string and return true, so validation pollutes its input."
+  (setf (getf plist :v) "mutated")
+  t)
+
 (defun register-counting-spec (registry spec-name generator-name sequence)
   "Register GENERATOR-NAME drawing SEQUENCE in order, then repeating its last value."
   (let ((remaining (copy-list sequence)))
@@ -222,6 +227,15 @@
                                :count 20 :seed 1)))
       (ok (plusp (length values)))
       (ok (every (lambda (value) (and (integerp value) (<= 3 value 5))) values)))))
+
+(deftest mutating-validation-never-produces-a-mutated-value
+  (testing "a candidate validation mutates is rejected, not sampled"
+    (ok (handler-case
+            (progn (sample-spec '(and (plist (:required (:v integer)))
+                                      (satisfies mutate-plist-value))
+                                :count 1 :generation-budget 5 :seed 1)
+                   nil)
+          (generation-budget-exhausted () t)))))
 
 (deftest shrink-validates-before-invoking-the-target-callback
   (let* ((sub (make-instance 'callback-probing-shrink-generator))
