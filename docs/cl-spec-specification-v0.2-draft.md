@@ -72,7 +72,7 @@
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
-| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDが畳み込む連言にgenerator指定がある場合、生成器構築時に`generator-unavailable`で拒否する。AND全体へのgenerator指定は可能 |
+| Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの生成元選択は§10・§73.4に従い、競合するcustom generator指定が一つだけならそれを優先してAND全体のvalidatorでfilterし、複数なら`generator-unavailable`とする。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
@@ -807,7 +807,13 @@ check-it backendは必須キーを常に生成し、任意キーは各drawで独
 任意キーの削除が可能なら`:available`とする。これは縮小成功の保証ではない。
 
 フィールド間制約は既存の`and`・`satisfies`で表現する。
-制約solverやAND生成の一般化は導入しない。
+制約solverは導入しない。ANDは決定的な規則で生成元を一つ構築する。
+既存の数値制約のfoldを維持し、それ以外は適格な連言一つを生成元とする。
+必要な制約検査にはAND全体のvalidatorによる有限予算のfilterを用いる。
+予算は一生成要求内のfilter間で共有し、候補数・棄却数・生成済みのルート値の
+件数・終了理由を報告する。予算切れは、この生成戦略が適用予算内に値を
+得られなかったことを示すものであり、仕様の充足不能を意味しない。
+生成元として競合する連言のcustom generator指定の扱いは§73.4に定める。
 
 ---
 
@@ -869,6 +875,8 @@ alistは`(KEY . VALUE)`を、hash-tableは宣言したtestのtableを生成す�
 縮小capabilityは`:none`。
 
 フィールド間制約はplistと同じく既存の`and`・`satisfies`で表現する。
+制約solverは導入せず、ANDは決定的な規則で生成元を一つ構築し、AND全体の
+validatorによる有限予算のfilterで残りの連言を課す（§9.2、§73.4）。
 
 ---
 
@@ -1015,6 +1023,26 @@ tuple
 simple structures
 
 ```
+
+## ANDの生成元選択
+
+`and`は決定的な規則で生成元を一つ構築する（§9.2、§73.4）。
+
+- AND自身の`(:generator NAME)`があればそれを使い、新しいfilterは課さない。
+- 競合する連言のcustom generator指定が一つだけなら、それを生成元とし、AND全体の
+  validatorでfilterする。通常の生成元候補より優先する。
+- 複数あれば`generator-unavailable`とする。AND全体へのgenerator指定が明示的な選択手段である。
+- 無ければ対応する数値型・rangeのfoldを優先し、foldで尽くされない連言は有限予算の
+  filterで課す。foldが完全ならfilterを省いてよい。
+- 非数値型は構造化specの生成元選択を妨げない。例えば`(and (type list) (list-of integer))`は
+  `list-of`を生成元とし、AND全体のvalidatorで`(type list)`も検査する。
+- 適格な生成元が一つも構築できなければ`generator-unavailable`を通知する。構築時の
+  未対応だけをskipし、malformed declaration・不正参照・任意の拡張エラーは伝播させる。
+- 一度選んだ生成元は、棄却率や予算切れを理由に選び直さない。
+
+生成器の構築は値を生成せず、custom generator本体・target・`satisfies`述語を実行しない。
+述語や構造的制約を反映できない場合があるため、「生成可能」はANDのどの値も生成できることを
+意味しない。capabilityの意味は§38.1のままである。
 
 ---
 
@@ -4240,10 +4268,15 @@ tests/dsl-test.lispで検証する。条項番号は変えない。
 メソッドは基本メソッドを**置き換える**ため、TYPE / RANGE / MEMBER / PREDICATE / INSTANCE-OF /
 REFERENCE の spec では `SPEC-DATA` から消えていた。定義レベルの属性は `SPEC->DATA` が出す。
 
-追加の仕様判断として、ANDの畳み込みで連言のcustom generatorを無視する動作は廃止した。
-直接指定・別名参照・入れ子のANDのいずれでも、該当する連言があれば生成器構築時に
-`generator-unavailable`を通知する。生成方法を指定する場合はAND全体に`(:generator NAME)`を
-付ける。制約が満たされるまで無制限に生成し直す方式は採用しない。
+追加の仕様判断として、ANDの生成元選択を次の規則に固定する。AND自身に指定された
+custom generatorは従来どおり優先する。それがない場合、生成元として競合する連言に
+custom generatorの指定が一つだけあれば、その連言を優先して生成元とし、得られた候補に
+AND全体のvalidatorを適用する。複数の競合するcustom生成元がある場合は、暗黙に一つを
+選ばず`generator-unavailable`とする。選択を明示するにはAND全体へgeneratorを指定する。
+aliasや入れ子のANDを処理する際にcustom generatorの指定を失わせてはならない。
+collection内部のfield用generatorは、それだけで外側のANDの競合生成元とはしない。
+無制限の再生成は採用しない。予算切れは`generation-budget-exhausted`とし、
+件数・枯渇フェーズ・位置を報告する。
 
 `:post`の複数形式は、先頭から短絡評価し、最初に偽を返した形式の位置を内部の分類に使う。
 別形式を破る縮小候補は`:different-failure`として棄却する。公開スロットは追加せず、DSLが
@@ -4600,3 +4633,138 @@ definition/result schema v1へ`:values` nodeと`:post-value-variables`を加算�
 古いprimary-only宣言のdigestは変更しない。artifact v1は新しいfailure identityを認識し、
 従来どおり入力と失敗の同一性を保存する。返り値の保存可能性を反例保存の条件にしない。
 自己仕様はfind-specの2値、definition-digestの3値とその相互関係を検査する。
+
+## Bounded AND generation implementation addendum (2026-09-16)
+
+This addendum fixes the executable contracts for bounded-AND generation and
+amends §9.2/§9.3/§10/§11/§14/§15/§38.1/§47/§48/§72.1/§72.4 by section meaning.
+The design is
+`docs/superpowers/specs/2026-09-15-and-generation-composability-design-revised.md`.
+
+### Source selection
+
+The check-it backend selects one generation source at construction time without
+drawing a value, running a custom generator body, evaluating a predicate, or
+running a target. Priority: the outer AND's own `(:generator NAME)`; then a
+unique conjunct carrying a custom generator (direct, through an alias, or a node
+annotation discovery reaches without descending into collection fields), ahead
+of numeric folding; then supported numeric/primitive folding; then the first
+conjunct, in declaration order, whose ordinary construction succeeds. Multiple
+competing custom-bearing conjuncts signal `generator-unavailable`; the explicit
+choice is a whole-AND generator. A candidate that signals
+`generator-unavailable` during construction is skipped; malformed declarations,
+invalid references and other errors propagate. A successfully constructed
+constant, including NIL, is a source, not an absence. Once selected, the source
+is not reselected on rejection or exhaustion. Discovery finds every competing
+annotation before choosing an ordinary source.
+
+### Bounded filter and request budget
+
+The fallback wraps the source in a `bounded-filter-generator` whose filter is
+the whole-AND validator. Its `generate`, `shrink` and `regenerate` methods
+reserve candidate units from the active generation request; a request that
+cannot reserve signals `generation-budget-exhausted`. Reservation precedes the
+source call, so a propagated error is not a rejection. The last permitted
+candidate may succeed; exhaustion is signalled only when another reservation is
+required, and consumes no extra draw or random number. Every candidate the
+wrapper returns satisfies the whole AND.
+
+One request is one `sample` call or one `run-generated-test` invocation. Its
+budget is shared by all structural descendant and sibling filters and by
+shrink-time regeneration; it is not reset per value and there is no independent
+per-value cap. The default is `*generation-budget-coefficient*` (1000) × N,
+where N is the planned normal root count (the sample count, or the runner's
+trial-loop bound). An explicit nonnegative total is supplied as
+`:generation-budget` on `sample` or in the runner's `:options`; explicit zero is
+not an omission. The applied budget, its scope (`:request`), unit
+(`:bounded-filter-source-call`), planned N, `:default`/`:explicit` origin,
+default coefficient, and source-policy identifier `:and-single-source-v1` are
+recorded before execution. A public single-value draw without an active request
+gets an implicit request with N = 1; internal retry and recursive descent never
+create a fresh budget. Finite candidate counts are not a wall-clock timeout.
+
+### Generation report
+
+Backend outcomes carry `:generation-report`; `property-result` exposes
+`property-result-generation-report`; `result-data` includes `:generation-report`,
+`:failure-phase` and `:failure-reason`. The report is an immutable plist:
+
+```lisp
+(:scope :request
+ :unit :bounded-filter-source-call
+ :policy :and-single-source-v1
+ :budget 10000
+ :budget-source :default
+ :default-coefficient 1000
+ :requested-values 10
+ :generated-values 10
+ :attempts 18
+ :rejections 8
+ :phases (:generation (:attempts 18 :rejections 8)
+          :shrinking (:attempts 0 :rejections 0))
+ :termination :completed
+ :exhaustion-phase nil
+ :exhausted-at nil)
+```
+
+`generation-report-p` validates nonnegative counts, roots within N, phase sums,
+rejection bounds, attempts within budget, and coherent exhaustion fields; owned
+exhaustion requires attempts = budget. `:termination` is `:completed`,
+`:budget-exhausted` or `:interrupted`. `:exhaustion-phase` is `:generation` or
+`:shrinking` for owned exhaustion and NIL otherwise; `:exhausted-at` is the
+stable declaration path of the denied reservation. `generated-values` counts
+roots the top-level generator returned normally, including a tuple later
+refused by a precondition; `attempts - rejections` is not that count. `:rejected`
+keeps its existing meaning (precondition-refused trials) and is not the report's
+`:rejections`. Absence is `:not-collected`, never a fabricated zero-work report.
+
+`sample` returns `(values samples generation-report)`; primary-value callers are
+unchanged, but multiple-value callers observe the extension. On exhaustion the
+same report schema is read from the condition.
+
+### Exhaustion condition and the generation-only outcome
+
+`generation-budget-exhausted` subclasses `generator-unavailable`, so existing
+handlers keep catching it, and adds an immutable report snapshot plus request
+ownership. Its readers expose attempts, rejections, budget, exhaustion phase and
+the denied filter's declaration path. The diagnostic states that the selected
+strategy exhausted its candidate budget and makes no claim that the
+specification is unsatisfiable. An empty finite numeric range keeps its distinct
+construction diagnosis.
+
+When the request owns a normal-generation exhaustion, the runner returns
+`(:status :error :failure-reason :generation-budget-exhausted :failure-phase
+:generation :condition ...)` with the report and the already-collected trial and
+precondition counts, and with no target failure observation, counterexample or
+fabricated invocation. A partial prefix is not a pass. Creating a counterexample
+artifact from such a result is refused. Evidence requirements are relaxed only
+for this validated, request-owned shape. Shrink-phase depletion instead stops
+regeneration, retains the original and any accepted reduced observation, records
+`:budget-exhausted` with `:exhaustion-phase :shrinking`, and adds
+`:generation-budget-exhausted` to a collecting shrink report's termination
+vocabulary. A condition signalled by a target, a nested public request, or an
+unrelated source is not treated as this request's depletion. Capability
+semantics are unchanged: `:available` means construction succeeded and promises
+neither a valid draw within the budget nor an accepted shrink.
+
+### Reproducibility
+
+Selection, candidate order, counting and stopping are deterministic given the
+same declarations, registry, seed, backend/version, source-policy version,
+requested count, effective budget, other runner settings, and deterministic
+generator/validator behavior. Budget reservation and reporting make no extra
+random calls. Because the effective budget and applied options are recorded, a
+replay can reproduce roots, work counts and exhaustion when those conditions
+hold; changing the budget intentionally changes completion. Claims limited to
+`(spec, seed, backend)` remain too strong once configuration or custom code
+varies.
+
+### Acceptance tests
+
+`tests/backends/and-generation-test.lisp` covers structured-source composition,
+numeric folding regressions, the nonnumeric structured fallback, ordered source
+selection, no-source unavailability, unique-custom reuse and competing-custom
+refusal, budget boundaries and explicit zero, shared sibling budgets, difficult
+values exceeding 1000 candidates with spare request budget, fresh per-request
+counters, construction-only capability, report validation, the generation-only
+runner branch and artifact refusal, target-outcome reports, and shrink safety.

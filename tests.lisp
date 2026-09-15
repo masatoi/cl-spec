@@ -72,6 +72,7 @@
   (:import-from #:cl-spec/tests/backends/keyed-generator-test)
   (:import-from #:cl-spec/tests/backends/object-generator-test)
   (:import-from #:cl-spec/tests/backends/tagged-union-generator-test)
+  (:import-from #:cl-spec/tests/backends/and-generation-test)
   (:import-from #:cl-spec/tests/instrument-test)
   (:import-from #:cl-spec/tests/instrument-status-test)
   (:import-from #:cl-spec/tests/instrument-status-integration-test)

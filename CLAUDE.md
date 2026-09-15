@@ -34,7 +34,13 @@ CLOS field specs (`object-of`) observe instances through explicit readers; they
 validate and introspect but need a custom generator to construct values. Tagged
 unions (`tagged-by`) dispatch on an explicit tag reader, validate only the
 matching branch, name it in errors, and let `sample :branch` target one branch.
-The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
+AND generation selects one source by a fixed policy — a unique custom conjunct,
+numeric folding, or the first ordinarily constructible conjunct — and enforces
+the remaining conjuncts through a request-shared bounded filter whose attempts,
+rejections and exhaustion are reported. Exhausting the finite budget signals
+`generation-budget-exhausted` and is never a claim that the spec is
+unsatisfiable. The `describe-*` printers remain stubs. The cl-mcp adapter lives
+in cl-mcp, not here.
 
 ## Development With cl-mcp
 

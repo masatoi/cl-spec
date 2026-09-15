@@ -24,6 +24,7 @@
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
+                #:bounded-filter-generator #:bounded-filter-sub-generator
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children
                 #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
                 #:bounded-collection-generator #:bounded-generator-min-length
@@ -36,13 +37,19 @@
                 #:generate-value
                 #:run-generated-test
                 #:backend-default-trials #:backend-capabilities)
+  (:import-from #:cl-spec/src/generation-request
+                #:record-generated-value
+                #:with-generation-phase
+                #:owned-generation-exhaustion-p)
   (:import-from #:cl-spec/src/execution
                 #:snapshot-value #:observe-trial #:observation-failure-p
                 #:failure-identities-match-p #:same-value-p
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status
                 #:trial-observation-signature)
-  (:import-from #:cl-spec/src/conditions #:invalid-generated-arguments)
+  (:import-from #:cl-spec/src/conditions
+                #:invalid-generated-arguments
+                #:generation-budget-exhausted)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/validator #:compile-validator)
@@ -287,7 +294,19 @@ calling user code, and keep existing evidence if shrinking itself fails."
         ((max *base-size* (compiled-generator-size compiled))
          :trials trials)
       (loop for trial from 1 to trials
-            do (generate generator)
+            do (handler-case
+                   (progn (generate generator)
+                          (record-generated-value))
+                 (generation-budget-exhausted (condition)
+                   (if (owned-generation-exhaustion-p condition :generation)
+                       (return (list :status :error
+                                     :trials (1- trial)
+                                     :rejected rejected
+                                     :capabilities capabilities
+                                     :failure-reason :generation-budget-exhausted
+                                     :failure-phase :generation
+                                     :condition condition))
+                       (error condition))))
                (when (or custom-name
                          (and (typep generator 'call-arguments-generator)
                               (not (call-generator-rest-driven-p generator))))
@@ -299,52 +318,65 @@ calling user code, and keep existing evidence if shrinking itself fails."
                    (incf rejected))
                  (when (observation-failure-p original)
                    (let ((accepted nil) (different nil) (report nil))
-                     (when (typep generator 'custom-value-generator)
-                       (let ((reason (cond ((not shrink-p) :disabled)
-                                           ((trial-observation-arguments-mutated-p original)
-                                            :mutation)
-                                           ((null (custom-value-generator-shrinker generator))
-                                            :no-shrinker))))
-                         (if reason
-                             (setf report (list :candidates 0 :budget shrink-budget
-                                                :termination reason))
-                             (multiple-value-setq (accepted different report)
-                               (shrink-custom-arguments generator property original whole-validator
-                                                        context shrink-budget)))))
-                     (when (and (not (typep generator 'custom-value-generator))
-                                shrink-p (property-arguments property)
-                                (not (trial-observation-arguments-mutated-p original)))
-                       (handler-case
-                           (block shrink-search
-                             (shrink
-                              generator
-                              (lambda (arguments)
-                                (handler-case
-                                    (let ((before (snapshot-value arguments))
-                                           (admitted (and (finite-list-p arguments)
-                                                           (funcall whole-validator arguments))))
-                                      (unless (same-value-p before arguments)
-                                        (return-from shrink-search nil))
-                                      (if (not admitted)
-                                          t
-                                          (let ((candidate
-                                                  (observe-trial property arguments
-                                                                 :context context)))
-                                            (when (trial-observation-arguments-mutated-p candidate)
+                     (handler-case
+                         (with-generation-phase (:shrinking)
+                           (when (typep generator 'custom-value-generator)
+                             (let ((reason (cond ((not shrink-p) :disabled)
+                                                 ((trial-observation-arguments-mutated-p original)
+                                                  :mutation)
+                                                 ((null (custom-value-generator-shrinker generator))
+                                                  :no-shrinker))))
+                               (if reason
+                                   (setf report (list :candidates 0 :budget shrink-budget
+                                                      :termination reason))
+                                   (multiple-value-setq (accepted different report)
+                                     (shrink-custom-arguments generator property original
+                                                              whole-validator context
+                                                              shrink-budget)))))
+                           (when (and (not (typep generator 'custom-value-generator))
+                                      shrink-p (property-arguments property)
+                                      (not (trial-observation-arguments-mutated-p original)))
+                             (handler-case
+                                 (block shrink-search
+                                   (shrink
+                                    generator
+                                    (lambda (arguments)
+                                      (handler-case
+                                          (let ((before (snapshot-value arguments))
+                                                (admitted (and (finite-list-p arguments)
+                                                               (funcall whole-validator arguments))))
+                                            (unless (same-value-p before arguments)
                                               (return-from shrink-search nil))
-                                            (cond
-                                              ((not (observation-failure-p candidate)) t)
-                                              ((failure-identities-match-p
-                                                (trial-observation-signature original)
-                                                (trial-observation-signature candidate))
-                                               (unless (same-value-p
-                                                        (trial-observation-arguments original)
-                                                        (trial-observation-arguments candidate))
-                                                 (setf accepted candidate))
-                                               nil)
-                                              (t (setf different t) t)))))
-                                  (error () (setf different t) t)))))
-                         (error () (setf different t))))
+                                            (if (not admitted)
+                                                t
+                                                (let ((candidate
+                                                        (observe-trial property arguments
+                                                                       :context context)))
+                                                  (when (trial-observation-arguments-mutated-p candidate)
+                                                    (return-from shrink-search nil))
+                                                  (cond
+                                                    ((not (observation-failure-p candidate)) t)
+                                                    ((failure-identities-match-p
+                                                      (trial-observation-signature original)
+                                                      (trial-observation-signature candidate))
+                                                     (unless (same-value-p
+                                                              (trial-observation-arguments original)
+                                                              (trial-observation-arguments candidate))
+                                                       (setf accepted candidate))
+                                                     nil)
+                                                    (t (setf different t) t)))))
+                                        (error () (setf different t) t)))))
+                               (generation-budget-exhausted (condition)
+                                 (if (owned-generation-exhaustion-p condition :shrinking)
+                                     (error condition)
+                                     (setf different t)))
+                               (error () (setf different t)))))
+                       (generation-budget-exhausted (condition)
+                         (if (owned-generation-exhaustion-p condition :shrinking)
+                             (when report
+                               (setf (getf report :termination)
+                                     :generation-budget-exhausted))
+                             (error condition))))
                      (return
                        (list :status (trial-observation-status (or accepted original))
                              :trials trial :rejected rejected :capabilities capabilities
@@ -396,6 +428,8 @@ Lists can shrink in length even when their element generator cannot shrink."
                       (generator-shrink-strategy-p probe)))))))
     ((or tuple-generator mapped-generator)
      (some #'generator-shrink-strategy-p (sub-generators generator)))
+    (bounded-filter-generator
+     (generator-shrink-strategy-p (bounded-filter-sub-generator generator)))
     (guard-generator (generator-shrink-strategy-p (sub-generator generator)))
     ;; Preserve capability reporting for existing non-plist constant specs.
     (t t)))

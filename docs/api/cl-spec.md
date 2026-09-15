@@ -2,21 +2,21 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 215 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 225 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
 **Macros**: [`defgenerator`](#defgenerator) · [`defproperty`](#defproperty) · [`defspec`](#defspec) · [`defspec-function`](#defspec-function)
 
-**Functions**: [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
+**Functions**: [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
 
 **Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`validate-definition`](#validate-definition)
 
-**Accessors**: [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name)
+**Accessors**: [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name)
 
 **Classes**: [`custom-generator`](#custom-generator) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
 
-**Conditions**: [`cl-spec-error`](#cl-spec-error) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed)
+**Conditions**: [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed)
 
 **Structures**: [`counterexample-artifact`](#counterexample-artifact) · [`trial-observation`](#trial-observation)
 
@@ -391,6 +391,41 @@ Fixed return declarations use :KIND :VALUES with ordered children. Explicit
 :POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key.
 ```
 
+<a name="generation-budget-exhausted-attempts"></a>
+### generation-budget-exhausted-attempts
+
+*Function* · `(condition)`
+
+Return the candidate reservations the request made before exhaustion.
+
+<a name="generation-budget-exhausted-budget"></a>
+### generation-budget-exhausted-budget
+
+*Function* · `(condition)`
+
+Return the effective candidate budget of the exhausted request.
+
+<a name="generation-budget-exhausted-path"></a>
+### generation-budget-exhausted-path
+
+*Function* · `(condition)`
+
+Return the declaration path of the filter whose reservation was denied, or NIL.
+
+<a name="generation-budget-exhausted-phase"></a>
+### generation-budget-exhausted-phase
+
+*Function* · `(condition)`
+
+Return :GENERATION or :SHRINKING, the phase that owned the exhausted budget.
+
+<a name="generation-budget-exhausted-rejections"></a>
+### generation-budget-exhausted-rejections
+
+*Function* · `(condition)`
+
+Return the filter rejections the request recorded before exhaustion.
+
 <a name="generator-for"></a>
 ### generator-for
 
@@ -560,7 +595,7 @@ Return the selected failure explanation; internal post-form tags are excluded.
 
 *Function* · `(result)`
 
-Return the selected observation's reason, or NIL on success.
+Return the selected observation's reason, a stored generation reason, or NIL.
 
 <a name="property-result-failure-signature"></a>
 ### property-result-failure-signature
@@ -678,17 +713,22 @@ backend.
 <a name="sample"></a>
 ### sample
 
-*Function* · `(spec-designator &key (count 10) seed (branch nil branch-p) (registry *registry*))`
+*Function* · `(spec-designator &key (count 10) seed (branch nil branch-p) (generation-budget nil generation-budget-p) (registry *registry*))`
 
-Return a list of COUNT values generated from SPEC-DESIGNATOR.
+Return (VALUES VALUES REPORT) for COUNT values generated from SPEC-DESIGNATOR.
 
 ```text
+VALUES is the sampled list.  REPORT is the generation report for this one
+request: the bounded-filter candidate budget, attempts, rejections and phases.
+
 SEED, when supplied, makes the whole sequence reproducible.  BRANCH, when
 supplied, samples only the named branch of a tagged union, which is how a caller
 aims generation at one alternative; an explicitly supplied NIL is an unknown
 branch and is refused rather than read as "no branch requested", so a caller
-forwarding a computed branch value is told when it is bad.  Intended for
-inspecting what a spec admits, from the REPL or from an agent.
+forwarding a computed branch value is told when it is bad.  GENERATION-BUDGET,
+when supplied, is the request-wide bounded-filter candidate budget; explicit zero
+is not an omission.  Intended for inspecting what a spec admits, from the REPL or
+from an agent.
 ```
 
 <a name="schema-info"></a>
@@ -1455,6 +1495,27 @@ The whole DEFSPEC-FUNCTION form, kept verbatim.
 
 Source location plist, or NIL.
 
+<a name="generation-budget-exhausted-report"></a>
+### generation-budget-exhausted-report
+
+*Accessor* of `generation-budget-exhausted` · `(condition)`
+
+Immutable snapshot of the request's generation report
+at the moment the budget was exhausted.
+
+<a name="generation-budget-exhausted-request"></a>
+### generation-budget-exhausted-request
+
+*Accessor* of `generation-budget-exhausted` · `(condition)`
+
+Identity of the generation request whose budget ran out.
+
+```text
+Compared by the runner against the request it owns, so an inner public request's
+or a target's condition of the same class is not misread as this request's own
+depletion.  The live object is internal state, never wire metadata.
+```
+
 <a name="generator-unavailable-reason"></a>
 ### generator-unavailable-reason
 
@@ -1657,6 +1718,22 @@ Wall clock seconds the run took, or NIL.
 *Accessor* of `property-result` · `(object)`
 
 Observation from the original failing trial.
+
+<a name="property-result-failure-phase"></a>
+### property-result-failure-phase
+
+*Accessor* of `property-result` · `(object)`
+
+:GENERATION when the run stopped in generation infrastructure rather
+than on a target observation, else NIL.
+
+<a name="property-result-generation-report"></a>
+### property-result-generation-report
+
+*Accessor* of `property-result` · `(object)`
+
+Bounded-filter generation report captured by the backend,
+or :NOT-COLLECTED when the backend did not collect one.
 
 <a name="property-result-options"></a>
 ### property-result-options
@@ -1987,6 +2064,21 @@ Base class of every Semantic IR node.
 *Condition* · extends error
 
 Root of every condition signalled by cl-spec.
+
+<a name="generation-budget-exhausted"></a>
+### generation-budget-exhausted
+
+*Condition* · extends generator-unavailable
+
+Signalled when a request-owned candidate budget is exhausted.
+
+```text
+A subclass of GENERATOR-UNAVAILABLE, so a caller that already treats "this
+generation could not complete" as one family keeps working, while a caller that
+must tell a static no-strategy refusal from dynamic budget depletion handles this
+type first.  The report and the message state explicitly that exhausting a
+finite budget is not a proof that the spec admits no values.
+```
 
 <a name="generator-unavailable"></a>
 ### generator-unavailable

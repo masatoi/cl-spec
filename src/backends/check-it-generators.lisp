@@ -11,6 +11,7 @@
                 #:generator
                 #:generate
                 #:shrink
+                #:regenerate
                 #:*size*
                 #:cached-value
                 #:int-generator
@@ -20,7 +21,6 @@
                 #:list-generator
                 #:tuple-generator
                 #:or-generator
-                #:guard-generator
                 #:mapped-generator)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
@@ -67,7 +67,15 @@
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
+  (:import-from #:cl-spec/src/generation-request
+                #:*generation-request*
+                #:make-generation-request
+                #:reserve-generation-candidate
+                #:record-generation-rejection
+                #:with-generation-phase)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
+           #:bounded-filter-generator #:bounded-filter-sub-generator
+           #:bounded-filter-validator #:bounded-filter-path
            #:plist-value-generator #:plist-generator-fields #:plist-generator-children
            #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
            #:bounded-collection-generator #:bounded-generator-min-length
@@ -954,6 +962,81 @@ rather than binding it here lets one binding cover a whole trial loop."
         ((eq current :unbounded) new)
         (t (min current new))))
 
+(defclass bounded-filter-generator (generator)
+  ((sub-generator :initarg :sub-generator
+                  :reader bounded-filter-sub-generator
+                  :documentation "Generator the filter draws candidates from.")
+   (filter :initarg :filter
+           :reader bounded-filter-validator
+           :documentation "Whole-AND validator every returned candidate must satisfy.")
+   (spec :initarg :spec
+         :reader bounded-filter-spec
+         :documentation "The AND spec this filter enforces.")
+   (path :initarg :path
+         :initform nil
+         :reader bounded-filter-path
+         :documentation "Stable declaration path reported when the request is spent."))
+  (:documentation "Draw from a source and keep only whole-AND valid candidates.
+
+Unlike check-it's GUARD-GENERATOR this wrapper never recurses without a bound:
+each candidate reservation comes from the active generation request, and a
+request that runs out signals GENERATION-BUDGET-EXHAUSTED with its report.
+Request budgets and counters live in that request, never on this reusable object."))
+
+(defmethod generate ((generator bounded-filter-generator))
+  "Reserve a candidate, draw once, and validate against the whole AND.
+
+Reservation precedes the source call, so a source error propagates without
+becoming a rejection.  The final permitted candidate may succeed; exhaustion is
+signalled only when another reservation is required, and consumes no extra draw
+or random number."
+  (let ((draw (lambda ()
+                (loop
+                  (reserve-generation-candidate (bounded-filter-path generator)
+                                                (bounded-filter-spec generator))
+                  (let ((candidate (generate (bounded-filter-sub-generator generator))))
+                    (if (funcall (bounded-filter-validator generator) candidate)
+                        (return (setf (cached-value generator) candidate))
+                        (record-generation-rejection)))))))
+    (if *generation-request*
+        (funcall draw)
+        ;; A bare draw outside every public boundary still gets a finite request,
+        ;; so a direct backend GENERATE call cannot loop forever.
+        (let ((*generation-request* (make-generation-request :planned 1)))
+          (funcall draw)))))
+
+(defmethod shrink ((generator bounded-filter-generator) test)
+  "Shrink the source, never adopting a candidate the whole AND rejects.
+
+Mirrors check-it's GUARD-GENERATOR callback so the source's own shrinker keeps
+working, but a rejected candidate can never replace the cached evidence.  Any
+fresh draw a nested bounded filter makes here is charged to :SHRINKING."
+  (with-generation-phase (:shrinking)
+    (let ((previous (cached-value generator)))
+      (let ((result (shrink (bounded-filter-sub-generator generator)
+                            (lambda (candidate)
+                              (or (funcall test candidate)
+                                  (not (funcall (bounded-filter-validator generator)
+                                                candidate)))))))
+        (setf (cached-value generator)
+              (if (funcall (bounded-filter-validator generator) result)
+                  result
+                  previous))))))
+
+(defmethod regenerate ((generator bounded-filter-generator))
+  "Draw a fresh whole-AND valid candidate, charging the shrinking phase.
+
+Unlike check-it's GUARD-GENERATOR delegation, regeneration validates before
+returning, so a regenerated shrink candidate can never violate the AND."
+  (with-generation-phase (:shrinking)
+    (setf (cached-value generator)
+          (loop
+            (reserve-generation-candidate (bounded-filter-path generator)
+                                          (bounded-filter-spec generator))
+            (let ((candidate (generate (bounded-filter-sub-generator generator))))
+              (when (funcall (bounded-filter-validator generator) candidate)
+                (return candidate)))))))
+
 (defun fold-and-children (children context spec base-type minimum maximum leftovers)
   "Return (VALUES BASE-TYPE MINIMUM MAXIMUM LEFTOVERS), folding CHILDREN into the
 accumulators of the same names.
@@ -1001,28 +1084,100 @@ distribution. Anything else is collected into LEFTOVERS."
   (values base-type minimum maximum leftovers))
 
 (defmethod spec-generator ((spec and-spec) context)
-  ;; Folding rather than guarding is a correctness requirement, not an
-  ;; optimisation: check-it's GUARD-GENERATOR retries by recursing into GENERATE
-  ;; with no depth limit, so a guard that rejects often enough overflows the
-  ;; stack.  Narrowing the base generator removes the rejection entirely.
-  (multiple-value-bind (base-type minimum maximum leftovers)
-      (fold-and-children (and-spec-children spec) context spec nil :unbounded :unbounded '())
-    (when (and (null base-type)
-               (not (and (eq minimum :unbounded) (eq maximum :unbounded))))
-      (setf base-type 'real))
-    (when (null base-type)
-      (error 'generator-unavailable
-             :spec spec
-             :reason "an AND needs a type or range conjunct to generate from"))
-    (when (and (not (eq minimum :unbounded))
-               (not (eq maximum :unbounded))
-               (> minimum maximum))
-      (error 'generator-unavailable :spec spec :reason "the folded range is empty"))
-    (let ((base (if (and (eq minimum :unbounded) (eq maximum :unbounded))
-                    (type-specifier-generator base-type spec)
-                    (bounded-generator base-type minimum maximum spec))))
-      (if leftovers
-          (make-instance 'guard-generator
-                         :guard (compile-validator spec :context context)
-                         :sub-generator base)
-          base))))
+  "Build one generation source for SPEC and filter it against the whole AND.
+
+Source selection is deterministic and construction-time only; it never draws a
+value, runs a custom generator body, or evaluates the validator.  A unique custom
+conjunct wins ahead of numeric folding; multiple custom conjuncts are refused
+rather than silently coalesced; supported numeric folding stays a fast path;
+otherwise the first ordinarily constructible conjunct is the source.  Every new
+fallback checks the whole AND, so the selected source's own constraints are
+enforced too."
+  (labels ((resolve-candidate (child trail)
+             (let ((node child) (seen trail))
+               (loop
+                 (when (spec-generator-name node)
+                   (return (values t node seen)))
+                 (unless (typep node 'reference-spec)
+                   (return (values nil node seen)))
+                 (let ((target (reference-spec-target node)))
+                   (when (member target seen)
+                     (error 'generator-unavailable
+                            :spec node
+                            :reason "recursive specs have no generator in this version"))
+                   (setf seen (cons target seen)
+                         node (resolve-spec target (context-registry context)))))))
+           (entries-for (child path trail)
+             (multiple-value-bind (custom-p node extended)
+                 (resolve-candidate child trail)
+               (cond
+                 (custom-p (list (list :spec node :path path :custom-p t)))
+                 ((typep node 'and-spec)
+                  (entries (and-spec-children node) path extended))
+                 (t (list (list :spec node :path path :custom-p nil))))))
+           (entries (children prefix trail)
+             (let ((collected nil))
+               (loop for child in children
+                     for index from 0
+                     do (setf collected
+                              (append collected
+                                      (entries-for child
+                                                   (append prefix (list index))
+                                                   trail))))
+               collected))
+           (constructible (candidates)
+             "Return (VALUES GENERATOR ENTRY) for the first candidate that compiles."
+             (dolist (entry candidates)
+               (handler-case
+                   (return (values (spec-generator (getf entry :spec) context) entry))
+                 (generator-unavailable () nil))))
+           (filtered (source path)
+             (make-instance 'bounded-filter-generator
+                            :sub-generator source
+                            :filter (compile-validator spec :context context)
+                            :spec spec
+                            :path path)))
+    (let* ((candidates (entries (and-spec-children spec) nil *reference-trail*))
+           (customs (remove-if-not (lambda (entry) (getf entry :custom-p)) candidates))
+           (ordinaries (remove-if (lambda (entry) (getf entry :custom-p)) candidates)))
+      (cond
+        ((rest customs)
+         (error 'generator-unavailable
+                :spec spec
+                :reason (format nil "~D conjuncts name a custom generator (~{~S~^, ~}); ~
+                                     name one on the whole AND to choose explicitly"
+                                (length customs)
+                                (mapcar (lambda (entry) (getf entry :path)) customs))))
+        (customs
+         ;; P1: a unique custom source wins ahead of numeric folding.
+         (let ((entry (first customs)))
+           (filtered (spec-generator (getf entry :spec) context)
+                     (getf entry :path))))
+        (t
+         (multiple-value-bind (base-type minimum maximum leftovers)
+             (fold-and-children (and-spec-children spec) context spec
+                                nil :unbounded :unbounded '())
+           (if (and base-type (member base-type '(integer real character string
+                                                   null boolean)))
+               ;; P2: supported numeric/primitive folding stays a fast path.
+               (let ((bounded-p (not (and (eq minimum :unbounded)
+                                          (eq maximum :unbounded)))))
+                 (when (and (not (eq minimum :unbounded))
+                            (not (eq maximum :unbounded))
+                            (> minimum maximum))
+                   (error 'generator-unavailable
+                          :spec spec :reason "the folded range is empty"))
+                 (let ((base (if bounded-p
+                                 (bounded-generator base-type minimum maximum spec)
+                                 (type-specifier-generator base-type spec))))
+                   (if leftovers
+                       (filtered base nil)
+                       base)))
+               ;; P3: first ordinary conjunct whose construction succeeds.
+               (multiple-value-bind (source entry) (constructible ordinaries)
+                 (if entry
+                     (filtered source (getf entry :path))
+                     ;; P4: no eligible source.
+                     (error 'generator-unavailable
+                            :spec spec
+                            :reason "no conjunct has an ordinary generator strategy"))))))))))
