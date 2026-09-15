@@ -18,8 +18,7 @@
                 #:*generation-request*
                 #:generation-request-report
                 #:generation-report-p
-                #:record-generated-value
-                #:owned-generation-exhaustion-p)
+                #:record-generated-value)
   (:import-from #:cl-spec/src/property #:property-call-arguments-p)
   (:import-from #:cl-spec/src/execution
                 #:*trial-observations* #:observation-from-current-run-p #:trial-observation-status
@@ -257,8 +256,10 @@ report.  A backend that never calls the accounting hooks leaves the report
 The request's candidate budget is shared by every bounded AND filter the run
 reaches.  An explicit :GENERATION-BUDGET option is validated before execution;
 otherwise the default coefficient applies.  The effective generation report is
-attached to the outcome before validation, and a request-owned exhaustion that
-reaches this boundary becomes the narrow generation-only error branch."
+attached to the outcome before validation.  A participating backend converts its
+own request-owned exhaustion into the narrow generation-only error branch with
+the trial and precondition counts it collected; this boundary never fabricates
+`:trials 0` for an exhaustion that generated roots."
   (let ((budget (getf options :trials :missing))
         (*trial-observations* (list nil)))
     (unless (and (integerp budget) (not (minusp budget)))
@@ -268,16 +269,7 @@ reaches this boundary becomes the narrow generation-only error branch."
                         (make-generation-request :planned budget)
                         (make-generation-request :planned budget :budget explicit)))
            (*generation-request* request)
-           (outcome (handler-case (call-next-method)
-                      (generation-budget-exhausted (condition)
-                        (if (owned-generation-exhaustion-p condition :generation)
-                            (list :status :error
-                                  :trials 0
-                                  :rejected 0
-                                  :failure-reason :generation-budget-exhausted
-                                  :failure-phase :generation
-                                  :condition condition)
-                            (error condition))))))
+           (outcome (call-next-method)))
       (validate-backend-outcome
        (if (backend-reports-generation backend)
            (list* :generation-report (generation-request-report request) outcome)

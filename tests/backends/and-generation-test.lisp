@@ -17,7 +17,8 @@
   (:import-from #:cl-spec/src/property #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/generator
                 #:sample #:backend-capabilities #:run-generated-test
-                #:generator-for #:generate-value #:current-generator-backend)
+                #:generator-for #:generate-value #:current-generator-backend
+                #:backend-reports-generation)
   (:import-from #:cl-spec/src/backends/check-it #:check-it-backend)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:bounded-filter-generator #:spec-generator)
@@ -39,6 +40,7 @@
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
                 #:run-property #:property-result-status #:property-result
+                #:replay-property
                 #:property-result-generation-report #:property-result-failure-phase
                 #:property-result-failure-reason #:property-result-counterexample
                 #:property-result-shrunk-counterexample
@@ -55,6 +57,20 @@
 (defun mutate-plist-value (plist)
   "Replace :V with a string and return true, so validation pollutes its input."
   (setf (getf plist :v) "mutated")
+  t)
+
+(defclass mutable-probe ()
+  ((v :initarg :v :accessor mutable-probe-v))
+  (:documentation "A test class observed through MUTABLE-PROBE-V."))
+
+(defun mutate-hash-entry (table)
+  "Replace the :V entry with a string and return true."
+  (setf (gethash :v table) "mutated")
+  t)
+
+(defun mutate-object (object)
+  "Replace the V slot with a string and return true."
+  (setf (mutable-probe-v object) "mutated")
   t)
 
 (defun register-counting-spec (registry spec-name generator-name sequence)
@@ -142,6 +158,18 @@
 (defmethod run-generated-test ((backend non-collecting-backend) property &key options)
   (declare (ignore backend property options))
   (list :status :passed :trials 1 :rejected 0))
+
+(defclass escaping-exhaustion-backend ()
+  ()
+  (:documentation "A reporting backend that lets an owned exhaustion reach the boundary."))
+
+(defmethod backend-reports-generation ((backend escaping-exhaustion-backend))
+  (declare (ignore backend))
+  t)
+
+(defmethod run-generated-test ((backend escaping-exhaustion-backend) property &key options)
+  (declare (ignore backend property options))
+  (reserve-generation-candidate nil nil))
 
 (defun sample-spec (form &rest args)
   "Return (VALUES VALUES REPORT) for the normalized FORM."
@@ -234,6 +262,57 @@
             (progn (sample-spec '(and (plist (:required (:v integer)))
                                       (satisfies mutate-plist-value))
                                 :count 1 :generation-budget 5 :seed 1)
+                   nil)
+          (generation-budget-exhausted () t)))))
+
+(deftest mutating-validation-of-a-hash-table-is-rejected
+  (testing "an in-place hash-table write during validation is detected"
+    (ok (handler-case
+            (progn (sample-spec '(and (hash-table (:required (:v integer)))
+                                      (satisfies mutate-hash-entry))
+                                :count 1 :generation-budget 5 :seed 1)
+                   nil)
+          (generation-budget-exhausted () t)))))
+
+(deftest mutating-validation-of-an-instance-is-rejected
+  (testing "an in-place instance slot write during validation is detected"
+    (let ((*registry* (make-hash-table-registry)))
+      (registry-register-generator
+       *registry* 'mutable-probe-gen
+       (make-instance 'custom-generator :name 'mutable-probe-gen
+                      :function (lambda () (make-instance 'mutable-probe :v 1))))
+      (registry-register-spec
+       *registry* 'mutable-probe-spec
+       (normalize-spec-form '(object-of mutable-probe (:required (mutable-probe-v integer)))
+                            :name 'mutable-probe-spec :generator 'mutable-probe-gen))
+      (ok (handler-case
+              (progn (sample-spec '(and mutable-probe-spec (satisfies mutate-object))
+                                  :count 1 :generation-budget 5 :seed 1)
+                     nil)
+            (generation-budget-exhausted () t))))))
+
+(deftest replay-restores-the-recorded-generation-budget
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty impossible-law
+        ((x (and (member 1) (satisfies evenp))))
+      (:trials (:normal 5))
+      t)
+    (let* ((result (run-property 'impossible-law :seed 1
+                                 :options '(:generation-budget 8)))
+           (replay (replay-property 'impossible-law result))
+           (report (property-result-generation-report replay)))
+      (ok (eq :error (property-result-status result)))
+      (ok (eq :error (property-result-status replay)))
+      (testing "the replay reuses the recorded explicit budget"
+        (ok (= 8 (getf report :budget)))
+        (ok (eq :explicit (getf report :budget-source)))
+        (ok (eq :budget-exhausted (getf report :termination)))))))
+
+(deftest generic-boundary-does-not-fabricate-exhaustion-counts
+  (testing "a reporting backend's escaped exhaustion propagates instead of becoming 0/0"
+    (ok (handler-case
+            (progn (run-generated-test (make-instance 'escaping-exhaustion-backend) nil
+                                       :options (list :trials 0))
                    nil)
           (generation-budget-exhausted () t)))))
 

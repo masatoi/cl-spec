@@ -67,6 +67,7 @@
                 #:context-registry)
   (:import-from #:cl-spec/src/validator
                 #:compile-validator)
+  (:import-from #:closer-mop #:class-slots #:slot-definition-name)
   (:import-from #:cl-spec/src/execution
                 #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/generation-request
@@ -993,6 +994,52 @@ each candidate reservation comes from the active generation request, and a
 request that runs out signals GENERATION-BUDGET-EXHAUSTED with its report.
 Request budgets and counters live in that request, never on this reusable object."))
 
+(defun candidate-snapshot (value)
+  "Return a snapshot of VALUE that notices in-place validation writes.
+
+SNAPSHOT-VALUE copies conses and arrays but keeps every other object by identity,
+so a hash-table or instance write would compare equal to itself.  This records a
+hash table's test and entries, and an instance's slot values, so a validator that
+mutates its candidate is detected.  Opaque application state is still not
+checkpointed."
+  (cond
+    ((hash-table-p value)
+     (let ((entries nil))
+       (maphash (lambda (key item) (push (cons key item) entries)) value)
+       (cons (hash-table-test value) entries)))
+    ((or (typep value 'standard-object) (typep value 'structure-object))
+     (loop for slot in (class-slots (class-of value))
+           collect (let ((name (slot-definition-name slot)))
+                     (cons name (if (slot-boundp value name)
+                                    (slot-value value name)
+                                    :unbound)))))
+    (t (snapshot-value value))))
+
+(defun candidate-mutated-p (snapshot value)
+  "Return true when VALUE differs from SNAPSHOT after validation ran."
+  (cond
+    ((hash-table-p value)
+     (let ((test (car snapshot))
+           (entries (cdr snapshot)))
+       (or (not (eq test (hash-table-test value)))
+           (/= (hash-table-count value) (length entries))
+           (loop for (key . item) in entries
+                 thereis (multiple-value-bind (current present-p) (gethash key value)
+                           (or (not present-p)
+                               (not (same-value-p item current))))))))
+    ((or (typep value 'standard-object) (typep value 'structure-object))
+     (let ((slots (class-slots (class-of value))))
+       (or (/= (length slots) (length snapshot))
+           (loop for slot in slots
+                 for (name . item) in snapshot
+                 thereis (or (not (eq name (slot-definition-name slot)))
+                             (if (eq item :unbound)
+                                 (slot-boundp value name)
+                                 (or (not (slot-boundp value name))
+                                     (not (same-value-p item
+                                                        (slot-value value name))))))))))
+    (t (not (same-value-p snapshot value)))))
+
 (defmethod generate ((generator bounded-filter-generator))
   "Reserve a candidate, draw once, and validate against the whole AND.
 
@@ -1005,9 +1052,9 @@ or random number.  A candidate the validator mutates is rejected, never returned
                   (reserve-generation-candidate (bounded-filter-path generator)
                                                 (bounded-filter-spec generator))
                   (let* ((candidate (generate (bounded-filter-sub-generator generator)))
-                         (before (snapshot-value candidate)))
+                         (before (candidate-snapshot candidate)))
                     (if (and (funcall (bounded-filter-validator generator) candidate)
-                             (same-value-p before candidate))
+                             (not (candidate-mutated-p before candidate)))
                         (return (setf (cached-value generator) candidate))
                         (record-generation-rejection)))))))
     (if *generation-request*
@@ -1031,10 +1078,10 @@ charged to :SHRINKING."
   (with-generation-phase (:shrinking)
     (shrink (bounded-filter-sub-generator generator)
             (lambda (candidate)
-              (let ((before (snapshot-value candidate)))
+              (let ((before (candidate-snapshot candidate)))
                 (cond
                   ((not (funcall (bounded-filter-validator generator) candidate)) t)
-                  ((not (same-value-p before candidate)) t)
+                  ((candidate-mutated-p before candidate) t)
                   ((funcall test candidate) t)
                   (t (setf (cached-value generator) candidate) nil)))))
     (cached-value generator)))
@@ -1053,9 +1100,9 @@ understate the work an exhaustion consumed."
             (reserve-generation-candidate (bounded-filter-path generator)
                                           (bounded-filter-spec generator))
             (let* ((candidate (generate (bounded-filter-sub-generator generator)))
-                   (before (snapshot-value candidate)))
+                   (before (candidate-snapshot candidate)))
               (if (and (funcall (bounded-filter-validator generator) candidate)
-                       (same-value-p before candidate))
+                       (not (candidate-mutated-p before candidate)))
                   (return candidate)
                   (record-generation-rejection)))))))
 
