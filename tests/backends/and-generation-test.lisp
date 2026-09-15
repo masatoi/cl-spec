@@ -16,7 +16,8 @@
   (:import-from #:cl-spec/src/explain #:compile-node)
   (:import-from #:cl-spec/src/property #:property #:property-argument-schema)
   (:import-from #:cl-spec/src/generator
-                #:sample #:backend-capabilities #:run-generated-test)
+                #:sample #:backend-capabilities #:run-generated-test
+                #:generator-for #:generate-value #:current-generator-backend)
   (:import-from #:cl-spec/src/backends/check-it #:check-it-backend)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:bounded-filter-generator #:spec-generator)
@@ -168,6 +169,31 @@
     (let ((values (sample-spec '(and (type real) (type float)) :count 20 :seed 1)))
       (ok (plusp (length values)))
       (ok (every #'floatp values)))))
+
+(deftest overlapping-type-conjuncts-reach-a-source
+  (testing "a value admitted by both supported types is still generated"
+    (let ((values (sample-spec '(and (type null) (type boolean)) :count 4 :seed 1)))
+      (ok (equal '(nil nil nil nil) values))))
+  (testing "unrelated supported types fall through to ordinary selection"
+    (ok (handler-case
+            (progn (sample-spec '(and (type integer) (type string)) :count 1
+                                :generation-budget 5 :seed 1)
+                   nil)
+          (generation-budget-exhausted () t)))))
+
+(deftest nested-generate-value-does-not-inflate-root-count
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty nested-draw-law
+        ((x (range integer 1 5)))
+      (:trials (:normal 3))
+      (progn (generate-value (current-generator-backend)
+                             (generator-for (normalize-spec-form 'integer)))
+             (< x 100)))
+    (let* ((result (run-property 'nested-draw-law :seed 4))
+           (report (property-result-generation-report result)))
+      (ok (eq :passed (property-result-status result)))
+      (ok (generation-report-p report))
+      (ok (= 3 (getf report :generated-values))))))
 
 (deftest no-source-still-reports-ordinary-unavailability
   (ok (handler-case

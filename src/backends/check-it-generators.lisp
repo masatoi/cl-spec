@@ -940,28 +940,21 @@ rather than binding it here lets one binding cover a whole trial loop."
   (let ((*required-size* 0))
     (values (spec-generator spec context) *required-size*)))
 
-(defun supported-type-specifier-p (type-specifier spec)
-  "Return true when TYPE-SPECIFIER-GENERATOR can build a base for TYPE-SPECIFIER."
-  (handler-case (progn (type-specifier-generator type-specifier spec) t)
-    (generator-unavailable () nil)))
-
 (defun merge-base-type (current new spec)
-  "Return the base type implied by both CURRENT and NEW.
+  "Return the base type implied by both CURRENT and NEW, or NIL when none does.
 
-Two unequal types that BOTH name a supported generator are a genuine conflict
-and signal.  A pair with an unsupported side has no usable numeric fold -- it may
-be a subtype of the supported side, as FLOAT is of REAL -- so the fold is
-inapplicable, merges to NIL, and declaration-order source selection can build a
-source and let the whole-AND filter retain the admitted subtype."
+The numeric fold is only an optimisation.  Related types keep the narrower one;
+unrelated or merely overlapping types are left to declaration-order source
+selection and the whole-AND filter, so two type conjuncts never refuse an AND at
+construction merely because they differ -- (and (type null) (type boolean))
+admits NIL and must reach a source."
+  (declare (ignore spec))
   (cond ((null current) new)
         ((null new) current)
         ((eq current new) current)
         ((and (member current '(integer real)) (member new '(integer real))) 'integer)
-        ((and (supported-type-specifier-p current spec)
-              (supported-type-specifier-p new spec))
-         (error 'generator-unavailable
-                :spec spec
-                :reason (format nil "conflicting base types ~S and ~S" current new)))
+        ((subtypep current new) current)
+        ((subtypep new current) new)
         (t nil)))
 
 (defun tighter-minimum (current new)

@@ -79,16 +79,18 @@ everything except BACKEND and GENERATE-VALUE."))
 SEED, when supplied, makes the value reproducible (specification §15)."))
 
 (defmethod generate-value :around (backend compiled-generator &key seed)
-  "Record one root value and own an implicit single-value request when needed.
+  "Own an implicit single-value request for a bare draw.
 
 A caller that already owns a request (SAMPLE, a runner) keeps it, so the budget
-and counters stay shared across the request's values.  A bare single-value draw
-outside any request gets an implicit request with N = 1."
+is shared across the request's values.  Root counting belongs to those request
+boundaries -- the runner and SAMPLE record their own roots -- so a nested
+GENERATE-VALUE call made by user code inside a run does not inflate the root
+count past the planned value count."
   (declare (ignore seed))
   (if *generation-request*
-      (prog1 (call-next-method) (record-generated-value))
+      (call-next-method)
       (let ((*generation-request* (make-generation-request :planned 1)))
-        (prog1 (call-next-method) (record-generated-value)))))
+        (call-next-method))))
 
 (defgeneric run-generated-test (backend property &key options)
   (:documentation "Run PROPERTY and return a validated backend outcome plist.
@@ -337,7 +339,9 @@ from an agent."
                       (make-generation-request :planned count)))
          (*generation-request* request))
     (flet ((draw ()
-             (loop repeat count collect (generate-value backend generator))))
+             (loop repeat count
+                   collect (prog1 (generate-value backend generator)
+                             (record-generated-value)))))
       (if seed
           (let ((*random-state* (seed->random-state seed)))
             (values (draw) (generation-request-report request)))
