@@ -678,15 +678,17 @@ backend.
 <a name="sample"></a>
 ### sample
 
-*Function* · `(spec-designator &key (count 10) seed branch (registry *registry*))`
+*Function* · `(spec-designator &key (count 10) seed (branch nil branch-p) (registry *registry*))`
 
 Return a list of COUNT values generated from SPEC-DESIGNATOR.
 
 ```text
 SEED, when supplied, makes the whole sequence reproducible.  BRANCH, when
 supplied, samples only the named branch of a tagged union, which is how a caller
-aims generation at one alternative.  Intended for inspecting what a spec admits,
-from the REPL or from an agent.
+aims generation at one alternative; an explicitly supplied NIL is an unknown
+branch and is refused rather than read as "no branch requested", so a caller
+forwarding a computed branch value is told when it is bad.  Intended for
+inspecting what a spec admits, from the REPL or from an agent.
 ```
 
 <a name="schema-info"></a>
