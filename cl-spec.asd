@@ -25,3 +25,12 @@
   :version "0.1.0"
   :depends-on ("cl-spec"
                "cl-spec/src/instrument"))
+
+;;; CL-SPEC/EXAMPLES/STRUCTURED-DATA is an inferred subsystem of the
+;;; package-inferred primary system above: examples/structured-data.lisp defines
+;;; package CL-SPEC/EXAMPLES/STRUCTURED-DATA, and ASDF derives the system and its
+;;; dependencies from that file.  Declaring it again here would be ignored (ASDF
+;;; prefers the inferred subsystem whenever the system name maps to an existing
+;;; source file), so its only dependency beyond cl-spec/main -- the check-it
+;;; generator backend -- is declared by the bare :IMPORT-FROM in the example's
+;;; own DEFPACKAGE.

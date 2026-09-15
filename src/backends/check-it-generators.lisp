@@ -347,11 +347,12 @@ does not inject the tag, because it does not know the branch representation."
 
 The value is not checked against SPEC.  A custom generator that draws outside its
 spec should be seen for what it is -- a property reporting a counterexample the
-contract refuses -- rather than hidden behind a guard, which as AND's method
-notes would retry with no depth limit.
+contract refuses -- rather than hidden behind a bounded filter that redraws until
+its budget runs out.
 
-An AND that would fold a conjunct with a custom generator is refused by
-FOLD-AND-CHILDREN. A generator on the whole AND overrides folding explicitly."
+An AND uses a unique custom-generator conjunct as its source and filters its
+draws with the whole-AND validator; two or more such conjuncts are refused.  A
+generator on the whole AND overrides all of that explicitly."
   (let ((entry (registry-find-generator (context-registry context) name)))
     (unless entry
       (error 'generator-unavailable
@@ -1062,8 +1063,8 @@ A TYPE-SPEC or RANGE-SPEC child narrows BASE-TYPE/MINIMUM/MAXIMUM directly.  A
 REFERENCE-SPEC child is resolved through CONTEXT's registry and folded as if
 its target had been written inline -- otherwise a named spec such as (AND
 MY-RANGE (SATISFIES ODDP)) would fold nothing from MY-RANGE and either lose
-its constraints or, worse, leave them to a GUARD-GENERATOR that rejects every
-draw forever.  The resolution is guarded by *REFERENCE-TRAIL* against
+its constraints or, worse, leave them to a filter that has to exhaust its
+candidate budget.  The resolution is guarded by *REFERENCE-TRAIL* against
 recursion, exactly as the REFERENCE-SPEC method guards its own.  A nested
 AND-SPEC child is flattened the same way, so (AND A (AND B C)) folds
 identically to (AND A B C). A custom generator on any folded child is refused,

@@ -1,8 +1,13 @@
 # AND generation composability: a bounded filter over a generatable source
 
-Status: **revised design proposal; not an implementation report.**
+Status: **design record; implemented in `main`.**
 Revision date: **2026-09-16**.
 Supersedes the original `2026-09-15-and-generation-composability-design.md`.
+The normative contract is §73.5's bounded-AND addendum in
+`docs/cl-spec-specification-v0.2-draft.md`; the runnable tour is
+`docs/guides/structured-data-walkthrough.md`.
+The evidence and line-number notes below describe the baseline at the time of
+writing, not the current tree.
 
 This revision incorporates the original proposal, its review, and the subsequent
 recommendations for the five maintainer questions. It preserves the original

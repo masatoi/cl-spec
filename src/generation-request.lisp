@@ -187,7 +187,9 @@ permitted candidate sufficed."
 Signals GENERATION-BUDGET-EXHAUSTED, owned by the active request, when no unit
 remains; the denied reservation records the phase and PATH.  Returns the reserved
 attempt count.  Reservation happens immediately before a bounded filter calls its
-source, so a propagated source error is not a rejection and consumes no unit."
+source and is taken even if that call then signals, so a propagated source error
+is not a rejection; only a returned candidate the validator rejects increments
+the rejection count."
   (let ((request *generation-request*))
     (unless request
       (error "~S requires an active generation request" 'reserve-generation-candidate))

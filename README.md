@@ -27,6 +27,7 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 | `cl-spec/instrument` | runtime function instrumentation | none |
 | `cl-spec/specs` | executable specifications of cl-spec's own APIs and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
+| `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
@@ -38,10 +39,20 @@ backend into `cl-spec:*generator-backend*`.
 (asdf:load-system :cl-spec/check-it)
 ```
 
+For a runnable tour of the structured-data and AND-generation features, see the
+[structured-data walkthrough](docs/guides/structured-data-walkthrough.md). Its
+system is an inferred subsystem of the package-inferred primary, and its own
+`defpackage` declares the check-it backend, so loading it on its own is enough
+to run every demo:
+
+```lisp
+(asdf:load-system "cl-spec/examples/structured-data")
+```
+
 ## cl-spec's own executable specifications
 
 Load the optional specification bundle to register contracts for twenty-seven
-public functions and twenty-four semantic Properties. The definitions live in
+public functions and twenty-five semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
 the same structured APIs used by cl-mcp:
 
@@ -247,9 +258,12 @@ optional fields and shrink values while retaining required keys. Every child
 must have a generator, including optional fields; custom generators still have
 no automatic value shrink strategy.
 
-Cross-field constraints use ordinary `and` / `satisfies`. Their automatic
-generation retains the existing AND limitations below. Field metadata is
-independent of storage format; alist and hash-table DSLs are not implemented yet.
+Cross-field constraints use ordinary `and` / `satisfies`:
+`(and (plist ...) (satisfies ordered-p))` validates and generates. Field metadata
+is independent of storage format, and the same fields can be declared as an
+`alist`, a `hash-table`, an `object-of`, or dispatched by a `tagged-by` union.
+See the [structured-data walkthrough](docs/guides/structured-data-walkthrough.md)
+and the AND rules under [Known limitations](#known-limitations).
 
 ## Collection length and uniqueness
 
@@ -721,8 +735,15 @@ explain:
 
 - [`docs/api/`](docs/api/README.md) — API reference for the public packages,
   generated from their docstrings
-- `docs/cl-spec-specification-v0.2-draft.md` — the specification
-- `docs/superpowers/specs/` — design documents
+- [`docs/guides/structured-data-walkthrough.md`](docs/guides/structured-data-walkthrough.md)
+  — runnable structured-data integration walkthrough
+- [`docs/cl-spec-specification-v0.2-draft.md`](docs/cl-spec-specification-v0.2-draft.md)
+  — the specification
+- [`docs/superpowers/specs/`](docs/superpowers/specs/) — design documents, including
+  historical proposals; read them as records of when they were written, not as
+  the current usage guide
+- [`examples/structured-data.lisp`](examples/structured-data.lisp) — the
+  executable example the guide runs
 
 The API reference is regenerated and committed by CI after every push to
 `main`. Regenerate it locally with:

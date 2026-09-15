@@ -105,10 +105,11 @@ The original form and the definition site are kept on the resulting spec.
 
 OPTIONS is a list of clauses.  The only one this version accepts is
 (:GENERATOR NAME), naming a DEFGENERATOR generator whose values the backend draws
-instead of deriving them from FORM (specification §11). If an AND would fold a
-conjunct with a custom generator, generator construction signals
-GENERATOR-UNAVAILABLE. Name a generator on the whole AND to choose its draws
-explicitly; the backend never silently ignores a conjunct's generator."
+instead of deriving them from FORM (specification §11).  For an AND, a generator
+on the whole AND wins.  Otherwise a unique conjunct that carries a custom
+generator is used as the generation source and the whole AND filters its draws;
+two or more such conjuncts signal GENERATOR-UNAVAILABLE, because the backend never
+silently picks one or ignores one.  See the bounded-AND addendum in §73.5."
   (let ((location (current-source-location))
         (generator (spec-generator-option options)))
     `(register-spec ',name
@@ -639,8 +640,8 @@ For DEFSPEC-FUNCTION's :ARGS-GENERATOR, the whole argument list is validated
 before the precondition or target runs.  A generator that
 draws outside its spec makes a property report a counterexample the contract
 refuses, which is a true statement about the generator rather than a silent pass;
-a guard that retried until a draw conformed would recurse with no depth limit,
-which SRC/BACKENDS/CHECK-IT-GENERATORS.LISP refuses to build elsewhere.
+the AND generator's residual filter is bounded by a shared candidate budget and
+signals GENERATION-BUDGET-EXHAUSTED instead of retrying without limit.
 
 An optional leading (:SHRINK (VALUE) BODY...) clause after documentation supplies
 an ordered finite list of candidate values. Its one binding must be a valid variable.
