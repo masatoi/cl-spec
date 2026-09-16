@@ -66,10 +66,13 @@
                 #:function-spec-source-location
                 #:function-spec-metadata
                 #:function-spec-cases
+                #:function-spec-capture-bindings
+                #:function-spec-state-postconditions
                 #:function-case-name #:function-case-documentation
                 #:function-case-when-forms #:function-case-outcome-kind
                 #:function-case-outcome-spec #:function-case-postconditions
-                #:function-case-post-value-variables)
+                #:function-case-post-value-variables
+                #:function-case-state-postconditions)
   (:import-from #:cl-spec/src/property
                 #:property-name
                 #:property-arguments
@@ -241,17 +244,25 @@ The body is the author's source rather than the compiled function (§39)."
    :signals <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
    :source-location (:file <string> :package <string>) :metadata <plist>
+   [:capture ((:name <symbol> :form <form>) ...)]
+   [:state-post (<form> ...)]
    [:case-selection :exclusive
     :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
              :outcome :returns-or-:signals
              :returns <spec-data plist or NIL> :signals <spec-data plist or NIL>
              :postconditions (<form> ...)
+             [:state-post (<form> ...)]
              [:post-value-variables (<symbol> ...)]) ...)])
 
 A case-carrying contract adds :CASE-SELECTION and its ordered :CASES.  A case-less
 contract omits both keys, so its projection is exactly what it was.  Case guards
 and case postconditions are compiled functions and are never projected; their
 source forms are.
+
+:CAPTURE lists the ordered capture bindings as declarations, not the values
+observed at run time, and :STATE-POST lists the state-post forms.  A contract
+that declares neither omits both keys, so its projection is unchanged.  Producing
+this data runs no capture form, guard, state-post or target.
 
 This is the projection that answers the two questions a caller asks before
 editing a function: which inputs it accepts, and which output it must return
@@ -297,7 +308,16 @@ Fixed return declarations use :KIND :VALUES with ordered children. Explicit
                                   (unless (eq :primary
                                               (function-case-post-value-variables case))
                                     (list :post-value-variables
-                                          (function-case-post-value-variables case)))))))
+                                          (function-case-post-value-variables case)))
+                                  (when (function-case-state-postconditions case)
+                                    (list :state-post
+                                          (function-case-state-postconditions case)))))))
+            (when (function-spec-capture-bindings contract)
+              (list :capture
+                    (loop for (name form) in (function-spec-capture-bindings contract)
+                          collect (list :name name :form form))))
+            (when (function-spec-state-postconditions contract)
+              (list :state-post (function-spec-state-postconditions contract)))
             (list :name (function-spec-name contract)
                   ;; KIND is retained for compatibility; ENTITY-KIND routes records.
                   :kind :function-spec

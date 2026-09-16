@@ -21,7 +21,8 @@
                 #:observation-failure-phase
                 #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/registry #:*registry*)
-  (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest)
+  (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest
+                #:definition-state-constraints)
   (:import-from #:cl-spec/src/property #:property-argument-schema)
   (:import-from #:cl-spec/src/function-spec #:make-function-check-property)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
@@ -232,6 +233,12 @@ than persisted as a call that never happened."
          (omissions nil))
     (unless (and (finite-list-p metadata) (evenp (length metadata)))
       (reject-artifact :invalid-definition-metadata))
+    ;; A :CAPTURE / :STATE-POST contract observes state and never restores it, so
+    ;; a saved input is not a reproducible artifact.  The answer comes from the
+    ;; declaration captured before the run, not from the current registry:
+    ;; registering a different definition under the same name must not change it.
+    (when (eq :present (getf metadata :state-constraints))
+      (reject-artifact :stateful-contract-unsupported))
     (when (or (and original (eq :case-selection (observation-failure-phase original)))
               (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
       (reject-artifact :case-selection-failure))
@@ -287,6 +294,13 @@ Returns a :RECHECK record; never mutates the saved artifact or original result."
           (let ((definition (resolve-definition (getf data :name) kind registry)))
             (unless definition (return-from recheck-counterexample
                                  (outcome :definition-missing)))
+            ;; Refuse a state-observing contract before the target is called:
+            ;; rechecking would reapply the saved input to unrestored state.
+            ;; Checked before the digest so a state-observing definition under a
+            ;; saved name reports the real reason rather than a mismatch.
+            (when (definition-state-constraints definition)
+              (return-from recheck-counterexample
+                (outcome :unsupported :stateful-contract-unsupported)))
             (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
               (unless (and complete (getf data :definition-digest-complete))
                 (return-from recheck-counterexample (outcome :incomparable-definition)))

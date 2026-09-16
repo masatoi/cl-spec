@@ -39,7 +39,8 @@
            #:definition-description #:definition-entity-kind #:definition-generation-schema
            #:resolve-definition #:definition-shrink-enabled-p
            #:definition-constraints #:definition-description-complete-p
-           #:definition-instrumentation-capability))
+           #:definition-instrumentation-capability #:definition-shrink-enabled-p
+           #:definition-state-constraints))
 
 (in-package #:cl-spec/src/schema)
 
@@ -230,6 +231,19 @@ unknown subclass yields an incomplete digest rather than a trusted partial one."
 
 (defmethod definition-shrink-enabled-p ((definition property))
   (getf (property-metadata definition) :shrink t))
+
+(defgeneric definition-state-constraints (definition)
+  (:documentation "Return :PRESENT when DEFINITION declares state observation, or NIL.
+
+A state-observing declaration uses :CAPTURE or :STATE-POST.  Automatic
+shrinking, replay of a past result and counterexample artifacts are unsupported
+for it, because none of them can rebuild the same initial state.  The value is
+recorded in the definition metadata captured before a run, so a result says what
+the definition was when the run started rather than what the current registry
+holds under the same name.")
+  (:method ((definition t))
+    (declare (ignore definition))
+    nil))
 
 (defun canonical-digest (value)
   "Hash a tagged graph without Lisp printer settings or unreadable object addresses.
@@ -511,10 +525,13 @@ to avoid compiling a disposable generator before constructing the actual one."
       ;; Instrumentation belongs to the separate core module, not the generator backend.
       (setf (getf capabilities :instrumentation)
             (definition-instrumentation-capability definition))
-      (list :schema-version 1 :record-kind :definition
-            :entity-kind (definition-entity-kind definition)
-            :definition-digest digest :definition-digest-complete complete
-            :definition-digest-covers :declaration-and-registered-dependencies
-            :digest-omissions omissions
-            :digest-exclusions (digest-exclusions)
-            :capabilities capabilities))))
+      (append
+       (let ((state (definition-state-constraints definition)))
+         (when state (list :state-constraints state)))
+       (list :schema-version 1 :record-kind :definition
+             :entity-kind (definition-entity-kind definition)
+             :definition-digest digest :definition-digest-complete complete
+             :definition-digest-covers :declaration-and-registered-dependencies
+             :digest-omissions omissions
+             :digest-exclusions (digest-exclusions)
+             :capabilities capabilities)))))

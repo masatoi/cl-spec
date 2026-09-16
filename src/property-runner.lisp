@@ -18,7 +18,7 @@
                 #:trial-observation-status #:trial-observation-case
                 #:trial-observation-arguments #:trial-observation-condition
                 #:trial-observation-reason #:trial-observation-signature
-                #:trial-observation-explanation)
+                #:trial-observation-explanation #:trial-observation-state)
   (:import-from #:cl-spec/src/registry
                 #:*registry*)
   (:import-from #:cl-spec/src/resolve
@@ -209,17 +209,26 @@ not change."
       (trial-observation-explanation evidence))))
 
 (defun observation-data (observation)
-  "Project captured trial evidence as Lisp data rather than a structure object."
+  "Project captured trial evidence as Lisp data rather than a structure object.
+
+:STATE is present only when the contract declared :CAPTURE or :STATE-POST and
+the evaluator reported state evidence; a featureless failure omits it, so its
+projection is unchanged.  The state plist says whether capture ran to completion
+and whether state-post was not evaluated (with a reason), passed, was violated or
+itself signalled."
   (when observation
-    (list :arguments (trial-observation-arguments observation)
-          :status (trial-observation-status observation)
-          :reason (trial-observation-reason observation)
-          :signature (trial-observation-signature observation)
-          :explanation (trial-observation-explanation observation)
-          :outcome (trial-observation-outcome observation)
-          :value (trial-observation-value observation)
-          :case (trial-observation-case observation)
-          :condition-report (trial-observation-condition-report observation))))
+    (append
+     (list :arguments (trial-observation-arguments observation)
+           :status (trial-observation-status observation)
+           :reason (trial-observation-reason observation)
+           :signature (trial-observation-signature observation)
+           :explanation (trial-observation-explanation observation)
+           :outcome (trial-observation-outcome observation)
+           :value (trial-observation-value observation)
+           :case (trial-observation-case observation)
+           :condition-report (trial-observation-condition-report observation))
+     (let ((state (trial-observation-state observation)))
+       (when state (list :state state))))))
 
 (defun result-data (result)
   "Return a versioned result record using metadata captured before execution.

@@ -12,7 +12,8 @@
            #:trial-observation-reason #:trial-observation-signature
            #:trial-observation-explanation #:trial-observation-condition
            #:trial-observation-condition-report #:trial-observation-value
-           #:trial-observation-case #:begin-trial-report #:note-trial-outcome
+           #:trial-observation-case #:trial-observation-state
+           #:begin-trial-report #:note-trial-outcome
            #:observation-failure-phase
            #:observation-from-current-run-p #:evaluate-trial #:observe-trial #:observation-failure-p
            #:failure-identities-match-p #:snapshot-value #:same-value-p))
@@ -24,7 +25,7 @@
                 (&key run property arguments arguments-mutated-p
                       (status :passed) reason signature explanation condition
                       condition-report (outcome :not-collected) value case
-                      failure-phase))
+                      state failure-phase))
             (:copier nil))
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
@@ -42,6 +43,7 @@ text at observation time."
   (outcome :not-collected :read-only t)
   (value nil :read-only t)
   (case nil :read-only t)
+  (state nil :read-only t)
   (failure-phase nil :read-only t))
 
 ;; DEFSTRUCT cannot attach a docstring to a slot, and these accessors are part
@@ -120,7 +122,18 @@ Recorded where the framework produced the observation -- the function-spec
 classifier marks :CASE-SELECTION when selection itself failed -- rather than
 inferred later from the condition's class.  A target that signals the public
 CASE-SELECTION-ERROR condition is therefore an ordinary target observation, and
-the backend may shrink it and persist it as a counterexample.")
+the backend may shrink it and persist it as a counterexample.  :CAPTURE marks a
+capture form that signalled, which is a pre-target phase; :STATE-POST marks a
+state-post form that failed or signalled, which is a post-target phase and does
+not mean the target was not called.")
+
+(setf (documentation 'trial-observation-state 'function)
+      "State evidence for a :CAPTURE / :STATE-POST trial, or NIL.
+
+A contract that declares neither clause records NIL, so a featureless run's
+evidence is unchanged.  The plist carries :CAPTURE and :STATE-POST entries with
+the statuses and details fixed by the specification; capture values are copied
+with the same evidence snapshot as the other fields.")
 
 (defun snapshot-value (value)
   "Copy conses and arrays iteratively, preserving cycles and sharing within VALUE.
@@ -245,7 +258,11 @@ The optional seventh value is the captured target call outcome; the optional
 eighth names the selected function-spec case, or NIL when none was selected; the
 optional ninth is the failure phase the classifier recorded, or NIL for a target
 observation.  A classifier records :CASE-SELECTION only when selection itself
-failed, so nothing infers a phase from a condition's class.
+failed, so nothing infers a phase from a condition's class; it records :CAPTURE
+for a capture form that signalled and :STATE-POST for a state-post form that
+failed or signalled, and only the latter means the target was called.  The
+optional tenth is the trial's state evidence plist, or NIL when the contract
+declares neither :CAPTURE nor :STATE-POST.
 The first six keep their established meaning, so an existing specialization that
 returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
@@ -334,10 +351,11 @@ Mutations of conses and arrays, including changed sharing, stop backend shrinkin
 The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
 NIL when none was selected, and is recorded on the observation.  The optional
 ninth is the failure phase the classifier recorded, or NIL for a target
-observation; a recorded :CASE-SELECTION is checked to be consistent with it."
+observation; a recorded phase is checked to be consistent with the status and the
+case.  The optional tenth is the trial's state evidence, recorded as captured."
   (let ((snapshot (snapshot-value arguments)))
     (multiple-value-bind (status reason signature explanation condition value outcome
-                          selected-case failure-phase)
+                          selected-case failure-phase state)
         (evaluate-trial property arguments :context context)
       (unless (and (member status '(:passed :rejected :failed :error))
                    (if (member status '(:failed :error))
@@ -348,9 +366,14 @@ observation; a recorded :CASE-SELECTION is checked to be consistent with it."
                        (not (or reason signature explanation condition)))
                    (or (null selected-case) (keywordp selected-case))
                    (or (null failure-phase)
-                       (and (eq :case-selection failure-phase)
-                            (eq status :error)
-                            (null selected-case))))
+                       (case failure-phase
+                         ;; A pre-target phase stops before any target call, so
+                         ;; it carries no case.  :STATE-POST is a post-target
+                         ;; phase: the target ran, and a selected case may own it.
+                         ((:case-selection :capture)
+                          (and (eq status :error) (null selected-case)))
+                         (:state-post
+                          (member status '(:failed :error))))))
         (error 'invalid-backend-result
                :reason "evaluate-trial returned an invalid status or inconsistent evidence"))
       (make-trial-observation
@@ -365,4 +388,5 @@ observation; a recorded :CASE-SELECTION is checked to be consistent with it."
        :outcome (observed-outcome-data outcome)
         :value (snapshot-value value)
         :case selected-case
+        :state (snapshot-value state)
         :failure-phase failure-phase))))

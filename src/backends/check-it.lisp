@@ -341,11 +341,30 @@ target never produced is not a reduction of it."
                          (phase (observation-failure-phase original)))
                      (if phase
                          (setf report (list :candidates 0 :budget shrink-budget
-                                            :termination :not-a-target-failure))
+                                            ;; :STATE-POST runs after the target,
+                                            ;; so its suppression is the
+                                            ;; state-restoration limit, not an
+                                            ;; un-called target.
+                                            :termination (if (eq :state-post phase)
+                                                             :state-restoration-unavailable
+                                                             :not-a-target-failure)))
                          (handler-case
                              (with-generation-phase (:shrinking)
+                               ;; A state-observing contract is not shrunk even
+                               ;; when its outcome contract failed first: the
+                               ;; target was called and its state was never
+                               ;; restored, so no candidate may call it again.
+                               (when (and (getf (property-metadata property)
+                                                :state-constraints)
+                                          (null report))
+                                 (setf report (list :candidates 0 :budget shrink-budget
+                                                    :termination
+                                                    :state-restoration-unavailable)))
                                (when (typep generator 'custom-value-generator)
-                                 (let ((reason (cond ((not shrink-p) :disabled)
+                                 (let ((reason (cond ((getf (property-metadata property)
+                                                            :state-constraints)
+                                                      :state-restoration-unavailable)
+                                                     ((not shrink-p) :disabled)
                                                      ((trial-observation-arguments-mutated-p original)
                                                       :mutation)
                                                      ((null (custom-value-generator-shrinker generator))

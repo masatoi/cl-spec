@@ -120,10 +120,11 @@ silently picks one or ignores one.  See the bounded-AND addendum in §73.5."
                                          :source-location ',location))))
 
 (defparameter *function-spec-clause-keywords*
-  '(:args :args-generator :pre :returns :post :post-values :signals :cases)
+  '(:args :args-generator :pre :capture :returns :post :post-values :signals
+    :state-post :cases)
   "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
 
-(defparameter *function-case-clause-keywords* '(:when :returns :signals :post :post-values)
+(defparameter *function-case-clause-keywords* '(:when :returns :signals :post :post-values :state-post)
   "Clause heads a case inside a DEFSPEC-FUNCTION :CASES clause accepts.
 
 Deliberately short.  A case rules one outcome; per-case :args, :args-generator,
@@ -192,9 +193,9 @@ input compiled into a tautology."
   "Parse one case: a keyword name, one optional docstring, one :WHEN and one outcome.
 
 Returns a plist of :NAME :DOCUMENTATION :WHEN :RETURNS :SIGNALS :POST
-:POST-VALUES and :SOURCE-FORM.  The contract's ARGS are needed here because
-explicit :POST-VALUES names are checked against its argument bindings, exactly as
-the contract-level clause does."
+:POST-VALUES :STATE-POST and :SOURCE-FORM.  The contract's ARGS are needed here
+because explicit :POST-VALUES names are checked against its argument bindings,
+exactly as the contract-level clause does."
   (unless (and (consp case-form) (proper-list-p case-form) (keywordp (first case-form)))
     (function-spec-error case-form "expected a case headed by a keyword name"))
   (let ((name (first case-form))
@@ -205,6 +206,7 @@ the contract-level clause does."
         (signals nil)
         (post nil)
         (post-values :primary)
+        (state-post nil)
         (seen '()))
     (when (stringp (first body))
       (setf documentation (pop body)))
@@ -243,6 +245,10 @@ the contract-level clause does."
            (unless (and (= 2 (length clause)) (second clause))
              (function-spec-error clause ":signals takes exactly one non-NIL spec form"))
            (setf signals (second clause)))
+          (:state-post
+           (unless (rest clause)
+             (function-spec-error clause ":state-post requires at least one form"))
+           (setf state-post (rest clause)))
           (:post (setf post (rest clause)))
           (:post-values
            (unless (and (>= (length clause) 3) (proper-list-p (second clause)))
@@ -262,7 +268,8 @@ the contract-level clause does."
     (when (and (member :signals seen)
                (or (member :post seen) (member :post-values seen)))
       ;; Judged by clause occurrence, not by the body: an empty (:post) is still
-      ;; a written :post clause, and a :signals case may not carry one.
+      ;; a written :post clause, and a :signals case may not carry one.  A
+      ;; :state-post is a separate clause and is allowed here.
       (function-spec-error case-form "a :signals case cannot carry :post or :post-values"))
     (unless (eq post-values :primary)
       (unless (and (proper-list-p returns) (symbolp (first returns))
@@ -274,6 +281,7 @@ the contract-level clause does."
     (list :name name :documentation documentation
           :when (second when-clause)
           :returns returns :signals signals :post post :post-values post-values
+          :state-post state-post
           :source-form case-form)))
 
 (defun parse-function-cases (case-clauses args)
@@ -288,6 +296,59 @@ the contract-level clause does."
         (push name names)
         (push case cases)))
     (nreverse cases)))
+
+(defun parse-capture-bindings (clause)
+  "Parse a :CAPTURE CLAUSE into ordered (NAME FORM) pairs, or refuse it.
+
+Each binding is exactly two elements and NAME is a bindable symbol: a
+non-constant, non-keyword symbol whose name does not begin with an ampersand,
+and unique among the bindings."
+  (unless (rest clause)
+    (function-spec-error clause ":capture requires at least one (NAME FORM) binding"))
+  (let ((bindings '())
+        (names '()))
+    (dolist (binding (rest clause))
+      (unless (and (consp binding) (proper-list-p binding) (= 2 (length binding)))
+        (function-spec-error binding "expected a (NAME FORM) capture binding"))
+      (let ((name (first binding)))
+        (unless (and name (symbolp name) (not (keywordp name)) (not (constantp name))
+                     (not (lambda-list-keyword-name-p name)))
+          (function-spec-error
+           binding "a capture name must be a bindable non-constant, non-keyword variable"))
+        (when (member name names)
+          (function-spec-error binding (format nil "capture ~S appears more than once" name)))
+        (push name names)
+        (push binding bindings)))
+    (nreverse bindings)))
+
+(defun check-capture-collisions (capture args post-values cases)
+  "Refuse a capture name that collides with an existing binding.
+
+Checked after every clause is read, because :CAPTURE may be written before the
+:ARGS and :POST-VALUES clauses it has to be compared against.  Covers argument
+and supplied-p variables, the return-value binding RESULT, and the explicit
+return names of a contract-level or case-level :POST-VALUES."
+  (let* ((variables (call-declaration-variables args))
+         (result (return-value-symbol variables)))
+    (labels ((refuse (name reason)
+               (function-spec-error
+                (assoc name capture)
+                (format nil "capture ~S ~A" name reason)))
+             (explicit (plist)
+               (unless (eq :primary plist) plist)))
+      (dolist (binding capture)
+        (let ((name (first binding)))
+          (cond
+            ((member name variables)
+             (refuse name "collides with an argument or supplied-p variable"))
+            ((and result (eq name result))
+             (refuse name "collides with the return-value binding RESULT"))
+            ((member name (explicit post-values))
+             (refuse name "collides with a contract-level :post-values name"))
+            ((loop for case in cases
+                   thereis (member name (explicit (getf case :post-values))))
+             (refuse name "collides with a case :post-values name"))))))
+    capture))
 
 (defun parse-function-spec-clauses (name clauses)
   "Split clauses into documentation, arguments, pre/returns/post, generator, signals and post names.
@@ -308,6 +369,8 @@ cannot be confused."
         (post nil)
         (post-values :primary)
         (signals nil)
+        (capture nil)
+        (state-post nil)
         (case-clauses nil)
         (argument-generator nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
@@ -342,6 +405,11 @@ cannot be confused."
              (function-spec-error clause ":args-generator takes one generator name"))
            (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
+          (:capture (setf capture (parse-capture-bindings clause)))
+          (:state-post
+           (unless (rest clause)
+             (function-spec-error clause ":state-post requires at least one form"))
+           (setf state-post (rest clause)))
           (:cases
            (unless (rest clause)
              (function-spec-error clause ":cases requires at least one case"))
@@ -379,11 +447,13 @@ cannot be confused."
       (function-spec-error clauses ":signals cannot coexist with returns or postconditions"))
     (when (and case-clauses
                (or (member :returns seen) (member :post seen)
-                   (member :post-values seen) (member :signals seen)))
+                   (member :post-values seen) (member :signals seen)
+                   (member :state-post seen)))
       (function-spec-error
        clauses
-       ":cases cannot be combined with a top-level :returns, :signals, :post or ~
-:post-values; each case rules its own outcome and there is no shared one"))
+       ":cases cannot be combined with a top-level :returns, :signals, :post, ~
+:post-values or :state-post; each case rules its own outcome and there is no ~
+shared one"))
     (unless (eq post-values :primary)
       (unless (and (proper-list-p returns) (symbolp (first returns))
                     (string= "VALUES" (symbol-name (first returns))))
@@ -391,8 +461,10 @@ cannot be confused."
          clauses ":post-values requires a fixed (values ...) return declaration"))
       (validate-post-value-variables post-values (length (rest returns))
                                      (call-declaration-variables args)))
-    (values documentation args pre returns post argument-generator signals post-values
-            (parse-function-cases case-clauses args))))
+    (let ((cases (parse-function-cases case-clauses args)))
+      (check-capture-collisions capture args post-values cases)
+      (values documentation args pre returns post argument-generator signals post-values
+              capture state-post cases))))
 
 (defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -441,17 +513,18 @@ lambda list is a compiler error about a form the author never wrote."
   "Validate positional, rest and explicit keyword declarations before macro expansion."
   (validate-call-declarations args))
 
-(defun expand-postcondition-forms (forms &optional (index 0))
+(defun expand-postcondition-forms (forms &optional (index 0) (tag :cl-spec-post-form-failure))
   "Compile short-circuiting FORMS with an internal failure index.
 The primary value remains the predicate result. Only a false result carries the
-tagged secondary values consumed by the function checker; no form runs twice."
+tagged secondary values consumed by the checker; no form runs twice.  TAG names
+the clause family so a failure cannot be mistaken for one of another family."
   (let ((value (gensym "POST-VALUE")))
     `(let ((,value ,(first forms)))
        (if ,value
            ,(if (rest forms)
-                (expand-postcondition-forms (rest forms) (1+ index))
+                (expand-postcondition-forms (rest forms) (1+ index) tag)
                 value)
-           (values nil ,index :cl-spec-post-form-failure)))))
+           (values nil ,index ,tag)))))
 
 (defun post-result-symbol (post variables)
   "Return the symbol :POST binds to the return value for VARIABLES.
@@ -495,21 +568,94 @@ return value"
                candidate)))
     result))
 
-(defun expand-postcondition-function (post post-values variables result)
-  "Return the compiled :POST predicate form, or NIL when POST is empty."
+(defun expand-postcondition-function (post post-values variables result &optional captures)
+  "Return the compiled :POST predicate form, or NIL when POST is empty.
+
+CAPTURES are the contract's capture names, appended after the parameters so a
+postcondition can compare against a value observed before the call.  With no
+capture the lambda list is exactly what it was, so existing contracts compile
+and run unchanged."
   (when post
     (if (eq post-values :primary)
-        `(lambda (,result ,@variables)
-           (declare (ignorable ,result ,@variables))
+        `(lambda (,result ,@variables ,@captures)
+           (declare (ignorable ,result ,@variables ,@captures))
            ,(expand-postcondition-forms post))
         (let ((returned (gensym "RETURNED")))
-          `(lambda (,returned ,@variables)
-             (declare (ignorable ,@variables))
+          `(lambda (,returned ,@variables ,@captures)
+             (declare (ignorable ,@variables ,@captures))
              (let ((,result (first ,returned))
                    ,@(loop for name in post-values for index from 0
                            collect `(,name (nth ,index ,returned))))
                (declare (ignorable ,result ,@post-values))
                ,(expand-postcondition-forms post)))))))
+
+(defun expand-state-post-function (forms variables captures)
+  "Return the compiled :STATE-POST predicate form, or NIL when FORMS is empty.
+
+The predicate sees the arguments and the capture values.  It binds no implicit
+RESULT, condition or raw outcome: a relation to the return value belongs in the
+existing :POST.  Forms are compiled flat and evaluated in order; the first that
+does not hold or that signals returns (values NIL INDEX TAG CONDITION) from the
+block, so a signalling form's position survives without an extra condition type,
+and no later form runs."
+  (when forms
+    (let ((block (gensym "STATE-POST"))
+          (tag :cl-spec-state-post-form-failure))
+      `(lambda (,@variables ,@captures)
+         (declare (ignorable ,@variables ,@captures))
+         (block ,block
+           ,@(loop for form in forms
+                   for index from 0
+                   for value = (gensym "STATE-POST-VALUE")
+                   collect
+                   `(let ((,value (handler-case ,form
+                                    (error (condition)
+                                      (return-from ,block
+                                        (values nil ,index ,tag condition))))))
+                      (unless ,value
+                        (return-from ,block (values nil ,index ,tag nil)))))
+           (values t nil nil nil))))))
+
+(defun capture-bindings-check (capture variables)
+  "Refuse a capture form that reads the return value or a later capture binding.
+
+Capture runs before the call, so RESULT does not exist yet.  A later capture
+name is not bound yet either: each compiled binding is a lambda over the
+arguments and the earlier capture values, so reading a later one would compile
+into a free variable and register a claim the checker could not run.  This is a
+targeted refusal, not a free-variable analysis: a symbol shadowed lexically
+inside the form is still counted, exactly as the existing RESULT checks are."
+  (let* ((candidate (return-value-symbol variables))
+         (parameterp (and candidate (member candidate variables) t)))
+    (loop for remaining on capture
+          for binding = (first remaining)
+          for form = (second binding)
+          do (when (and candidate (symbol-occurs-p candidate form) (not parameterp))
+               (function-spec-error
+                (cons :capture binding)
+                (format nil ":capture runs before the call, so it cannot refer to ~S"
+                        candidate)))
+             (dolist (later (rest remaining))
+               (when (symbol-occurs-p (first later) form)
+                 (function-spec-error
+                  (cons :capture binding)
+                  (format nil ":capture binding ~S reads ~S, which is declared later; ~
+a capture form may use only earlier capture values"
+                          (first binding) (first later)))))))
+  capture)
+
+(defun expand-capture-functions (capture variables)
+  "Return one compiled lambda per capture binding, in declaration order.
+
+Binding i is a lambda over the arguments plus capture names 0..i-1, so the forms
+have LET* visibility without any runtime evaluation or free-variable analysis.
+Each is called once per trial and its primary value is the capture."
+  (loop for binding in capture
+        for index from 0
+        for previous = (mapcar #'first (subseq capture 0 index))
+        collect `(lambda (,@variables ,@previous)
+                   (declare (ignorable ,@variables ,@previous))
+                   ,(second binding))))
 
 (defun expand-guard-check (when-form variables)
   "Refuse a case :WHEN that refers to the return value, then return WHEN-FORM.
@@ -525,16 +671,19 @@ the contract named RESULT is an ordinary guard."
        (format nil ":when runs before the call, so it cannot refer to ~S" candidate)))
     when-form))
 
-(defun expand-function-case (case variables)
+(defun expand-function-case (case variables captures)
   "Return the MAKE-INSTANCE form that builds one FUNCTION-CASE.
 
-CASE is the plist PARSE-FUNCTION-CASE returned.  The guard and the case
-postcondition are compiled here, at macroexpansion time, because §60 forbids
-runtime EVAL and a stored form cannot be run later."
+CASE is the plist PARSE-FUNCTION-CASE returned.  The guard, the case
+postcondition and the case state-post are compiled here, at macroexpansion
+time, because §60 forbids runtime EVAL and a stored form cannot be run later.
+CAPTURES are the contract's capture names, which the guard, the postcondition
+and the state-post may all read."
   (let* ((post (getf case :post))
          (post-values (getf case :post-values))
          (returns (getf case :returns))
          (signals (getf case :signals))
+         (state-post (getf case :state-post))
          (when-form (expand-guard-check (getf case :when) variables))
          (result (post-result-symbol post variables)))
     `(make-instance 'function-case
@@ -542,32 +691,37 @@ runtime EVAL and a stored form cannot be run later."
                     :documentation ,(getf case :documentation)
                     :when-forms (list ',when-form)
                     :when-function
-                    (lambda ,variables
-                      (declare (ignorable ,@variables))
+                    (lambda (,@variables ,@captures)
+                      (declare (ignorable ,@variables ,@captures))
                       ,when-form)
                     :outcome-kind ,(if returns :returns :signals)
                     :outcome-spec ',(or returns signals)
                     :postconditions ',post
                     :postcondition-function ,(expand-postcondition-function
-                                              post post-values variables result)
+                                              post post-values variables result captures)
                     :post-value-variables ',post-values
+                    :state-postconditions ',state-post
+                    :state-postcondition-function ,(expand-state-post-function
+                                                    state-post variables captures)
                     :source-form ',(getf case :source-form))))
 
 (defun expand-function-spec-definition (whole name clauses source-location)
   "Return the form DEFSPEC-FUNCTION expands into.
 
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE,
-:POST and case :WHEN forms have to be compiled into real functions: §60 forbids
-runtime EVAL, so a contract kept only as a list could be read but never checked."
+:POST, case :WHEN, :CAPTURE and :STATE-POST forms have to be compiled into real
+functions: §60 forbids runtime EVAL, so a contract kept only as a list could be
+read but never checked."
   (multiple-value-bind (documentation args pre returns post argument-generator signals
-                        post-values cases)
+                        post-values capture state-post cases)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (call-declaration-variables args))
            (candidate (return-value-symbol variables))
            (parameterp (and candidate (member candidate variables) t))
            (in-pre (and candidate (symbol-occurs-p candidate pre)))
-           (result (post-result-symbol post variables)))
+           (result (post-result-symbol post variables))
+           (capture-names (mapcar #'first capture)))
       (when (and in-pre (not parameterp))
         ;; Only when it is not a parameter: a precondition about a parameter the
         ;; contract itself named RESULT is an ordinary precondition, and refusing
@@ -576,6 +730,7 @@ runtime EVAL, so a contract kept only as a list could be read but never checked.
          (cons :pre pre)
          (format nil ":pre runs before the call, so it cannot refer to ~S"
                  candidate)))
+      (capture-bindings-check capture variables)
       `(register-function-spec
         (make-instance 'function-spec
                        :name ',name
@@ -587,15 +742,23 @@ runtime EVAL, so a contract kept only as a list could be read but never checked.
                        :post-value-variables ',post-values
                        :preconditions ',pre
                        :postconditions ',post
+                       :capture-bindings ',capture
                        :precondition-function
                        ,(when pre
                           `(lambda ,variables
                              (declare (ignorable ,@variables))
                              (and ,@pre)))
                        :postcondition-function
-                       ,(expand-postcondition-function post post-values variables result)
+                       ,(expand-postcondition-function post post-values variables result
+                                                       capture-names)
+                       :capture-functions
+                       (list ,@(expand-capture-functions capture variables))
+                       :state-postconditions ',state-post
+                       :state-postcondition-function
+                       ,(expand-state-post-function state-post variables capture-names)
                        :cases (list
-                               ,@(mapcar (lambda (case) (expand-function-case case variables))
+                               ,@(mapcar (lambda (case)
+                                           (expand-function-case case variables capture-names))
                                          cases))
                        :documentation ,documentation
                        :source-form ',whole
@@ -605,8 +768,9 @@ runtime EVAL, so a contract kept only as a list could be read but never checked.
   "Attach a contract to the existing function NAME without redefining it.
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC), (:POST FORM ...),
-(:POST-VALUES (NAME ...) FORM ...), or (:SIGNALS SPEC),
+(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:CAPTURE (NAME FORM) ...),
+(:RETURNS SPEC), (:POST FORM ...),
+(:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
 argument list. Its output is validated before :PRE and the target; it has no
 automatic shrink strategy.  :PRE
@@ -634,6 +798,37 @@ and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
+:CAPTURE observes values before the call.  It appears at most once, at the top
+level, and takes one or more exact (NAME FORM) bindings: NAME is a unique
+bindable variable that collides with no argument, supplied-p variable,
+:POST-VALUES name or RESULT, and each FORM runs once in declaration order and
+sees the arguments and the capture values declared before it.  Only the primary
+value is bound, and a captured NIL is a value rather than an absence.  A capture
+variable is not a target argument: the argument schema, generator and actual
+call are unchanged.  Capture observes a value, it does not copy the object, so
+(:CAPTURE (BEFORE ACCOUNT)) does not preserve ACCOUNT's earlier contents; an
+author who needs a pre-call representation reads a value out or copies the part
+that matters.  Capture forms are contract-side code and must not modify the
+inputs or anything reachable from them; cl-spec neither detects nor restores a
+violation.
+
+:STATE-POST checks state after the call.  A case-less contract may put one
+top-level :STATE-POST; a case-carrying contract puts one inside each case, and
+the two positions cannot be combined.  It takes one or more ordinary forms, runs
+them in declaration order only after the outcome contract passed, and treats NIL
+as a violation and a signalled error as a contract error.  It sees the arguments
+and the capture values and binds no implicit RESULT, condition or raw outcome.
+Its failure identity is (:STATE-POSTCONDITION INDEX), or
+(:CASE NAME :STATE-POSTCONDITION INDEX) inside a case; a signalling form adds
+its position too.  The target was called for such a failure, so it keeps the raw
+outcome and counts as that case's call.
+
+A state-observing contract is checked by CHECK-FUNCTION but is not shrunk,
+replayed from a past result or persisted as a counterexample artifact in this
+version, because none of those can rebuild the same initial state.  A
+pure-looking use is not exempted, and this is a scope limit, not a claim that
+state constraints are inherently unreproducible.
+
 :CASES names the behaviour required of each admitted input, instead of one
 outcome for all of them.  :CASES appears at most once and holds one or more
 (:NAME [DOCSTRING] (:WHEN FORM) OUTCOME) cases; NAME is a unique keyword,
@@ -655,8 +850,8 @@ refusal.  A selected case's own outcome judges the invocation by the established
 rules, and its name joins the failure identity, so shrinking and rechecking stay
 inside that case.
 
-:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST or
-:POST-VALUES.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
+:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST,
+:POST-VALUES or :STATE-POST.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
 reached, in FUNCTION-CHECK-RESULT-CASE-REPORT; :PASSED means no violation was
 observed in the trials that ran, not that every case ran
 (specification §17.2).

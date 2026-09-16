@@ -56,6 +56,24 @@
            #:case-selection-error-case
            #:case-selection-error-original-condition
            #:case-selection-error-data
+           #:capture-error
+           #:capture-error-function
+           #:capture-error-binding
+           #:capture-error-index
+           #:capture-error-captured
+           #:capture-error-original-condition
+           #:capture-error-data
+           #:state-post-error
+           #:state-post-error-function
+           #:state-post-error-case
+           #:state-post-error-index
+           #:state-post-error-form
+           #:state-post-error-original-condition
+           #:state-post-error-data
+           #:unsupported-stateful-operation
+           #:unsupported-stateful-operation-operation
+           #:unsupported-stateful-operation-function
+           #:unsupported-stateful-operation-reason
            #:unsupported-seed))
 
 (in-package #:cl-spec/src/conditions)
@@ -409,3 +427,138 @@ shape for every kind."
                      (lisp-implementation-type))))
   (:documentation
    "Signalled when an integer seed cannot be honoured on this implementation."))
+
+(define-condition capture-error (cl-spec-error)
+  ((function :initarg :function
+             :initform nil
+             :reader capture-error-function
+             :documentation "Name of the function whose contract was being checked.")
+   (binding :initarg :binding
+            :initform nil
+            :reader capture-error-binding
+            :documentation "Name of the :capture binding whose form signalled.")
+   (index :initarg :index
+          :initform nil
+          :reader capture-error-index
+          :documentation "Zero-based declaration position of the failing binding.")
+   (captured :initarg :captured
+             :initform nil
+             :reader capture-error-captured
+             :documentation "Ordered (NAME . VALUE) pairs completed before the failure.
+Only the bindings that finished are present; a later binding is never shown as
+obtained, and a captured NIL is a pair with a NIL value rather than an absence.")
+   (original-condition :initarg :original-condition
+                       :initform nil
+                       :reader capture-error-original-condition
+                       :documentation "Condition the capture form signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again."))
+  (:report (lambda (condition stream)
+             (format stream "The :capture binding ~S at position ~D of ~S signalled ~A."
+                     (capture-error-binding condition)
+                     (capture-error-index condition)
+                     (capture-error-function condition)
+                     (type-of (capture-error-original-condition condition)))))
+  (:documentation "Signalled (as captured evidence) when a :capture form signals.
+
+Capture runs before the target, so the target was not called for such a trial:
+this is a contract-side error, not a target failure, and it is neither a
+counterexample nor a precondition rejection.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION."))
+
+(defun capture-error-data (condition)
+  "Project CONDITION as the explanation plist a function-check result carries.
+
+The shape is fixed: :KIND is always :CAPTURE-ERROR, :BINDING and :INDEX name the
+form that signalled, and :CONDITION-TYPE and :CONDITION-REPORT describe the
+original condition.  The values completed before the failure are the
+observation's state evidence, not part of this explanation."
+  (let ((original (capture-error-original-condition condition)))
+    (list :kind :capture-error
+          :function (capture-error-function condition)
+          :binding (capture-error-binding condition)
+          :index (capture-error-index condition)
+          :condition-type (and original (type-of original))
+          :condition-report (and original (condition-report-text original)))))
+
+(define-condition state-post-error (cl-spec-error)
+  ((function :initarg :function
+             :initform nil
+             :reader state-post-error-function
+             :documentation "Name of the function whose contract was being checked.")
+   (case :initarg :case
+         :initform nil
+         :reader state-post-error-case
+         :documentation "Selected case name, or NIL for a case-less contract.")
+   (index :initarg :index
+          :initform nil
+          :reader state-post-error-index
+          :documentation "Zero-based position of the :state-post form that signalled.")
+   (form :initarg :form
+         :initform nil
+         :reader state-post-error-form
+         :documentation "The :state-post form that signalled.")
+   (original-condition :initarg :original-condition
+                       :initform nil
+                       :reader state-post-error-original-condition
+                       :documentation "Condition the state-post form signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again."))
+  (:report (lambda (condition stream)
+             (format stream "The :state-post form at position ~D~@[ of case ~S~] ~
+                             of ~S signalled ~A."
+                     (state-post-error-index condition)
+                     (state-post-error-case condition)
+                     (state-post-error-function condition)
+                     (type-of (state-post-error-original-condition condition)))))
+  (:documentation "Signalled (as captured evidence) when a :state-post form signals.
+
+The target was called for this trial, so this is a contract-side evaluation
+error that still owns the selected case and retains the captured target
+outcome.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION."))
+
+(defun state-post-error-data (condition)
+  "Project CONDITION as the explanation plist a function-check result carries.
+
+The shape is fixed: :KIND is always :STATE-POST-ERROR, :CASE, :INDEX and :FORM
+name the offending clause position, and :CONDITION-TYPE and :CONDITION-REPORT
+describe the original condition.  Expected values are not extracted."
+  (let ((original (state-post-error-original-condition condition)))
+    (list :kind :state-post-error
+          :function (state-post-error-function condition)
+          :case (state-post-error-case condition)
+          :index (state-post-error-index condition)
+          :form (state-post-error-form condition)
+          :condition-type (and original (type-of original))
+          :condition-report (and original (condition-report-text original)))))
+
+(define-condition unsupported-stateful-operation (cl-spec-error)
+  ((operation :initarg :operation
+              :reader unsupported-stateful-operation-operation
+              :documentation "The refused operation, such as :REPLAY.")
+   (function :initarg :function
+             :initform nil
+             :reader unsupported-stateful-operation-function
+             :documentation "Name of the state-observing function spec.")
+   (reason :initarg :reason
+           :initform :state-restoration-unavailable
+           :reader unsupported-stateful-operation-reason
+           :documentation "Machine-readable reason the operation is unsupported."))
+  (:report (lambda (condition stream)
+             (format stream "Cannot ~S ~S: ~A.  The contract observes state but ~
+                             no contract for rebuilding the same initial state ~
+                             exists, so a past run cannot be replayed."
+                     (unsupported-stateful-operation-operation condition)
+                     (unsupported-stateful-operation-function condition)
+                     (unsupported-stateful-operation-reason condition))))
+  (:documentation "Signalled when a state-observing contract is asked to replay a past run.
+
+A :capture / :state-post contract observes state and never restores it, so
+reapplying a saved run against an unrestored state is refused explicitly rather
+than performed silently.  A new run with an integer seed is not this operation
+and is allowed."))
