@@ -2,21 +2,21 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 234 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 253 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
 **Macros**: [`defgenerator`](#defgenerator) · [`defproperty`](#defproperty) · [`defspec`](#defspec) · [`defspec-function`](#defspec-function)
 
-**Functions**: [`case-selection-error-data`](#case-selection-error-data) · [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
+**Functions**: [`capture-error-data`](#capture-error-data) · [`case-selection-error-data`](#case-selection-error-data) · [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`state-post-error-data`](#state-post-error-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-state`](#trial-observation-state) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
 
 **Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`validate-definition`](#validate-definition)
 
-**Accessors**: [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name)
+**Accessors**: [`capture-error-binding`](#capture-error-binding) · [`capture-error-captured`](#capture-error-captured) · [`capture-error-function`](#capture-error-function) · [`capture-error-index`](#capture-error-index) · [`capture-error-original-condition`](#capture-error-original-condition) · [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`state-post-error-case`](#state-post-error-case) · [`state-post-error-form`](#state-post-error-form) · [`state-post-error-function`](#state-post-error-function) · [`state-post-error-index`](#state-post-error-index) · [`state-post-error-original-condition`](#state-post-error-original-condition) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name) · [`unsupported-stateful-operation-function`](#unsupported-stateful-operation-function) · [`unsupported-stateful-operation-operation`](#unsupported-stateful-operation-operation) · [`unsupported-stateful-operation-reason`](#unsupported-stateful-operation-reason)
 
 **Classes**: [`custom-generator`](#custom-generator) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
 
-**Conditions**: [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed)
+**Conditions**: [`capture-error`](#capture-error) · [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`state-post-error`](#state-post-error) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed) · [`unsupported-stateful-operation`](#unsupported-stateful-operation)
 
 **Structures**: [`counterexample-artifact`](#counterexample-artifact) · [`trial-observation`](#trial-observation)
 
@@ -120,8 +120,9 @@ Attach a contract to the existing function NAME without redefining it.
 
 ```text
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:RETURNS SPEC), (:POST FORM ...),
-(:POST-VALUES (NAME ...) FORM ...), or (:SIGNALS SPEC),
+(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:CAPTURE (NAME FORM) ...),
+(:RETURNS SPEC), (:POST FORM ...),
+(:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
 argument list. Its output is validated before :PRE and the target; it has no
 automatic shrink strategy.  :PRE
@@ -149,6 +150,37 @@ and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
+:CAPTURE observes values before the call.  It appears at most once, at the top
+level, and takes one or more exact (NAME FORM) bindings: NAME is a unique
+bindable variable that collides with no argument, supplied-p variable,
+:POST-VALUES name or RESULT, and each FORM runs once in declaration order and
+sees the arguments and the capture values declared before it.  Only the primary
+value is bound, and a captured NIL is a value rather than an absence.  A capture
+variable is not a target argument: the argument schema, generator and actual
+call are unchanged.  Capture observes a value, it does not copy the object, so
+(:CAPTURE (BEFORE ACCOUNT)) does not preserve ACCOUNT's earlier contents; an
+author who needs a pre-call representation reads a value out or copies the part
+that matters.  Capture forms are contract-side code and must not modify the
+inputs or anything reachable from them; cl-spec neither detects nor restores a
+violation.
+
+:STATE-POST checks state after the call.  A case-less contract may put one
+top-level :STATE-POST; a case-carrying contract puts one inside each case, and
+the two positions cannot be combined.  It takes one or more ordinary forms, runs
+them in declaration order only after the outcome contract passed, and treats NIL
+as a violation and a signalled error as a contract error.  It sees the arguments
+and the capture values and binds no implicit RESULT, condition or raw outcome.
+Its failure identity is (:STATE-POSTCONDITION INDEX), or
+(:CASE NAME :STATE-POSTCONDITION INDEX) inside a case; a signalling form adds
+its position too.  The target was called for such a failure, so it keeps the raw
+outcome and counts as that case's call.
+
+A state-observing contract is checked by CHECK-FUNCTION but is not shrunk,
+replayed from a past result or persisted as a counterexample artifact in this
+version, because none of those can rebuild the same initial state.  A
+pure-looking use is not exempted, and this is a scope limit, not a claim that
+state constraints are inherently unreproducible.
+
 :CASES names the behaviour required of each admitted input, instead of one
 outcome for all of them.  :CASES appears at most once and holds one or more
 (:NAME [DOCSTRING] (:WHEN FORM) OUTCOME) cases; NAME is a unique keyword,
@@ -170,8 +202,8 @@ refusal.  A selected case's own outcome judges the invocation by the established
 rules, and its name joins the failure identity, so shrinking and rechecking stay
 inside that case.
 
-:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST or
-:POST-VALUES.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
+:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST,
+:POST-VALUES or :STATE-POST.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
 reached, in FUNCTION-CHECK-RESULT-CASE-REPORT; :PASSED means no violation was
 observed in the trials that ran, not that every case ran
 (specification §17.2).
@@ -190,6 +222,20 @@ observed in the trials that ran, not that every case ran
 
 
 ## Functions
+
+<a name="capture-error-data"></a>
+### capture-error-data
+
+*Function* · `(condition)`
+
+Project CONDITION as the explanation plist a function-check result carries.
+
+```text
+The shape is fixed: :KIND is always :CAPTURE-ERROR, :BINDING and :INDEX name the
+form that signalled, and :CONDITION-TYPE and :CONDITION-REPORT describe the
+original condition.  The values completed before the failure are the
+observation's state evidence, not part of this explanation.
+```
 
 <a name="case-selection-error-data"></a>
 ### case-selection-error-data
@@ -232,6 +278,17 @@ calls no target.  A backend that neither opens trial reporting nor records an
 observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
 participating backend's zero-trial and first-draw-exhaustion runs report known
 zeros.
+
+A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
+common :PRE admits an input and before case selection; state-post runs only after
+the outcome contract passed.  The per-case report adds :CAPTURE-ERRORS, a capture
+failure counts no case as called, and a state-post violation or evaluation error
+counts as that case's :FAILED or :ERROR.  Such a contract is not shrunk -- its
+shrink report says :STATE-RESTORATION-UNAVAILABLE -- and replaying a past result
+as :SEED is refused with UNSUPPORTED-STATEFUL-OPERATION before the target is
+called, as is MAKE-COUNTEREXAMPLE-ARTIFACT with :STATEFUL-CONTRACT-UNSUPPORTED.
+A new run with an integer seed is allowed; the seed reproduces a random stream,
+not the initial object state, which the author must build.
 ```
 
 <a name="clear-registry"></a>
@@ -443,17 +500,25 @@ Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
    :signals <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
    :source-location (:file <string> :package <string>) :metadata <plist>
+   [:capture ((:name <symbol> :form <form>) ...)]
+   [:state-post (<form> ...)]
    [:case-selection :exclusive
     :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
              :outcome :returns-or-:signals
              :returns <spec-data plist or NIL> :signals <spec-data plist or NIL>
              :postconditions (<form> ...)
+             [:state-post (<form> ...)]
              [:post-value-variables (<symbol> ...)]) ...)])
 
 A case-carrying contract adds :CASE-SELECTION and its ordered :CASES.  A case-less
 contract omits both keys, so its projection is exactly what it was.  Case guards
 and case postconditions are compiled functions and are never projected; their
 source forms are.
+
+:CAPTURE lists the ordered capture bindings as declarations, not the values
+observed at run time, and :STATE-POST lists the state-post forms.  A contract
+that declares neither omits both keys, so its projection is unchanged.  Producing
+this data runs no capture form, guard, state-post or target.
 
 This is the projection that answers the two questions a caller asks before
 editing a function: which inputs it accepts, and which output it must return
@@ -570,7 +635,7 @@ Return a fresh empty HASH-TABLE-REGISTRY.
 <a name="make-trial-observation"></a>
 ### make-trial-observation
 
-*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case failure-phase)`
+*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case state failure-phase)`
 
 Create the evidence record for one invocation.
 
@@ -632,7 +697,8 @@ Mutations of conses and arrays, including changed sharing, stop backend shrinkin
 The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
 NIL when none was selected, and is recorded on the observation.  The optional
 ninth is the failure phase the classifier recorded, or NIL for a target
-observation; a recorded :CASE-SELECTION is checked to be consistent with it.
+observation; a recorded phase is checked to be consistent with the status and the
+case.  The optional tenth is the trial's state evidence, recorded as captured.
 
 <a name="properties-for"></a>
 ### properties-for
@@ -925,6 +991,19 @@ has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 SCHEMA-INFO, specification §38.1). Children are plain IR projections.
 ```
 
+<a name="state-post-error-data"></a>
+### state-post-error-data
+
+*Function* · `(condition)`
+
+Project CONDITION as the explanation plist a function-check result carries.
+
+```text
+The shape is fixed: :KIND is always :STATE-POST-ERROR, :CASE, :INDEX and :FORM
+name the offending clause position, and :CONDITION-TYPE and :CONDITION-REPORT
+describe the original condition.  Expected values are not extracted.
+```
+
 <a name="tagged-union-branch"></a>
 ### tagged-union-branch
 
@@ -1034,6 +1113,20 @@ return spec or postcondition form broke, so shrinking cannot cross from one
 failure into another.
 ```
 
+<a name="trial-observation-state"></a>
+### trial-observation-state
+
+*Function* · `(instance)`
+
+State evidence for a :CAPTURE / :STATE-POST trial, or NIL.
+
+```text
+A contract that declares neither clause records NIL, so a featureless run's
+evidence is unchanged.  The plist carries :CAPTURE and :STATE-POST entries with
+the statuses and details fixed by the specification; capture values are copied
+with the same evidence snapshot as the other fields.
+```
+
 <a name="trial-observation-status"></a>
 ### trial-observation-status
 
@@ -1133,7 +1226,11 @@ The optional seventh value is the captured target call outcome; the optional
 eighth names the selected function-spec case, or NIL when none was selected; the
 optional ninth is the failure phase the classifier recorded, or NIL for a target
 observation.  A classifier records :CASE-SELECTION only when selection itself
-failed, so nothing infers a phase from a condition's class.
+failed, so nothing infers a phase from a condition's class; it records :CAPTURE
+for a capture form that signalled and :STATE-POST for a state-post form that
+failed or signalled, and only the latter means the target was called.  The
+optional tenth is the trial's state evidence plist, or NIL when the contract
+declares neither :CAPTURE nor :STATE-POST.
 The first six keep their established meaning, so an existing specialization that
 returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
@@ -1358,6 +1455,45 @@ Validate and normalize a definition, returning OBJECT.
 
 ## Accessors
 
+<a name="capture-error-binding"></a>
+### capture-error-binding
+
+*Accessor* of `capture-error` · `(condition)`
+
+Name of the :capture binding whose form signalled.
+
+<a name="capture-error-captured"></a>
+### capture-error-captured
+
+*Accessor* of `capture-error` · `(condition)`
+
+Ordered (NAME . VALUE) pairs completed before the failure.
+Only the bindings that finished are present; a later binding is never shown as
+obtained, and a captured NIL is a pair with a NIL value rather than an absence.
+
+<a name="capture-error-function"></a>
+### capture-error-function
+
+*Accessor* of `capture-error` · `(condition)`
+
+Name of the function whose contract was being checked.
+
+<a name="capture-error-index"></a>
+### capture-error-index
+
+*Accessor* of `capture-error` · `(condition)`
+
+Zero-based declaration position of the failing binding.
+
+<a name="capture-error-original-condition"></a>
+### capture-error-original-condition
+
+*Accessor* of `capture-error` · `(condition)`
+
+Condition the capture form signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again.
+
 <a name="case-selection-error-case"></a>
 ### case-selection-error-case
 
@@ -1450,7 +1586,8 @@ Per-case report of this run, or :NOT-COLLECTED.
 
 ```text
 A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
-:CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
+:CASES, :CASE-SELECTION-ERRORS, :CAPTURE-ERRORS and :NEVER-CALLED; see
+CHECK-FUNCTION.  The
 counters come from the run's own ordinary trials and are snapshotted onto the
 result, so two runs of one contract never share them.  A result that did not go
 through a function-check run, and one whose backend never opened trial
@@ -1461,7 +1598,8 @@ a first draw that exhausted the generation budget report known zeros.
 A trial that reached the target is counted for its selected case even when
 classifying the result signalled, because the call happened and the case owned
 it.  A case-selection error called no target, so it is counted separately and
-never appears as a call of any case.
+never appears as a call of any case.  A capture failure called no target either:
+it counts in :CAPTURE-ERRORS and is not a case-selection error.
 
 :STATUS :PASSED means no violation was observed in the trials that ran.  It does
 not mean every declared case ran; read :NEVER-CALLED before drawing that
@@ -2138,6 +2276,43 @@ Spec designator the value was checked against.
 
 Value that failed the check.
 
+<a name="state-post-error-case"></a>
+### state-post-error-case
+
+*Accessor* of `state-post-error` · `(condition)`
+
+Selected case name, or NIL for a case-less contract.
+
+<a name="state-post-error-form"></a>
+### state-post-error-form
+
+*Accessor* of `state-post-error` · `(condition)`
+
+The :state-post form that signalled.
+
+<a name="state-post-error-function"></a>
+### state-post-error-function
+
+*Accessor* of `state-post-error` · `(condition)`
+
+Name of the function whose contract was being checked.
+
+<a name="state-post-error-index"></a>
+### state-post-error-index
+
+*Accessor* of `state-post-error` · `(condition)`
+
+Zero-based position of the :state-post form that signalled.
+
+<a name="state-post-error-original-condition"></a>
+### state-post-error-original-condition
+
+*Accessor* of `state-post-error` · `(condition)`
+
+Condition the state-post form signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again.
+
 <a name="unknown-function-spec-name"></a>
 ### unknown-function-spec-name
 
@@ -2158,6 +2333,27 @@ Symbol that is not registered as a property.
 *Accessor* of `unknown-spec` · `(condition)`
 
 Symbol that is not registered as a spec.
+
+<a name="unsupported-stateful-operation-function"></a>
+### unsupported-stateful-operation-function
+
+*Accessor* of `unsupported-stateful-operation` · `(condition)`
+
+Name of the state-observing function spec.
+
+<a name="unsupported-stateful-operation-operation"></a>
+### unsupported-stateful-operation-operation
+
+*Accessor* of `unsupported-stateful-operation` · `(condition)`
+
+The refused operation, such as :REPLAY.
+
+<a name="unsupported-stateful-operation-reason"></a>
+### unsupported-stateful-operation-reason
+
+*Accessor* of `unsupported-stateful-operation` · `(condition)`
+
+Machine-readable reason the operation is unsupported.
 
 
 ## Classes
@@ -2244,6 +2440,22 @@ Base class of every Semantic IR node.
 
 
 ## Conditions
+
+<a name="capture-error"></a>
+### capture-error
+
+*Condition* · extends cl-spec-error
+
+Signalled (as captured evidence) when a :capture form signals.
+
+```text
+Capture runs before the target, so the target was not called for such a trial:
+this is a contract-side error, not a target failure, and it is neither a
+counterexample nor a precondition rejection.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION.
+```
 
 <a name="case-selection-error"></a>
 ### case-selection-error
@@ -2379,6 +2591,22 @@ Signalled by skeleton stubs that carry a settled signature but no body.
 
 Signalled when a value fails to satisfy a spec.
 
+<a name="state-post-error"></a>
+### state-post-error
+
+*Condition* · extends cl-spec-error
+
+Signalled (as captured evidence) when a :state-post form signals.
+
+```text
+The target was called for this trial, so this is a contract-side evaluation
+error that still owns the selected case and retains the captured target
+outcome.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION.
+```
+
 <a name="unbound-target"></a>
 ### unbound-target
 
@@ -2428,6 +2656,20 @@ Signalled when a spec designator resolves to nothing.
 *Condition* · extends cl-spec-error
 
 Signalled when an integer seed cannot be honoured on this implementation.
+
+<a name="unsupported-stateful-operation"></a>
+### unsupported-stateful-operation
+
+*Condition* · extends cl-spec-error
+
+Signalled when a state-observing contract is asked to replay a past run.
+
+```text
+A :capture / :state-post contract observes state and never restores it, so
+reapplying a saved run against an unrestored state is refused explicitly rather
+than performed silently.  A new run with an integer seed is not this operation
+and is allowed.
+```
 
 
 ## Structures

@@ -16,7 +16,15 @@ admits, zero matches / several matches / a signalling guard are contract-side
 `:case-selection` errors that call no target, per-case calls and never-called
 cases are reported, the selected case name joins the failure identity, and
 case-carrying contracts refuse instrumentation. Expected-error contracts are not
-supported by runtime instrumentation.
+supported by runtime instrumentation. A function spec may also declare a
+top-level `:capture` of ordered `(NAME FORM)` bindings observed before the call
+and a `:state-post` (top-level for a case-less contract, or inside each case)
+checked after a passed outcome; a capture variable is not a target argument, a
+capture or state-post failure keeps the recorded phase and evidence rather than
+inferring either from a condition's class, and such a state-observing contract
+is not shrunk, replayed from a past result, persisted as a counterexample
+artifact or instrumented in this version. Capture observes a value and does not
+copy it, and this feature does not restore anything.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
 Field-aware keyword plist specs support required/optional keys, closed records,
@@ -51,8 +59,9 @@ Tests mirror the sources in `tests/` as `*-test.lisp` and **must** be listed in
 
 Systems beside the core are `cl-spec/check-it` (generation and shrinking),
 `cl-spec/instrument` (runtime contract wrappers), `cl-spec/specs` (executable
-self-specifications), `cl-spec/tests`, `cl-spec/examples/structured-data` and
-`cl-spec/examples/function-spec-cases`.
+self-specifications), `cl-spec/tests`, `cl-spec/examples/structured-data`,
+`cl-spec/examples/function-spec-cases` and
+`cl-spec/examples/stateful-withdraw`.
 The core system must never load `check-it` or cl-mcp.
 
 `examples/structured-data.lisp` is the executable integration example for the
@@ -73,6 +82,14 @@ named per-condition cases; its guide is
 `tests/function-spec-cases-example-test.lisp`. It registers its own generator and
 contracts only in `register-example!`, and each `demo-*` runs a controlled input
 sequence, so neither loading nor reading it depends on what a seed draws.
+
+`examples/stateful-withdraw.lisp` is the same shape of executable example for
+`:capture` and `:state-post`; its guide is
+`docs/guides/state-observation-walkthrough.md` and its suite is
+`tests/stateful-withdraw-example-test.lisp`. Its generator builds a fresh
+account per draw from a scripted `(BALANCE ID AMOUNT)` triple, and its
+`demo-limits` entry point reports the unsupported shrinking, replay and
+artifact paths rather than hiding them.
 
 ## Build, Test, and Development Commands
 
