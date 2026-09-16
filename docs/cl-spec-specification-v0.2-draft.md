@@ -74,6 +74,7 @@
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
 | Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| 名前付き条件別Function Spec | 実装済み | `defspec-function`の`:cases`。入力条件ごとに`:returns`か`:signals`を要求し、exclusiveに選択する。ケース別reportは`function-check-result-case-report`。ケース付きinstrumentationは非対応（§17.2） |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの生成元選択は§10・§73.4に従い、競合するcustom generator指定が一つだけならそれを優先してAND全体のvalidatorでfilterし、複数なら`generator-unavailable`とする。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
@@ -1502,6 +1503,133 @@ fdefinitionを変更しない。capabilityのinstrumentationは`:unavailable`と
 statusは正常復帰かerror outcomeかを区別する。契約不一致と契約自身の異常の区別には
 `failure-reason`（`:condition-spec`と`:contract-error`）を使う。
 欠落時の`:expected`ではAND・OR・NULLABLEも子specのdescriptorを保持する。
+
+## 17.2 名前付きケース（入力条件ごとの期待outcome）
+
+> **位置付け:** 実装済み。`defspec-function`の`:cases`と
+> `function-check-result-case-report`として提供する。
+
+共通`:pre`は契約が対象とする入力領域を限定する。ケース条件は、その領域内で
+**要求する振る舞い**を選ぶ。`tagged-by`が値のタグでデータspecを選ぶのとは別の機能である。
+
+```text
+CASE      := (KEYWORD [DOCSTRING] (:when FORM) OUTCOME)
+OUTCOME   := (:returns SPEC) [(:post FORM ...) | (:post-values (NAME ...) FORM ...)]
+           | (:signals SPEC)
+```
+
+- `:cases`は一つだけ、少なくとも一つのケースを含む。
+- ケース名はkeywordで、同一契約内で一意。ケース名の直後に任意のdocstringを一つ置ける。
+- 各ケースは`:when`を一つだけ持ち、formを一つ取る。`t`と`nil`は通常のformであり、
+  `t`を暗黙の`:else`として扱わない。
+- 各ケースは`:returns`か`:signals`のどちらか一方を必須とする。`:returns`ケースでは
+  既存の`:post`／`:post-values`を利用できるが、両者の排他性は契約レベルと同じく
+  ケース内でも適用し、`:post-values`は固定`(values ...)`戻り値とpost述語を要求する。
+  節の順序が2つの述語のどちらを残すかを決めることはない。`:signals`ケースでは
+  初版は両者を許可せず、この判定は本体の真偽ではなく**節の出現**で行う。空の
+  `(:post)`も書かれた節として拒否し、順序を入れ替えても結論は変わらない。
+- `:args`・`:args-generator`・共通`:pre`はトップレベルに置く。ケースごとの`:args`・
+  `:args-generator`・`:pre`・入れ子の`:cases`・`:else`・優先順位は初版では追加しない。
+- `:cases`とトップレベルの`:returns`／`:signals`／`:post`／`:post-values`は併用できない。
+  共通outcomeの継承・上書きは導入しない。
+- 未知の節、重複節、重複名、不正な形は登録前に`invalid-function-spec-form`で拒否する。
+
+選択は**exclusive**（ちょうど一つ一致）であり、先頭一致ではない。通常の一試行は
+引数束縛 → 共通`:pre` → ケース条件（宣言順に全て評価。最初の真で打ち切らない）→
+一致件数の確定 → 対象の一度だけの呼び出し → 確定ケースのoutcomeでの判定、の順に進む。
+`:when`は引数束縛だけを参照し、`RESULT`や返り値束縛は参照できない。省略引数の扱いと
+suppliednessは既存call-layoutに従い、対象のデフォルト式を選択のために評価しない。
+条件は一試行につき一度だけ評価し、診断やreportのために再評価せず、対象実行後に
+選択し直さない。
+
+一致ゼロ・複数一致・`:when`の評価中のerrorは、対象の失敗ではなく**契約側のケース選択
+エラー**である。この場合、対象は呼ばれず、`:rejected`にも数えない。
+
+| 項目 | 値 |
+|---|---|
+| status | `:error` |
+| failure-reason | `:contract-error` |
+| failure-phase | `:case-selection` |
+| condition | `case-selection-error`（kind `:no-matching-case`／`:ambiguous-case`／`:case-guard-error`） |
+| signature | `(:case-selection KIND)`、guard errorは`(:case-selection :case-guard-error NAME)` |
+| explanation | `(:kind :case-selection-error :case-error KIND :function NAME :cases (...) :case NAME :condition-type T :condition-report S)` |
+
+`:when`が`spec-violation`を送出した場合も初版は`:case-guard-error`とする。共通`:pre`が
+`spec-violation`を棄却として扱う規則は`:pre`だけのものである。ケース選択エラーは
+shrinkせず、対象のcounterexample artifactとして保存しない。
+
+`failure-phase`は**フレームワークが発生段階を記録**して決める。conditionの型から
+推測しない。選択そのものが失敗した試行だけが`:case-selection`を記録し、対象を呼んだ
+観測はすべて`nil`である。したがって、対象自身が公開condition`case-selection-error`を
+送出した場合も通常の対象失敗として扱い、shrinkとartifact保存を妨げない。
+
+選択後の判定は既存のFunction Specと同じ規則で、確定ケースの`:returns`／`:signals`／
+`:post`／`:post-values`に対して行う。ケースを通すために既存の判定を緩和しない。
+期待errorが要求どおり送出された試行は、そのケースの`:passed`へ数える。
+選択後に判定側（ケースのpost述語やoutcome specの述語）がerrorを送出した場合も
+`:contract-error`のままとし、確定ケース名・捕捉済みの対象outcome・ケースで包んだ
+失敗同一性`(:case NAME :contract-error TYPE)`・そのケースの`:error`件数を保持する。
+これは対象が呼ばれた試行であり、`:never-called`へ現れない。
+
+選択されたケース名は試行の証拠（`trial-observation-case`）に記録し、失敗の同一性へ含める:
+
+```text
+(:case NAME . 既存のsignature)
+```
+
+`failure-identities-match-p`はケース名を比較したうえで、内側に既存の比較規則を適用する。
+ケース名が異なる失敗は、同じ戻り値違反・同じcondition型でも同じ失敗として扱わない。
+ケースを持たない既存契約のsignatureは変更しない。
+
+`check-function`の結果と`result-data`は`:case-report`を持つ
+（公開reader `function-check-result-case-report`）:
+
+```text
+(:selection :exclusive :unit :normal-trials
+ :declared-cases (NAME ...)
+ :cases ((:name NAME :documentation S
+          :called N :passed N :failed N :error N) ...)
+ :case-selection-errors N
+ :never-called (NAME ...))
+```
+
+集計対象は通常試行だけであり、shrink中の呼び出しや共通`:pre`で棄却した入力は
+加算しない。ケース選択エラーはどのケースの`:called`も増やさない。選択後に判定側が
+errorを送出した試行は、対象を呼んだそのケースの`:error`へ数える。reportは実際の試行から
+集計し、そのために条件や対象を再実行しない。カウンタは一runのコンテキストが所有し、
+登録定義やグローバル表へ保存しない。`trials - rejected`は対象呼出件数ではなく、
+ケース選択まで到達した試行数である。
+
+計測への参加は最初のobservationより前に確定する。計測対応backendは最初のdrawの前に
+計測開始を宣言するため、試行0件や最初の入力生成での予算枯渇でも「既知のゼロ」を
+計測済みとして報告し、生成枯渇は別report（`:failure-phase :generation`）で示す。
+計測を開始せず観測も記録しなかったbackendだけが`:not-collected`を返す。手動で
+組み立てた結果も同じ扱いである。
+
+`function-spec-data`はケースを持つ契約について、順序付き`:cases`と
+`:case-selection :exclusive`を返す（ケースを持たない契約はこれらのキーを省く）。
+`definition-digest`はケース名・順序・条件・outcome・事後条件と、登録されたspec／
+generator依存を反映する。ケースを持たない既存定義のdigestは変更しない。
+引数や外部状態に依存する任意のコードの同一性までは保証しない。
+
+`function-case`にも契約と同じ不変条件を課す。`:when-forms`と`:when-function`、
+`:postconditions`と`:postcondition-function`は同時に更新し、`:post-value-variables`の
+変更は新しいpost formsと述語を要求する。DSLとprogrammatic constructionで同一の規則を
+適用し、拒否された再初期化は対象slotを巻き戻す。
+
+ケース付き契約のruntime instrumentationは初版では未対応である。capabilityは
+`:unavailable`を返し、install／refreshはfdefinitionを変更する前に
+`unsupported-instrumentation-target`（reason `:named-cases-unsupported`）で拒否する。
+ケースを無視して引数だけ検査するwrapperは作らない。ケースを持たない既存の
+instrumentationは変更しない。
+
+初版の非対象: ケースごとのgenerator合成・`:when`を満たすまでの再試行ループ・
+ケース別scheduler・`check-function`のケース指定option・到達性の自動判定・
+ケース別最低試行数やcoverage不足による自動失敗・ケース選択エラーのshrinking・
+`:capture`／`old`・期待error後の状態に対する事後条件・fixture／resetプロトコル・
+状態機械PBT・並行性検証・CLOSメソッド契約の合成・mutation検出・一般的な制約solver・
+新しいMCP tool。ケース条件も検証述語やreaderと同じく非破壊でなければならず、
+cl-specはその違反を検出も復元もしない。
 
 # 18. 自動generative function test
 
@@ -4801,3 +4929,119 @@ refusal, budget boundaries and explicit zero, shared sibling budgets, difficult
 values exceeding 1000 candidates with spare request budget, fresh per-request
 counters, construction-only capability, report validation, the generation-only
 runner branch and artifact refusal, target-outcome reports, and shrink safety.
+
+---
+
+## Function Spec case selection implementation addendum (2026-09-16)
+
+This addendum fixes the executable contracts for §17.2 named case selection and
+amends §17/§18/§19/§20/§28/§57/§73.1 D1 by section meaning. The design is
+`docs/superpowers/specs/2026-09-16-function-spec-cases-design.md`; the runnable
+tour is `docs/guides/function-spec-cases-walkthrough.md`.
+
+### Declaration and model
+
+`:cases` is accepted once, with at least one case. A case is a keyword name, an
+optional docstring, exactly one `(:when FORM)`, and exactly one of `(:returns
+SPEC)` or `(:signals SPEC)`; a `:returns` case may add `:post` or `:post-values`,
+a `:signals` case may not -- judged by clause occurrence, so an empty `(:post)`
+is refused in either order, exactly as at the contract level. Inside a case
+`:post` and `:post-values` are mutually exclusive, exactly as at the contract
+level, and `:post-values` additionally requires a fixed `(values ...)` return
+declaration and a post predicate; clause order never decides which predicate
+survives. Cases are stored as ordered
+`function-case` objects on the single `function-spec` registered under the
+function's name; a case is never registered as a public function spec of its own.
+`:cases` is exclusive with the contract-level `:returns`, `:signals`, `:post` and
+`:post-values`; there is no inherited common outcome. The DSL and programmatic
+construction enforce the same invariants: a clause's forms and its compiled
+predicate (`:when-forms` with `:when-function`, `:postconditions` with
+`:postcondition-function`) change together, and a `:post-value-variables` change
+requires new post forms and a new compiled predicate. A refused reinitialization
+restores the participating slots, and a case-less contract keeps its accepted
+clauses, meaning, signatures, projection and digest bytes.
+
+### Selection
+
+After the argument schema and the common `:pre`, every guard runs in declaration
+order, once per trial, without stopping at the first true one. Exactly one match
+selects that case; zero and several matches are `:no-matching-case` and
+`:ambiguous-case`; a guard that signals is `:case-guard-error`, including a
+`SPEC-VIOLATION`. Those are `:error` / `:contract-error` results with
+`:failure-phase :case-selection`, a `case-selection-error` condition, the
+signature `(:case-selection KIND)` (or `(:case-selection :case-guard-error NAME)`)
+and the structured explanation fixed in §17.2. The target is not invoked, the
+trial is not a rejection, the failure is not shrunk, and no target counterexample
+artifact is persisted for it. Guards are never re-evaluated for a report or after
+the call, and a case is not reselected from the value the target returned.
+
+### Outcome, evidence and reporting
+
+A selected case is judged by the established classification against that case's
+outcome; no rule is relaxed to make a case pass, and expected-error successes
+count as case passes. A classification error raised after selection -- a case
+postcondition or an outcome-spec predicate that signals -- keeps everything the
+trial produced: the recorded selected case, the captured target outcome, the
+case-wrapped `:contract-error` identity `(:case NAME :contract-error TYPE)` and
+the call counted as that case's `:error`. The failure phase is the one the
+classifier recorded, never one inferred from a condition's class, so a target
+that signals the public `CASE-SELECTION-ERROR` condition remains an ordinary
+target failure that may be shrunk and persisted. The selected name is recorded on
+the trial observation and wraps the existing failure signature as
+`(:case NAME . INNER)`; `failure-identities-match-p` compares the names and then
+applies the existing rules to INNER, so shrinking, replay and rechecking stay
+inside the case while case-less identities are unchanged. `check-function`
+results and `result-data` carry `:case-report` with `:selection :exclusive`,
+`:unit :normal-trials`, the declared cases, per-case call and outcome counts, the
+selection-error count and the never-called names. Counters belong to one run and
+receive a snapshot; shrink candidates and precondition refusals are not counted.
+A participating backend opens reporting before its first draw, so zero trials and
+a first draw that exhausts the generation budget report known zeros while the
+exhaustion itself is reported separately under `:failure-phase :generation`;
+only a backend that neither opens reporting nor records an observation answers
+`:not-collected`. `:passed` keeps its meaning over the trials that ran and does
+not claim every case ran; `trials - rejected` counts trials that reached
+selection, not target calls.
+
+The counterexample artifact format version is unchanged: the case name is
+payload inside the existing signature, so a pre-change artifact loads unchanged
+and matches only case-less failures, and a case-selection error is refused
+rather than persisted as a call the target never made.
+
+### Introspection, digest and instrumentation
+
+`function-spec-data` adds ordered `:cases` and `:case-selection :exclusive` for a
+case-carrying contract and omits both otherwise; no executable closure is
+projected and producing the data runs neither guard nor target. `definition-digest`
+covers case names, order, guard source, outcome specs, post forms and post-value
+bindings, and the registered spec/generator dependencies they name, so a case
+change changes the digest while a case-less digest is unchanged; it does not
+claim identity of arbitrary code that depends on arguments or external state.
+Runtime instrumentation of a case-carrying contract is unsupported:
+`definition-instrumentation-capability` returns `:unavailable`, and install and
+refresh refuse with reason `:named-cases-unsupported` before replacing the
+function or touching an existing wrapper.
+
+### Acceptance tests
+
+`tests/function-cases-test.lisp` covers declaration and refusal (DSL and
+programmatic, including rollback and the unchanged case-less projection), exclusive
+selection with controlled input sequences (one match, zero, several, a later
+guard error after a match, once-per-trial evaluation, precondition refusal,
+optional/suppliedness bindings, no reselection from the returned value, `:when
+NIL`), the reused outcome classifier (returns, post, post-values, expected error,
+missing condition, wrong condition, non-selected outcomes, reserved failures),
+the case report (counts, never-called, shrinking exclusion, `result-data`,
+per-run ownership, `:not-collected`, all-rejected runs), evidence and replay
+(case-wrapped failure identity, shrinking inside a case, artifact round trip and
+recheck, case-selection refusal, replay, legacy case-less artifacts), digest
+sensitivity, and the instrumentation refusal.
+
+It also pins the review follow-ups: a classification error after selection keeps
+its case, identity and count; a target signalling the public
+`CASE-SELECTION-ERROR` stays a target failure whose evidence is persistable; a
+case reinitialization must update forms and predicate together; `:post` and
+`:post-values` are exclusive inside a case, and a `:signals` case refuses either
+one by clause occurrence (an empty `(:post)` included); a participating backend's
+zero-trial and first-draw-exhaustion runs report known zeros while a
+non-participating backend answers `:not-collected`.

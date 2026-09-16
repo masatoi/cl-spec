@@ -12,6 +12,8 @@
            #:trial-observation-reason #:trial-observation-signature
            #:trial-observation-explanation #:trial-observation-condition
            #:trial-observation-condition-report #:trial-observation-value
+           #:trial-observation-case #:begin-trial-report #:note-trial-outcome
+           #:observation-failure-phase
            #:observation-from-current-run-p #:evaluate-trial #:observe-trial #:observation-failure-p
            #:failure-identities-match-p #:snapshot-value #:same-value-p))
 
@@ -21,7 +23,8 @@
             (:constructor make-trial-observation
                 (&key run property arguments arguments-mutated-p
                       (status :passed) reason signature explanation condition
-                      condition-report (outcome :not-collected) value))
+                      condition-report (outcome :not-collected) value case
+                      failure-phase))
             (:copier nil))
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
@@ -37,7 +40,9 @@ text at observation time."
   (condition nil :read-only t)
   (condition-report nil :read-only t)
   (outcome :not-collected :read-only t)
-  (value nil :read-only t))
+  (value nil :read-only t)
+  (case nil :read-only t)
+  (failure-phase nil :read-only t))
 
 ;; DEFSTRUCT cannot attach a docstring to a slot, and these accessors are part
 ;; of the public API, so their documentation is installed explicitly.  The
@@ -95,6 +100,27 @@ NIL, which the primary VALUE alone cannot.")
 
 (setf (documentation 'trial-observation-value 'function)
       "Snapshot of the primary value the invocation returned, or NIL.")
+
+(setf (documentation 'trial-observation-case 'function)
+      "Name of the selected function-spec case, or NIL.
+
+A case-less contract, a precondition refusal and a case-selection error all have
+no selected case, so this is NIL for them.  A failure of a selected case carries
+the name in its signature as well, which is what keeps shrinking and rechecking
+inside one case.
+
+A contract error raised while classifying a selected case still records that
+case: the target was called for it, so the failure belongs to it and the case
+report must count the call.")
+
+(setf (documentation 'trial-observation-failure-phase 'function)
+      "Failure phase the classifier recorded for this trial, or NIL.
+
+Recorded where the framework produced the observation -- the function-spec
+classifier marks :CASE-SELECTION when selection itself failed -- rather than
+inferred later from the condition's class.  A target that signals the public
+CASE-SELECTION-ERROR condition is therefore an ordinary target observation, and
+the backend may shrink it and persist it as a counterexample.")
 
 (defun snapshot-value (value)
   "Copy conses and arrays iteratively, preserving cycles and sharing within VALUE.
@@ -160,6 +186,21 @@ Other objects retain identity; arbitrary application state is not checkpointed."
                ((not (eql a b)) (return-from same-value-p nil))))
     t))
 
+(defun case-headed-signature-p (signature)
+  "Return true when SIGNATURE claims to be a case-wrapped failure identity.
+
+Detecting the claim even when it is malformed matters: a naked CASE-CARRIED
+identity must never fall through to the unwrapped comparison and match a
+case-less failure."
+  (and (consp signature) (eq :case (first signature))))
+
+(defun case-wrapped-signature-p (signature)
+  "Return true when SIGNATURE is a well-formed (:CASE NAME . INNER) identity."
+  (and (consp signature)
+       (eq :case (first signature))
+       (keywordp (second signature))
+       (consp (cddr signature))))
+
 (defun failure-identities-match-p (original candidate)
   "Compare observed failure signatures against the ORIGINAL trial.
 False property results and conditions have distinct classes, and conditions
@@ -167,19 +208,29 @@ compare by type. Legacy primary-value return-spec/postcondition crossings retain
  their shared :RETURN-VALUE class; within each clause, shapes or indices must agree.
 Fixed :RETURN-VALUES failures require the same clause and shape or post-form index;
 this prevents a return-position violation from shrinking into a different post failure.
-An unknown post-form identity never establishes a match, including clause crossings."
+An unknown post-form identity never establishes a match, including clause crossings.
+A function-spec case wraps that identity as (:CASE NAME . INNER): the case names
+must be EQ and the inner comparison is exactly the one above, so the same
+violation in a different case is a different failure while the rules inside a
+case are unchanged.  A wrapped identity never matches an unwrapped one, so
+evidence that names no case cannot be adopted for a case-carrying failure."
   (and original candidate
-       (eq (first original) (first candidate))
-       (not (and (member (first original) '(:return-value :return-values))
-                 (eq (second original) :postcondition)
-                 (null (third original))))
-       (not (and (member (first candidate) '(:return-value :return-values))
-                 (eq (second candidate) :postcondition)
-                 (null (third candidate))))
-       (if (eq (first original) :return-value)
-           (or (not (eq (second original) (second candidate)))
-               (same-value-p (cddr original) (cddr candidate)))
-           (same-value-p (rest original) (rest candidate)))))
+       (if (or (case-headed-signature-p original) (case-headed-signature-p candidate))
+           (and (case-wrapped-signature-p original)
+                (case-wrapped-signature-p candidate)
+                (eq (second original) (second candidate))
+                (failure-identities-match-p (cddr original) (cddr candidate)))
+           (and (eq (first original) (first candidate))
+                (not (and (member (first original) '(:return-value :return-values))
+                          (eq (second original) :postcondition)
+                          (null (third original))))
+                (not (and (member (first candidate) '(:return-value :return-values))
+                          (eq (second candidate) :postcondition)
+                          (null (third candidate))))
+                (if (eq (first original) :return-value)
+                    (or (not (eq (second original) (second candidate)))
+                        (same-value-p (cddr original) (cddr candidate)))
+                    (same-value-p (rest original) (rest candidate)))))))
 
 (defun observation-failure-p (observation)
   "Return true when OBSERVATION records a failed or signalled trial."
@@ -190,6 +241,13 @@ An unknown post-form identity never establishes a match, including clause crossi
 (defgeneric evaluate-trial (property arguments &key context)
   (:documentation "Evaluate PROPERTY once, returning status, reason, signature,
 explanation, condition and value. Status is :passed, :rejected, :failed or :error.
+The optional seventh value is the captured target call outcome; the optional
+eighth names the selected function-spec case, or NIL when none was selected; the
+optional ninth is the failure phase the classifier recorded, or NIL for a target
+observation.  A classifier records :CASE-SELECTION only when selection itself
+failed, so nothing infers a phase from a condition's class.
+The first six keep their established meaning, so an existing specialization that
+returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
 Specializations must classify during this invocation, never by rerunning it."))
 
@@ -236,11 +294,50 @@ Specializations must classify during this invocation, never by rerunning it."))
              :condition-report (render-condition-report condition))))
     (t (error 'invalid-backend-result :reason "unknown target outcome kind"))))
 
+(defun observation-failure-phase (observation)
+  "Return the failure phase the classifier recorded for OBSERVATION, or NIL.
+
+The classifier records the phase where it knows it: a function-spec case
+selection failure is marked :CASE-SELECTION, and every target observation is
+NIL.  That keeps a target which signals the public CASE-SELECTION-ERROR
+condition out of the selection-only paths (shrinking suppression, counterexample
+refusal), because the target was called and produced the condition.  The phase
+is never inferred from the condition's class."
+  (when (typep observation 'trial-observation)
+    (trial-observation-failure-phase observation)))
+
+(defgeneric begin-trial-report (property)
+  (:documentation "Open the run's trial reporting for PROPERTY, if the backend keeps one.
+
+The backend calls this once before generating its first trial, so a run that
+produces no observation at all -- zero trials, or a first draw that exhausts the
+generation budget -- still reports the zeros it does know instead of
+:NOT-COLLECTED.  The default keeps nothing: an ordinary PROPERTY has no per-trial
+state to aggregate, and a backend that never calls this has not reported.")
+  (:method ((property property))
+    (declare (ignore property))
+    nil))
+
+(defgeneric note-trial-outcome (property observation)
+  (:documentation "Record one ordinary trial OBSERVATION of PROPERTY, if the run keeps evidence.
+
+The backend calls this once per generated trial and never for a shrink candidate,
+so a specialization can keep per-run counters without counting shrinking.  The
+default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate.")
+  (:method ((property property) observation)
+    (declare (ignore property observation))
+    nil))
+
 (defun observe-trial (property arguments &key context)
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.
-Mutations of conses and arrays, including changed sharing, stop backend shrinking."
+Mutations of conses and arrays, including changed sharing, stop backend shrinking.
+The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
+NIL when none was selected, and is recorded on the observation.  The optional
+ninth is the failure phase the classifier recorded, or NIL for a target
+observation; a recorded :CASE-SELECTION is checked to be consistent with it."
   (let ((snapshot (snapshot-value arguments)))
-    (multiple-value-bind (status reason signature explanation condition value outcome)
+    (multiple-value-bind (status reason signature explanation condition value outcome
+                          selected-case failure-phase)
         (evaluate-trial property arguments :context context)
       (unless (and (member status '(:passed :rejected :failed :error))
                    (if (member status '(:failed :error))
@@ -248,7 +345,12 @@ Mutations of conses and arrays, including changed sharing, stop backend shrinkin
                             (if (eq status :error)
                                 (typep condition 'error)
                                 (null condition)))
-                       (not (or reason signature explanation condition))))
+                       (not (or reason signature explanation condition)))
+                   (or (null selected-case) (keywordp selected-case))
+                   (or (null failure-phase)
+                       (and (eq :case-selection failure-phase)
+                            (eq status :error)
+                            (null selected-case))))
         (error 'invalid-backend-result
                :reason "evaluate-trial returned an invalid status or inconsistent evidence"))
       (make-trial-observation
@@ -261,4 +363,6 @@ Mutations of conses and arrays, including changed sharing, stop backend shrinkin
        :condition condition
        :condition-report (render-condition-report condition)
        :outcome (observed-outcome-data outcome)
-        :value (snapshot-value value)))))
+        :value (snapshot-value value)
+        :case selected-case
+        :failure-phase failure-phase))))

@@ -14,6 +14,10 @@
                 #:unknown-function-spec
                 #:unbound-target
                 #:invalid-function-spec-form
+                #:case-selection-error
+                #:case-selection-error-data
+                #:case-selection-error-kind
+                #:case-selection-error-case
                 #:spec-violation)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
@@ -43,6 +47,7 @@
                 #:property-source-form)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result
+                #:property-result-case-report
                 #:property-result-schema-metadata #:property-result-budget
                 #:property-result-options #:property-result-provenance
                 #:property-result-status
@@ -65,7 +70,9 @@
                 #:current-generator-backend
                 #:backend-default-trials)
   (:import-from #:cl-spec/src/execution
-                #:evaluate-trial #:snapshot-value #:failure-identities-match-p)
+                #:evaluate-trial #:snapshot-value #:failure-identities-match-p
+                #:begin-trial-report #:note-trial-outcome #:observation-failure-phase
+                #:trial-observation-case #:trial-observation-status)
   (:import-from #:cl-spec/src/explain
                 #:explain-data #:expected-descriptor)
   (:export #:make-function-check-property #:precondition-refuses-p
@@ -85,6 +92,21 @@
            #:function-spec-source-form
            #:function-spec-source-location
            #:function-spec-metadata
+           #:function-spec-cases
+           #:function-case
+           #:function-case-name
+           #:function-case-documentation
+           #:function-case-when-forms
+           #:function-case-when-function
+           #:function-case-outcome-kind
+           #:function-case-outcome-spec
+           #:function-case-postconditions
+           #:function-case-postcondition-function
+           #:function-case-post-value-variables
+           #:function-case-source-form
+           #:function-case-select
+           #:function-case-outcome-parts
+           #:case-selection-signature
            #:register-function-spec
            #:function-check-result
            #:function-check-result-function
@@ -94,9 +116,248 @@
            #:function-check-result-failure-reason
            #:function-check-result-explanation
            #:function-check-result-shrunk-outcome
+           #:function-check-result-case-report
            #:check-function))
 
 (in-package #:cl-spec/src/function-spec)
+
+(defvar *case-owner* nil
+  "The contract a case under construction belongs to, or NIL.
+
+Bound only while a FUNCTION-SPEC validates its cases, so a case can check its
+:post-values names against the contract's argument bindings without holding a
+back-pointer that would make the declaration graph cyclic.  A case built on its
+own validates its return arity only.")
+
+(defclass function-case ()
+  ((name :initarg :name
+         :initform nil
+         :reader function-case-name
+         :documentation "Keyword naming this case, unique within its contract.
+Names are declarations, not search keys: selection is by condition, and the name
+exists so a result, a failure identity and a report can say which behaviour was
+required.")
+   (documentation-string :initarg :documentation
+                         :initform nil
+                         :reader function-case-documentation
+                         :documentation "Docstring of the case, or NIL.")
+   (when-forms :initarg :when-forms
+              :initform nil
+              :reader function-case-when-forms
+              :documentation "The :WHEN form as a one-element list, or NIL when absent.
+
+A list, like the contract's :PRE forms, so that the form NIL -- an allowed
+condition that never selects the case -- is distinguishable from no condition at
+all; a bare NIL slot could not tell them apart and would let a guard run with no
+source for introspection or the digest.")
+   (when-function :initarg :when-function
+                  :initform nil
+                  :reader function-case-when-function
+                  :documentation "Compiled predicate over the contract's argument bindings,
+true when the input selects this case.
+
+Compiled at macroexpansion time rather than interpreted at check time, because
+§60 forbids runtime EVAL and a stored form cannot otherwise be run.  It is
+evaluated once per admitted trial, for every case, so that duplicates are
+observed rather than hidden behind first-match short-circuiting.")
+   (outcome-kind :initarg :outcome-kind
+                 :initform nil
+                 :reader function-case-outcome-kind
+                 :documentation ":RETURNS or :SIGNALS, the one outcome this case requires.")
+   (outcome-spec :initarg :outcome-spec
+                 :initform nil
+                 :reader function-case-outcome-spec
+                 :documentation "The normalized primary return spec for :RETURNS, or the
+normalized required-condition spec for :SIGNALS.")
+   (postconditions :initarg :postconditions
+                   :initform nil
+                   :reader function-case-postconditions
+                   :documentation "The case's :POST or :POST-VALUES forms, or NIL.
+Refused on a :SIGNALS case in this version.")
+   (postcondition-function :initarg :postcondition-function
+                           :initform nil
+                           :reader function-case-postcondition-function
+                           :documentation "Compiled case postcondition, or NIL.
+To identify a failed form for shrinking, return
+\(values nil index :cl-spec-post-form-failure) exactly as the contract-level
+postcondition does.")
+   (post-value-variables :initarg :post-value-variables
+                         :initform :primary
+                         :reader function-case-post-value-variables
+                         :documentation ":PRIMARY, or the explicit return names of :POST-VALUES.")
+   (source-form :initarg :source-form
+                :initform nil
+                :reader function-case-source-form
+                :documentation "The whole case form as written."))
+  (:documentation "One named input condition and the outcome it requires.
+
+A FUNCTION-SPEC holds an ordered list of these when it declares :CASES.  The case
+rules its own outcome; the contract's common :ARGS, :ARGS-GENERATOR and :PRE stay
+on the contract and apply to every case.  A case is not a separate public
+function spec and is never registered under its own name."))
+
+(defparameter *function-case-slot-names*
+  '(name documentation-string when-forms when-function outcome-kind outcome-spec
+    postconditions postcondition-function post-value-variables source-form)
+  "Every slot of FUNCTION-CASE, for the rollback in SHARED-INITIALIZE :AROUND.")
+
+(defmethod definition-validation-slots append ((case function-case))
+  (copy-list *function-case-slot-names*))
+
+(defmethod shared-initialize :around ((case function-case) slot-names &rest initargs)
+  "Validate a case and restore its participating slots on refusal.
+
+A clause's forms and its compiled predicate must change together, on
+construction and on reinitialization alike: new text with the old predicate (or
+the reverse) would run one while introspection and the digest reported the
+other, which is the failure the contract-level :PRE and :POST already refuse.  A
+:post-values change is that failure seen from the return bindings, so it needs
+new post forms and a new compiled predicate as well."
+  (flet ((supplied (key)
+           (loop for (k) on initargs by #'cddr thereis (eq k key))))
+    (dolist (pair '((:when-forms :when-function)
+                    (:postconditions :postcondition-function)))
+      (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
+        (error 'invalid-function-spec-form :form pair
+               :reason "case clause forms and compiled function must change together")))
+    (when (and (supplied :post-value-variables)
+               (slot-boundp case 'post-value-variables)
+               (not (equal (getf initargs :post-value-variables)
+                           (function-case-post-value-variables case)))
+               (not (and (supplied :postconditions) (supplied :postcondition-function))))
+      (error 'invalid-function-spec-form
+             :form initargs
+             :reason "Case post-value binding changes require new forms and a compiled predicate.")))
+  (call-with-definition-rollback
+   case (lambda () (apply #'call-next-method case slot-names initargs))))
+
+(defmethod shared-initialize :after ((case function-case) slot-names &key)
+  (declare (ignore slot-names))
+  (validate-definition case))
+
+(defmethod validate-definition ((case function-case))
+  "Refuse a case the checker could not honour, and normalize what can be.
+
+The same invariant the contract applies to :PRE, :POST and :RETURNS holds per
+case: a clause's forms and its compiled predicate are present together or not at
+all, because a stored form cannot be run without runtime EVAL (§60) and a
+predicate without its form would run while introspection reported no such clause."
+  (flet ((refuse (reason)
+           (error 'invalid-function-spec-form
+                  :form (function-case-source-form case) :reason reason))
+         (half (value function reason)
+           ;; Exactly one half present: both absent is a case with no such clause.
+           (cond ((and value (null function)) reason)
+                 ((and function (null value)) reason))))
+    (unless (keywordp (function-case-name case))
+      (refuse "a case name must be a keyword"))
+    (unless (typep (function-case-documentation case) '(or null string))
+      (refuse "a case docstring must be NIL or a string"))
+    (unless (and (finite-list-p (function-case-when-forms case))
+                 (= 1 (length (function-case-when-forms case))))
+      (refuse "a case requires exactly one :when form"))
+    (unless (finite-definition-form-p (function-case-when-forms case))
+      (refuse "a :when form must be an acyclic finite form"))
+    (when (half (function-case-when-forms case) (function-case-when-function case)
+                "a case :when form and compiled predicate must change together")
+      (refuse "a case :when form and compiled predicate must change together"))
+    (unless (functionp (function-case-when-function case))
+      (refuse "a case :when predicate must be a function"))
+    (unless (member (function-case-outcome-kind case) '(:returns :signals))
+      (refuse "a case requires exactly one of :returns and :signals"))
+    (unless (function-case-outcome-spec case)
+      (refuse "a case outcome spec must be present"))
+    (unless (finite-list-p (function-case-postconditions case))
+      (refuse "case postconditions must be a finite proper list"))
+    (when (half (function-case-postconditions case) (function-case-postcondition-function case)
+                "case post forms and compiled predicate must change together")
+      (refuse "case post forms and compiled predicate must change together"))
+    (when (and (function-case-postconditions case)
+               (not (functionp (function-case-postcondition-function case))))
+      (refuse "a case postcondition predicate must be a function"))
+    (when (and (eq :signals (function-case-outcome-kind case))
+               (function-case-postconditions case))
+      (refuse "a :signals case cannot carry :post or :post-values in this version"))
+    (unless (finite-definition-form-p (function-case-source-form case))
+      (refuse "a case source form must be an acyclic finite form"))
+    (let ((kind (function-case-outcome-kind case))
+          (spec (function-case-outcome-spec case)))
+      (setf (slot-value case 'outcome-spec)
+            (if (eq kind :returns)
+                (normalize-return-declaration spec)
+                (normalize-spec-form spec))))
+    (unless (eq :primary (function-case-post-value-variables case))
+      (unless (and (typep (function-case-outcome-spec case) 'return-values-spec)
+                   (function-case-postconditions case)
+                   (function-case-postcondition-function case))
+        (refuse "explicit post-value bindings require fixed returns and a post predicate"))
+      (validate-post-value-variables
+       (function-case-post-value-variables case)
+       (length (tuple-spec-element-specs (function-case-outcome-spec case)))
+       (when *case-owner*
+         (call-declaration-variables (function-spec-argument-specs *case-owner*))))))
+  case)
+
+(defun function-case-select (cases bindings function)
+  "Select exactly one of CASES for BINDINGS, or report why that is impossible.
+
+BINDINGS is the bound argument value list the common :PRE also sees.  Every guard
+runs in declaration order and evaluation does not stop at the first true one:
+duplicates have to be observed, not hidden.  Returns (values CASE CONDITION);
+exactly one of them is non-NIL.  A guard that signals stops selection at that
+case and yields a :CASE-GUARD-ERROR; zero and several matches yield
+:NO-MATCHING-CASE and :AMBIGUOUS-CASE.  The target is not called for any of them."
+  (let ((matches '()))
+    (dolist (case cases)
+      (handler-case
+          (when (apply (function-case-when-function case) bindings)
+            (push case matches))
+        (error (condition)
+          (return-from function-case-select
+            (values nil (make-condition 'case-selection-error
+                                        :function function :kind :case-guard-error
+                                        :case (function-case-name case)
+                                        :original-condition condition))))))
+    (case (length matches)
+      (0 (values nil (make-condition 'case-selection-error
+                                     :function function :kind :no-matching-case)))
+      (1 (values (first matches) nil))
+      (t (values nil (make-condition 'case-selection-error
+                                     :function function :kind :ambiguous-case
+                                     :cases (mapcar #'function-case-name
+                                                    (reverse matches))))))))
+
+(defun case-selection-signature (condition)
+  "Return the failure identity of a case-selection CONDITION.
+
+Selection errors never reached the target, so their identity is the selection
+error kind rather than a target failure shape.  The guard-error form also names
+the case, because two guards that signal different ways are different contract
+faults."
+  (case (case-selection-error-kind condition)
+    (:case-guard-error (list :case-selection :case-guard-error
+                             (case-selection-error-case condition)))
+    (t (list :case-selection (case-selection-error-kind condition)))))
+
+(defun function-case-outcome-parts (contract case)
+  "Return the effective outcome declaration of CONTRACT with CASE selected.
+
+Values are RETURN-SPEC SIGNAL-SPEC POST POST-FORMS VALUES-POST-P.  With CASE NIL
+they are the contract's own case-less declaration, so the two paths classify
+through one implementation."
+  (if case
+      (values (and (eq :returns (function-case-outcome-kind case))
+                   (function-case-outcome-spec case))
+              (and (eq :signals (function-case-outcome-kind case))
+                   (function-case-outcome-spec case))
+              (function-case-postcondition-function case)
+              (function-case-postconditions case)
+              (not (eq :primary (function-case-post-value-variables case))))
+      (values (function-spec-return-spec contract)
+              (function-spec-signal-spec contract)
+              (function-spec-postcondition-function contract)
+              (function-spec-postconditions contract)
+              (not (eq :primary (function-spec-post-value-variables contract))))))
 
 (defclass function-spec ()
   ((call-layout-cache :initform nil)
@@ -183,7 +444,17 @@ claims, which is what an agent asking \"what may I pass here\" needs.")
    (metadata :initarg :metadata
              :initform nil
              :reader function-spec-metadata
-             :documentation "Arbitrary plist for callers and future extensions."))
+             :documentation "Arbitrary plist for callers and future extensions.")
+   (cases :initarg :cases
+          :initform nil
+          :reader function-spec-cases
+          :documentation "Ordered FUNCTION-CASE objects, or NIL for a case-less contract.
+
+When present, exactly one case is selected per admitted trial and its own
+:RETURNS or :SIGNALS outcome judges the invocation.  CASE-SELECTION is exclusive;
+a case is not a priority rule.  :CASES is exclusive with the contract-level
+:RETURNS, :SIGNALS, :POST and :POST-VALUES: there is no inherited common outcome
+to override."))
   (:documentation "A contract attached to an existing function by name.
 
 The function is never redefined, so an existing codebase adopts cl-spec one
@@ -192,7 +463,7 @@ function at a time (specification §3.2)."))
 (defparameter *function-spec-slot-names*
   '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
-    source-form source-location metadata
+    source-form source-location metadata cases
     call-layout-cache call-layout-declarations call-layout-bindings-snapshot)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
@@ -318,6 +589,28 @@ would run while introspection reported no such clause"
         (refuse (or (function-spec-postconditions contract)
                     (function-spec-postcondition-function contract))
                 post)))
+    ;; Cases are validated here, not only at their own construction, because a
+    ;; contract can be built with case objects that were made earlier and their
+    ;; :post-values names can only be checked against this contract's arguments.
+    (let ((cases (function-spec-cases contract)))
+      (unless (and (finite-list-p cases)
+                   (every (lambda (case) (typep case 'function-case)) cases))
+        (refuse cases "cases must be a finite proper list of FUNCTION-CASE objects"))
+      (let ((names (mapcar #'function-case-name cases)))
+        (unless (every #'keywordp names)
+          (refuse cases "case names must be keywords"))
+        (unless (= (length names) (length (remove-duplicates names :test #'eq)))
+          (refuse cases "case names must be unique within a contract")))
+      (when (and cases
+                 (or (function-spec-return-spec contract)
+                     (function-spec-signal-spec contract)
+                     (function-spec-postconditions contract)
+                     (function-spec-postcondition-function contract)))
+        (refuse cases
+                ":cases cannot be combined with a top-level :returns, :signals, :post or ~
+:post-values; there is no inherited common outcome"))
+      (let ((*case-owner* contract))
+        (dolist (case cases) (validate-definition case))))
     (setf (slot-value contract 'argument-specs)
           (normalize-call-declarations (function-spec-argument-specs contract)))
     (let ((generator (function-spec-argument-generator contract)))
@@ -424,11 +717,13 @@ to notice it by.")
              :documentation "Generated argument lists the preconditions refused.
 
 TRIALS counts what the backend generated; TRIALS minus this is the number of
-trials that reached the function.  Reporting only the first would let a run
+trials that reached case selection.  Reporting only the first would let a run
 that rejected every input read as a run that checked every input (§19, §73.3).
 
-Not the number of calls: shrinking may invoke the function on candidate inputs.
-Classification itself makes no additional call. This counts generated trials.")
+Not the number of target calls: a case-selection error calls no target, and
+shrinking may invoke the function on candidate inputs.  Classification itself
+makes no additional call.  This counts generated trials; read
+FUNCTION-CHECK-RESULT-CASE-REPORT for per-case call counts.")
    (failure-reason :initarg :failure-reason
                    :initform nil
                    :reader function-check-result-failure-reason
@@ -468,7 +763,29 @@ common one.  :USED means the value in SHRUNK-COUNTEREXAMPLE is the candidate.
 reduction was observed. :NONE means no reduction was observed, including when
 there were no arguments, shrinking was disabled, or argument mutation stopped it.
 When a matching candidate is observed, :USED takes precedence over earlier
-rejections. The original evidence remains available in every case."))
+rejections. The original evidence remains available in every case.")
+   (case-report :initarg :case-report
+                :initform :not-collected
+                :reader function-check-result-case-report
+                :documentation "Per-case report of this run, or :NOT-COLLECTED.
+
+A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
+:CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
+counters come from the run's own ordinary trials and are snapshotted onto the
+result, so two runs of one contract never share them.  A result that did not go
+through a function-check run, and one whose backend never opened trial
+reporting, both say :NOT-COLLECTED rather than reporting measured zeros.  A
+participating backend opens reporting before its first draw, so zero trials and
+a first draw that exhausted the generation budget report known zeros.
+
+A trial that reached the target is counted for its selected case even when
+classifying the result signalled, because the call happened and the case owned
+it.  A case-selection error called no target, so it is counted separately and
+never appears as a call of any case.
+
+:STATUS :PASSED means no violation was observed in the trials that ran.  It does
+not mean every declared case ran; read :NEVER-CALLED before drawing that
+conclusion."))
   (:documentation "Outcome of checking a function against its registered contract.
 
 A PROPERTY-RESULT, so one set of readers covers a DEFPROPERTY run and a
@@ -629,17 +946,20 @@ as its reduction.  The shapes come from the nested errors instead."
          (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
         append (list name value)))
 
-(defmethod evaluate-trial ((property function-check-property) arguments &key context)
-  "Call the target once and classify that invocation before returning its evidence."
-  (let* ((contract (checked-contract property))
-         (registry (getf context :registry))
-         (returns (function-spec-return-spec contract))
-         (return-schema (function-spec-return-schema contract))
-         (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
-         (signals (function-spec-signal-spec contract))
-         (pre (function-spec-precondition-function contract))
-         (post (function-spec-postcondition-function contract))
-         (outcome nil))
+(defun classify-target-outcome (return-spec signal-spec post post-forms values-post-p
+                                bound-values raw-outcome registry)
+  "Classify one target invocation against an effective outcome declaration.
+
+Returns (values STATUS REASON SIGNATURE EXPLANATION CONDITION VALUE), the
+classification CHECK-FUNCTION has always reported.  The case-less and
+case-carrying paths both call this, so the rules exist once and a case cannot be
+made to pass by relaxing them.  RAW-OUTCOME is the invocation already captured by
+INVOKE-TARGET-ONCE; nothing here calls the target again."
+  (let* ((return-schema (make-return-schema :primary-spec return-spec))
+         (condition (when (eq :signaled (call-outcome-kind raw-outcome))
+                      (call-outcome-condition raw-outcome)))
+         (returned (call-outcome-values raw-outcome))
+         (value (first returned)))
     (flet ((failure (reason detail condition &optional value)
              (values (if condition :error :failed) reason
                      (let ((signature (failure-signature reason detail condition)))
@@ -648,66 +968,257 @@ as its reduction.  The shapes come from the nested errors instead."
                                (and (eq reason :postcondition) values-post-p))
                            (cons :return-values (cdr signature))
                            signature))
-                      detail condition value outcome)))
+                     detail condition value)))
+      (cond
+        ;; Broad expected-error contracts must not certify a broken call.
+        ((typep condition '(or program-error undefined-function))
+         (failure :condition nil condition))
+        (signal-spec
+         (if condition
+             (let ((explanation (explain-data signal-spec condition :registry registry)))
+               (if (getf explanation :valid)
+                   (values :passed nil nil nil nil value)
+                   (failure :condition-spec explanation condition)))
+             (failure :missing-condition
+                      (list :expected (expected-descriptor signal-spec)) nil value)))
+        (condition (failure :condition nil condition))
+        (t
+         (let ((explanation (when return-spec
+                              (explain-data return-spec
+                                            (return-schema-value return-schema returned)
+                                            :registry registry))))
+           (cond
+             ((and explanation (not (getf explanation :valid)))
+              (failure :return-spec explanation nil value))
+             (post
+              (multiple-value-bind (holds index tag)
+                  (apply post (if values-post-p returned value) bound-values)
+                (if holds
+                    (values :passed nil nil nil nil value)
+                    (failure :postcondition
+                             (when (and (eq tag :cl-spec-post-form-failure)
+                                        (integerp index)
+                                        (<= 0 index)
+                                        (< index (length post-forms)))
+                               (list :post-form index))
+                             nil value))))
+             (t (values :passed nil nil nil nil value)))))))))
+
+(defmethod evaluate-trial ((property function-check-property) arguments &key context)
+  "Select a case, call the target once, and classify that invocation.
+
+Exclusive selection runs after the common :PRE admits the input and before the
+target is called.  A selection error returns :ERROR / :CONTRACT-ERROR with a
+case-selection condition, a :CASE-SELECTION signature and the structured
+explanation, and the target is not called."
+  (let* ((contract (checked-contract property))
+         (registry (getf context :registry))
+         (cases (function-spec-cases contract))
+         (pre (function-spec-precondition-function contract))
+         (outcome nil)
+         (selected-case nil))
+    (flet ((selection-failure (condition)
+             ;; Selection failed, so no case owns this trial and the target was
+             ;; not called; the phase is recorded here rather than inferred later
+             ;; from the condition's class.
+             (values :error :contract-error
+                     (case-selection-signature condition)
+                     (case-selection-error-data condition)
+                     condition nil outcome nil :case-selection))
+           (contract-failure (condition)
+             ;; The target was invoked and then classification itself signalled.
+             ;; The selected case still owns the failure: name it in the evidence
+             ;; and in the identity so the case report counts the call and
+             ;; shrinking and artifacts stay inside the case.  Before selection
+             ;; (a binding or precondition error) there is no case to name.
+             (values :error :contract-error
+                     (if selected-case
+                         (cons :case (cons (function-case-name selected-case)
+                                           (list :contract-error (type-of condition))))
+                         (list :contract-error (type-of condition)))
+                     nil condition nil outcome
+                     (and selected-case (function-case-name selected-case))
+                     nil)))
       (handler-case
           (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                  (values (bound-call-values bound)))
             (if (precondition-refuses-p pre values)
-                (values :rejected nil nil nil nil nil nil)
-                (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
-                       (condition (when (eq :signaled (call-outcome-kind raw-outcome))
-                                    (call-outcome-condition raw-outcome)))
-                       (value (first (call-outcome-values raw-outcome)))
-                       (projected (return-schema-value return-schema
-                                                       (call-outcome-values raw-outcome))))
-                  ;; Freeze invocation evidence before contract predicates can mutate returns.
-                  (setf outcome
-                        (make-call-outcome
-                         :kind (call-outcome-kind raw-outcome)
-                         :values (snapshot-value (call-outcome-values raw-outcome))
-                         :condition condition))
-                  (cond
-                    ;; Broad expected-error contracts must not certify a broken call.
-                    ((typep condition '(or program-error undefined-function))
-                     (failure :condition nil condition))
-                    (signals
-                     (if condition
-                         (let ((explanation (explain-data signals condition :registry registry)))
-                           (if (getf explanation :valid)
-                               (values :passed nil nil nil nil nil outcome)
-                               (failure :condition-spec explanation condition)))
-                         (failure :missing-condition
-                                  (list :expected (expected-descriptor signals)) nil value)))
-                    (condition (failure :condition nil condition))
-                    (t
-                     (let ((explanation (when returns
-                                          (explain-data returns projected :registry registry))))
-                       (cond
-                         ((and explanation (not (getf explanation :valid)))
-                          (failure :return-spec explanation nil value))
-                         (post
-                          (multiple-value-bind (holds index tag)
-                              (apply post (if values-post-p (call-outcome-values raw-outcome) value)
-                                      values)
-                            (if holds
-                                (values :passed nil nil nil nil value outcome)
-                                (failure :postcondition
-                                         (when (and (eq tag :cl-spec-post-form-failure)
-                                                    (integerp index)
-                                                    (<= 0 index)
-                                                    (< index
-                                                       (length
-                                                        (function-spec-postconditions contract))))
-                                           (list :post-form index))
-                                         nil value))))
-                         (t (values :passed nil nil nil nil value outcome)))))))))
-        ;; Structural errors in the contract itself still abort an initial trial.
-        ;; The backend rejects these if encountered only during shrinking.
+                (values :rejected nil nil nil nil nil nil nil nil)
+                (multiple-value-bind (case condition)
+                    (if cases
+                        (function-case-select cases values (function-spec-name contract))
+                        (values nil nil))
+                  (if condition
+                      (selection-failure condition)
+                      (progn
+                        (setf selected-case case)
+                        (multiple-value-bind (returns signals post post-forms values-post-p)
+                            (function-case-outcome-parts contract case)
+                          (let* ((raw-outcome (invoke-target-once (checked-target property)
+                                                                  arguments))
+                                 (target-condition
+                                   (when (eq :signaled (call-outcome-kind raw-outcome))
+                                     (call-outcome-condition raw-outcome))))
+                            ;; Freeze invocation evidence before contract predicates can
+                            ;; mutate returns.
+                            (setf outcome
+                                  (make-call-outcome
+                                   :kind (call-outcome-kind raw-outcome)
+                                   :values (snapshot-value (call-outcome-values raw-outcome))
+                                   :condition target-condition))
+                            (multiple-value-bind
+                                  (status reason signature explanation condition value)
+                                (classify-target-outcome returns signals post post-forms
+                                                         values-post-p values raw-outcome
+                                                         registry)
+                              (values status reason
+                                      (if (and case (consp signature))
+                                          (cons :case (cons (function-case-name case) signature))
+                                          signature)
+                                      explanation condition value outcome
+                                      (and case (function-case-name case))
+                                      nil)))))))))
+        ;; Structural errors in the contract itself abort the trial; see
+        ;; CONTRACT-FAILURE for what is preserved of a selected case.
         ((and error (not undefined-function) (not program-error)) (condition)
-          (failure :contract-error nil condition))))))
+          (contract-failure condition))))))
+
+(defstruct (case-trial-counts (:constructor make-case-trial-counts ()))
+  "Target invocations of one case during one function-check run."
+  (called 0)
+  (passed 0)
+  (failed 0)
+  (error 0))
+
+(defstruct (case-run (:constructor %make-case-run (cases counts)))
+  "One function-check run's per-case counters.
+
+Owned by the run, never by the registered definition or a global table: a reused
+contract must not carry counters from an earlier run into a later one.  MEASURED-P
+is set when the backend opens reporting (BEGIN-TRIAL-REPORT) or records an
+observation, so a backend that does not participate yields :NOT-COLLECTED instead
+of zeros that read as measurements, while a participating backend that produced
+no observation still reports known zeros."
+  (cases nil :read-only t)
+  (counts nil :read-only t)
+  (measured-p nil)
+  (selection-errors 0))
+
+(defvar *case-run* nil
+  "The function-check run whose case report is being counted, or NIL.
+
+Bound by CHECK-FUNCTION around the whole backend run.  The backend calls
+NOTE-TRIAL-OUTCOME once per ordinary trial, and never for a shrink candidate, so
+shrinking cannot inflate a case's call count.")
+
+(defun make-case-run (contract)
+  "Return a fresh run context for CONTRACT's declared cases."
+  (let ((cases (function-spec-cases contract))
+        (counts (make-hash-table :test #'eq)))
+    (dolist (case cases)
+      (setf (gethash (function-case-name case) counts) (make-case-trial-counts)))
+    (%make-case-run cases counts)))
+
+(defmethod begin-trial-report ((property function-check-property))
+  "Mark the active function-check run as measured before its first trial.
+
+A participating backend calls this when it starts running trials, so a run that
+produces no observation at all -- zero trials, or a first draw that exhausted the
+generation budget -- reports the zeros it does know.  A backend that never calls
+it leaves the run unmeasured, and the report says :NOT-COLLECTED."
+  (declare (ignore property))
+  (let ((run *case-run*))
+    (when run (setf (case-run-measured-p run) t))))
+
+(defmethod note-trial-outcome ((property function-check-property) observation)
+  "Count one ordinary trial of PROPERTY for the active run's case report.
+
+Reaching this method also marks the report measured, so a backend that reports
+observations without calling BEGIN-TRIAL-REPORT still gets a measured report; a
+backend that reaches neither leaves the run unmeasured, and the report says
+:NOT-COLLECTED rather than reporting zeros for counters nothing kept.
+
+A precondition refusal selected no case and called no target, so it contributes
+nothing.  A case-selection error called no target either and is counted
+separately, so it never appears as a call of any case.  A contract error raised
+while classifying a selected case is counted against that case, because the
+target was called for it."
+  (let ((run *case-run*))
+    (when run
+      (setf (case-run-measured-p run) t)
+      (when (case-run-cases run)
+        (let ((status (trial-observation-status observation))
+              (selected (trial-observation-case observation)))
+          (cond
+            ((eq status :rejected))
+            (selected
+             (let ((counts (gethash selected (case-run-counts run))))
+               (when counts
+                 (incf (case-trial-counts-called counts))
+                 (ecase status
+                   (:passed (incf (case-trial-counts-passed counts)))
+                   (:failed (incf (case-trial-counts-failed counts)))
+                   (:error (incf (case-trial-counts-error counts)))))))
+            ((eq :case-selection (observation-failure-phase observation))
+             (incf (case-run-selection-errors run)))))))))
+
+(defun case-run-report (run)
+  "Project RUN's counters as the public run report, or :NOT-COLLECTED.
+
+The counters are read, never recomputed: nothing here re-runs a guard or the
+target.  Every declared case appears in :CASES order, and a case the run never
+reached appears in :NEVER-CALLED rather than being silently absent.  Only a run
+whose backend neither opened reporting nor recorded an observation answers
+:NOT-COLLECTED; a run that opened reporting reports its known zeros even when it
+produced no observation at all."
+  (unless (case-run-measured-p run)
+    (return-from case-run-report :not-collected))
+  (let ((cases (case-run-cases run))
+        (counts (case-run-counts run)))
+    (list :selection :exclusive
+          :unit :normal-trials
+          :declared-cases (mapcar #'function-case-name cases)
+          :cases (loop for case in cases
+                       for case-counts = (gethash (function-case-name case) counts)
+                       collect (list :name (function-case-name case)
+                                     :documentation (function-case-documentation case)
+                                     :called (case-trial-counts-called case-counts)
+                                     :passed (case-trial-counts-passed case-counts)
+                                     :failed (case-trial-counts-failed case-counts)
+                                     :error (case-trial-counts-error case-counts)))
+          :case-selection-errors (case-run-selection-errors run)
+          :never-called (loop for case in cases
+                              for case-counts = (gethash (function-case-name case) counts)
+                              when (zerop (case-trial-counts-called case-counts))
+                                collect (function-case-name case)))))
+
+(defmethod definition-description ((case function-case))
+  "Describe one case for the declaration digest and child traversal.
+
+The outcome spec is a child definition rather than inline data, so its own
+declaration is digested by the same walk as every other spec, and no executable
+closure reaches the digest."
+  (values
+   (list :entity-kind :function-case
+         :name (function-case-name case)
+         :documentation (function-case-documentation case)
+         :when (first (function-case-when-forms case))
+         :outcome (function-case-outcome-kind case)
+         :post (function-case-postconditions case)
+         :post-value-variables (function-case-post-value-variables case))
+   (list (function-case-outcome-spec case))
+   nil
+   (and (function-case-when-function case)
+        (or (null (function-case-postconditions case))
+            (function-case-postcondition-function case))
+        t)))
 
 (defmethod property-result-entity-kind ((result function-check-result))
   :function-spec)
+
+(defmethod property-result-case-report ((result function-check-result))
+  "Route RESULT's own case report through the shared result projection."
+  (function-check-result-case-report result))
 
 (defmethod resolve-definition ((designator symbol) (kind (eql :function-spec)) registry)
   (registry-find-function-spec registry designator))
@@ -742,12 +1253,18 @@ as its reduction.  The shapes come from the nested errors instead."
            (when (function-spec-return-spec contract)
              (list (function-spec-return-spec contract)))
            (when (function-spec-signal-spec contract)
-             (list (function-spec-signal-spec contract))))
+             (list (function-spec-signal-spec contract)))
+           ;; Cases are child definitions, so their names, order, guards, outcomes
+           ;; and post bindings are digested by the same walk.  A case is described
+           ;; by DEFINITION-DESCRIPTION ((CASE FUNCTION-CASE)) and contributes no
+           ;; executable closure to the record.
+           (function-spec-cases contract))
    (when (function-spec-argument-generator contract)
      (list (cons :generator (function-spec-argument-generator contract))))
    (and (eq (class-name (class-of contract)) 'function-spec)
         (or (not (or (function-spec-precondition-function contract)
-                     (function-spec-postcondition-function contract)))
+                     (function-spec-postcondition-function contract)
+                     (function-spec-cases contract)))
             (not (null (function-spec-source-form contract)))))))
 
 (defmethod definition-description ((property function-check-property))
@@ -781,9 +1298,25 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
-No target or predicate is called again to classify the result. Shrinking still
-executes candidate inputs; only candidates with the original failure identity
-are accepted. A run with no admitted trials is :SKIPPED."
+
+No target or predicate is called again to classify the result.  Shrinking still
+executes candidate inputs; only candidates with the original failure identity are
+accepted.  A run with no admitted trials is :SKIPPED.
+
+A contract with :CASES selects exactly one case per admitted trial and judges the
+invocation by that case's outcome.  The result carries a per-case report
+(FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
+outcomes actually observed per case, the case-selection errors, and the cases no
+trial reached.  A selected case owns its trial even when classifying the result
+signalled -- the target was called, so the contract error is counted as that
+case's :ERROR and keeps the case in its failure identity.  :PASSED says no
+violation was observed in the trials that ran; it does not say every case ran, so
+read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
+reached case selection, not the number of target calls: a case-selection error
+calls no target.  A backend that neither opens trial reporting nor records an
+observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
+participating backend's zero-trial and first-draw-exhaustion runs report known
+zeros."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (unless (or (null seed) (typep seed 'property-result)
@@ -800,12 +1333,14 @@ are accepted. A run with no admitted trials is :SKIPPED."
          (name (function-spec-name contract))
          (property (make-function-check-property contract :budget budget))
          (source (property-source-form property))
-         (result (run-property property
-                               :seed seed
-                               :options (or options
-                                            (and seed-result
-                                                 (property-result-options seed-result)))
-                               :registry registry)))
+         (case-run (make-case-run contract))
+         (result (let ((*case-run* case-run))
+                   (run-property property
+                                 :seed seed
+                                 :options (or options
+                                              (and seed-result
+                                                   (property-result-options seed-result)))
+                                 :registry registry))))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)
                    :options (property-result-options result)
@@ -820,6 +1355,7 @@ are accepted. A run with no admitted trials is :SKIPPED."
                    :failure-evidence (property-result-failure-evidence result)
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
+                   :case-report (case-run-report case-run)
                     :shrink-report (property-result-shrink-report result)
                    :generation-report (property-result-generation-report result)
                    :failure-phase (property-result-failure-phase result)

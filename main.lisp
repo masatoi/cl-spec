@@ -63,6 +63,13 @@
                 #:generation-budget-exhausted-budget
                 #:generation-budget-exhausted-phase
                 #:generation-budget-exhausted-path
+                #:case-selection-error
+                #:case-selection-error-function
+                #:case-selection-error-kind
+                #:case-selection-error-cases
+                #:case-selection-error-case
+                #:case-selection-error-original-condition
+                #:case-selection-error-data
                 #:unsupported-seed)
   (:import-from #:cl-spec/src/ir
                 #:spec
@@ -157,6 +164,7 @@
                 #:trial-observation-condition
                 #:trial-observation-condition-report
                 #:trial-observation-value
+                #:trial-observation-case
                 #:evaluate-trial
                 #:observe-trial
                 #:observation-failure-p
@@ -211,6 +219,7 @@
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
                 #:function-check-result-shrunk-outcome
+                #:function-check-result-case-report
                 #:check-function)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator
@@ -278,6 +287,13 @@
            #:generation-budget-exhausted-budget
            #:generation-budget-exhausted-phase
            #:generation-budget-exhausted-path
+           #:case-selection-error
+           #:case-selection-error-function
+           #:case-selection-error-kind
+           #:case-selection-error-cases
+           #:case-selection-error-case
+           #:case-selection-error-original-condition
+           #:case-selection-error-data
            #:unsupported-seed
            #:invalid-backend-result #:invalid-backend-result-reason
            ;; Semantic IR
@@ -372,6 +388,7 @@
            #:trial-observation-condition
            #:trial-observation-condition-report
            #:trial-observation-value
+           #:trial-observation-case
            #:evaluate-trial
            #:observe-trial
            #:observation-failure-p
@@ -423,6 +440,7 @@
            #:function-check-result-failure-reason
            #:function-check-result-explanation
            #:function-check-result-shrunk-outcome
+           #:function-check-result-case-report
            #:check-function
            ;; Custom generators
            #:custom-generator

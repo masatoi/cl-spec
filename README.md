@@ -28,6 +28,7 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 | `cl-spec/specs` | executable specifications of cl-spec's own APIs and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 | `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
+| `cl-spec/examples/function-spec-cases` | executable named-case Function Spec example | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
@@ -196,6 +197,92 @@ This applies even to input-only or empty scopes. If an already instrumented
 function's contract is changed to `:signals`, explicitly call `uninstrument-function`:
 contract edits do not refresh captured checks, and a refused reinstall leaves
 the existing wrapper intact.
+
+## Named per-condition cases
+
+`:cases` requires a different behaviour per input condition, instead of one
+outcome for every admitted input. The common `:pre` still bounds the region; the
+case conditions select the required behaviour inside it.
+
+```lisp
+(defun remaining-balance (balance amount)
+  (if (<= amount balance)
+      (- balance amount)
+      (error 'insufficient-funds)))
+
+(cl-spec:defspec-function remaining-balance
+  (:args (balance (range integer 0 1000)) (amount (range integer 1 1000)))
+  (:cases
+    (:sufficient-funds
+      (:when (<= amount balance))
+      (:returns (range integer 0 *))
+      (:post (= result (- balance amount))))
+    (:insufficient-funds
+      (:when (> amount balance))
+      (:signals (type insufficient-funds)))))
+
+(cl-spec:check-function 'remaining-balance :trials 100 :seed 42)
+```
+
+Each case is a unique keyword name, an optional docstring, exactly one
+`(:when FORM)` and exactly one of `(:returns SPEC)` or `(:signals SPEC)`; a
+`:returns` case may add `:post` or `:post-values`, a `:signals` case may not in
+this version. That refusal is judged by clause occurrence, so an empty `(:post)`
+is refused too, and `:post`/`:post-values` are mutually exclusive inside a case
+just as they are at the contract level. `:args`, `:args-generator` and the common
+`:pre` stay top-level.
+`:cases` cannot be combined with a top-level `:returns`, `:signals`, `:post` or
+`:post-values`; there is no inherited common outcome. A case cannot declare its
+own arguments or precondition, nest `:cases`, or use `:else` or a priority.
+
+Selection is exclusive, not first-match: after the common `:pre` admits an input,
+every guard runs in declaration order and exactly one must be true. `:when t` is
+an ordinary always-true form, not an implicit `:else`. Zero matches, several
+matches and a guard that signals are contract-side errors reported as `:error` /
+`:contract-error` with `:failure-phase :case-selection`: the target is not
+called, no case is counted, the run is not shrunk, and no target counterexample
+is saved. A `spec-violation` from a guard is such an error; only the common
+`:pre` treats that as a refusal. The phase is recorded by the classifier where
+selection failed, never inferred from a condition's class, so a target that
+signals the public `case-selection-error` itself stays an ordinary target failure
+whose evidence may be shrunk and persisted.
+
+`function-check-result-case-report` and `result-data`'s `:case-report` report the
+declared cases, the calls and outcomes actually observed per case, the selection
+errors, and the cases no trial reached:
+
+```lisp
+(:selection :exclusive :unit :normal-trials
+ :declared-cases (:sufficient-funds :insufficient-funds)
+ :cases ((:name :sufficient-funds ... :called 62 :passed 62 :failed 0 :error 0)
+         (:name :insufficient-funds ... :called 38 :passed 38 :failed 0 :error 0))
+ :case-selection-errors 0 :never-called nil)
+```
+
+A successful expected-error trial counts as a pass for its case. `:passed` means
+no violation was observed in the trials that ran, not that every case ran: read
+`:never-called`. Counters cover ordinary trials only, so shrinking and
+precondition refusals are not counted and `trials - rejected` counts trials that
+reached selection rather than target calls. A contract error raised while
+classifying a selected case is counted as that case's `:error` and keeps the case
+in its evidence and identity, because the target was called. A participating
+backend opens the report before its first draw, so zero trials and a first draw
+that exhausts the generation budget report known zeros (the exhaustion itself
+under `:failure-phase :generation`); a result that did not go through a
+function-check run, and a backend that never opens reporting, answer
+`:not-collected` instead. The selected case's name is
+part of the failure identity (`(:case NAME . existing-signature)`), so shrinking,
+replay and counterexample artifacts stay inside that case;
+`function-spec-data` exposes ordered `:cases` with `:case-selection :exclusive`,
+and the digest covers them.
+
+Runtime instrumentation of a case-carrying contract is unavailable:
+`instrument-function` refuses with `unsupported-instrumentation-target` and
+reason `:named-cases-unsupported`, before changing the function.
+
+For a runnable tour of both behaviours, the duplicate and missing conditions, and
+an unchecked case, see the
+[cases walkthrough](docs/guides/function-spec-cases-walkthrough.md).
 
 ## Example
 
@@ -737,13 +824,16 @@ explain:
   generated from their docstrings
 - [`docs/guides/structured-data-walkthrough.md`](docs/guides/structured-data-walkthrough.md)
   — runnable structured-data integration walkthrough
+- [`docs/guides/function-spec-cases-walkthrough.md`](docs/guides/function-spec-cases-walkthrough.md)
+  — runnable named per-condition Function Spec walkthrough
 - [`docs/cl-spec-specification-v0.2-draft.md`](docs/cl-spec-specification-v0.2-draft.md)
   — the specification
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — design documents, including
   historical proposals; read them as records of when they were written, not as
   the current usage guide
-- [`examples/structured-data.lisp`](examples/structured-data.lisp) — the
-  executable example the guide runs
+- [`examples/structured-data.lisp`](examples/structured-data.lisp) and
+  [`examples/function-spec-cases.lisp`](examples/function-spec-cases.lisp) — the
+  executable examples the guides run
 
 The API reference is regenerated and committed by CI after every push to
 `main`. Regenerate it locally with:

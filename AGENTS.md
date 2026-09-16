@@ -9,7 +9,13 @@ the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their expanded §73.1 D1 range: required/optional positional, keyword and rest arguments,
 primary or fixed multiple return values, and explicit `:post-values` bindings,
-or a required error outcome via `:signals`. Expected-error contracts are not
+or a required error outcome via `:signals`. A function spec may instead declare
+named `:cases`, each with one `:when` condition and one required `:returns` or
+`:signals` outcome; selection is exclusive over the inputs the common `:pre`
+admits, zero matches / several matches / a signalling guard are contract-side
+`:case-selection` errors that call no target, per-case calls and never-called
+cases are reported, the selected case name joins the failure identity, and
+case-carrying contracts refuse instrumentation. Expected-error contracts are not
 supported by runtime instrumentation.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
@@ -45,7 +51,8 @@ Tests mirror the sources in `tests/` as `*-test.lisp` and **must** be listed in
 
 Systems beside the core are `cl-spec/check-it` (generation and shrinking),
 `cl-spec/instrument` (runtime contract wrappers), `cl-spec/specs` (executable
-self-specifications), `cl-spec/tests` and `cl-spec/examples/structured-data`.
+self-specifications), `cl-spec/tests`, `cl-spec/examples/structured-data` and
+`cl-spec/examples/function-spec-cases`.
 The core system must never load `check-it` or cl-mcp.
 
 `examples/structured-data.lisp` is the executable integration example for the
@@ -59,6 +66,13 @@ example therefore installs the backend while the core system stays free of
 check-it. Loading the example defines functions and one class only: spec
 registration and each demo are explicit entry points that use a dedicated
 registry, so loading it never draws a value, runs a demo or changes `*registry*`.
+
+`examples/function-spec-cases.lisp` is the same shape of executable example for
+named per-condition cases; its guide is
+`docs/guides/function-spec-cases-walkthrough.md` and its suite is
+`tests/function-spec-cases-example-test.lisp`. It registers its own generator and
+contracts only in `register-example!`, and each `demo-*` runs a controlled input
+sequence, so neither loading nor reading it depends on what a seed draws.
 
 ## Build, Test, and Development Commands
 

@@ -15,7 +15,7 @@
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
-                #:trial-observation-status
+                #:trial-observation-status #:trial-observation-case
                 #:trial-observation-arguments #:trial-observation-condition
                 #:trial-observation-reason #:trial-observation-signature
                 #:trial-observation-explanation)
@@ -34,6 +34,7 @@
            #:result-data #:property-result-schema-metadata #:property-result-budget
            #:property-result-generation-report #:property-result-failure-phase
            #:property-result-entity-kind
+           #:property-result-case-report
            #:property-result-failure-evidence #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-rejected
            #:property-result-failure-reason #:property-result-failure-signature
@@ -166,6 +167,18 @@ and the shrunk counterexample are what make a failure actionable."))
 (defmethod property-result-entity-kind ((result property-result))
   :property)
 
+(defgeneric property-result-case-report (result)
+  (:documentation "Return RESULT's per-case run report, or :NOT-COLLECTED.
+
+Only a function-check run with named cases has one; a property run and a manually
+built result answer :NOT-COLLECTED rather than measured zeros for counters
+nothing kept.  The public reader for the report is
+FUNCTION-CHECK-RESULT-CASE-REPORT, which keeps the PROPERTY-RESULT /
+FUNCTION-CHECK-RESULT reader split.")
+  (:method ((result property-result))
+    (declare (ignore result))
+    :not-collected))
+
 (defun selected-evidence (result)
   "Return the observation that RESULT puts forward."
   (or (property-result-shrunk-evidence result)
@@ -183,10 +196,16 @@ and the shrunk counterexample are what make a failure actionable."))
     (when evidence (trial-observation-signature evidence))))
 
 (defun property-result-explanation (result)
-  "Return the selected failure explanation; internal post-form tags are excluded."
+  "Return the selected failure explanation; internal post-form tags are excluded.
+
+:CONTRACT-ERROR is included because a function-spec case-selection error records
+its structured explanation there.  A contract-side error that records no
+explanation still reads NIL, so the projection of existing contract errors does
+not change."
   (let ((evidence (selected-evidence result)))
     (when (and evidence (member (trial-observation-reason evidence)
-                                '(:return-spec :condition-spec :missing-condition)))
+                                '(:return-spec :condition-spec :missing-condition
+                                  :contract-error)))
       (trial-observation-explanation evidence))))
 
 (defun observation-data (observation)
@@ -199,6 +218,7 @@ and the shrunk counterexample are what make a failure actionable."))
           :explanation (trial-observation-explanation observation)
           :outcome (trial-observation-outcome observation)
           :value (trial-observation-value observation)
+          :case (trial-observation-case observation)
           :condition-report (trial-observation-condition-report observation))))
 
 (defun result-data (result)
@@ -236,6 +256,7 @@ results without captured metadata have an explicitly incomplete digest."
                    :generation-report (property-result-generation-report result)
                    :failure-phase (property-result-failure-phase result)
                    :failure-reason (property-result-failure-reason result)
+                   :case-report (property-result-case-report result)
                    :failure (observation-data (property-result-failure-evidence result))
                    :shrunk-failure (observation-data (property-result-shrunk-evidence result))
                    :elapsed (property-result-elapsed result))))))

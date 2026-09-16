@@ -74,6 +74,8 @@
   (:import-from #:cl-spec/tests/backends/tagged-union-generator-test)
   (:import-from #:cl-spec/tests/backends/and-generation-test)
   (:import-from #:cl-spec/tests/examples-test)
+  (:import-from #:cl-spec/tests/function-cases-test)
+  (:import-from #:cl-spec/tests/function-spec-cases-example-test)
   (:import-from #:cl-spec/tests/instrument-test)
   (:import-from #:cl-spec/tests/instrument-status-test)
   (:import-from #:cl-spec/tests/instrument-status-integration-test)
