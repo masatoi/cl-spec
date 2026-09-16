@@ -41,6 +41,8 @@
                 #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/instrument
                 #:instrument-function #:instrumentation-status
+                #:instrumented-function-p #:uninstrument-function
+                #:refresh-instrumentation #:*instrumented-functions*
                 #:unsupported-instrumentation-target
                 #:unsupported-instrumentation-target-reason))
 
@@ -164,6 +166,11 @@ decides whether they pass."
 
 (defun instrumented-probe (x)
   "An ordinary function used by the unsupported-instrumentation test."
+  (incf *calls*)
+  x)
+
+(defun capability-probe (x)
+  "An ordinary function used by the capability-query test."
   (incf *calls*)
   x)
 
@@ -904,3 +911,52 @@ decides whether they pass."
         (ok (eq :not-installed (getf (instrumentation-status 'instrumented-probe) :status)))
         (ok (= 1 (instrumented-probe 1)))
         (ok (= 1 *calls*))))))
+
+(deftest a-capability-query-runs-no-guard-and-no-target
+  (with-fresh-registry
+    (reset-calls)
+    (let ((guard-calls 0))
+      (cl-spec:defspec-function capability-probe
+        (:args (x integer))
+        (:cases (:always (:when (progn (incf guard-calls) t)) (:returns integer))))
+      (testing "the capability answer is construction-only"
+        (ok (eq :unavailable
+                (definition-instrumentation-capability (find-function-spec 'capability-probe))))
+        (ok (= 0 guard-calls))
+        (ok (= 0 *calls*)))
+      (testing "and the refusal reason is about the cases, not the target"
+        (ok (eq :named-cases-unsupported
+                (handler-case (progn (instrument-function 'capability-probe) :no-error)
+                  (unsupported-instrumentation-target (condition)
+                    (unsupported-instrumentation-target-reason condition)))))
+        (ok (= 0 guard-calls))
+        (ok (= 0 *calls*))))))
+
+(deftest changing-an-installed-contract-to-cases-refuses-refresh
+  (with-fresh-registry
+    (reset-calls)
+    (let ((*instrumented-functions* (make-hash-table :test #'eq)))
+      (unwind-protect
+           (progn
+             (cl-spec:defspec-function instrumented-probe
+               (:args (x integer))
+               (:returns integer))
+             (instrument-function 'instrumented-probe)
+             (ok (instrumented-function-p 'instrumented-probe))
+             (testing "changing the contract to :cases leaves the wrapper stale"
+               (cl-spec:defspec-function instrumented-probe
+                 (:args (x integer))
+                 (:cases (:always (:when t) (:returns integer))))
+               (ok (eq :named-cases-unsupported
+                       (handler-case
+                           (progn (refresh-instrumentation 'instrumented-probe) :no-error)
+                         (unsupported-instrumentation-target (condition)
+                           (unsupported-instrumentation-target-reason condition)))))
+               (testing "and the existing wrapper is preserved"
+                 (ok (instrumented-function-p 'instrumented-probe))
+                 (ok (= 3 (instrumented-probe 3)))))
+             (testing "explicit uninstrumentation still restores the target"
+               (ok (uninstrument-function 'instrumented-probe))
+               (ok (not (instrumented-function-p 'instrumented-probe)))))
+        (when (instrumented-function-p 'instrumented-probe)
+          (uninstrument-function 'instrumented-probe))))))
