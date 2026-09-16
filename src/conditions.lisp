@@ -446,7 +446,10 @@ shape for every kind."
              :reader capture-error-captured
              :documentation "Ordered (NAME . VALUE) pairs completed before the failure.
 Only the bindings that finished are present; a later binding is never shown as
-obtained, and a captured NIL is a pair with a NIL value rather than an absence.")
+obtained, and a captured NIL is a pair with a NIL value rather than an absence.
+A value the evidence snapshot cannot preserve is reported as an
+\(:unavailable :reason :opaque-value :type TYPE) placeholder rather than as a
+live reference.")
    (original-condition :initarg :original-condition
                        :initform nil
                        :reader capture-error-original-condition

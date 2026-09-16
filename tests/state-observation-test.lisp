@@ -16,6 +16,9 @@
                 #:definition-digest #:definition-description
                 #:function-check-result-case-report
                 #:function-check-result-failure-reason
+                #:function-check-result-explanation
+                #:property-result-explanation
+                #:run-property #:replay-property
                 #:property-result-status #:property-result-trials
                 #:property-result-rejected #:property-result-failure-phase
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
@@ -23,12 +26,13 @@
                 #:property-result-schema-metadata
                 #:trial-observation-case #:trial-observation-signature
                 #:trial-observation-state #:trial-observation-outcome
+                #:trial-observation-explanation
                 #:make-counterexample-artifact #:recheck-counterexample
                 #:invalid-counterexample-artifact #:invalid-counterexample-artifact-reason
                 #:unsupported-stateful-operation
                 #:unsupported-stateful-operation-operation
                 #:unsupported-stateful-operation-reason
-                #:capture-error
+                #:capture-error #:capture-error-captured
                 #:state-post-error #:state-post-error-index
                 #:state-post-error-case #:state-post-error-original-condition
                 #:invalid-function-spec-form)
@@ -36,7 +40,8 @@
                 #:function-spec #:function-case
                 #:function-spec-cases
                 #:function-spec-capture-bindings #:function-spec-capture-functions
-                #:function-spec-state-postconditions)
+                #:function-spec-state-postconditions
+                #:make-function-check-property)
   (:import-from #:cl-spec/src/schema
                 #:definition-instrumentation-capability #:definition-shrink-enabled-p
                 #:definition-state-constraints)
@@ -62,6 +67,7 @@
 (defparameter *result* 'result)
 
 (defvar *calls* 0 "Target invocations counted by the current test.")
+(defvar *draws* 0 "Generator draws counted by the current test.")
 (defvar *capture-runs* 0 "Capture form evaluations counted by the current test.")
 (defvar *guard-runs* 0 "Case guard evaluations counted by the current test.")
 (defvar *state-runs* 0 "State-post form evaluations counted by the current test.")
@@ -73,7 +79,8 @@
 (defvar *draw-amount* 10 "Amount the next draw passes to the target.")
 
 (defun reset-counters ()
-  (setf *calls* 0 *capture-runs* 0 *guard-runs* 0 *state-runs* 0 *last-args* nil))
+  (setf *calls* 0 *draws* 0 *capture-runs* 0 *guard-runs* 0 *state-runs* 0
+        *last-args* nil))
 
 (defun refuses-p (thunk)
   "True when THUNK signals INVALID-FUNCTION-SPEC-FORM."
@@ -107,6 +114,17 @@ mutated."
        (:shrink (value)
         (declare (ignore value))
         (list (list (make-account 1 7) 1)))
+       (list (make-account *draw-balance* *draw-id*) *draw-amount*))
+     ,@body))
+
+(defmacro with-counting-generator ((name) &body body)
+  "Register a fresh-account generator NAME that counts each draw, then run BODY.
+
+Used to prove a refused replay draws nothing: the refusals under test must not
+reach generation, capture or the target."
+  `(progn
+     (cl-spec:defgenerator ,name ()
+       (incf *draws*)
        (list (make-account *draw-balance* *draw-id*) *draw-amount*))
      ,@body))
 
@@ -357,7 +375,8 @@ checks after the call that the observed values moved the way it requires."
              (capture (getf (observation-state result) :capture)))
         (testing "the later form read the earlier capture value"
           (ok (eq :failed (property-result-status result)))
-          (ok (equal '(30 40) (getf capture :values))))
+          (ok (equal '((first-value . 30) (second-value . 40))
+                     (getf capture :values))))
         (testing "the declaration order is reported"
           (ok (equal '(first-value second-value) (getf capture :declared)))
           (ok (eq :completed (getf capture :status))))))))
@@ -386,7 +405,8 @@ checks after the call that the observed values moved the way it requires."
         (testing "a captured NIL is reported as completed with a NIL value"
           (ok (eq :failed (property-result-status result)))
           (ok (eq :completed (getf capture :status)))
-          (ok (equal '(nil) (getf capture :values)))))
+          (ok (equal '((observed . nil)) (getf capture :values)))
+          (ok (null (cdr (assoc 'observed (getf capture :values)))))))
       (testing "a predicate may test the NIL value it captured"
         (define-target nil-pass-target)
         (cl-spec:defspec-function nil-pass-target
@@ -544,17 +564,20 @@ checks after the call that the observed values moved the way it requires."
         (:returns (satisfies listp))
         (:state-post (progn (incf *state-runs*) t)))
       (reset-counters)
+      (configure-draw :balance 30 :amount 10)
       (let* ((result (check-function 'capture-boom-target :trials 2 :seed 1))
+             (condition (property-result-condition result))
              (capture (getf (observation-state result) :capture)))
         (ok (eq :error (property-result-status result)))
         (ok (eq :capture (property-result-failure-phase result)))
         (ok (= 0 *calls*))
         (ok (= 0 *capture-runs*))
         (ok (= 0 *state-runs*))
-        (testing "only the completed bindings are recorded"
+        (testing "only the completed bindings are recorded, as a named alist"
           (ok (eq :error (getf capture :status)))
           (ok (equal '(a b c) (getf capture :declared)))
-          (ok (= 1 (length (getf capture :values)))))))))
+          (ok (equal '((a . 30)) (getf capture :values)))
+          (ok (equal '((a . 30)) (capture-error-captured condition))))))))
 
 (deftest selection-and-guard-errors-call-no-target
   (with-fresh-registry
@@ -635,6 +658,45 @@ checks after the call that the observed values moved the way it requires."
           (ok (eq :completed (getf (getf state :capture) :status))))))))
 
 ;;; C. What state constraints detect
+
+(deftest a-declared-state-post-survives-a-pre-selection-stop
+  (with-fresh-registry
+    (with-live-generator (presel-capture-args)
+      (define-target presel-capture-target)
+      (cl-spec:defspec-function presel-capture-target
+        (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+        (:args-generator presel-capture-args)
+        (:capture (x (error 'insufficient-funds :balance 0 :amount 0)))
+        (:cases
+          (:a (:when (<= amount x)) (:returns (satisfies listp)) (:state-post t))))
+      (reset-counters)
+      (let* ((result (check-function 'presel-capture-target :trials 1 :seed 1))
+             (state-post (getf (observation-state result) :state-post)))
+        (testing "a case-level state-post is reported as declared but not evaluated"
+          (ok (eq :capture (property-result-failure-phase result)))
+          (ok (eq :not-evaluated (getf state-post :status)))
+          (ok (eq :capture-failed (getf state-post :reason)))
+          (ok (null (getf state-post :case))))))
+    (with-live-generator (presel-select-args)
+      (define-target presel-select-target)
+      (cl-spec:defspec-function presel-select-target
+        (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+        (:args-generator presel-select-args)
+        (:capture (before (account-balance account)))
+        (:cases
+          (:a (:when (<= amount before)) (:returns (satisfies listp)) (:state-post t))
+          (:b (:when (<= amount before)) (:returns (satisfies listp)) (:state-post t))))
+      (reset-counters)
+      (let* ((result (run-scenario :name 'presel-select-target))
+             (state (observation-state result))
+             (state-post (getf state :state-post)))
+        (testing "an ambiguous selection reports the same, with nil case"
+          (ok (eq :case-selection (property-result-failure-phase result)))
+          (ok (eq :not-evaluated (getf state-post :status)))
+          (ok (eq :case-selection-failed (getf state-post :reason)))
+          (ok (null (getf state-post :case))))
+        (testing "the completed capture is still reported"
+          (ok (eq :completed (getf (getf state :capture) :status))))))))
 
 (deftest a-correct-withdrawal-passes
   (with-fresh-registry
@@ -841,7 +903,28 @@ checks after the call that the observed values moved the way it requires."
         (ok (= 1 (getf (report-case report :sufficient-funds) :called)))
         (ok (equal '(:insufficient-funds) (getf report :never-called)))))))
 
-(deftest an-opaque-capture-value-does-not-lose-the-failure
+(deftest a-state-post-violation-explanation-is-readable-everywhere
+  (with-fresh-registry
+    (with-live-generator (expl-args)
+      (define-withdraw-contract expl-target expl-args)
+      (reset-counters)
+      (let ((result (run-scenario :name 'expl-target :scenario :no-update))
+            (expected '(:kind :state-postcondition
+                        :function expl-target
+                        :case :sufficient-funds
+                        :index 0
+                        :form (= (account-balance account)
+                                 (- balance-before amount)))))
+        (testing "the observation keeps the structured explanation"
+          (ok (equal expected
+                     (trial-observation-explanation (failing-evidence result)))))
+        (testing "every public reader returns the same explanation"
+          (ok (equal expected (property-result-explanation result)))
+          (ok (equal expected (function-check-result-explanation result)))
+          (ok (equal expected
+                     (getf (getf (result-data result) :failure) :explanation))))))))
+
+(deftest an-opaque-capture-value-is-reported-as-unprojectable
   (with-fresh-registry
     (with-live-generator (d7-args)
       (define-target opaque-target)
@@ -853,11 +936,17 @@ checks after the call that the observed values moved the way it requires."
         (:state-post (eq box nil)))
       (reset-counters)
       (let* ((result (run-scenario :name 'opaque-target :scenario :no-update))
-             (state (observation-state result)))
-        (ok (eq :failed (property-result-status result)))
-        (ok (equal '(:state-postcondition 0)
-                   (trial-observation-signature (failing-evidence result))))
-        (ok (typep (first (getf (getf state :capture) :values)) 'opaque-box))))))
+             (state (observation-state result))
+             (entry (assoc 'box (getf (getf state :capture) :values))))
+        (testing "the failure is intact and names the failing form"
+          (ok (eq :failed (property-result-status result)))
+          (ok (equal '(:state-postcondition 0)
+                     (trial-observation-signature (failing-evidence result)))))
+        (testing "the diagnostic value is an explicit unprojectable placeholder"
+          (ok entry)
+          (ok (equal '(:unavailable :reason :opaque-value :type opaque-box)
+                     (cdr entry)))
+          (ok (not (typep (cdr entry) 'opaque-box))))))))
 
 (deftest runs-do-not-share-captures-or-counters
   (with-fresh-registry
@@ -870,7 +959,8 @@ checks after the call that the observed values moved the way it requires."
                                       :balance 40 :amount 5 :seed 2)))
         (ok (eq :failed (property-result-status first-run)))
         (ok (eq :passed (property-result-status second-run)))
-        (ok (equal '(30 7) (getf (getf (observation-state first-run) :capture) :values)))
+        (ok (equal '((balance-before . 30) (id-before . 7))
+                   (getf (getf (observation-state first-run) :capture) :values)))
         (ok (null (observation-state second-run)))
         (ok (not (eq (function-check-result-case-report first-run)
                      (function-check-result-case-report second-run))))))))
@@ -937,6 +1027,40 @@ checks after the call that the observed values moved the way it requires."
         (ok (equal '(:operation :replay :reason :state-restoration-unavailable)
                    outcome))
         (ok (= before *calls*))))))
+
+(deftest replaying-through-the-property-adapter-is-refused
+  (with-fresh-registry
+    (with-counting-generator (adapter-args)
+      (define-target adapter-target)
+      (cl-spec:defspec-function adapter-target
+        (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+        (:args-generator adapter-args)
+        (:capture (before (progn (incf *capture-runs*) (account-balance account))))
+        (:returns (satisfies listp))
+        (:state-post (progn (incf *state-runs*)
+                            (= (account-balance account) (- before 1)))))
+      (reset-counters)
+      (configure-draw :balance 30 :amount 10 :scenario :no-update)
+      (let* ((adapter (make-function-check-property (find-function-spec 'adapter-target)
+                                                    :budget 1))
+             (result (run-property adapter :seed 42))
+             (draws *draws*) (calls *calls*) (captures *capture-runs*))
+        (testing "an integer seed starts a new run and is allowed"
+          (ok (eq :failed (property-result-status result)))
+          (ok (= 1 draws))
+          (ok (= 1 calls))
+          (ok (= 1 captures)))
+        (testing "a past result is refused by replay-property"
+          (ok (handler-case (progn (replay-property adapter result) nil)
+                (unsupported-stateful-operation (condition)
+                  (eq :replay (unsupported-stateful-operation-operation condition))))))
+        (testing "a past result is refused by run-property"
+          (ok (handler-case (progn (run-property adapter :seed result) nil)
+                (unsupported-stateful-operation () t))))
+        (testing "the refusal reaches neither generator, capture nor target"
+          (ok (= draws *draws*))
+          (ok (= calls *calls*))
+          (ok (= captures *capture-runs*)))))))
 
 (deftest a-new-integer-seed-run-is-allowed
   (with-fresh-registry

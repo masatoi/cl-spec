@@ -437,28 +437,68 @@ returns one value yields an unknown position rather than a guessed one."
     (error (condition)
       (values nil nil nil condition))))
 
+(defun project-capture-value (value)
+  "Return VALUE as capture-report data, or an explicit unprojectable placeholder.
+
+The existing evidence snapshot copies conses and arrays and keeps other objects
+by identity.  A value the snapshot returns by identity that is not an atom whose
+representation is self-contained is reported as
+\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE) rather than as a live reference
+that reads like frozen evidence.  This is a report projection, not a deep copy
+and not a new snapshot; the evaluation path keeps the original value."
+  (let ((copy (snapshot-value value)))
+    (if (and (eq copy value)
+             (not (or (consp value) (arrayp value)
+                      (numberp value) (characterp value) (symbolp value))))
+        (list :unavailable :reason :opaque-value :type (type-of value))
+        copy)))
+
+(defun project-capture-values (contract captured)
+  "Zip the completed capture values CAPTURED with their binding names.
+
+Returns an ordered ((NAME . VALUE) ...) alist over the bindings that completed,
+or NIL when CONTRACT declares no capture.  Each value is projected for the
+report by PROJECT-CAPTURE-VALUE, so a caller reads a value with ASSOC rather
+than reconstructing the pairing from :DECLARED.  The raw value list stays the
+evaluation form passed to later capture forms, guards and predicates."
+  (when (function-spec-capture-bindings contract)
+    (loop for binding in (function-spec-capture-bindings contract)
+          for value in captured
+          collect (cons (first binding) (project-capture-value value)))))
+
 (defun capture-evidence (contract status captured condition index)
   "Return the :CAPTURE half of a trial's state evidence, or NIL when undeclared.
 
-STATUS is :NOT-EVALUATED, :COMPLETED or :ERROR.  CAPTURED holds only the
-bindings that completed, in declaration order, so a capture that failed halfway
-never shows a later binding as obtained.  A captured NIL is a (NAME . NIL)
-entry, not an absence."
+STATUS is :NOT-EVALUATED, :COMPLETED or :ERROR.  CAPTURED holds only the value
+of the bindings that completed, in declaration order, so a capture that failed
+halfway never shows a later binding as obtained.  :VALUES pairs each completed
+value with its binding name as ((NAME . VALUE) ...), and a captured NIL is a
+(NAME . NIL) entry rather than an absence."
   (when (function-spec-capture-bindings contract)
     (let ((bindings (function-spec-capture-bindings contract)))
       (list :status status
             :declared (mapcar #'first bindings)
-            :values captured
+            :values (project-capture-values contract captured)
             :error (when condition
                      (let ((failing (nth index bindings)))
                        (list :binding (first failing) :index index
                              :condition-type (type-of condition))))))))
 
 (defun state-post-declared-p (contract case)
-  "Return true when the effective state-post clause of CONTRACT under CASE exists."
+  "Return true when the effective state-post clause of CONTRACT under CASE exists.
+
+A selected CASE rules its own clause.  With no case selected -- a capture or
+case-selection failure, or a case-less contract -- the contract declares one
+when its top-level clause exists or any of its cases carries one.  The
+distinction keeps \"no state-post declared\" apart from \"declared but stopped
+before a case was chosen\": the latter still reports :NOT-EVALUATED with a reason
+and no case, rather than dropping the evidence entirely."
   (if case
       (and (function-case-state-postconditions case) t)
-      (and (function-spec-state-postconditions contract) t)))
+      (or (and (function-spec-state-postconditions contract) t)
+          (some (lambda (candidate)
+                  (and (function-case-state-postconditions candidate) t))
+                (function-spec-cases contract)))))
 
 (defun state-post-evidence (contract case status &key reason index form condition)
   "Return the :STATE-POST half of a trial's state evidence, or NIL when undeclared.
@@ -1434,7 +1474,8 @@ keeps its existing classification and leaves state-post explicitly
                                :function (function-spec-name contract)
                                :binding (first (nth index
                                                     (function-spec-capture-bindings contract)))
-                               :index index :captured captures
+                               :index index
+                               :captured (project-capture-values contract captures)
                                :original-condition condition)))
                         (values :error :contract-error
                                 (list :capture index :contract-error (type-of condition))

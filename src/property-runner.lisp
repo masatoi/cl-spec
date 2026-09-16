@@ -6,13 +6,16 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
-  (:import-from #:cl-spec/src/schema #:definition-metadata)
+  (:import-from #:cl-spec/src/schema #:definition-metadata
+                #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:property-name
                 #:property-named-arguments
                 #:property-trials)
-  (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
+  (:import-from #:cl-spec/src/conditions
+                #:invalid-backend-result
+                #:unsupported-stateful-operation)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
                 #:trial-observation-status #:trial-observation-case
@@ -199,13 +202,14 @@ FUNCTION-CHECK-RESULT reader split.")
   "Return the selected failure explanation; internal post-form tags are excluded.
 
 :CONTRACT-ERROR is included because a function-spec case-selection error records
-its structured explanation there.  A contract-side error that records no
-explanation still reads NIL, so the projection of existing contract errors does
-not change."
+its structured explanation there, and :STATE-POSTCONDITION because a violated
+:state-post records the case, form position and source.  A contract-side error
+that records no explanation still reads NIL, so the projection of existing
+contract errors does not change."
   (let ((evidence (selected-evidence result)))
     (when (and evidence (member (trial-observation-reason evidence)
                                 '(:return-spec :condition-spec :missing-condition
-                                  :contract-error)))
+                                  :contract-error :state-postcondition)))
       (trial-observation-explanation evidence))))
 
 (defun observation-data (observation)
@@ -308,13 +312,32 @@ the profile in effect falls back to the backend's own default."
                                         ((or (null revision) (eq revision :unknown)) :unknown)
                                         (t :known)))))))
 
+(defun refuse-stateful-replay (property seed-result)
+  "Refuse re-applying a past run to a state-observing PROPERTY, or return NIL.
+
+A :CAPTURE / :STATE-POST function-check property observes state and never
+restores it, so a saved run cannot be reapplied to it.  SEED-RESULT is the
+PROPERTY-RESULT the caller is standing in for a run, or NIL when the caller
+starts a new run (no seed, or an integer seed) which stays allowed.  The
+refusal happens before metadata probing, generation, capture or the target run,
+so no call counter moves.  Ordinary properties declare no state constraints, so
+their existing replay is unchanged."
+  (when (and seed-result (definition-state-constraints property))
+    (error 'unsupported-stateful-operation :operation :replay
+           :function (property-name property))))
+
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend."
+backend.
+
+A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
+whose definition declares state constraints refuses that with
+UNSUPPORTED-STATEFUL-OPERATION before generation, capture or the target, because
+nothing restores its state.  An integer SEED starts a new run and stays allowed."
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
   ;; unusable seed with a condition naming an internal symbol.  A result stands
   ;; in for its seed, as REPLAY-PROPERTY and CHECK-FUNCTION both allow.
@@ -338,7 +361,11 @@ backend."
          ;; default budget, contradicting the result it was handed.
          (options (or options
                       (and seed-result (property-result-options seed-result))))
-         (property (resolve-property property-designator registry))
+         (property (let ((resolved (resolve-property property-designator registry)))
+                     ;; Refuse a state-observing property before metadata
+                     ;; probing, generation, capture or the target run.
+                     (refuse-stateful-replay resolved seed-result)
+                     resolved))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))
          ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
@@ -434,12 +461,22 @@ integer SEED carries no profile, so that spelling still requires the caller to
 supply a matching PROFILE.
 
 SEED must be a property-result or a non-negative integer, or an error is
-signalled."
+signalled.
+
+Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
+definition declares state constraints refuses that, before the integer seed is
+extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
+integer SEED starts a new run and stays allowed."
   (unless (or (typep seed 'property-result)
               (and (integerp seed) (>= seed 0)))
     (error 'type-error
            :datum seed
            :expected-type '(or property-result (integer 0 *))))
+  ;; A past result is checked before its integer seed is extracted, so the
+  ;; refusal cannot be bypassed by this entry point.  An integer seed starts a
+  ;; new run and is not a replay.
+  (refuse-stateful-replay (resolve-property property-designator registry)
+                          (and (typep seed 'property-result) seed))
   (run-property property-designator
                 :seed (if (typep seed 'property-result)
                           (property-result-seed seed)
