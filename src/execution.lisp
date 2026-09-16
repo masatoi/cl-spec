@@ -12,7 +12,8 @@
            #:trial-observation-reason #:trial-observation-signature
            #:trial-observation-explanation #:trial-observation-condition
            #:trial-observation-condition-report #:trial-observation-value
-           #:trial-observation-case #:note-trial-outcome #:observation-failure-phase
+           #:trial-observation-case #:begin-trial-report #:note-trial-outcome
+           #:observation-failure-phase
            #:observation-from-current-run-p #:evaluate-trial #:observe-trial #:observation-failure-p
            #:failure-identities-match-p #:snapshot-value #:same-value-p))
 
@@ -304,6 +305,18 @@ refusal), because the target was called and produced the condition.  The phase
 is never inferred from the condition's class."
   (when (typep observation 'trial-observation)
     (trial-observation-failure-phase observation)))
+
+(defgeneric begin-trial-report (property)
+  (:documentation "Open the run's trial reporting for PROPERTY, if the backend keeps one.
+
+The backend calls this once before generating its first trial, so a run that
+produces no observation at all -- zero trials, or a first draw that exhausts the
+generation budget -- still reports the zeros it does know instead of
+:NOT-COLLECTED.  The default keeps nothing: an ordinary PROPERTY has no per-trial
+state to aggregate, and a backend that never calls this has not reported.")
+  (:method ((property property))
+    (declare (ignore property))
+    nil))
 
 (defgeneric note-trial-outcome (property observation)
   (:documentation "Record one ordinary trial OBSERVATION of PROPERTY, if the run keeps evidence.

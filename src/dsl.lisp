@@ -259,7 +259,10 @@ the contract-level clause does."
       ;; The same rule the contract-level clauses have: letting :post-values win
       ;; because it was written last would silently drop the other predicate.
       (function-spec-error case-form ":post and :post-values are exclusive"))
-    (when (and signals post)
+    (when (and (member :signals seen)
+               (or (member :post seen) (member :post-values seen)))
+      ;; Judged by clause occurrence, not by the body: an empty (:post) is still
+      ;; a written :post clause, and a :signals case may not carry one.
       (function-spec-error case-form "a :signals case cannot carry :post or :post-values"))
     (unless (eq post-values :primary)
       (unless (and (proper-list-p returns) (symbolp (first returns))

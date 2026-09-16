@@ -227,7 +227,10 @@ case conditions select the required behaviour inside it.
 Each case is a unique keyword name, an optional docstring, exactly one
 `(:when FORM)` and exactly one of `(:returns SPEC)` or `(:signals SPEC)`; a
 `:returns` case may add `:post` or `:post-values`, a `:signals` case may not in
-this version. `:args`, `:args-generator` and the common `:pre` stay top-level.
+this version. That refusal is judged by clause occurrence, so an empty `(:post)`
+is refused too, and `:post`/`:post-values` are mutually exclusive inside a case
+just as they are at the contract level. `:args`, `:args-generator` and the common
+`:pre` stay top-level.
 `:cases` cannot be combined with a top-level `:returns`, `:signals`, `:post` or
 `:post-values`; there is no inherited common outcome. A case cannot declare its
 own arguments or precondition, nest `:cases`, or use `:else` or a priority.
@@ -262,9 +265,12 @@ no violation was observed in the trials that ran, not that every case ran: read
 precondition refusals are not counted and `trials - rejected` counts trials that
 reached selection rather than target calls. A contract error raised while
 classifying a selected case is counted as that case's `:error` and keeps the case
-in its evidence and identity, because the target was called. A result that did not
-go through a function-check run, and a run whose backend reported no observation,
-answer `:not-collected` rather than measured zeros. The selected case's name is
+in its evidence and identity, because the target was called. A participating
+backend opens the report before its first draw, so zero trials and a first draw
+that exhausts the generation budget report known zeros (the exhaustion itself
+under `:failure-phase :generation`); a result that did not go through a
+function-check run, and a backend that never opens reporting, answer
+`:not-collected` instead. The selected case's name is
 part of the failure identity (`(:case NAME . existing-signature)`), so shrinking,
 replay and counterexample artifacts stay inside that case;
 `function-spec-data` exposes ordered `:cases` with `:case-selection :exclusive`,

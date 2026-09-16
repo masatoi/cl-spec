@@ -71,7 +71,7 @@
                 #:backend-default-trials)
   (:import-from #:cl-spec/src/execution
                 #:evaluate-trial #:snapshot-value #:failure-identities-match-p
-                #:note-trial-outcome #:observation-failure-phase
+                #:begin-trial-report #:note-trial-outcome #:observation-failure-phase
                 #:trial-observation-case #:trial-observation-status)
   (:import-from #:cl-spec/src/explain
                 #:explain-data #:expected-descriptor)
@@ -773,8 +773,10 @@ A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
 :CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
 counters come from the run's own ordinary trials and are snapshotted onto the
 result, so two runs of one contract never share them.  A result that did not go
-through a function-check run, and a run whose backend reported no observation at
-all, both say :NOT-COLLECTED rather than reporting measured zeros.
+through a function-check run, and one whose backend never opened trial
+reporting, both say :NOT-COLLECTED rather than reporting measured zeros.  A
+participating backend opens reporting before its first draw, so zero trials and
+a first draw that exhausted the generation budget report known zeros.
 
 A trial that reached the target is counted for its selected case even when
 classifying the result signalled, because the call happened and the case owned
@@ -1093,8 +1095,10 @@ explanation, and the target is not called."
 
 Owned by the run, never by the registered definition or a global table: a reused
 contract must not carry counters from an earlier run into a later one.  MEASURED-P
-stays NIL until the backend reports an observation, so a backend that does not
-participate yields :NOT-COLLECTED instead of zeros that read as measurements."
+is set when the backend opens reporting (BEGIN-TRIAL-REPORT) or records an
+observation, so a backend that does not participate yields :NOT-COLLECTED instead
+of zeros that read as measurements, while a participating backend that produced
+no observation still reports known zeros."
   (cases nil :read-only t)
   (counts nil :read-only t)
   (measured-p nil)
@@ -1115,12 +1119,24 @@ shrinking cannot inflate a case's call count.")
       (setf (gethash (function-case-name case) counts) (make-case-trial-counts)))
     (%make-case-run cases counts)))
 
+(defmethod begin-trial-report ((property function-check-property))
+  "Mark the active function-check run as measured before its first trial.
+
+A participating backend calls this when it starts running trials, so a run that
+produces no observation at all -- zero trials, or a first draw that exhausted the
+generation budget -- reports the zeros it does know.  A backend that never calls
+it leaves the run unmeasured, and the report says :NOT-COLLECTED."
+  (declare (ignore property))
+  (let ((run *case-run*))
+    (when run (setf (case-run-measured-p run) t))))
+
 (defmethod note-trial-outcome ((property function-check-property) observation)
   "Count one ordinary trial of PROPERTY for the active run's case report.
 
-Reaching this method is what makes the report measured: a backend that never
-calls it leaves the run unmeasured, and the report says :NOT-COLLECTED rather
-than reporting zeros for counters nothing kept.
+Reaching this method also marks the report measured, so a backend that reports
+observations without calling BEGIN-TRIAL-REPORT still gets a measured report; a
+backend that reaches neither leaves the run unmeasured, and the report says
+:NOT-COLLECTED rather than reporting zeros for counters nothing kept.
 
 A precondition refusal selected no case and called no target, so it contributes
 nothing.  A case-selection error called no target either and is counted
@@ -1296,8 +1312,10 @@ case's :ERROR and keeps the case in its failure identity.  :PASSED says no
 violation was observed in the trials that ran; it does not say every case ran, so
 read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
 reached case selection, not the number of target calls: a case-selection error
-calls no target.  A backend that reports no observation at all leaves the report
-:NOT-COLLECTED rather than measured zeros."
+calls no target.  A backend that neither opens trial reporting nor records an
+observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
+participating backend's zero-trial and first-draw-exhaustion runs report known
+zeros."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (unless (or (null seed) (typep seed 'property-result)

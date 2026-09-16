@@ -197,6 +197,16 @@ decides whether they pass."
   (incf *calls*)
   x)
 
+(defun zero-trial-probe (x)
+  "An identity used by the zero-trial measurement test."
+  (incf *calls*)
+  x)
+
+(defun impossible-probe (x)
+  "An identity behind an argument spec whose generator exhausts on the first draw."
+  (incf *calls*)
+  x)
+
 (defclass unmeasured-backend (check-it-backend) ()
   (:documentation "A backend that generates trials without reporting observations."))
 
@@ -292,7 +302,22 @@ decides whether they pass."
     (ok (refuses (macroexpand-1
                   '(cl-spec:defspec-function f
                     (:args (x integer))
-                    (:cases (:a (:when t) (:signals error) (:post t))))))))
+                    (:cases (:a (:when t) (:signals error) (:post t)))))))
+    (testing "including an empty (:post) clause, judged by its occurrence"
+      (ok (refuses (macroexpand-1
+                    '(cl-spec:defspec-function f
+                      (:args (x integer))
+                      (:cases (:a (:when t) (:signals error) (:post)))))))
+      (ok (refuses (macroexpand-1
+                    '(cl-spec:defspec-function f
+                      (:args (x integer))
+                      (:cases (:a (:when t) (:post) (:signals error))))))))
+    (testing "and an explicit :post-values clause"
+      (ok (refuses (macroexpand-1
+                    '(cl-spec:defspec-function f
+                      (:args (x integer))
+                      (:cases (:a (:when t) (:signals error)
+                                  (:post-values (v) (declare (ignore v)) t)))))))))
   (testing ":post and :post-values are exclusive inside a case"
     (ok (refuses (macroexpand-1
                   '(cl-spec:defspec-function f
@@ -1080,3 +1105,46 @@ decides whether they pass."
           (ok (eq :passed (property-result-status result)))
           (ok (eq :not-collected (function-check-result-case-report result)))
           (ok (eq :not-collected (getf (result-data result) :case-report))))))))
+
+(deftest a-participating-backend-reports-known-zeros
+  (with-fresh-registry
+    (reset-calls)
+    (cl-spec:defspec-function zero-trial-probe
+      (:args (x integer))
+      (:cases
+        (:first (:when (plusp x)) (:returns integer))
+        (:second (:when (minusp x)) (:returns integer))))
+    (testing "a run that generated nothing still reports measured zeros"
+      (let* ((result (check-function 'zero-trial-probe :trials 0 :seed 1))
+             (report (function-check-result-case-report result)))
+        (ok (eq :skipped (property-result-status result)))
+        (ok (= 0 (property-result-trials result)))
+        (ok (eq :exclusive (getf report :selection)))
+        (ok (= 0 (getf (report-case report :first) :called)))
+        (ok (= 0 (getf report :case-selection-errors)))
+        (ok (equal '(:first :second) (getf report :never-called)))))))
+
+(deftest a-first-draw-generation-exhaustion-reports-known-zeros
+  (with-fresh-registry
+    (reset-calls)
+    ;; (member 1) with an impossible residual filter exhausts its candidate
+    ;; budget on the very first draw.
+    (cl-spec:defspec-function impossible-probe
+      (:args (x (and (member 1) (satisfies evenp))))
+      (:cases
+        (:first (:when (plusp x)) (:returns integer))
+        (:second (:when (minusp x)) (:returns integer))))
+    (let* ((result (check-function 'impossible-probe :trials 1 :seed 1
+                                   :options (list :generation-budget 5)))
+           (report (function-check-result-case-report result)))
+      (testing "the exhaustion is its own report, not a lost measurement"
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :generation (property-result-failure-phase result)))
+        (ok (eq :generation-budget-exhausted
+                (function-check-result-failure-reason result)))
+        (ok (= 0 (property-result-trials result))))
+      (testing "and the case counters are known zeros"
+        (ok (eq :exclusive (getf report :selection)))
+        (ok (= 0 (getf (report-case report :first) :called)))
+        (ok (= 0 (getf report :case-selection-errors)))
+        (ok (equal '(:first :second) (getf report :never-called)))))))

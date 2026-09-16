@@ -228,8 +228,10 @@ case's :ERROR and keeps the case in its failure identity.  :PASSED says no
 violation was observed in the trials that ran; it does not say every case ran, so
 read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
 reached case selection, not the number of target calls: a case-selection error
-calls no target.  A backend that reports no observation at all leaves the report
-:NOT-COLLECTED rather than measured zeros.
+calls no target.  A backend that neither opens trial reporting nor records an
+observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
+participating backend's zero-trial and first-draw-exhaustion runs report known
+zeros.
 ```
 
 <a name="clear-registry"></a>
@@ -1451,8 +1453,10 @@ A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
 :CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
 counters come from the run's own ordinary trials and are snapshotted onto the
 result, so two runs of one contract never share them.  A result that did not go
-through a function-check run, and a run whose backend reported no observation at
-all, both say :NOT-COLLECTED rather than reporting measured zeros.
+through a function-check run, and one whose backend never opened trial
+reporting, both say :NOT-COLLECTED rather than reporting measured zeros.  A
+participating backend opens reporting before its first draw, so zero trials and
+a first draw that exhausted the generation budget report known zeros.
 
 A trial that reached the target is counted for its selected case even when
 classifying the result signalled, because the call happened and the case owned

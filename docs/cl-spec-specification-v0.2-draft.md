@@ -1526,7 +1526,8 @@ OUTCOME   := (:returns SPEC) [(:post FORM ...) | (:post-values (NAME ...) FORM .
   既存の`:post`／`:post-values`を利用できるが、両者の排他性は契約レベルと同じく
   ケース内でも適用し、`:post-values`は固定`(values ...)`戻り値とpost述語を要求する。
   節の順序が2つの述語のどちらを残すかを決めることはない。`:signals`ケースでは
-  初版は両者を許可しない。
+  初版は両者を許可せず、この判定は本体の真偽ではなく**節の出現**で行う。空の
+  `(:post)`も書かれた節として拒否し、順序を入れ替えても結論は変わらない。
 - `:args`・`:args-generator`・共通`:pre`はトップレベルに置く。ケースごとの`:args`・
   `:args-generator`・`:pre`・入れ子の`:cases`・`:else`・優先順位は初版では追加しない。
 - `:cases`とトップレベルの`:returns`／`:signals`／`:post`／`:post-values`は併用できない。
@@ -1599,9 +1600,11 @@ errorを送出した試行は、対象を呼んだそのケースの`:error`へ�
 登録定義やグローバル表へ保存しない。`trials - rejected`は対象呼出件数ではなく、
 ケース選択まで到達した試行数である。
 
-計数hookに到達しなかったrunは`:not-collected`を返す。backendが観測を報告していない
-場合にゼロを計測済みの値として提示しないためであり、手動で組み立てた結果と同じ扱いで
-ある。
+計測への参加は最初のobservationより前に確定する。計測対応backendは最初のdrawの前に
+計測開始を宣言するため、試行0件や最初の入力生成での予算枯渇でも「既知のゼロ」を
+計測済みとして報告し、生成枯渇は別report（`:failure-phase :generation`）で示す。
+計測を開始せず観測も記録しなかったbackendだけが`:not-collected`を返す。手動で
+組み立てた結果も同じ扱いである。
 
 `function-spec-data`はケースを持つ契約について、順序付き`:cases`と
 `:case-selection :exclusive`を返す（ケースを持たない契約はこれらのキーを省く）。
@@ -4941,10 +4944,12 @@ tour is `docs/guides/function-spec-cases-walkthrough.md`.
 `:cases` is accepted once, with at least one case. A case is a keyword name, an
 optional docstring, exactly one `(:when FORM)`, and exactly one of `(:returns
 SPEC)` or `(:signals SPEC)`; a `:returns` case may add `:post` or `:post-values`,
-a `:signals` case may not. Inside a case `:post` and `:post-values` are mutually
-exclusive, exactly as at the contract level, and `:post-values` additionally
-requires a fixed `(values ...)` return declaration and a post predicate; clause
-order never decides which predicate survives. Cases are stored as ordered
+a `:signals` case may not -- judged by clause occurrence, so an empty `(:post)`
+is refused in either order, exactly as at the contract level. Inside a case
+`:post` and `:post-values` are mutually exclusive, exactly as at the contract
+level, and `:post-values` additionally requires a fixed `(values ...)` return
+declaration and a post predicate; clause order never decides which predicate
+survives. Cases are stored as ordered
 `function-case` objects on the single `function-spec` registered under the
 function's name; a case is never registered as a public function spec of its own.
 `:cases` is exclusive with the contract-level `:returns`, `:signals`, `:post` and
@@ -4989,11 +4994,14 @@ inside the case while case-less identities are unchanged. `check-function`
 results and `result-data` carry `:case-report` with `:selection :exclusive`,
 `:unit :normal-trials`, the declared cases, per-case call and outcome counts, the
 selection-error count and the never-called names. Counters belong to one run and
-receive a snapshot; shrink candidates and precondition refusals are not counted,
-and a run whose backend reported no observation answers `:not-collected` rather
-than zeros. `:passed` keeps its meaning over the trials that ran and does not
-claim every case ran; `trials - rejected` counts trials that reached selection,
-not target calls.
+receive a snapshot; shrink candidates and precondition refusals are not counted.
+A participating backend opens reporting before its first draw, so zero trials and
+a first draw that exhausts the generation budget report known zeros while the
+exhaustion itself is reported separately under `:failure-phase :generation`;
+only a backend that neither opens reporting nor records an observation answers
+`:not-collected`. `:passed` keeps its meaning over the trials that ran and does
+not claim every case ran; `trials - rejected` counts trials that reached
+selection, not target calls.
 
 The counterexample artifact format version is unchanged: the case name is
 payload inside the existing signature, so a pre-change artifact loads unchanged
@@ -5033,5 +5041,7 @@ It also pins the review follow-ups: a classification error after selection keeps
 its case, identity and count; a target signalling the public
 `CASE-SELECTION-ERROR` stays a target failure whose evidence is persistable; a
 case reinitialization must update forms and predicate together; `:post` and
-`:post-values` are exclusive inside a case; and a backend that reports no
-observation leaves the report `:not-collected`.
+`:post-values` are exclusive inside a case, and a `:signals` case refuses either
+one by clause occurrence (an empty `(:post)` included); a participating backend's
+zero-trial and first-draw-exhaustion runs report known zeros while a
+non-participating backend answers `:not-collected`.

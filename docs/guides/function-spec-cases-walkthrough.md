@@ -187,8 +187,11 @@ case's `:error` and keeps the case in its evidence and identity, because the
 target was called for it. Because a selection error calls no target,
 `TRIALS - REJECTED` is the number of trials that reached selection, not the
 number of target calls. The counters belong to one run and are snapshotted onto
-its result; a result built by hand, or one whose backend reported no observation,
-answers `:NOT-COLLECTED` rather than measured zeros.
+its result. A participating backend opens the report before its first draw, so a
+run with zero trials, or one whose first draw exhausted the generation budget,
+reports known zeros (the exhaustion itself under `:FAILURE-PHASE :GENERATION`);
+a result built by hand, and one whose backend never opened reporting, answers
+`:NOT-COLLECTED`.
 
 ## What this version does and does not do
 

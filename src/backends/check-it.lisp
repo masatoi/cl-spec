@@ -45,7 +45,7 @@
                 #:owned-generation-exhaustion-p)
   (:import-from #:cl-spec/src/execution
                 #:snapshot-value #:observe-trial #:observation-failure-p
-                #:observation-failure-phase #:note-trial-outcome
+                #:observation-failure-phase #:begin-trial-report #:note-trial-outcome
                 #:failure-identities-match-p #:same-value-p
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status
@@ -286,6 +286,8 @@ Return accepted observation, whether another failure occurred, and a bounded rep
 The shrinker's return value is not evidence: some generators transform it after
 the last callback. Reject internal representations and domain violations before
 calling user code, and keep existing evidence if shrinking itself fails.
+Running trials is reported before the first draw, so a run with no observation
+still reports the zeros it knows.
 A trial that stopped before the target -- a function-spec case-selection error --
 is reported with its :FAILURE-PHASE and is not shrunk: repeating a failure the
 target never produced is not a reduction of it."
@@ -301,6 +303,11 @@ target never produced is not a reduction of it."
          (generator (compiled-generator-generator compiled))
          (rejected 0))
     (check-type shrink-budget (integer 0 100000))
+    ;; Report that this run is being measured before the first draw, so a run
+    ;; that produces no observation -- zero trials, or a first draw that
+    ;; exhausts the generation budget -- still reports the zeros it knows
+    ;; instead of :NOT-COLLECTED.
+    (begin-trial-report property)
     (with-generation-environment
         ((max *base-size* (compiled-generator-size compiled))
          :trials trials)

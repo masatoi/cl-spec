@@ -62,7 +62,9 @@ Rules, all refused before registration with `INVALID-FUNCTION-SPEC-FORM`:
 - A case has exactly one of `:returns` or `:signals`.
 - A `:returns` case may add `:post` or `:post-values` with the existing
   exclusivity, arity and variable rules.
-- A `:signals` case may not carry `:post` or `:post-values` in this version.
+- A `:signals` case may not carry `:post` or `:post-values` in this version. The
+  refusal is by clause occurrence, not by body: an empty `(:post)` is still a
+  written clause and is refused, in either order.
 - No other clause is accepted inside a case. Unknown, duplicated and malformed
   clauses are refused at macroexpansion time.
 - `:cases` cannot be combined with a top-level `:returns`, `:signals`, `:post` or
@@ -240,9 +242,11 @@ as `:case-report`.
   definition or in a global table; the result receives a snapshot.
 - A result that did not go through a function-check run reports
   `:not-collected` rather than measured zeros, and so does a run whose backend
-  reported no observation at all. Reaching the counting hook is what makes a
-  report measured; a backend that never calls it leaves counters nothing filled,
-  and reporting them as zeros would claim a measurement that never happened.
+  never opened trial reporting. A participating backend opens the report before
+  its first draw, so zero trials and a first draw that exhausts the generation
+  budget both report the zeros they know; only a backend that never opens it (and
+  never records an observation) leaves the counters unfilled, and reporting those
+  as zeros would claim a measurement that never happened.
 
 `PROPERTY-RESULT-TRIALS` and `PROPERTY-RESULT-REJECTED` keep their meaning.
 Because a case-selection error calls no target, `trials - rejected` is not always
@@ -348,5 +352,13 @@ found alongside them are fixed here:
   refuse.
 - `check-function` reported measured-looking zeros when the backend never
   reported an observation; that now answers `:not-collected`.
+- The `:signals` / `:post` exclusivity was still judged by the body, so an empty
+  `(:post)` slipped through; it is now judged by clause occurrence in either
+  order.
+- Opening a report only when the first observation arrived made a participating
+  backend's zero-trial and first-draw-exhaustion runs look unmeasured; the
+  backend now opens reporting before its first draw, so a known zero is reported
+  as a known zero and only a non-participating backend answers
+  `:not-collected`.
 
 No new feature, mutation detection or general state tracking was added for these.
