@@ -4958,6 +4958,11 @@ shrink candidates and precondition refusals are not counted. `:passed` keeps its
 meaning over the trials that ran and does not claim every case ran;
 `trials - rejected` counts trials that reached selection, not target calls.
 
+The counterexample artifact format version is unchanged: the case name is
+payload inside the existing signature, so a pre-change artifact loads unchanged
+and matches only case-less failures, and a case-selection error is refused
+rather than persisted as a call the target never made.
+
 ### Introspection, digest and instrumentation
 
 `function-spec-data` adds ordered `:cases` and `:case-selection :exclusive` for a
