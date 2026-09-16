@@ -322,16 +322,21 @@ a state-evidence plist on its observation (new
   (`trial-observation-state` is `NIL`, and `result-data` omits `:state`), so a
   featureless run's evidence is unchanged.
 
-Values are projected through the existing evidence snapshot: a cons or array is
-reported as its copy, and an atom whose representation is self-contained
-(number, character, symbol) as itself. An object the snapshot returns by
-identity -- a CLOS instance, structure, hash table, function and the like -- is
-reported as `(:unavailable :reason :opaque-value :type TYPE)`, an explicit
-unprojectable placeholder, because the snapshot does not preserve its contents
-and a live reference would read like frozen evidence. The evaluation path still
-passes the original value to later capture forms, guards and predicates; this is
-a report projection, not a deep copy or a new snapshot. A projection failure
-never discards the target outcome or an already-determined failure.
+Values are projected through the existing evidence snapshot. The supported
+diagnostic range is explicit: conses and arrays are reported as copies, and
+self-contained atoms (numbers, characters, symbols) as themselves. A capture
+value that is, or contains at any depth, an object outside that range -- a CLOS
+instance, structure, hash table, function and the like -- is reported **whole**
+as `(:unavailable :reason :opaque-value :type TYPE)`, where `TYPE` names the
+object that could not be projected. Reporting only the outer copy would leave a
+live reference to the inner object inside "frozen" evidence, so a later change
+to that object would be visible through the diagnostic; the whole-value
+placeholder prevents that. The walk is bounded by the value's own structure and
+visits cycles and sharing once. This is a report projection, not a deep copy and
+not a new snapshot, and it adds no copy support for opaque objects; the
+evaluation path still passes the original value to later capture forms, guards
+and predicates. A projection failure never discards the target outcome or an
+already-determined failure.
 
 No automatic expected/actual extraction, no generic diagnostic DSL and no
 all-field diff is added. No giant log of every successful trial object is kept;

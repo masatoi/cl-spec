@@ -1481,9 +1481,9 @@ Name of the :capture binding whose form signalled.
 Ordered (NAME . VALUE) pairs completed before the failure.
 Only the bindings that finished are present; a later binding is never shown as
 obtained, and a captured NIL is a pair with a NIL value rather than an absence.
-A value the evidence snapshot cannot preserve is reported as an
-(:unavailable :reason :opaque-value :type TYPE) placeholder rather than as a
-live reference.
+A value the diagnostic projection cannot preserve, or that contains one at any
+depth, is reported whole as an (:unavailable :reason :opaque-value :type TYPE)
+placeholder rather than as a live reference.
 
 <a name="capture-error-function"></a>
 ### capture-error-function

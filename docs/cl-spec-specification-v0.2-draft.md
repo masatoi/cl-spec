@@ -1809,14 +1809,18 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 して表示せず、`:values`は完了した束縛だけの順序付き`((NAME . VALUE) ...)` alistで
 あり、`assoc`で名前から値を引ける。取得値NILは`(NAME . NIL)`として未取得と区別する。
 
-証拠の値は既存のsnapshotで投影する。consとarrayは複製として、number・character・
-symbolなど表現が自己完結したatomはそのまま報告する。snapshotが同一性で返す
-オブジェクト（CLOSインスタンス・構造体・hash-table・関数など）は、内容を保存できない
-ため`(:unavailable :reason :opaque-value :type TYPE)`という明示的な投影不可の
-プレースホルダとして報告し、ライブ参照を凍結済み証拠のように見せない。評価経路は
-元の値を後続のcapture式・guard・述語へそのまま渡す。これは報告用の投影であり、
-deep copyでも新しいsnapshot機構でもない。投影失敗で元の対象outcomeや確定済み失敗を
-失わない。成功試行のオブジェクトを保持する巨大なログは追加しない。
+証拠の値は既存のsnapshotで投影する。診断の投影可能範囲を明示する。consとarrayは
+複製として、number・character・symbolなど表現が自己完結したatomはそのまま報告する。
+この範囲外のオブジェクト（CLOSインスタンス・構造体・hash-table・関数など）を
+**その値自身が、または任意の深さで内包する**場合、その束縛の診断値全体を
+`(:unavailable :reason :opaque-value :type TYPE)`（`TYPE`は投影できなかった
+オブジェクトの型）として報告する。外側だけを複製して内部のライブ参照を残すと、
+「保存済みの診断」から後の変更が見えてしまうためである。走査は値自身の構造に
+よって束縛され、循環と共有は一度だけ訪問する。評価経路は元の値を後続のcapture式・
+guard・述語へそのまま渡す。これは報告用の投影であり、deep copyでも新しいsnapshot
+機構でもなく、opaqueオブジェクトのコピー対応を追加しない。投影失敗で元の対象
+outcomeや確定済み失敗を失わない。成功試行のオブジェクトを保持する巨大なログは
+追加しない。
 
 state-post不成立の構造化説明（`:kind`・`:function`・`:case`・`:index`・`:form`）は、
 `trial-observation-explanation`・`property-result-explanation`・

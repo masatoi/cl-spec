@@ -437,21 +437,52 @@ returns one value yields an unknown position rather than a guessed one."
     (error (condition)
       (values nil nil nil condition))))
 
+(defun unprojectable-diagnostic-leaf (value)
+  "Return the TYPE of an opaque value reachable from VALUE, or NIL when none.
+
+The evidence snapshot copies conses and arrays and keeps other objects by
+identity.  A reachable object it does not copy and that is not a self-contained
+atom (number, character, symbol) makes the whole capture value unprojectable:
+reporting a copy of the outer structure would still carry a live reference to the
+inner object, so a later change to that object would be visible through
+\"saved\" diagnostics.  Cycles and shared structure are visited once.  This
+defines the diagnostic projection's supported range; it is not a statement about
+the object and adds no copy support."
+  (let ((seen (make-hash-table :test #'eq))
+        (pending (list value)))
+    (loop while pending
+          for item = (pop pending)
+          do (cond
+               ((gethash item seen))
+               ((consp item)
+                (setf (gethash item seen) t)
+                (push (car item) pending)
+                (push (cdr item) pending))
+               ((arrayp item)
+                (setf (gethash item seen) t)
+                (dotimes (index (array-total-size item))
+                  (push (row-major-aref item index) pending)))
+               ((or (numberp item) (characterp item) (symbolp item)))
+               (t (return-from unprojectable-diagnostic-leaf (type-of item)))))
+    nil))
+
 (defun project-capture-value (value)
   "Return VALUE as capture-report data, or an explicit unprojectable placeholder.
 
-The existing evidence snapshot copies conses and arrays and keeps other objects
-by identity.  A value the snapshot returns by identity that is not an atom whose
-representation is self-contained is reported as
-\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE) rather than as a live reference
-that reads like frozen evidence.  This is a report projection, not a deep copy
-and not a new snapshot; the evaluation path keeps the original value."
-  (let ((copy (snapshot-value value)))
-    (if (and (eq copy value)
-             (not (or (consp value) (arrayp value)
-                      (numberp value) (characterp value) (symbolp value))))
-        (list :unavailable :reason :opaque-value :type (type-of value))
-        copy)))
+The diagnostic projection supports conses, arrays and self-contained atoms
+\(numbers, characters, symbols); the existing evidence snapshot copies the first
+two and returns the rest unchanged.  A value that is, or contains at any depth,
+an object the snapshot keeps by identity -- a CLOS instance, structure, hash
+table, function and the like -- is reported whole as
+\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE), where TYPE names the value that
+could not be projected.  A live reference inside a copied outer structure is
+never published as if it were frozen evidence.  This is a report projection, not
+a deep copy and not a new snapshot; the evaluation path keeps the original
+value."
+  (let ((unprojectable (unprojectable-diagnostic-leaf value)))
+    (if unprojectable
+        (list :unavailable :reason :opaque-value :type unprojectable)
+        (snapshot-value value))))
 
 (defun project-capture-values (contract captured)
   "Zip the completed capture values CAPTURED with their binding names.

@@ -245,11 +245,14 @@ was selected its `:case` is `NIL` and its `:reason` is `:CAPTURE-FAILED` or
 before selection" stay distinct. A contract that declares neither clause records
 no state evidence at all, so a featureless run's projection is unchanged.
 
-Capture values are projected through the existing evidence snapshot: a cons or
-array as its copy, a self-contained atom as itself. An object the snapshot returns
-by identity — a CLOS instance, structure, hash table, function — is reported as
-`(:unavailable :reason :opaque-value :type TYPE)`, an explicit unprojectable
-placeholder, because a live reference would read like frozen evidence. The
+Capture values are projected through the existing evidence snapshot. The
+supported diagnostic range is conses, arrays and self-contained atoms (numbers,
+characters, symbols). A capture value that is, **or contains at any depth**, an
+object outside that range — a CLOS instance, structure, hash table, function — is
+reported **whole** as `(:unavailable :reason :opaque-value :type TYPE)`, where
+`TYPE` names the object that could not be projected. Reporting only the outer copy
+would leave a live reference to the inner object inside "frozen" evidence, so a
+later change to that object would be visible through the diagnostic. The
 evaluation path still passes the original value to later capture forms, guards and
 predicates; this is a report projection, not a deep copy. Nothing is re-executed
 to build this data, and the state-post violation's `:kind`/`:case`/`:index`/`:form`

@@ -62,6 +62,12 @@
 
 (defclass opaque-box () ((tag :initform :opaque)))
 
+(defclass projection-probe ()
+  ((value :initform 10 :accessor probe-value)))
+
+(defvar *probe-object* nil
+  "The PROJECTION-PROBE instance the current nested-projection test captured.")
+
 ;; Intern RESULT in this package so the capture/RESULT collision check has a
 ;; symbol to find, exactly as a contract with a :POST would.
 (defparameter *result* 'result)
@@ -947,6 +953,64 @@ checks after the call that the observed values moved the way it requires."
           (ok (equal '(:unavailable :reason :opaque-value :type opaque-box)
                      (cdr entry)))
           (ok (not (typep (cdr entry) 'opaque-box))))))))
+
+(deftest a-nested-opaque-capture-value-is-also-unprojectable
+  (with-fresh-registry
+    (with-live-generator (nested-args)
+      (define-target nested-target)
+      (cl-spec:defspec-function nested-target
+        (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+        (:args-generator nested-args)
+        (:capture
+          (in-list (list (setf *probe-object* (make-instance 'projection-probe))))
+          (in-vector (vector 1 (make-instance 'projection-probe))))
+        (:returns (satisfies listp))
+        (:state-post (eq in-list nil)))
+      (reset-counters)
+      (let* ((result (run-scenario :name 'nested-target :scenario :no-update))
+             (evidence (failing-evidence result))
+             (values (getf (getf (observation-state result) :capture) :values))
+             (list-entry (assoc 'in-list values))
+             (vector-entry (assoc 'in-vector values))
+             (placeholder '(:unavailable :reason :opaque-value
+                            :type projection-probe)))
+        (testing "a capture value containing an opaque object is unprojectable whole"
+          (ok list-entry)
+          (ok vector-entry)
+          (ok (equal placeholder (cdr list-entry)))
+          (ok (equal placeholder (cdr vector-entry))))
+        (testing "no live reference remains, so a later change is not visible"
+          (ok (not (eq *probe-object* (cdr list-entry))))
+          (ok (eq 10 (probe-value *probe-object*)))
+          (setf (probe-value *probe-object*) 99)
+          (ok (equal placeholder (cdr list-entry))))
+        (testing "the original failure and outcome are intact"
+          (ok (eq :failed (property-result-status result)))
+          (ok (equal '(:state-postcondition 0)
+                     (trial-observation-signature evidence)))
+          (ok (null (trial-observation-case evidence)))
+          (ok (getf (trial-observation-outcome evidence) :values)))))))
+
+(deftest a-supported-capture-value-projects-to-a-copy
+  (with-fresh-registry
+    (with-live-generator (supported-capture-args)
+      (define-target supported-capture-target)
+      (cl-spec:defspec-function supported-capture-target
+        (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+        (:args-generator supported-capture-args)
+        (:capture (pair (list 1 "two" 'three))
+                  (vector-value (vector 1 2))
+                  (scalar 42))
+        (:returns (satisfies listp))
+        (:state-post (eql scalar 0)))
+      (reset-counters)
+      (let* ((result (run-scenario :name 'supported-capture-target
+                                   :scenario :no-update))
+             (values (getf (getf (observation-state result) :capture) :values)))
+        (testing "conses, arrays and self-contained atoms project as copies"
+          (ok (equal '(1 "two" three) (cdr (assoc 'pair values))))
+          (ok (equalp #(1 2) (cdr (assoc 'vector-value values))))
+          (ok (eql 42 (cdr (assoc 'scalar values)))))))))
 
 (deftest runs-do-not-share-captures-or-counters
   (with-fresh-registry
