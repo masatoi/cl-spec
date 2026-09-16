@@ -28,6 +28,7 @@
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
   (:import-from #:cl-spec/src/schema
                 #:definition-instrumentation-capability #:definition-graph #:definition-digest
+                #:definition-state-constraints
                 #:schema-info)
   (:import-from #:cl-spec/src/execution #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/function-spec
@@ -106,6 +107,11 @@ fdefinition is replaced: this version has no case-aware wrapper, and a wrapper
 that ignored :CASES and checked arguments only would report a contract it did not
 enforce.  Existing case-less instrumentation is unaffected."
   (or (unsupported-target-reason name)
+      ;; A :CAPTURE / :STATE-POST contract needs the pre-call observation and
+      ;; the post-call state check, which this wrapper does not perform; refuse
+      ;; before any wrapper is built or fdefinition replaced.  The capability
+      ;; method below reads the same predicate, so refusal and capability agree.
+      (when (definition-state-constraints contract) :state-constraints-unsupported)
       (when (function-spec-cases contract) :named-cases-unsupported)
       (when (function-spec-signal-spec contract) :expected-condition-contract)))
 

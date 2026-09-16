@@ -70,6 +70,24 @@
                 #:case-selection-error-case
                 #:case-selection-error-original-condition
                 #:case-selection-error-data
+                #:capture-error
+                #:capture-error-function
+                #:capture-error-binding
+                #:capture-error-index
+                #:capture-error-captured
+                #:capture-error-original-condition
+                #:capture-error-data
+                #:state-post-error
+                #:state-post-error-function
+                #:state-post-error-case
+                #:state-post-error-index
+                #:state-post-error-form
+                #:state-post-error-original-condition
+                #:state-post-error-data
+                #:unsupported-stateful-operation
+                #:unsupported-stateful-operation-operation
+                #:unsupported-stateful-operation-function
+                #:unsupported-stateful-operation-reason
                 #:unsupported-seed)
   (:import-from #:cl-spec/src/ir
                 #:spec
@@ -165,6 +183,7 @@
                 #:trial-observation-condition-report
                 #:trial-observation-value
                 #:trial-observation-case
+                #:trial-observation-state
                 #:evaluate-trial
                 #:observe-trial
                 #:observation-failure-p
@@ -294,6 +313,24 @@
            #:case-selection-error-case
            #:case-selection-error-original-condition
            #:case-selection-error-data
+           #:capture-error
+           #:capture-error-function
+           #:capture-error-binding
+           #:capture-error-index
+           #:capture-error-captured
+           #:capture-error-original-condition
+           #:capture-error-data
+           #:state-post-error
+           #:state-post-error-function
+           #:state-post-error-case
+           #:state-post-error-index
+           #:state-post-error-form
+           #:state-post-error-original-condition
+           #:state-post-error-data
+           #:unsupported-stateful-operation
+           #:unsupported-stateful-operation-operation
+           #:unsupported-stateful-operation-function
+           #:unsupported-stateful-operation-reason
            #:unsupported-seed
            #:invalid-backend-result #:invalid-backend-result-reason
            ;; Semantic IR
@@ -389,6 +426,7 @@
            #:trial-observation-condition-report
            #:trial-observation-value
            #:trial-observation-case
+           #:trial-observation-state
            #:evaluate-trial
            #:observe-trial
            #:observation-failure-p

@@ -18,6 +18,11 @@
                 #:case-selection-error-data
                 #:case-selection-error-kind
                 #:case-selection-error-case
+                #:capture-error
+                #:capture-error-data
+                #:state-post-error
+                #:state-post-error-data
+                #:unsupported-stateful-operation
                 #:spec-violation)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
@@ -27,7 +32,8 @@
                 #:registry-register-function-spec)
   (:import-from #:cl-spec/src/schema
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
-                #:resolve-definition #:definition-instrumentation-capability)
+                #:resolve-definition #:definition-instrumentation-capability
+                #:definition-shrink-enabled-p #:definition-state-constraints)
   (:import-from #:cl-spec/src/ir #:tuple-spec #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/call-schema
                 #:make-call-layout #:bind-call-arguments #:bound-call-values
@@ -93,6 +99,10 @@
            #:function-spec-source-location
            #:function-spec-metadata
            #:function-spec-cases
+           #:function-spec-capture-bindings
+           #:function-spec-capture-functions
+           #:function-spec-state-postconditions
+           #:function-spec-state-postcondition-function
            #:function-case
            #:function-case-name
            #:function-case-documentation
@@ -103,6 +113,8 @@
            #:function-case-postconditions
            #:function-case-postcondition-function
            #:function-case-post-value-variables
+           #:function-case-state-postconditions
+           #:function-case-state-postcondition-function
            #:function-case-source-form
            #:function-case-select
            #:function-case-outcome-parts
@@ -185,6 +197,18 @@ postcondition does.")
                          :initform :primary
                          :reader function-case-post-value-variables
                          :documentation ":PRIMARY, or the explicit return names of :POST-VALUES.")
+   (state-postconditions :initarg :state-postconditions
+                         :initform nil
+                         :reader function-case-state-postconditions
+                         :documentation "The case's :STATE-POST forms, or NIL.
+A separate clause from :POST and :POST-VALUES: it runs only after the case's
+outcome contract passed, and it may accompany :SIGNALS.")
+   (state-postcondition-function :initarg :state-postcondition-function
+                                 :initform nil
+                                 :reader function-case-state-postcondition-function
+                                 :documentation "Compiled case state-post, or NIL.
+Sees the arguments and the contract's capture values.  To identify a failed
+form, return (values nil index :cl-spec-state-post-form-failure).")
    (source-form :initarg :source-form
                 :initform nil
                 :reader function-case-source-form
@@ -198,7 +222,8 @@ function spec and is never registered under its own name."))
 
 (defparameter *function-case-slot-names*
   '(name documentation-string when-forms when-function outcome-kind outcome-spec
-    postconditions postcondition-function post-value-variables source-form)
+    postconditions postcondition-function post-value-variables
+    state-postconditions state-postcondition-function source-form)
   "Every slot of FUNCTION-CASE, for the rollback in SHARED-INITIALIZE :AROUND.")
 
 (defmethod definition-validation-slots append ((case function-case))
@@ -216,7 +241,8 @@ new post forms and a new compiled predicate as well."
   (flet ((supplied (key)
            (loop for (k) on initargs by #'cddr thereis (eq k key))))
     (dolist (pair '((:when-forms :when-function)
-                    (:postconditions :postcondition-function)))
+                    (:postconditions :postcondition-function)
+                    (:state-postconditions :state-postcondition-function)))
       (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
         (error 'invalid-function-spec-form :form pair
                :reason "case clause forms and compiled function must change together")))
@@ -278,6 +304,15 @@ predicate without its form would run while introspection reported no such clause
     (when (and (eq :signals (function-case-outcome-kind case))
                (function-case-postconditions case))
       (refuse "a :signals case cannot carry :post or :post-values in this version"))
+    (unless (finite-list-p (function-case-state-postconditions case))
+      (refuse "case state-post forms must be a finite proper list"))
+    (when (half (function-case-state-postconditions case)
+                (function-case-state-postcondition-function case)
+                "case state-post forms and compiled predicate must change together")
+      (refuse "case state-post forms and compiled predicate must change together"))
+    (when (and (function-case-state-postconditions case)
+               (not (functionp (function-case-state-postcondition-function case))))
+      (refuse "a case state-post predicate must be a function"))
     (unless (finite-definition-form-p (function-case-source-form case))
       (refuse "a case source form must be an acyclic finite form"))
     (let ((kind (function-case-outcome-kind case))
@@ -298,7 +333,7 @@ predicate without its form would run while introspection reported no such clause
          (call-declaration-variables (function-spec-argument-specs *case-owner*))))))
   case)
 
-(defun function-case-select (cases bindings function)
+(defun function-case-select (cases bindings function &optional captures)
   "Select exactly one of CASES for BINDINGS, or report why that is impossible.
 
 BINDINGS is the bound argument value list the common :PRE also sees.  Every guard
@@ -310,7 +345,8 @@ case and yields a :CASE-GUARD-ERROR; zero and several matches yield
   (let ((matches '()))
     (dolist (case cases)
       (handler-case
-          (when (apply (function-case-when-function case) bindings)
+          (when (apply (function-case-when-function case)
+                       (append bindings captures))
             (push case matches))
         (error (condition)
           (return-from function-case-select
@@ -342,9 +378,12 @@ faults."
 (defun function-case-outcome-parts (contract case)
   "Return the effective outcome declaration of CONTRACT with CASE selected.
 
-Values are RETURN-SPEC SIGNAL-SPEC POST POST-FORMS VALUES-POST-P.  With CASE NIL
-they are the contract's own case-less declaration, so the two paths classify
-through one implementation."
+Values are RETURN-SPEC SIGNAL-SPEC POST POST-FORMS VALUES-POST-P
+STATE-POST-FUNCTION STATE-POST-FORMS.  With CASE NIL they are the contract's own
+case-less declaration, so the two paths classify and check state through one
+implementation.  The state-post pair is the selected case's clause, or the
+contract's case-less one; a case-carrying contract never inherits a common
+state-post."
   (if case
       (values (and (eq :returns (function-case-outcome-kind case))
                    (function-case-outcome-spec case))
@@ -352,12 +391,237 @@ through one implementation."
                    (function-case-outcome-spec case))
               (function-case-postcondition-function case)
               (function-case-postconditions case)
-              (not (eq :primary (function-case-post-value-variables case))))
+              (not (eq :primary (function-case-post-value-variables case)))
+              (function-case-state-postcondition-function case)
+              (function-case-state-postconditions case))
       (values (function-spec-return-spec contract)
               (function-spec-signal-spec contract)
               (function-spec-postcondition-function contract)
               (function-spec-postconditions contract)
-              (not (eq :primary (function-spec-post-value-variables contract))))))
+              (not (eq :primary (function-spec-post-value-variables contract)))
+              (function-spec-state-postcondition-function contract)
+              (function-spec-state-postconditions contract))))
+
+(defun run-captures (contract argument-values)
+  "Run CONTRACT's :CAPTURE bindings once, in declaration order.
+
+Returns (values VALUES CONDITION INDEX): VALUES is the ordered list of primary
+values produced by the bindings that completed, CONDITION is the condition that
+stopped the sequence or NIL, and INDEX is the zero-based position of the binding
+that stopped it.  Binding i is called with the argument values followed by
+capture values 0..i-1, so a later form sees earlier captures without any runtime
+evaluation.  Nothing is re-run to build a report."
+  (let ((captured '())
+        (index 0))
+    (dolist (function (function-spec-capture-functions contract))
+      (handler-case
+          (push (apply function (append argument-values (reverse captured))) captured)
+        (error (condition)
+          (return-from run-captures (values (nreverse captured) condition index))))
+      (incf index))
+    (values (nreverse captured) nil nil)))
+
+(defun apply-state-post (predicate argument-values captures)
+  "Run one state-post PREDICATE once and report its verdict.
+
+Returns (values HOLDS INDEX TAG CONDITION).  HOLDS is true when every form held;
+INDEX is the zero-based failing form position when the predicate reports one;
+TAG is the clause family tag; CONDITION is the condition that stopped it, or
+NIL.  The compiled predicate reports a signalling form's position as a value, so
+no extra condition type is needed.  A hand-written programmatic predicate that
+returns one value yields an unknown position rather than a guessed one."
+  (handler-case
+      (multiple-value-bind (holds index tag condition)
+          (apply predicate (append argument-values captures))
+        (values holds index tag condition))
+    (error (condition)
+      (values nil nil nil condition))))
+
+(defun unprojectable-diagnostic-leaf (value)
+  "Return the TYPE of an opaque value reachable from VALUE, or NIL when none.
+
+The evidence snapshot copies conses and arrays and keeps other objects by
+identity.  A reachable object it does not copy and that is not a self-contained
+atom (number, character, symbol) makes the whole capture value unprojectable:
+reporting a copy of the outer structure would still carry a live reference to the
+inner object, so a later change to that object would be visible through
+\"saved\" diagnostics.  Cycles and shared structure are visited once.  This
+defines the diagnostic projection's supported range; it is not a statement about
+the object and adds no copy support."
+  (let ((seen (make-hash-table :test #'eq))
+        (pending (list value)))
+    (loop while pending
+          for item = (pop pending)
+          do (cond
+               ((gethash item seen))
+               ((consp item)
+                (setf (gethash item seen) t)
+                (push (car item) pending)
+                (push (cdr item) pending))
+               ((arrayp item)
+                (setf (gethash item seen) t)
+                (dotimes (index (array-total-size item))
+                  (push (row-major-aref item index) pending)))
+               ((or (numberp item) (characterp item) (symbolp item)))
+               (t (return-from unprojectable-diagnostic-leaf (type-of item)))))
+    nil))
+
+(defun project-capture-value (value)
+  "Return VALUE as capture-report data, or an explicit unprojectable placeholder.
+
+The diagnostic projection supports conses, arrays and self-contained atoms
+\(numbers, characters, symbols); the existing evidence snapshot copies the first
+two and returns the rest unchanged.  A value that is, or contains at any depth,
+an object the snapshot keeps by identity -- a CLOS instance, structure, hash
+table, function and the like -- is reported whole as
+\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE), where TYPE names the value that
+could not be projected.  A live reference inside a copied outer structure is
+never published as if it were frozen evidence.  This is a report projection, not
+a deep copy and not a new snapshot; the evaluation path keeps the original
+value."
+  (let ((unprojectable (unprojectable-diagnostic-leaf value)))
+    (if unprojectable
+        (list :unavailable :reason :opaque-value :type unprojectable)
+        (snapshot-value value))))
+
+(defun project-capture-values (contract captured)
+  "Zip the completed capture values CAPTURED with their binding names.
+
+Returns an ordered ((NAME . VALUE) ...) alist over the bindings that completed,
+or NIL when CONTRACT declares no capture.  Each value is projected for the
+report by PROJECT-CAPTURE-VALUE, so a caller reads a value with ASSOC rather
+than reconstructing the pairing from :DECLARED.  The raw value list stays the
+evaluation form passed to later capture forms, guards and predicates."
+  (when (function-spec-capture-bindings contract)
+    (loop for binding in (function-spec-capture-bindings contract)
+          for value in captured
+          collect (cons (first binding) (project-capture-value value)))))
+
+(defun capture-evidence (contract status captured condition index)
+  "Return the :CAPTURE half of a trial's state evidence, or NIL when undeclared.
+
+STATUS is :NOT-EVALUATED, :COMPLETED or :ERROR.  CAPTURED holds only the value
+of the bindings that completed, in declaration order, so a capture that failed
+halfway never shows a later binding as obtained.  :VALUES pairs each completed
+value with its binding name as ((NAME . VALUE) ...), and a captured NIL is a
+(NAME . NIL) entry rather than an absence."
+  (when (function-spec-capture-bindings contract)
+    (let ((bindings (function-spec-capture-bindings contract)))
+      (list :status status
+            :declared (mapcar #'first bindings)
+            :values (project-capture-values contract captured)
+            :error (when condition
+                     (let ((failing (nth index bindings)))
+                       (list :binding (first failing) :index index
+                             :condition-type (type-of condition))))))))
+
+(defun state-post-declared-p (contract case)
+  "Return true when the effective state-post clause of CONTRACT under CASE exists.
+
+A selected CASE rules its own clause.  With no case selected -- a capture or
+case-selection failure, or a case-less contract -- the contract declares one
+when its top-level clause exists or any of its cases carries one.  The
+distinction keeps \"no state-post declared\" apart from \"declared but stopped
+before a case was chosen\": the latter still reports :NOT-EVALUATED with a reason
+and no case, rather than dropping the evidence entirely."
+  (if case
+      (and (function-case-state-postconditions case) t)
+      (or (and (function-spec-state-postconditions contract) t)
+          (some (lambda (candidate)
+                  (and (function-case-state-postconditions candidate) t))
+                (function-spec-cases contract)))))
+
+(defun state-post-evidence (contract case status &key reason index form condition)
+  "Return the :STATE-POST half of a trial's state evidence, or NIL when undeclared.
+
+STATUS is :NOT-EVALUATED, :PASSED, :VIOLATION or :ERROR.  REASON explains a
+:NOT-EVALUATED clause.  INDEX, FORM and CONDITION describe the form that did not
+hold or that signalled."
+  (when (state-post-declared-p contract case)
+    (list :status status
+          :reason reason
+          :case (and case (function-case-name case))
+          :index index
+          :form form
+          :condition-type (and condition (type-of condition)))))
+
+(defun make-state-evidence (contract &key capture-status captured capture-condition
+                                       capture-index
+                                       state-status state-reason state-case
+                                       state-index state-form state-condition)
+  "Build one trial's state evidence, or NIL when the contract declares neither clause."
+  (let ((capture (capture-evidence contract capture-status captured
+                                   capture-condition capture-index))
+        (state (state-post-evidence contract state-case state-status
+                                    :reason state-reason :index state-index
+                                    :form state-form :condition state-condition)))
+    (when (or capture state)
+      (append (when capture (list :capture capture))
+              (when state (list :state-post state))))))
+
+(defun classify-state-post (contract case argument-values captures value outcome
+                            state-post-function state-post-forms)
+  "Run the selected state-post and return the trial's final classification.
+
+Called only after the outcome contract passed.  A contract that declares no
+state-post keeps that :passed result.  A form returning NIL yields
+:FAILED / :STATE-POSTCONDITION; a form that signals yields :ERROR /
+:CONTRACT-ERROR with a STATE-POST-ERROR condition.  Both keep the captured target
+outcome and the selected case, and neither is re-run for the report."
+  (let ((case-name (and case (function-case-name case)))
+        (function-name (function-spec-name contract)))
+    (if (null state-post-function)
+        (values :passed nil nil nil nil value outcome case-name nil
+                (make-state-evidence contract :capture-status :completed
+                                     :captured captures
+                                     :state-status :not-evaluated
+                                     :state-reason :not-declared
+                                     :state-case case))
+        (multiple-value-bind (holds index tag condition)
+            (apply-state-post state-post-function argument-values captures)
+          (declare (ignore tag))
+          (let ((form (and (integerp index) (<= 0 index)
+                           (< index (length state-post-forms))
+                           (nth index state-post-forms))))
+            (cond
+              (condition
+               (let ((state-condition
+                       (make-condition 'state-post-error
+                                       :function function-name :case case-name
+                                       :index index :form form
+                                       :original-condition condition)))
+                 (values :error :contract-error
+                         (if case
+                             (list :case case-name :state-post index
+                                   :contract-error (type-of condition))
+                             (list :state-post index :contract-error (type-of condition)))
+                         (state-post-error-data state-condition)
+                         state-condition nil outcome case-name :state-post
+                         (make-state-evidence contract :capture-status :completed
+                                              :captured captures
+                                              :state-status :error
+                                              :state-index index :state-form form
+                                              :state-condition condition
+                                              :state-case case))))
+              (holds
+               (values :passed nil nil nil nil value outcome case-name nil
+                       (make-state-evidence contract :capture-status :completed
+                                            :captured captures
+                                            :state-status :passed
+                                            :state-case case)))
+              (t
+               (values :failed :state-postcondition
+                       (if case
+                           (list :case case-name :state-postcondition index)
+                           (list :state-postcondition index))
+                       (list :kind :state-postcondition :function function-name
+                             :case case-name :index index :form form)
+                       nil value outcome case-name :state-post
+                       (make-state-evidence contract :capture-status :completed
+                                            :captured captures
+                                            :state-status :violation
+                                            :state-index index :state-form form
+                                            :state-case case)))))))))
 
 (defclass function-spec ()
   ((call-layout-cache :initform nil)
@@ -454,7 +718,34 @@ When present, exactly one case is selected per admitted trial and its own
 :RETURNS or :SIGNALS outcome judges the invocation.  CASE-SELECTION is exclusive;
 a case is not a priority rule.  :CASES is exclusive with the contract-level
 :RETURNS, :SIGNALS, :POST and :POST-VALUES: there is no inherited common outcome
-to override."))
+to override.")
+   (capture-bindings :initarg :capture-bindings
+                     :initform nil
+                     :reader function-spec-capture-bindings
+                     :documentation "Ordered (NAME FORM) pairs observed before the call, or NIL.
+Each form's primary value is bound to NAME for the following forms, the case
+guards, the postconditions and the state-post.  A capture variable is not a
+target argument: the argument schema, generator and actual call are unchanged.")
+   (capture-functions :initarg :capture-functions
+                      :initform nil
+                      :reader function-spec-capture-functions
+                      :documentation "One compiled function per capture binding, aligned by position.
+Binding i is called with the argument values followed by capture values 0..i-1,
+so the forms have LET* visibility without runtime evaluation.  Present exactly
+when CAPTURE-BINDINGS is, and supplied together with it.")
+   (state-postconditions :initarg :state-postconditions
+                         :initform nil
+                         :reader function-spec-state-postconditions
+                         :documentation "The case-less :STATE-POST forms, or NIL.
+Runs only after the outcome contract passed, and only for a contract without
+:CASES; a case-carrying contract carries the clause inside each case instead.")
+   (state-postcondition-function :initarg :state-postcondition-function
+                                 :initform nil
+                                 :reader function-spec-state-postcondition-function
+                                 :documentation "Compiled case-less state-post, or NIL.
+Sees the arguments and the capture values, and no implicit RESULT, condition or
+raw outcome.  To identify a failed form, return
+(values nil index :cl-spec-state-post-form-failure)."))
   (:documentation "A contract attached to an existing function by name.
 
 The function is never redefined, so an existing codebase adopts cl-spec one
@@ -464,6 +755,7 @@ function at a time (specification §3.2)."))
   '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
     source-form source-location metadata cases
+    capture-bindings capture-functions state-postconditions state-postcondition-function
     call-layout-cache call-layout-declarations call-layout-bindings-snapshot)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
 
@@ -482,10 +774,33 @@ function at a time (specification §3.2)."))
       (error 'invalid-function-spec-form :form initargs
              :reason "Post-value binding changes require new forms and a compiled predicate."))
     (dolist (pair '((:preconditions :precondition-function)
-                    (:postconditions :postcondition-function)))
+                    (:postconditions :postcondition-function)
+                    (:capture-bindings :capture-functions)
+                    (:state-postconditions :state-postcondition-function)))
       (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
         (error 'invalid-function-spec-form :form pair
-               :reason "clause forms and compiled function must change together"))))
+               :reason "clause forms and compiled function must change together")))
+    ;; A capture list is part of every compiled predicate that reads it: the
+    ;; guard, post and state-post lambdas take the capture values as trailing
+    ;; parameters, so a new list with the old closures would call them with the
+    ;; wrong arity.  Require the dependent clauses to change with it.
+    (when (and (supplied :capture-bindings)
+               (slot-boundp contract 'capture-bindings)
+               (not (equal (getf initargs :capture-bindings)
+                           (function-spec-capture-bindings contract))))
+      (dolist (key (append (list :capture-functions)
+                           (when (or (function-spec-postconditions contract)
+                                     (function-spec-postcondition-function contract))
+                             (list :postcondition-function))
+                           (when (or (function-spec-state-postconditions contract)
+                                     (function-spec-state-postcondition-function contract))
+                             (list :state-postcondition-function))
+                           (when (function-spec-cases contract)
+                             (list :cases))))
+        (unless (supplied key)
+          (error 'invalid-function-spec-form :form initargs
+                 :reason (format nil "changing :capture-bindings requires new ~S ~
+and the compiled predicates that read the capture values" key))))))
   (call-with-definition-rollback
    contract (lambda () (apply #'call-next-method contract slot-names initargs))))
 
@@ -503,6 +818,84 @@ function at a time (specification §3.2)."))
     (error 'invalid-function-spec-form :form names
            :reason "Post-value names must match fixed returns and be unique, bindable variables."))
   names)
+
+(defun contract-result-symbol (variables)
+  "Return the symbol RESULT denotes for a contract over VARIABLES, or NIL.
+
+The same lookup the DSL's RETURN-VALUE-SYMBOL performs for its own package
+resolution; duplicated here because DSL depends on this file, so this file
+cannot import from it."
+  (let ((home (if variables (symbol-package (first variables)) *package*)))
+    (and home (find-symbol "RESULT" home))))
+
+(defun validate-capture-bindings (contract)
+  "Refuse capture declarations the checker could not honour, and return them.
+
+The DSL applies the same rules at macroexpansion time; enforcing them here as
+well covers programmatic construction, reinitialization and registry
+registration, which all reach the slots without going through the macro.  A
+capture name is rejected when it collides with an argument or supplied-p
+variable, the return-value binding RESULT, or an explicit :POST-VALUES name,
+because the compiled predicates bind all of those in one lambda list."
+  (let ((bindings (function-spec-capture-bindings contract))
+        (functions (function-spec-capture-functions contract)))
+    (flet ((refuse (reason)
+             (error 'invalid-function-spec-form :form bindings :reason reason))
+           (explicit (names)
+             (unless (eq :primary names) names)))
+      (unless (finite-list-p bindings)
+        (refuse "capture bindings must be a finite proper list"))
+      (unless (finite-list-p functions)
+        (refuse "capture functions must be a finite proper list"))
+      (let ((names '()))
+        (dolist (binding bindings)
+          (unless (and (consp binding) (finite-list-p binding) (= 2 (length binding)))
+            (refuse "each capture binding must be an exact (NAME FORM) pair"))
+          (let ((name (first binding)))
+            (unless (and name (symbolp name) (not (keywordp name)) (not (constantp name))
+                         (not (and (plusp (length (symbol-name name)))
+                                   (char= #\& (char (symbol-name name) 0)))))
+              (refuse "a capture name must be a bindable non-constant, non-keyword variable"))
+            (when (member name names)
+              (refuse "capture names must be unique"))
+            (push name names)))
+        (unless (and (= (length functions) (length bindings))
+                     (every #'functionp functions))
+          (refuse "capture bindings and compiled capture functions must align one to one"))
+        (let* ((variables (call-declaration-variables (function-spec-argument-specs contract)))
+               (result (contract-result-symbol variables))
+               (contract-values (explicit (function-spec-post-value-variables contract)))
+               (case-values (loop for case in (function-spec-cases contract)
+                                  append (explicit
+                                          (function-case-post-value-variables case)))))
+          (dolist (name (reverse names))
+            (cond
+              ((member name variables)
+               (refuse "a capture name cannot collide with an argument or supplied-p variable"))
+              ((and result (eq name result))
+               (refuse "a capture name cannot collide with the return-value binding RESULT"))
+              ((or (member name contract-values) (member name case-values))
+               (refuse "a capture name cannot collide with a :post-values name")))))))
+    bindings))
+
+(defun state-observing-contract-p (contract)
+  "Return true when CONTRACT declares :CAPTURE or :STATE-POST.
+
+Such a contract observes state and never restores it, so automatic shrinking,
+replay of a past result and counterexample artifacts are unsupported for it.
+The decision is structural: a pure-looking use is not exempted by inspecting
+the target or the predicate bodies."
+  (or (function-spec-capture-bindings contract)
+      (function-spec-state-postconditions contract)
+      (some (lambda (case) (function-case-state-postconditions case))
+            (function-spec-cases contract))))
+
+(defmethod definition-state-constraints ((contract function-spec))
+  (when (state-observing-contract-p contract) :present))
+
+(defmethod definition-shrink-enabled-p ((contract function-spec))
+  "Automatic shrinking is unsupported for a state-observing contract."
+  (not (state-observing-contract-p contract)))
 
 (defmethod validate-definition ((contract function-spec))
   "Refuse a contract that could not be honoured, and normalize what can be.
@@ -556,6 +949,9 @@ would run while introspection reported no such clause"
     (unless (and (finite-list-p (function-spec-argument-specs contract))
                  (finite-list-p (function-spec-preconditions contract))
                  (finite-list-p (function-spec-postconditions contract))
+                 (finite-list-p (function-spec-capture-bindings contract))
+                 (finite-list-p (function-spec-capture-functions contract))
+                 (finite-list-p (function-spec-state-postconditions contract))
                  (finite-list-p (function-spec-source-form contract)))
       (refuse nil "arguments, clause forms and source must be finite proper lists"))
     (unless (every #'finite-definition-form-p
@@ -563,10 +959,13 @@ would run while introspection reported no such clause"
                          (function-spec-return-spec contract) (function-spec-signal-spec contract)
                          (function-spec-preconditions contract)
                          (function-spec-postconditions contract)
+                         (function-spec-capture-bindings contract)
+                         (function-spec-state-postconditions contract)
                          (function-spec-source-form contract)))
       (refuse nil "definition forms must be acyclic"))
     (dolist (predicate (list (function-spec-precondition-function contract)
-                             (function-spec-postcondition-function contract)))
+                             (function-spec-postcondition-function contract)
+                             (function-spec-state-postcondition-function contract)))
       (unless (or (null predicate) (functionp predicate))
         (refuse nil "compiled clause predicates must be functions")))
     (unless (typep (function-spec-documentation contract) '(or null string))
@@ -580,7 +979,10 @@ would run while introspection reported no such clause"
                      (function-spec-precondition-function contract)))
           (post (half ":postconditions" ":postcondition-function"
                       (function-spec-postconditions contract)
-                      (function-spec-postcondition-function contract))))
+                      (function-spec-postcondition-function contract)))
+          (state (half ":state-postconditions" ":state-postcondition-function"
+                       (function-spec-state-postconditions contract)
+                       (function-spec-state-postcondition-function contract))))
       (when pre
         (refuse (or (function-spec-preconditions contract)
                     (function-spec-precondition-function contract))
@@ -588,7 +990,11 @@ would run while introspection reported no such clause"
       (when post
         (refuse (or (function-spec-postconditions contract)
                     (function-spec-postcondition-function contract))
-                post)))
+                post))
+      (when state
+        (refuse (or (function-spec-state-postconditions contract)
+                    (function-spec-state-postcondition-function contract))
+                state)))
     ;; Cases are validated here, not only at their own construction, because a
     ;; contract can be built with case objects that were made earlier and their
     ;; :post-values names can only be checked against this contract's arguments.
@@ -605,12 +1011,17 @@ would run while introspection reported no such clause"
                  (or (function-spec-return-spec contract)
                      (function-spec-signal-spec contract)
                      (function-spec-postconditions contract)
-                     (function-spec-postcondition-function contract)))
+                     (function-spec-postcondition-function contract)
+                     (function-spec-state-postconditions contract)
+                     (function-spec-state-postcondition-function contract)))
         (refuse cases
-                ":cases cannot be combined with a top-level :returns, :signals, :post or ~
-:post-values; there is no inherited common outcome"))
+                ":cases cannot be combined with a top-level :returns, :signals, :post, ~
+:post-values or :state-post; there is no inherited common outcome"))
       (let ((*case-owner* contract))
         (dolist (case cases) (validate-definition case))))
+    ;; Capture is validated after the cases, because a capture name must not
+    ;; collide with a case-level :post-values name either.
+    (validate-capture-bindings contract)
     (setf (slot-value contract 'argument-specs)
           (normalize-call-declarations (function-spec-argument-specs contract)))
     (let ((generator (function-spec-argument-generator contract)))
@@ -770,7 +1181,8 @@ rejections. The original evidence remains available in every case.")
                 :documentation "Per-case report of this run, or :NOT-COLLECTED.
 
 A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
-:CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
+:CASES, :CASE-SELECTION-ERRORS, :CAPTURE-ERRORS and :NEVER-CALLED; see
+CHECK-FUNCTION.  The
 counters come from the run's own ordinary trials and are snapshotted onto the
 result, so two runs of one contract never share them.  A result that did not go
 through a function-check run, and one whose backend never opened trial
@@ -781,7 +1193,8 @@ a first draw that exhausted the generation budget report known zeros.
 A trial that reached the target is counted for its selected case even when
 classifying the result signalled, because the call happened and the case owned
 it.  A case-selection error called no target, so it is counted separately and
-never appears as a call of any case.
+never appears as a call of any case.  A capture failure called no target either:
+it counts in :CAPTURE-ERRORS and is not a case-selection error.
 
 :STATUS :PASSED means no violation was observed in the trials that ran.  It does
 not mean every declared case ran; read :NEVER-CALLED before drawing that
@@ -933,6 +1346,12 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod definition-instrumentation-capability ((property function-check-property))
   (definition-instrumentation-capability (checked-contract property)))
 
+(defmethod definition-state-constraints ((property function-check-property))
+  (definition-state-constraints (checked-contract property)))
+
+(defmethod definition-shrink-enabled-p ((property function-check-property))
+  (not (state-observing-contract-p (checked-contract property))))
+
 (defmethod property-argument-schema ((property function-check-property))
   "Use the function's whole argument schema, including its custom generator."
   (function-spec-argument-schema (checked-contract property)))
@@ -947,14 +1366,16 @@ as its reduction.  The shapes come from the nested errors instead."
         append (list name value)))
 
 (defun classify-target-outcome (return-spec signal-spec post post-forms values-post-p
-                                bound-values raw-outcome registry)
+                                bound-values captures raw-outcome registry)
   "Classify one target invocation against an effective outcome declaration.
 
 Returns (values STATUS REASON SIGNATURE EXPLANATION CONDITION VALUE), the
 classification CHECK-FUNCTION has always reported.  The case-less and
 case-carrying paths both call this, so the rules exist once and a case cannot be
 made to pass by relaxing them.  RAW-OUTCOME is the invocation already captured by
-INVOKE-TARGET-ONCE; nothing here calls the target again."
+INVOKE-TARGET-ONCE; nothing here calls the target again.  CAPTURES are the values
+observed before the call, appended after BOUND-VALUES for the post predicate; a
+contract without :CAPTURE passes NIL and the call is byte-for-byte what it was."
   (let* ((return-schema (make-return-schema :primary-spec return-spec))
          (condition (when (eq :signaled (call-outcome-kind raw-outcome))
                       (call-outcome-condition raw-outcome)))
@@ -992,7 +1413,8 @@ INVOKE-TARGET-ONCE; nothing here calls the target again."
               (failure :return-spec explanation nil value))
              (post
               (multiple-value-bind (holds index tag)
-                  (apply post (if values-post-p returned value) bound-values)
+                  (apply post (if values-post-p returned value)
+                        (append bound-values captures))
                 (if holds
                     (values :passed nil nil nil nil value)
                     (failure :postcondition
@@ -1005,81 +1427,144 @@ INVOKE-TARGET-ONCE; nothing here calls the target again."
              (t (values :passed nil nil nil nil value)))))))))
 
 (defmethod evaluate-trial ((property function-check-property) arguments &key context)
-  "Select a case, call the target once, and classify that invocation.
+  "Capture state, select a case, call the target once, classify, then check state.
 
-Exclusive selection runs after the common :PRE admits the input and before the
-target is called.  A selection error returns :ERROR / :CONTRACT-ERROR with a
-case-selection condition, a :CASE-SELECTION signature and the structured
-explanation, and the target is not called."
+The common :PRE admits the input first.  :CAPTURE runs next, once per trial and
+in declaration order; a capture that signals stops the trial before the target
+and is a contract-side error.  Exclusive case selection follows, then the
+target's single invocation, then the existing outcome classification.  Only a
+:passed outcome runs the selected :STATE-POST; an outcome that failed first
+keeps its existing classification and leaves state-post explicitly
+:not-evaluated.  Nothing is re-run to build the evidence."
   (let* ((contract (checked-contract property))
          (registry (getf context :registry))
          (cases (function-spec-cases contract))
          (pre (function-spec-precondition-function contract))
          (outcome nil)
-         (selected-case nil))
-    (flet ((selection-failure (condition)
-             ;; Selection failed, so no case owns this trial and the target was
-             ;; not called; the phase is recorded here rather than inferred later
-             ;; from the condition's class.
-             (values :error :contract-error
-                     (case-selection-signature condition)
-                     (case-selection-error-data condition)
-                     condition nil outcome nil :case-selection))
-           (contract-failure (condition)
-             ;; The target was invoked and then classification itself signalled.
-             ;; The selected case still owns the failure: name it in the evidence
-             ;; and in the identity so the case report counts the call and
-             ;; shrinking and artifacts stay inside the case.  Before selection
-             ;; (a binding or precondition error) there is no case to name.
-             (values :error :contract-error
-                     (if selected-case
-                         (cons :case (cons (function-case-name selected-case)
-                                           (list :contract-error (type-of condition))))
-                         (list :contract-error (type-of condition)))
-                     nil condition nil outcome
-                     (and selected-case (function-case-name selected-case))
-                     nil)))
+         (selected-case nil)
+         (captured-values nil)
+         (capture-status :not-evaluated)
+         (capture-condition nil)
+         (capture-index nil)
+         (target-called-p nil))
+    (labels ((selection-failure (condition)
+               ;; Selection failed, so no case owns this trial and the target was
+               ;; not called; the phase is recorded here rather than inferred later
+               ;; from the condition's class.
+               (values :error :contract-error
+                       (case-selection-signature condition)
+                       (case-selection-error-data condition)
+                       condition nil outcome nil :case-selection
+                       (make-state-evidence contract :capture-status capture-status
+                                            :captured captured-values
+                                            :state-status :not-evaluated
+                                            :state-reason :case-selection-failed
+                                            :state-case selected-case)))
+             (contract-failure (condition)
+               ;; The trial stopped in contract-side code.  When the target was
+               ;; already invoked the selected case still owns the failure: name
+               ;; it in the evidence and in the identity so the case report
+               ;; counts the call and shrinking and artifacts stay inside the
+               ;; case.  Before the target (a binding, :pre or capture error)
+               ;; there is no target failure to own.
+               (values :error :contract-error
+                       (if selected-case
+                           (cons :case (cons (function-case-name selected-case)
+                                             (list :contract-error (type-of condition))))
+                           (list :contract-error (type-of condition)))
+                       nil condition nil outcome
+                       (and selected-case (function-case-name selected-case))
+                       nil
+                       (make-state-evidence contract :capture-status capture-status
+                                            :captured captured-values
+                                            :capture-condition capture-condition
+                                            :capture-index capture-index
+                                            :state-status :not-evaluated
+                                            :state-reason (if target-called-p
+                                                              :outcome-failed
+                                                              :contract-error)
+                                            :state-case selected-case))))
       (handler-case
           (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                  (values (bound-call-values bound)))
             (if (precondition-refuses-p pre values)
-                (values :rejected nil nil nil nil nil nil nil nil)
-                (multiple-value-bind (case condition)
-                    (if cases
-                        (function-case-select cases values (function-spec-name contract))
-                        (values nil nil))
+                (values :rejected nil nil nil nil nil nil nil nil
+                        (make-state-evidence contract :capture-status :not-evaluated
+                                             :state-status :not-evaluated
+                                             :state-reason :precondition-rejected))
+                (multiple-value-bind (captures condition index)
+                    (run-captures contract values)
+                  (setf captured-values captures
+                        capture-condition condition
+                        capture-index index
+                        capture-status (if condition :error :completed))
                   (if condition
-                      (selection-failure condition)
-                      (progn
-                        (setf selected-case case)
-                        (multiple-value-bind (returns signals post post-forms values-post-p)
-                            (function-case-outcome-parts contract case)
-                          (let* ((raw-outcome (invoke-target-once (checked-target property)
-                                                                  arguments))
-                                 (target-condition
-                                   (when (eq :signaled (call-outcome-kind raw-outcome))
-                                     (call-outcome-condition raw-outcome))))
-                            ;; Freeze invocation evidence before contract predicates can
-                            ;; mutate returns.
-                            (setf outcome
-                                  (make-call-outcome
-                                   :kind (call-outcome-kind raw-outcome)
-                                   :values (snapshot-value (call-outcome-values raw-outcome))
-                                   :condition target-condition))
-                            (multiple-value-bind
-                                  (status reason signature explanation condition value)
-                                (classify-target-outcome returns signals post post-forms
-                                                         values-post-p values raw-outcome
-                                                         registry)
-                              (values status reason
-                                      (if (and case (consp signature))
-                                          (cons :case (cons (function-case-name case) signature))
-                                          signature)
-                                      explanation condition value outcome
-                                      (and case (function-case-name case))
-                                      nil)))))))))
-        ;; Structural errors in the contract itself abort the trial; see
-        ;; CONTRACT-FAILURE for what is preserved of a selected case.
+                      (let ((capture-errors
+                              (make-condition
+                               'capture-error
+                               :function (function-spec-name contract)
+                               :binding (first (nth index
+                                                    (function-spec-capture-bindings contract)))
+                               :index index
+                               :captured (project-capture-values contract captures)
+                               :original-condition condition)))
+                        (values :error :contract-error
+                                (list :capture index :contract-error (type-of condition))
+                                (capture-error-data capture-errors)
+                                capture-errors nil outcome nil :capture
+                                (make-state-evidence contract :capture-status :error
+                                                     :captured captures
+                                                     :capture-condition condition
+                                                     :capture-index index
+                                                     :state-status :not-evaluated
+                                                     :state-reason :capture-failed)))
+                      (multiple-value-bind (case selection-condition)
+                          (if cases
+                              (function-case-select cases values
+                                                    (function-spec-name contract) captures)
+                              (values nil nil))
+                        (if selection-condition
+                            (selection-failure selection-condition)
+                            (progn
+                              (setf selected-case case)
+                              (multiple-value-bind
+                                    (returns signals post post-forms values-post-p
+                                     state-post-function state-post-forms)
+                                  (function-case-outcome-parts contract case)
+                                (let* ((raw-outcome (invoke-target-once
+                                                     (checked-target property) arguments))
+                                       (target-condition
+                                         (when (eq :signaled (call-outcome-kind raw-outcome))
+                                           (call-outcome-condition raw-outcome))))
+                                  (setf target-called-p t)
+                                  (setf outcome
+                                        (make-call-outcome
+                                         :kind (call-outcome-kind raw-outcome)
+                                         :values (snapshot-value
+                                                  (call-outcome-values raw-outcome))
+                                         :condition target-condition))
+                                  (multiple-value-bind
+                                        (status reason signature explanation condition value)
+                                      (classify-target-outcome returns signals post post-forms
+                                                               values-post-p values captures
+                                                               raw-outcome registry)
+                                    (let ((case-name (and case (function-case-name case))))
+                                      (if (eq status :passed)
+                                          (classify-state-post
+                                           contract case values captures value outcome
+                                           state-post-function state-post-forms)
+                                          (values status reason
+                                                  (if (and case (consp signature))
+                                                      (cons :case (cons case-name signature))
+                                                      signature)
+                                                  explanation condition value outcome
+                                                  case-name nil
+                                                  (make-state-evidence
+                                                   contract :capture-status :completed
+                                                   :captured captures
+                                                   :state-status :not-evaluated
+                                                   :state-reason :outcome-failed
+                                                   :state-case case))))))))))))))
         ((and error (not undefined-function) (not program-error)) (condition)
           (contract-failure condition))))))
 
@@ -1102,7 +1587,8 @@ no observation still reports known zeros."
   (cases nil :read-only t)
   (counts nil :read-only t)
   (measured-p nil)
-  (selection-errors 0))
+  (selection-errors 0)
+  (capture-errors 0))
 
 (defvar *case-run* nil
   "The function-check run whose case report is being counted, or NIL.
@@ -1139,28 +1625,32 @@ backend that reaches neither leaves the run unmeasured, and the report says
 :NOT-COLLECTED rather than reporting zeros for counters nothing kept.
 
 A precondition refusal selected no case and called no target, so it contributes
-nothing.  A case-selection error called no target either and is counted
-separately, so it never appears as a call of any case.  A contract error raised
-while classifying a selected case is counted against that case, because the
-target was called for it."
+nothing.  A capture failure called no target either and is counted separately, so
+it never appears as a call of any case and is not a case-selection error.  A
+case-selection error likewise called no target and is counted separately.  A
+failure after the target was called -- including a state-post violation or a
+state-post evaluation error -- is counted against the selected case once, from
+the trial's final classification."
   (let ((run *case-run*))
     (when run
       (setf (case-run-measured-p run) t)
-      (when (case-run-cases run)
-        (let ((status (trial-observation-status observation))
-              (selected (trial-observation-case observation)))
-          (cond
-            ((eq status :rejected))
-            (selected
-             (let ((counts (gethash selected (case-run-counts run))))
-               (when counts
-                 (incf (case-trial-counts-called counts))
-                 (ecase status
-                   (:passed (incf (case-trial-counts-passed counts)))
-                   (:failed (incf (case-trial-counts-failed counts)))
-                   (:error (incf (case-trial-counts-error counts)))))))
-            ((eq :case-selection (observation-failure-phase observation))
-             (incf (case-run-selection-errors run)))))))))
+      (let ((status (trial-observation-status observation))
+            (selected (trial-observation-case observation))
+            (phase (observation-failure-phase observation)))
+        (cond
+          ((eq status :rejected))
+          ((eq phase :capture)
+           (incf (case-run-capture-errors run)))
+          ((eq phase :case-selection)
+           (incf (case-run-selection-errors run)))
+          (selected
+           (let ((counts (gethash selected (case-run-counts run))))
+             (when counts
+               (incf (case-trial-counts-called counts))
+               (ecase status
+                 (:passed (incf (case-trial-counts-passed counts)))
+                 (:failed (incf (case-trial-counts-failed counts)))
+                 (:error (incf (case-trial-counts-error counts))))))))))))
 
 (defun case-run-report (run)
   "Project RUN's counters as the public run report, or :NOT-COLLECTED.
@@ -1170,7 +1660,8 @@ target.  Every declared case appears in :CASES order, and a case the run never
 reached appears in :NEVER-CALLED rather than being silently absent.  Only a run
 whose backend neither opened reporting nor recorded an observation answers
 :NOT-COLLECTED; a run that opened reporting reports its known zeros even when it
-produced no observation at all."
+produced no observation at all.  A capture failure calls no target, so it counts
+in :CAPTURE-ERRORS and against no case, and it is not a case-selection error."
   (unless (case-run-measured-p run)
     (return-from case-run-report :not-collected))
   (let ((cases (case-run-cases run))
@@ -1187,6 +1678,7 @@ produced no observation at all."
                                      :failed (case-trial-counts-failed case-counts)
                                      :error (case-trial-counts-error case-counts)))
           :case-selection-errors (case-run-selection-errors run)
+          :capture-errors (case-run-capture-errors run)
           :never-called (loop for case in cases
                               for case-counts = (gethash (function-case-name case) counts)
                               when (zerop (case-trial-counts-called case-counts))
@@ -1199,13 +1691,19 @@ The outcome spec is a child definition rather than inline data, so its own
 declaration is digested by the same walk as every other spec, and no executable
 closure reaches the digest."
   (values
-   (list :entity-kind :function-case
-         :name (function-case-name case)
-         :documentation (function-case-documentation case)
-         :when (first (function-case-when-forms case))
-         :outcome (function-case-outcome-kind case)
-         :post (function-case-postconditions case)
-         :post-value-variables (function-case-post-value-variables case))
+   (append
+    (list :entity-kind :function-case
+          :name (function-case-name case)
+          :documentation (function-case-documentation case)
+          :when (first (function-case-when-forms case))
+          :outcome (function-case-outcome-kind case)
+          :post (function-case-postconditions case)
+          :post-value-variables (function-case-post-value-variables case))
+    ;; A case state-post is part of the case declaration: changing its forms
+    ;; changes the digest.  A case without one adds no key, so existing case
+    ;; digests are unchanged.
+    (when (function-case-state-postconditions case)
+      (list :state-post (function-case-state-postconditions case))))
    (list (function-case-outcome-spec case))
    nil
    (and (function-case-when-function case)
@@ -1234,6 +1732,13 @@ closure reaches the digest."
    (append
     (unless (eq :primary (function-spec-post-value-variables contract))
       (list :post-value-variables (function-spec-post-value-variables contract)))
+    ;; Capture names, order and source, and the case-less state-post forms, are
+    ;; part of the declaration: changing any of them changes the digest.  A
+    ;; contract that declares neither adds no key and keeps its digest bytes.
+    (when (function-spec-capture-bindings contract)
+      (list :capture (function-spec-capture-bindings contract)))
+    (when (function-spec-state-postconditions contract)
+      (list :state-post (function-spec-state-postconditions contract)))
     (list :entity-kind :function-spec :name (function-spec-name contract)
           :variables (loop for entry in (function-spec-argument-specs contract)
                            collect (if (consp entry)
@@ -1264,6 +1769,8 @@ closure reaches the digest."
    (and (eq (class-name (class-of contract)) 'function-spec)
         (or (not (or (function-spec-precondition-function contract)
                      (function-spec-postcondition-function contract)
+                     (function-spec-capture-functions contract)
+                     (function-spec-state-postcondition-function contract)
                      (function-spec-cases contract)))
             (not (null (function-spec-source-form contract)))))))
 
@@ -1294,7 +1801,8 @@ closure reaches the digest."
                    :trials (list :normal budget)
                    :source-form (snapshot-value (function-spec-source-form contract))
                    :source-location (function-spec-source-location contract)
-                   :metadata (list :shrink t))))
+                   :metadata (list :shrink (definition-shrink-enabled-p contract)
+                                   :state-constraints (definition-state-constraints contract)))))
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
@@ -1316,7 +1824,18 @@ reached case selection, not the number of target calls: a case-selection error
 calls no target.  A backend that neither opens trial reporting nor records an
 observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
 participating backend's zero-trial and first-draw-exhaustion runs report known
-zeros."
+zeros.
+
+A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
+common :PRE admits an input and before case selection; state-post runs only after
+the outcome contract passed.  The per-case report adds :CAPTURE-ERRORS, a capture
+failure counts no case as called, and a state-post violation or evaluation error
+counts as that case's :FAILED or :ERROR.  Such a contract is not shrunk -- its
+shrink report says :STATE-RESTORATION-UNAVAILABLE -- and replaying a past result
+as :SEED is refused with UNSUPPORTED-STATEFUL-OPERATION before the target is
+called, as is MAKE-COUNTEREXAMPLE-ARTIFACT with :STATEFUL-CONTRACT-UNSUPPORTED.
+A new run with an integer seed is allowed; the seed reproduces a random stream,
+not the initial object state, which the author must build."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (unless (or (null seed) (typep seed 'property-result)
@@ -1334,13 +1853,21 @@ zeros."
          (property (make-function-check-property contract :budget budget))
          (source (property-source-form property))
          (case-run (make-case-run contract))
-         (result (let ((*case-run* case-run))
-                   (run-property property
-                                 :seed seed
-                                 :options (or options
-                                              (and seed-result
-                                                   (property-result-options seed-result)))
-                                 :registry registry))))
+         (result (progn
+                   ;; A past result stands in for a run: replaying it would
+                   ;; reapply the saved inputs to a target whose state was never
+                   ;; restored.  Refuse before the target is called.  An integer
+                   ;; seed starts a new run and stays allowed.
+                   (when (and seed-result (state-observing-contract-p contract))
+                     (error 'unsupported-stateful-operation :operation :replay
+                            :function name))
+                   (let ((*case-run* case-run))
+                     (run-property property
+                                   :seed seed
+                                   :options (or options
+                                                (and seed-result
+                                                     (property-result-options seed-result)))
+                                   :registry registry)))))
     (make-instance 'function-check-result
                    :schema-metadata (property-result-schema-metadata result)
                    :options (property-result-options result)

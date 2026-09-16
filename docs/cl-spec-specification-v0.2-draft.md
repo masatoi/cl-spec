@@ -1626,10 +1626,307 @@ instrumentationは変更しない。
 初版の非対象: ケースごとのgenerator合成・`:when`を満たすまでの再試行ループ・
 ケース別scheduler・`check-function`のケース指定option・到達性の自動判定・
 ケース別最低試行数やcoverage不足による自動失敗・ケース選択エラーのshrinking・
-`:capture`／`old`・期待error後の状態に対する事後条件・fixture／resetプロトコル・
+`old`（旧値の自動束縛。`:capture`は§17.3で追加する）・期待error後の状態に対する
+事後条件・fixture／resetプロトコル・
 状態機械PBT・並行性検証・CLOSメソッド契約の合成・mutation検出・一般的な制約solver・
 新しいMCP tool。ケース条件も検証述語やreaderと同じく非破壊でなければならず、
 cl-specはその違反を検出も復元もしない。
+
+## 17.3 明示的な事前観測と終了後の状態制約
+
+> **位置付け:** 実装済み。`defspec-function`の`:capture`と`:state-post`、
+> `function-spec-data`の`:capture`／`:state-post`、`trial-observation-state`と
+> `result-data`の`:state`として提供する。
+
+目的は、返り値や期待エラーだけでなく、業務操作が状態を要求どおりに更新したかを
+一つのFunction Specで記述・検査することである。これは状態の**観測**であり、
+**復元**ではない。事前値と事後値が等しいことは実行途中に一度も変更されなかった
+ことの証明ではなく、中間状態・並行実行・クラッシュ時の原子性・外部I/Oの非発生を
+保証しない。
+
+検証する処理と検証対象を区別する。対象関数は業務上必要な状態変更を行ってよいが、
+capture式・case guard・post述語・state-post述語・readerは、入力およびそこから
+到達可能な可変オブジェクトを変更してはならない。cl-specはその非破壊性への違反を
+検出・復元しない。この契約を理由にmutation検出器を再導入しない。
+
+### 構文
+
+```text
+CLAUSE    := (:args ...) | (:args-generator NAME) | (:pre FORM ...)
+           | (:capture (NAME FORM) ...)
+           | (:returns SPEC) | (:signals SPEC) | (:post FORM ...)
+           | (:post-values (NAME ...) FORM ...)
+           | (:state-post FORM ...) | (:cases CASE ...)
+CASE      := (KEYWORD [DOCSTRING] (:when FORM) OUTCOME)
+OUTCOME   := (:returns SPEC) [(:post ...) | (:post-values ...)] [(:state-post ...)]
+           | (:signals SPEC) [(:state-post ...)]
+```
+
+`:capture`と`:state-post`は新しい節である。以前は未知の節として拒否していたため、
+既存契約の意味を暗黙に変えない。
+
+### `:capture`の宣言規則
+
+- Function Specのトップレベルに一つだけ指定できる。省略できる。
+- 一つ以上の`(NAME FORM)`という正確な2要素の束縛を受け取る。
+- `NAME`は束縛可能なsymbolとする。constant、keyword、lambda-list keyword
+  （名前が`&`で始まるsymbol）を許可せず、束縛間で一意でなければならない。
+- `NAME`は引数名・supplied-p変数・明示的な`:post-values`名・`RESULT`と衝突しては
+  ならない。
+- `FORM`は引数と、それより前に宣言したcapture値を参照できる。`RESULT`と、
+  それより後に宣言したcapture値を参照してはならない。これは対象を絞った拒否で
+  あり、任意のLispコードの完全な自由変数解析器ではない。
+- case内の`:capture`、入れ子capture、無名の自動観測は追加しない。
+
+captureは対象関数への引数ではない。argument schema、generator、対象へ渡す実引数の
+個数・順序・identityを変更しない。対象のデフォルト式をcaptureやcase選択のために
+実行しない。マクロ展開・コンパイル・名前解決は既存方式を再利用し、実行時eval・
+動的interning・文字列置換で束縛を作らない。
+
+### `:state-post`の宣言規則
+
+- ケースなし契約ではトップレベルに一つ、ケース付き契約では各caseの中に一つだけ
+  指定できる。一つの位置に一節だけ、一つ以上の通常のLisp formを受け取る。
+- case付き契約とトップレベルの`:state-post`は併用できない。共通state-postの
+  継承・上書き・合成は導入しない。
+- `:returns`ケースにも`:signals`ケースにも指定でき、ケースなしの通常返却契約・
+  期待エラー契約でも利用できる。captureがなくても終了後の状態だけを検査できる。
+- `:state-post`は`:signals`と既存`:post`／`:post-values`の併用禁止を緩和しない。
+  既存の排他性と多値規則を維持する。
+- 空の節、重複節、禁止された位置は登録前に`invalid-function-spec-form`で拒否する。
+  節の出現と、その本体が空かどうかを混同しない。
+
+### 変数の利用範囲
+
+| 位置 | 参照できるもの |
+|---|---|
+| 共通`:pre` | 引数のみ（captureより前に実行する） |
+| capture式i | 引数と、完了済みのcapture値0..i-1 |
+| case`:when` | 引数と、完了済みのcapture値 |
+| 既存`:post`／`:post-values` | 返り値束縛・引数・capture値 |
+| `:state-post` | 引数とcapture値 |
+
+初版の`:state-post`へ、暗黙の`RESULT`・condition・raw outcomeの束縛は追加しない。
+返り値との関係は既存の`:post`で記述する。引数のoptional／key／rest／suppliednessは
+既存call-layoutに従う。
+
+### 事前観測の評価と値の意味
+
+captureは共通`:pre`が許可した後、ケース選択より前に実行する。各式を宣言順に一度
+だけ評価し、前のcapture変数を後の式から参照できる`let*`相当の意味とする。各式の
+主値一つを束縛し、主値がNILであることと未評価を区別する。多値の全収集を暗黙に
+行わない。capture取得・ケース選択・対象実行・終了後検査は同じ試行に属し、capture
+値を次の試行や別runへ持ち越さない。失敗の説明を作るためにcapture式を再実行しない。
+共通`:pre`が拒否した場合、captureもcase guardも対象も実行しない。
+
+capture変数が保持するのは式が返した値である。呼び出し前のオブジェクト全体を
+自動的に複製する機能ではない。`(:capture (before account))`はaccountの変更前内容の
+保存にはならない。必要な範囲を`copy-seq`等で分離するのは作者の契約であり、
+cl-specはaliasing・所有権・独立性を自動検証しない。任意のCLOS／hash-tableを走査する
+snapshot機構、すべてのcapture値の暗黙のdeep-copy、inputとの共有を探すgraph walker、
+validator前後の変更比較、「独立したsnapshotになっているか」を推定する検出器は
+追加しない。報告用の証拠保存に既存snapshotを使うことは別の責務であり、その対応
+範囲を拡大して任意のオブジェクトの凍結を保証しない。
+
+### 一試行の評価順序と失敗の優先順位
+
+1. 入力schemaの検証と引数束縛。
+2. 共通`:pre`。
+3. `:capture`。
+4. 名前付きcaseがあれば、既存のexclusiveなcase選択。
+5. 対象関数を一度だけ呼び、raw outcomeを取得する。
+6. 既存のreturn／signal／post／post-values契約で分類する。
+7. 6が`:passed`だった場合だけ、該当する`:state-post`を評価する。
+8. 最終分類と証拠を一つの試行結果にまとめる。
+
+ケースなし契約では4を省き、トップレベルのoutcomeとstate-postを使う。正常返却が
+既存outcome契約を満たした場合と、`:signals`が要求したerrorで終了しそのerrorが
+期待specを満たした場合の両方でstate-postを評価する。これにより「正しいerrorを
+通知したが残高を変更してしまった」を検出できる。
+
+return spec違反・post違反・missing-condition・condition不一致・予期しない対象
+error・outcome判定側のerrorがあれば、既存の失敗を主結果として維持し、state-postは
+実行しない。state-postの記録は`:not-evaluated`とし、その理由を示す。実行しなかった
+検査を`:passed`と書かない。これは初版の意図的な制限であり、あらゆる異常終了後に
+state-postを実行するfinally契約ではなく、outcome失敗とstate失敗を同時に列挙する
+機能でもなく、先に判明した失敗を後続の診断errorで上書きしない。通常のreturnまたは
+既存`invoke-target-once`が捕捉するerrorを対象とし、throw・外部abort・プロセス終了・
+timeout・クラッシュ時に状態検査が必ず走ることは保証しない。
+
+`:state-post`は宣言順に一式ずつ一度だけ評価し、非NILを成立、NILを不成立とする。
+最初の不成立またはerrorで停止し、後続の式を診断のためだけに実行しない。成功した
+outcomeにstate-postがすべて成立したら試行全体を`:passed`とする。対象実行後に
+入力schema・capture・case guardを再評価しない。
+
+### 失敗分類とphase
+
+| 発生箇所 | status / reason | failure phase | 対象呼び出し |
+|---|---|---|---|
+| capture式のerror | `:error` / `:contract-error` | `:capture` | 0回 |
+| case選択失敗 | 既存の分類 | `:case-selection` | 0回 |
+| 既存outcome契約の失敗 | 既存の分類を維持 | 既存の意味 | 1回 |
+| state-postのNIL | `:failed` / `:state-postcondition` | `:state-post` | 1回 |
+| state-post式のerror | `:error` / `:contract-error` | `:state-post` | 1回 |
+
+capture／state-postで発生したerrorを、対象が通知した期待errorとして受理しない。
+spec-violationもその位置での契約評価errorであり、共通`:pre`の通常棄却へ変換しない。
+
+phaseが非NILというだけで対象呼び出しを未実行扱いにしない。`:state-post`は対象
+実行後のphaseであり、対象呼び出しを未実行扱いせず、`:not-a-target-failure`へ分類
+せず、ケースの`:called`への加算を落とさず、元のraw outcomeを捨てない。発生段階は
+その処理を実行した場所で明示的に記録し、conditionの型から推定しない。「ケースを
+選択した」ことだけを「対象を呼んだ」証拠にも使わない。
+
+期待errorのspecは通ったがstate-postが不成立だった場合、最終結果は`:failed` /
+`:state-postcondition`とし、raw outcomeには実際に通知された期待errorを保持する。
+分類側のconditionフィールドと対象outcomeのconditionを混同しない。state-post自体が
+errorを出した場合も、対象outcomeと検証側のerrorの情報を両方保持する。
+
+### 証拠
+
+`:capture`または`:state-post`を宣言した契約の試行は、observation
+（`trial-observation-state`）に状態証拠を持ち、`result-data`の`:state`へ投影される。
+
+```text
+(:capture (:status :not-evaluated | :completed | :error
+           :declared (NAME ...)
+           :values ((NAME . VALUE) ...)          ; 完了した束縛だけ
+           :error (:binding NAME :index I :condition-type T))
+ :state-post (:status :not-evaluated | :passed | :violation | :error
+             :reason REASON                      ; :not-evaluatedのとき
+             :case NAME | NIL
+             :index I :form FORM                 ; violation／errorのとき
+             :condition-type T))                 ; errorのとき
+```
+
+`:not-evaluated`の理由は`:precondition-rejected`・`:capture-failed`・
+`:case-selection-failed`・`:outcome-failed`のいずれかである。`:state-post`は契約が
+節を宣言していれば現れる。ケースが選択される前はトップレベル節またはいずれかの
+ケースの節を指し、そのとき`:case`は`NIL`で理由は`:capture-failed`または
+`:case-selection-failed`となり、「宣言していない」と「宣言はあるが選択・実行の前に
+止まった」を区別する。どちらの節も宣言しない契約は状態証拠を持たず、`:state`を
+省略するので既存の投影は変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
+して表示せず、`:values`は完了した束縛だけの順序付き`((NAME . VALUE) ...)` alistで
+あり、`assoc`で名前から値を引ける。取得値NILは`(NAME . NIL)`として未取得と区別する。
+
+証拠の値は既存のsnapshotで投影する。診断の投影可能範囲を明示する。consとarrayは
+複製として、number・character・symbolなど表現が自己完結したatomはそのまま報告する。
+この範囲外のオブジェクト（CLOSインスタンス・構造体・hash-table・関数など）を
+**その値自身が、または任意の深さで内包する**場合、その束縛の診断値全体を
+`(:unavailable :reason :opaque-value :type TYPE)`（`TYPE`は投影できなかった
+オブジェクトの型）として報告する。外側だけを複製して内部のライブ参照を残すと、
+「保存済みの診断」から後の変更が見えてしまうためである。走査は値自身の構造に
+よって束縛され、循環と共有は一度だけ訪問する。評価経路は元の値を後続のcapture式・
+guard・述語へそのまま渡す。これは報告用の投影であり、deep copyでも新しいsnapshot
+機構でもなく、opaqueオブジェクトのコピー対応を追加しない。投影失敗で元の対象
+outcomeや確定済み失敗を失わない。成功試行のオブジェクトを保持する巨大なログは
+追加しない。
+
+state-post不成立の構造化説明（`:kind`・`:function`・`:case`・`:index`・`:form`）は、
+`trial-observation-explanation`・`property-result-explanation`・
+`function-check-result-explanation`・`result-data`の`:failure`内の`:explanation`の
+いずれからも同じ内容で読める。state-post評価エラーの説明も同様である。
+
+### 失敗同一性
+
+```text
+capture error        (:capture BINDING-INDEX :contract-error CONDITION-TYPE)
+ケースなし state NIL  (:state-postcondition FORM-INDEX)
+ケースあり state NIL  (:case CASE-NAME :state-postcondition FORM-INDEX)
+ケースなし state err  (:state-post FORM-INDEX :contract-error CONDITION-TYPE)
+ケースあり state err  (:case CASE-NAME :state-post FORM-INDEX :contract-error CONDITION-TYPE)
+```
+
+state-postの不成立は`:return-spec`／`:postcondition`とは別の失敗種別とする。式の
+位置と、ケース付きならケース名を同一性に含める。具体値や変動するエラーメッセージを
+同一性へ入れない。既存の`:case` wrapperと内側の比較規則を再利用し、任意のsignatureを
+受け入れるようvalidatorを緩和しない。
+
+### ケース集計
+
+`check-function`の結果と`result-data`の`:case-report`は`:capture-errors`を追加する。
+
+- capture失敗ではどのcaseの`:called`も増やさず、`:case-selection-errors`へ混ぜず、
+  `:capture-errors`へ数える。
+- state-post不成立では、対象を呼んだcaseの`:called`と`:failed`を各1増やす。
+- state-post評価エラーでは、そのcaseの`:called`と`:error`を各1増やす。
+- outcome判定時とstate-post判定時に二重計数せず、完成した試行の最終分類を既存の
+  計数hookへ一度だけ渡す。
+
+capture失敗が追加されるため、`trials - rejected`が対象呼出数やcase選択到達数に
+常に一致するという説明はしない。生成件数・事前条件棄却・対象呼出件数の既存の意味を
+維持する。
+
+### 定義・introspection・digest
+
+Function Specは順序付きcapture束縛名・ソース式・対応する実行関数と、ケースなしの
+state-post forms・実行関数を構造化slotとして保持する。Function caseは自分の
+state-post forms・実行関数を保持する。任意metadataへ隠すだけにせず、毎試行に登録
+済み定義のslotを書き換えない。実行時の値は試行ローカルに持つ。
+
+`function-spec-data`は宣言された`:capture`（`(:name NAME :form FORM)`の並び）と
+`:state-post`、各caseの`:state-post`を返す。宣言のない契約はこれらのキーを省く。
+introspectionはcapture式・state-post・対象を実行せず、closureを投影しない。
+
+`definition-description`はcapture名・順序・ソース、state-post forms、ケースとの
+関連を反映するので、変更はdigestを変える。captureで実際に得た値は実行データであり
+宣言digestへ混ぜない。新機能を使わない定義のdigest bytes・失敗signature・多値・
+ケース・期待エラー・postの判定を変更しない。外部readerの実装やDB状態までdigestが
+固定するとは説明しない。
+
+DSLだけでなく、programmatic construction、reinitialization、registryへの登録でも
+同じ構造上の制約を検査する。captureの名前・順序・重複・束縛衝突、capture formsと
+実行関数の対応、state-post formsと実行関数の対応、capture変数の変更時に依存する
+述語の束縛整合を検査し、formsと実行関数の片方だけを差し替えさせない。更新拒否時は
+参加slotを巻き戻して既存定義を保持する。任意のソースとclosureが意味的に同値かを
+証明する機構は作らない。ソースのないprogrammatic definitionは既存のdigest
+completeness方針に従う。
+
+### 縮小・replay・artifact・instrumentationの初版制限
+
+今回の機能は状態を観測するが復元しない。観測した値を保存できたことと、同じ状態から
+再実行できることは別である。初版は保守的に、`:capture`または`:state-post`を持つ
+Function Specについて次を採用する。純粋な利用例でも自動判定で例外を設けない。
+
+- 通常の複数試行: 既存の`check-function`による新しい検査runは許可する。独立した
+  試行が必要なら作者がgenerator等で試行ごとに新しい対象オブジェクトや初期状態を
+  用意する。cl-specはそれを自動検出・検証・復元しない。captureは各試行で取り直すが、
+  取り直しはresetの代わりではない。
+- 自動縮小: 無効にする。失敗後に同じ可変オブジェクトで対象をもう一度呼ばず、生成値の
+  型やmutation検出結果から縮小してよいと推測せず、custom shrinkerがあっても制限を
+  迂回しない。取得済みの失敗証拠を保持し、shrink-reportの`:termination`に
+  `:state-restoration-unavailable`を出す。これは「対象を呼んでいない」からではなく
+  「同じ初期状態を再構築する契約がない」ための非対応である。無効な縮小を結果
+  capabilityが利用可能と主張しないよう、`:shrinking :none`と整合させる。新機能を
+  使わない既存Function SpecとPropertyの縮小は変更しない。
+- replay: `check-function`へ過去結果をseedとして渡す経路を、対象を呼ぶ前に
+  `unsupported-stateful-operation`（`:operation :replay`）で拒否する。
+  `run-property`へ過去結果をseedとして渡す経路と、`replay-property`へ過去結果を
+  渡す経路も、結果を整数seedへ変換して再適用の事実を失う前に同じ理由で拒否する。
+  `recheck-counterexample`はstate観測契約の解決済み定義を、対象呼び出し前に既存の
+  `:unsupported`結果と理由`:stateful-contract-unsupported`で拒否する。整数seedを
+  指定した「新しいrun」は許可する。seedが再現するのは乱数系列だけで、外部状態や
+  可変オブジェクトの初期内容まで復元されるとは説明せず、新しいrunの初期状態は作者が
+  用意する。fixture・reset hook・新しいstate-policy指定は追加しない。
+- counterexample artifact: result-dataによる診断は提供するが、artifact v1への保存と
+  保存反例による自動直接再検査は非対応とする。`make-counterexample-artifact`は既存の
+  拒否通知を使い、理由`:stateful-contract-unsupported`を明示する。制限は実行時に固定
+  した定義情報から判断し、現在のregistryへ同名の別定義を登録しただけで変わらない
+  ようにする。新機能のない既存artifactの保存・読込・再検査は維持する。汎用オブジェクト
+  codecや状態復元adapterは追加しない。
+- instrumentation: `:capture`または`:state-post`を使う契約のruntime
+  instrumentationは未対応とする。ケースなし契約やinput-onlyのscopeでも同様に扱い、
+  install／refreshをfdefinitionや既存wrapperを変更する前に
+  `:state-constraints-unsupported`で拒否する。capabilityは`:unavailable`を返し、
+  非対応理由と一致させる。新しい節を無視して部分的なwrapperを黙って作らない。既存の
+  ケースなし・新機能なしのinstrumentationは維持する。
+
+これらは初版の対応範囲であり、「状態制約は本質的に縮小・replayできない」という説明
+にはしない。将来、明示的な状態構築・復元プロトコルを追加する余地を残す。backendと
+結果プロトコルは、新しい観測値・phase・signature・state失敗をevaluatorだけでなく
+結果検証・observation・function-check-result・result-dataまで一貫して扱い、可能な
+限り共通evaluatorを使う。入力生成の共有予算・棄却数・終了理由は変更せず、capture
+errorやstate-post errorを生成棄却や生成枯渇へ混ぜない。
 
 # 18. 自動generative function test
 

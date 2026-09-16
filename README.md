@@ -12,10 +12,13 @@ property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) for
 required/optional positional, keyword and rest arguments, primary or fixed multiple
 return values, or a required error outcome,
+named per-condition `:cases`, and explicit pre-observation (`:capture`) plus
+post-run state constraints (`:state-post`),
 including custom generators
 for whole argument sets. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
-output and postcondition scopes through the optional `cl-spec/instrument` system.
+output and postcondition scopes through the optional `cl-spec/instrument` system;
+a state-observing contract refuses instrumentation.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
 ## Systems
@@ -29,6 +32,7 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 | `cl-spec/tests` | test suite | `rove` |
 | `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
 | `cl-spec/examples/function-spec-cases` | executable named-case Function Spec example | `check-it` |
+| `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
@@ -231,9 +235,10 @@ this version. That refusal is judged by clause occurrence, so an empty `(:post)`
 is refused too, and `:post`/`:post-values` are mutually exclusive inside a case
 just as they are at the contract level. `:args`, `:args-generator` and the common
 `:pre` stay top-level.
-`:cases` cannot be combined with a top-level `:returns`, `:signals`, `:post` or
-`:post-values`; there is no inherited common outcome. A case cannot declare its
-own arguments or precondition, nest `:cases`, or use `:else` or a priority.
+`:cases` cannot be combined with a top-level `:returns`, `:signals`, `:post`,
+`:post-values` or `:state-post`; there is no inherited common outcome. A case
+cannot declare its own arguments or precondition, nest `:cases`, or use `:else`
+or a priority.
 
 Selection is exclusive, not first-match: after the common `:pre` admits an input,
 every guard runs in declaration order and exactly one must be true. `:when t` is
@@ -256,7 +261,7 @@ errors, and the cases no trial reached:
  :declared-cases (:sufficient-funds :insufficient-funds)
  :cases ((:name :sufficient-funds ... :called 62 :passed 62 :failed 0 :error 0)
          (:name :insufficient-funds ... :called 38 :passed 38 :failed 0 :error 0))
- :case-selection-errors 0 :never-called nil)
+ :case-selection-errors 0 :capture-errors 0 :never-called nil)
 ```
 
 A successful expected-error trial counts as a pass for its case. `:passed` means
@@ -283,6 +288,82 @@ reason `:named-cases-unsupported`, before changing the function.
 For a runnable tour of both behaviours, the duplicate and missing conditions, and
 an unchecked case, see the
 [cases walkthrough](docs/guides/function-spec-cases-walkthrough.md).
+
+## State observation and post-run constraints
+
+`:capture` observes values before the call; `:state-post` checks after the call
+that state relates, as declared, to the inputs and the captured values. This is
+state **observation**, not state restoration: it detects that a declared
+observation changed and that a declared relation failed, and it does not freeze,
+deep-copy, restore or prove anything stayed unchanged during the call.
+
+```lisp
+(defstruct (account (:constructor make-account (balance id))) balance id)
+
+(cl-spec:defspec-function withdraw!
+  (:args (account (satisfies account-p)) (amount (positive-money)))
+  (:capture
+    (balance-before (account-balance account))
+    (id-before      (account-id account)))
+  (:cases
+    (:sufficient-funds
+      (:when (<= amount balance-before))
+      (:returns receipt-spec)
+      (:state-post
+        (= (account-balance account) (- balance-before amount))
+        (eql (account-id account) id-before)))
+    (:insufficient-funds
+      (:when (> amount balance-before))
+      (:signals (type insufficient-funds))
+      (:state-post
+        (= (account-balance account) balance-before)
+        (eql (account-id account) id-before)))))
+```
+
+- `:capture` is top-level, at most once, and takes one or more exact
+  `(NAME FORM)` bindings. Each form runs once in declaration order and sees the
+  arguments and the earlier capture values; only the primary value is bound, and
+  a captured `NIL` is a value rather than an absence. A capture variable is
+  **not** a target argument: the argument schema, generator and actual call are
+  unchanged. Capture observes a value, so `(:capture (before account))` does not
+  preserve the account's earlier contents.
+- `:state-post` is one clause with one or more forms, top-level for a case-less
+  contract or inside each case (never both). It runs only after the outcome
+  contract passed, treats `NIL` as a violation and a signalled error as a
+  contract error, and binds no implicit `RESULT`, condition or raw outcome. Its
+  failure identity is `(:state-postcondition INDEX)`, or
+  `(:case NAME :state-postcondition INDEX)` inside a case.
+- A capture failure calls no target and is `:error` / `:contract-error` with
+  `:failure-phase :capture`. A state-post violation is `:failed` /
+  `:state-postcondition`; a state-post form that signals is `:error` /
+  `:contract-error` with `:failure-phase :state-post`. Both keep the raw target
+  outcome and count the call against the selected case. A `:signals` case may
+  carry `:state-post`; the existing `:signals` / `:post` exclusivity is
+  unchanged.
+- An outcome that failed first keeps its existing classification and leaves
+  state-post `:not-evaluated` with a reason; an unrun check is never reported as
+  passed.
+
+The trial's state evidence is on `trial-observation-state` and in `result-data`
+under `:state`; `function-spec-data` exposes the declaration under `:capture`
+and `:state-post`; `definition-digest` covers names, order, source and the case
+association. Captured values are an ordered `((name . value) ...)` alist, and a
+value the evidence snapshot cannot preserve is reported as an explicit
+`:opaque-value` placeholder rather than a live reference. `check-function` runs
+such a contract, but this version does not
+shrink it (`:shrink-report` says `:state-restoration-unavailable`), replay a past
+result into it (`unsupported-stateful-operation`, through `check-function` or the
+property runner's `run-property`/`replay-property`), save it as a counterexample
+artifact (`:stateful-contract-unsupported`) or instrument it
+(`:state-constraints-unsupported`); a new run with an integer seed is allowed and
+the author supplies the fresh initial state. Observing equal before and after is
+not a proof that nothing changed in between, and this feature does not claim
+atomicity, concurrency safety, crash safety or the absence of external I/O.
+
+For a runnable tour — a correct update, a forgotten update, a refusal after a
+partial update, a changed identifier, a verification error and the first-version
+limits — see the
+[state observation walkthrough](docs/guides/state-observation-walkthrough.md).
 
 ## Example
 
@@ -826,6 +907,8 @@ explain:
   — runnable structured-data integration walkthrough
 - [`docs/guides/function-spec-cases-walkthrough.md`](docs/guides/function-spec-cases-walkthrough.md)
   — runnable named per-condition Function Spec walkthrough
+- [`docs/guides/state-observation-walkthrough.md`](docs/guides/state-observation-walkthrough.md)
+  — runnable capture and post-run state constraint walkthrough
 - [`docs/cl-spec-specification-v0.2-draft.md`](docs/cl-spec-specification-v0.2-draft.md)
   — the specification
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — design documents, including
@@ -834,6 +917,8 @@ explain:
 - [`examples/structured-data.lisp`](examples/structured-data.lisp) and
   [`examples/function-spec-cases.lisp`](examples/function-spec-cases.lisp) — the
   executable examples the guides run
+- [`examples/stateful-withdraw.lisp`](examples/stateful-withdraw.lisp) — the
+  executable capture/state-post example the state observation guide runs
 
 The API reference is regenerated and committed by CI after every push to
 `main`. Regenerate it locally with:
