@@ -33,6 +33,7 @@
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:function-spec-name
                 #:function-spec-signal-spec
+                #:function-spec-cases
                 #:function-spec-precondition-function
                 #:function-spec-postcondition-function #:function-spec-postconditions
                 #:function-spec-post-value-variables
@@ -98,8 +99,14 @@ return or postcondition check."))
     ((typep (fdefinition name) 'generic-function) :generic-function)))
 
 (defun unsupported-contract-reason (name contract)
-  "Return the shared installation/capability refusal reason for NAME and CONTRACT."
+  "Return the shared installation/capability refusal reason for NAME and CONTRACT.
+
+A case-carrying contract is refused here, before any wrapper is built or any
+fdefinition is replaced: this version has no case-aware wrapper, and a wrapper
+that ignored :CASES and checked arguments only would report a contract it did not
+enforce.  Existing case-less instrumentation is unaffected."
   (or (unsupported-target-reason name)
+      (when (function-spec-cases contract) :named-cases-unsupported)
       (when (function-spec-signal-spec contract) :expected-condition-contract)))
 
 (defmethod definition-instrumentation-capability ((contract function-spec))

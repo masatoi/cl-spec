@@ -21,7 +21,13 @@ the property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `function-spec-data`) in
 their expanded §73.1 D1 range: required/optional positional, keyword and rest arguments,
 primary or fixed multiple return values, and explicit `:post-values` bindings,
-or a required error outcome via `:signals`. Expected-error contracts are not
+or a required error outcome via `:signals`. A function spec may instead declare
+named `:cases`, each with one `:when` condition and one required `:returns` or
+`:signals` outcome; selection is exclusive over the inputs the common `:pre`
+admits, zero matches / several matches / a signalling guard are contract-side
+`:case-selection` errors that call no target, per-case calls and never-called
+cases are reported, the selected case name joins the failure identity, and
+case-carrying contracts refuse instrumentation. Expected-error contracts are not
 supported by runtime instrumentation.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
@@ -65,6 +71,7 @@ This project is developed with cl-mcp's tools:
 | `cl-spec/specs` | optional executable API contracts and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 | `cl-spec/examples/structured-data` | executable structured-data integration example (inferred subsystem) | `check-it` |
+| `cl-spec/examples/function-spec-cases` | executable named per-condition Function Spec example (inferred subsystem) | `check-it` |
 
 The core system must never load `check-it`. The generator backend is injected
 at load time into `cl-spec:*generator-backend*` by `cl-spec/check-it`.

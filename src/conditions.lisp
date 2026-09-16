@@ -49,6 +49,13 @@
            #:generation-budget-exhausted-budget
            #:generation-budget-exhausted-phase
            #:generation-budget-exhausted-path
+           #:case-selection-error
+           #:case-selection-error-function
+           #:case-selection-error-kind
+           #:case-selection-error-cases
+           #:case-selection-error-case
+           #:case-selection-error-original-condition
+           #:case-selection-error-data
            #:unsupported-seed))
 
 (in-package #:cl-spec/src/conditions)
@@ -313,6 +320,84 @@ finite budget is not a proof that the spec admits no values."))
 (defun generation-budget-exhausted-path (condition)
   "Return the declaration path of the filter whose reservation was denied, or NIL."
   (getf (generation-budget-exhausted-report condition) :exhausted-at))
+
+(define-condition case-selection-error (cl-spec-error)
+  ((function :initarg :function
+             :initform nil
+             :reader case-selection-error-function
+             :documentation "Name of the function whose contract was being checked.")
+   (kind :initarg :kind
+         :initform nil
+         :reader case-selection-error-kind
+         :documentation ":NO-MATCHING-CASE, :AMBIGUOUS-CASE or :CASE-GUARD-ERROR.")
+   (cases :initarg :cases
+          :initform nil
+          :reader case-selection-error-cases
+          :documentation "Case names that matched more than once, for :AMBIGUOUS-CASE.
+NIL for the other kinds.")
+   (case :initarg :case
+         :initform nil
+         :reader case-selection-error-case
+         :documentation "Case whose :WHEN signalled, for :CASE-GUARD-ERROR.  NIL otherwise.")
+   (original-condition :initarg :original-condition
+                       :initform nil
+                       :reader case-selection-error-original-condition
+                       :documentation "Condition the case guard signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again."))
+  (:report (lambda (condition stream)
+             (ecase (case-selection-error-kind condition)
+               (:no-matching-case
+                (format stream "No case of ~S matches the argument bindings."
+                        (case-selection-error-function condition)))
+               (:ambiguous-case
+                (format stream "More than one case of ~S matches the argument ~
+                                bindings: ~{~S~^, ~}."
+                        (case-selection-error-function condition)
+                        (case-selection-error-cases condition)))
+               (:case-guard-error
+                (format stream "The :WHEN of case ~S of ~S signalled ~A."
+                        (case-selection-error-case condition)
+                        (case-selection-error-function condition)
+                        (type-of (case-selection-error-original-condition condition)))))))
+  (:documentation "Signalled (as captured evidence) when case selection is not unique.
+
+Selection is exclusive: exactly one case must match the admitted input.  Zero
+matches, several matches and a guard that signalled are contract-side errors,
+not target failures.  The target is not invoked for any of them, so none of them
+is a target counterexample or a precondition rejection.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION."))
+
+(defun condition-report-text (condition)
+  "Render CONDITION as text without losing evidence to a broken condition printer.
+
+LOCAL to the condition vocabulary: SRC/EXECUTION keeps the same rule for trial
+observation, but it depends on this file, so the projection here cannot reach
+that helper without closing the dependency graph into a cycle."
+  (when condition
+    (handler-case
+        (let ((*print-circle* t))
+          (princ-to-string condition))
+      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
+
+(defun case-selection-error-data (condition)
+  "Project CONDITION as the explanation plist a function-check result carries.
+
+The shape is fixed: :KIND is always :CASE-SELECTION-ERROR, :CASE-ERROR is the
+selection error kind, :FUNCTION names the contract, :CASES lists the ambiguous
+matches, and :CASE, :CONDITION-TYPE and :CONDITION-REPORT describe the guard that
+signalled.  Unused keys are NIL rather than absent, so a consumer reads one
+shape for every kind."
+  (let ((original (case-selection-error-original-condition condition)))
+    (list :kind :case-selection-error
+          :case-error (case-selection-error-kind condition)
+          :function (case-selection-error-function condition)
+          :cases (case-selection-error-cases condition)
+          :case (case-selection-error-case condition)
+          :condition-type (and original (type-of original))
+          :condition-report (and original (condition-report-text original)))))
 
 (define-condition unsupported-seed (cl-spec-error)
   ()

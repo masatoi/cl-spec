@@ -18,6 +18,7 @@
                 #:trial-observation-status #:trial-observation-reason
                 #:trial-observation-signature #:trial-observation-condition-report
                 #:observation-failure-p #:observe-trial #:failure-identities-match-p
+                #:observation-failure-phase
                 #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/registry #:*registry*)
   (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest)
@@ -71,31 +72,56 @@
           :signature (trial-observation-signature observation)
           :mutated-p (trial-observation-arguments-mutated-p observation))))
 
+(defun case-signature-parts (signature)
+  "Split SIGNATURE into (values CASE-NAME INNER WRAPPED-P).
+
+A function-spec failure of a selected case wraps the established identity as
+(:CASE NAME . INNER).  Anything else is returned unchanged with WRAPPED-P NIL, so
+the case-less shapes are read exactly as before."
+  (if (and (consp signature) (eq :case (first signature)))
+      (values (second signature) (cddr signature) t)
+      (values nil signature nil)))
+
+(defun valid-signature-shape-p (signature reason status kind)
+  "Recognize one unwrapped failure identity against its reason and status."
+  (and (finite-list-p signature)
+       (if (eq kind :property)
+           (case reason
+             (:predicate-false (and (eq status :failed) (equal signature '(:property-false))))
+             (:condition (and (eq status :error) (= (length signature) 2)
+                              (eq (first signature) :property-condition)
+                              (symbolp (second signature)))))
+           (case reason
+             ((:return-spec :postcondition)
+              (and (eq status :failed) (= (length signature) 3)
+                   (member (first signature) '(:return-value :return-values))
+                    (eq (second signature) reason)))
+             (:missing-condition
+              (and (eq status :failed) (equal signature '(:missing-condition))))
+             (:condition-spec
+              (and (eq status :error) (= (length signature) 3)
+                   (eq (first signature) :condition-spec) (symbolp (second signature))))
+             ((:condition :contract-error)
+              (and (eq status :error) (= (length signature) 2)
+                   (eq (first signature) (if (eq reason :condition) :target-signal :contract-error))
+                   (symbolp (second signature))))))))
+
 (defun valid-signature-p (data kind)
-  (let ((signature (getf data :signature))
-        (reason (getf data :reason))
-        (status (getf data :status)))
-    (and (finite-list-p signature)
-         (if (eq kind :property)
-             (case reason
-               (:predicate-false (and (eq status :failed) (equal signature '(:property-false))))
-               (:condition (and (eq status :error) (= (length signature) 2)
-                                (eq (first signature) :property-condition)
-                                (symbolp (second signature)))))
-             (case reason
-               ((:return-spec :postcondition)
-                (and (eq status :failed) (= (length signature) 3)
-                     (member (first signature) '(:return-value :return-values))
-                      (eq (second signature) reason)))
-               (:missing-condition
-                (and (eq status :failed) (equal signature '(:missing-condition))))
-               (:condition-spec
-                (and (eq status :error) (= (length signature) 3)
-                     (eq (first signature) :condition-spec) (symbolp (second signature))))
-               ((:condition :contract-error)
-                (and (eq status :error) (= (length signature) 2)
-                     (eq (first signature) (if (eq reason :condition) :target-signal :contract-error))
-                     (symbolp (second signature)))))))))
+  "Recognize the failure identities this artifact format accepts.
+
+A function-spec case wraps the established identity as (:CASE NAME . INNER); NAME
+must be a keyword and INNER must be one of the shapes CASE-SIGNATURE-PARTS
+separates.  The wrapper is not a wildcard: evidence that names no case is never
+accepted as a case-carrying failure, and the validator is not relaxed to accept
+arbitrary signatures.  A case-selection error cannot be persisted at all -- it
+never reached the target -- and is refused before this point."
+  (multiple-value-bind (case-name inner wrapped-p)
+      (case-signature-parts (getf data :signature))
+    (and (finite-list-p (getf data :signature))
+         (if wrapped-p
+             (and (keywordp case-name) (consp inner) (finite-list-p inner))
+             t)
+         (valid-signature-shape-p inner (getf data :reason) (getf data :status) kind))))
 
 (defun valid-evidence-p (data)
   (and (record-p data '(:arguments :status :reason :signature :mutated-p))
@@ -193,7 +219,9 @@
   "Freeze original and accepted shrunk evidence from RESULT.
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
-is represented by an unavailable placeholder and :METADATA-OMISSIONS."
+is represented by an unavailable placeholder and :METADATA-OMISSIONS.
+A case-selection error never reached the target, so it is refused here rather
+than persisted as a call that never happened."
   (check-type result property-result)
   (unless (member selection '(:selected :original :shrunk))
     (reject-artifact :invalid-selection))
@@ -204,6 +232,9 @@ is represented by an unavailable placeholder and :METADATA-OMISSIONS."
          (omissions nil))
     (unless (and (finite-list-p metadata) (evenp (length metadata)))
       (reject-artifact :invalid-definition-metadata))
+    (when (or (and original (eq :case-selection (observation-failure-phase original)))
+              (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
+      (reject-artifact :case-selection-failure))
     (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-metadata (value field)
                (multiple-value-bind (copy omission) (persistable-metadata value field)

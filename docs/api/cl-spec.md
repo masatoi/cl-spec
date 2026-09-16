@@ -2,21 +2,21 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 225 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 234 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
 **Macros**: [`defgenerator`](#defgenerator) · [`defproperty`](#defproperty) · [`defspec`](#defspec) · [`defspec-function`](#defspec-function)
 
-**Functions**: [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
+**Functions**: [`case-selection-error-data`](#case-selection-error-data) · [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
 
 **Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`validate-definition`](#validate-definition)
 
-**Accessors**: [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name)
+**Accessors**: [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name)
 
 **Classes**: [`custom-generator`](#custom-generator) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
 
-**Conditions**: [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed)
+**Conditions**: [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed)
 
 **Structures**: [`counterexample-artifact`](#counterexample-artifact) · [`trial-observation`](#trial-observation)
 
@@ -149,15 +149,62 @@ and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
-  (defspec-function ranged-random
-    (:args (start integer) (end integer))
-    (:pre (< start end))
-    (:returns integer)
-    (:post (and (>= result start) (< result end))))
+:CASES names the behaviour required of each admitted input, instead of one
+outcome for all of them.  :CASES appears at most once and holds one or more
+(:NAME [DOCSTRING] (:WHEN FORM) OUTCOME) cases; NAME is a unique keyword,
+:WHEN takes exactly one form, and OUTCOME is exactly one of (:RETURNS SPEC) or
+(:SIGNALS SPEC).  A :RETURNS case may add :POST or :POST-VALUES with the rules
+above; a :SIGNALS case may not, in this version.  :ARGS, :ARGS-GENERATOR and the
+common :PRE stay on the contract; a case cannot declare its own, nest :CASES,
+or use :ELSE or a priority.
+
+Selection is exclusive: after the common :PRE admits an input, every case's
+:WHEN runs in declaration order and exactly one must be true.  :WHEN T is an
+ordinary always-true form, not an implicit :ELSE, and :WHEN NIL is an ordinary
+never-true one.  Zero matches, several matches, and a guard that signals are
+contract-side selection errors: the target is not called, and the result is
+:ERROR / :CONTRACT-ERROR with :FAILURE-PHASE :CASE-SELECTION and a structured
+explanation naming the error and the cases.  A signal from a guard is such an
+error even when it is a SPEC-VIOLATION; only the common :PRE treats that as a
+refusal.  A selected case's own outcome judges the invocation by the established
+rules, and its name joins the failure identity, so shrinking and rechecking stay
+inside that case.
+
+:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST or
+:POST-VALUES.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
+reached, in FUNCTION-CHECK-RESULT-CASE-REPORT; :PASSED means no violation was
+observed in the trials that ran, not that every case ran
+(specification §17.2).
+
+  (defspec-function remaining-balance
+    (:args (balance (range integer 0 1000)) (amount (range integer 1 1000)))
+    (:cases
+      (:sufficient-funds
+        (:when (<= amount balance))
+        (:returns (range integer 0 *))
+        (:post (= result (- balance amount))))
+      (:insufficient-funds
+        (:when (> amount balance))
+        (:signals (type insufficient-funds)))))
 ```
 
 
 ## Functions
+
+<a name="case-selection-error-data"></a>
+### case-selection-error-data
+
+*Function* · `(condition)`
+
+Project CONDITION as the explanation plist a function-check result carries.
+
+```text
+The shape is fixed: :KIND is always :CASE-SELECTION-ERROR, :CASE-ERROR is the
+selection error kind, :FUNCTION names the contract, :CASES lists the ambiguous
+matches, and :CASE, :CONDITION-TYPE and :CONDITION-REPORT describe the guard that
+signalled.  Unused keys are NIL rather than absent, so a consumer reads one
+shape for every kind.
+```
 
 <a name="check-function"></a>
 ### check-function
@@ -165,9 +212,21 @@ INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 *Function* · `(function-designator &key trials seed options (registry *registry*))`
 
 Check a function contract using evidence captured during each invocation.
-No target or predicate is called again to classify the result. Shrinking still
-executes candidate inputs; only candidates with the original failure identity
-are accepted. A run with no admitted trials is :SKIPPED.
+
+```text
+No target or predicate is called again to classify the result.  Shrinking still
+executes candidate inputs; only candidates with the original failure identity are
+accepted.  A run with no admitted trials is :SKIPPED.
+
+A contract with :CASES selects exactly one case per admitted trial and judges the
+invocation by that case's outcome.  The result carries a per-case report
+(FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
+outcomes actually observed per case, the case-selection errors, and the cases no
+trial reached.  :PASSED says no violation was observed in the trials that ran; it
+does not say every case ran, so read :NEVER-CALLED as well.  TRIALS minus
+REJECTED is the number of trials that reached case selection, not the number of
+target calls: a case-selection error calls no target.
+```
 
 <a name="clear-registry"></a>
 ### clear-registry
@@ -307,6 +366,11 @@ compare by type. Legacy primary-value return-spec/postcondition crossings retain
 Fixed :RETURN-VALUES failures require the same clause and shape or post-form index;
 this prevents a return-position violation from shrinking into a different post failure.
 An unknown post-form identity never establishes a match, including clause crossings.
+A function-spec case wraps that identity as (:CASE NAME . INNER): the case names
+must be EQ and the inner comparison is exactly the one above, so the same
+violation in a different case is a different failure while the rules inside a
+case are unchanged.  A wrapped identity never matches an unwrapped one, so
+evidence that names no case cannot be adopted for a case-carrying failure.
 
 <a name="find-function-spec"></a>
 ### find-function-spec
@@ -372,7 +436,18 @@ Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
    :preconditions (<form> ...) :returns <spec-data plist or NIL>
    :signals <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
-   :source-location (:file <string> :package <string>) :metadata <plist>)
+   :source-location (:file <string> :package <string>) :metadata <plist>
+   [:case-selection :exclusive
+    :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
+             :outcome :returns-or-:signals
+             :returns <spec-data plist or NIL> :signals <spec-data plist or NIL>
+             :postconditions (<form> ...)
+             [:post-value-variables (<symbol> ...)]) ...)])
+
+A case-carrying contract adds :CASE-SELECTION and its ordered :CASES.  A case-less
+contract omits both keys, so its projection is exactly what it was.  Case guards
+and case postconditions are compiled functions and are never projected; their
+source forms are.
 
 This is the projection that answers the two questions a caller asks before
 editing a function: which inputs it accepts, and which output it must return
@@ -476,6 +551,8 @@ Freeze original and accepted shrunk evidence from RESULT.
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
+A case-selection error never reached the target, so it is refused here rather
+than persisted as a call that never happened.
 
 <a name="make-hash-table-registry"></a>
 ### make-hash-table-registry
@@ -487,7 +564,7 @@ Return a fresh empty HASH-TABLE-REGISTRY.
 <a name="make-trial-observation"></a>
 ### make-trial-observation
 
-*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value)`
+*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case)`
 
 Create the evidence record for one invocation.
 
@@ -546,6 +623,8 @@ Return true when OBSERVATION records a failed or signalled trial.
 
 Evaluate generated objects once, snapshot evidence and record invocation provenance.
 Mutations of conses and arrays, including changed sharing, stop backend shrinking.
+The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
+NIL when none was selected, and is recorded on the observation.
 
 <a name="properties-for"></a>
 ### properties-for
@@ -590,6 +669,13 @@ The body is the author's source rather than the compiled function (§39).
 *Function* · `(result)`
 
 Return the selected failure explanation; internal post-form tags are excluded.
+
+```text
+:CONTRACT-ERROR is included because a function-spec case-selection error records
+its structured explanation there.  A contract-side error that records no
+explanation still reads NIL, so the projection of existing contract errors does
+not change.
+```
 
 <a name="property-result-failure-reason"></a>
 ### property-result-failure-reason
@@ -862,6 +948,20 @@ Conses and arrays are compared with SAME-VALUE-P before and after the call.
 Arbitrary objects and external state are not checkpointed or compared.
 ```
 
+<a name="trial-observation-case"></a>
+### trial-observation-case
+
+*Function* · `(instance)`
+
+Name of the selected function-spec case, or NIL.
+
+```text
+A case-less contract, a precondition refusal and a case-selection error all have
+no selected case, so this is NIL for them.  A failure of a selected case carries
+the name in its signature as well, which is what keeps shrinking and rechecking
+inside one case.
+```
+
 <a name="trial-observation-condition"></a>
 ### trial-observation-condition
 
@@ -1017,6 +1117,10 @@ Append participating slot names from a definition and its subclasses.
 
 Evaluate PROPERTY once, returning status, reason, signature,
 explanation, condition and value. Status is :passed, :rejected, :failed or :error.
+The optional seventh value is the captured target call outcome; the optional
+eighth names the selected function-spec case, or NIL when none was selected.
+The first six keep their established meaning, so an existing specialization that
+returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
 Specializations must classify during this invocation, never by rerunning it.
 
@@ -1239,6 +1343,44 @@ Validate and normalize a definition, returning OBJECT.
 
 ## Accessors
 
+<a name="case-selection-error-case"></a>
+### case-selection-error-case
+
+*Accessor* of `case-selection-error` · `(condition)`
+
+Case whose :WHEN signalled, for :CASE-GUARD-ERROR.  NIL otherwise.
+
+<a name="case-selection-error-cases"></a>
+### case-selection-error-cases
+
+*Accessor* of `case-selection-error` · `(condition)`
+
+Case names that matched more than once, for :AMBIGUOUS-CASE.
+NIL for the other kinds.
+
+<a name="case-selection-error-function"></a>
+### case-selection-error-function
+
+*Accessor* of `case-selection-error` · `(condition)`
+
+Name of the function whose contract was being checked.
+
+<a name="case-selection-error-kind"></a>
+### case-selection-error-kind
+
+*Accessor* of `case-selection-error` · `(condition)`
+
+:NO-MATCHING-CASE, :AMBIGUOUS-CASE or :CASE-GUARD-ERROR.
+
+<a name="case-selection-error-original-condition"></a>
+### case-selection-error-original-condition
+
+*Accessor* of `case-selection-error` · `(condition)`
+
+Condition the case guard signalled, or NIL.
+Kept as a condition object for inspection; the explanation carries its type and
+report text so evidence survives a condition that cannot be printed again.
+
 <a name="custom-generator-documentation"></a>
 ### custom-generator-documentation
 
@@ -1284,6 +1426,25 @@ The whole DEFGENERATOR form, kept verbatim.
 
 Source location plist, or NIL.
 
+<a name="function-check-result-case-report"></a>
+### function-check-result-case-report
+
+*Accessor* of `function-check-result` · `(object)`
+
+Per-case report of this run, or :NOT-COLLECTED.
+
+```text
+A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
+:CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
+counters come from the run's own trials and are snapshotted onto the result, so
+two runs of one contract never share them, and a result that did not go through
+a function-check run says :NOT-COLLECTED rather than reporting measured zeros.
+
+:STATUS :PASSED means no violation was observed in the trials that ran.  It does
+not mean every declared case ran; read :NEVER-CALLED before drawing that
+conclusion.
+```
+
 <a name="function-check-result-explanation"></a>
 ### function-check-result-explanation
 
@@ -1326,11 +1487,13 @@ Generated argument lists the preconditions refused.
 
 ```text
 TRIALS counts what the backend generated; TRIALS minus this is the number of
-trials that reached the function.  Reporting only the first would let a run
+trials that reached case selection.  Reporting only the first would let a run
 that rejected every input read as a run that checked every input (§19, §73.3).
 
-Not the number of calls: shrinking may invoke the function on candidate inputs.
-Classification itself makes no additional call. This counts generated trials.
+Not the number of target calls: a case-selection error calls no target, and
+shrinking may invoke the function on candidate inputs.  Classification itself
+makes no additional call.  This counts generated trials; read
+FUNCTION-CHECK-RESULT-CASE-REPORT for per-case call counts.
 ```
 
 <a name="function-check-result-shrunk-outcome"></a>
@@ -2058,6 +2221,23 @@ Base class of every Semantic IR node.
 
 
 ## Conditions
+
+<a name="case-selection-error"></a>
+### case-selection-error
+
+*Condition* · extends cl-spec-error
+
+Signalled (as captured evidence) when case selection is not unique.
+
+```text
+Selection is exclusive: exactly one case must match the admitted input.  Zero
+matches, several matches and a guard that signalled are contract-side errors,
+not target failures.  The target is not invoked for any of them, so none of them
+is a target counterexample or a precondition rejection.
+
+This is the condition carried by the trial observation of such a trial; it is
+not raised out of CHECK-FUNCTION.
+```
 
 <a name="cl-spec-error"></a>
 ### cl-spec-error

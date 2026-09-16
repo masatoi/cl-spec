@@ -31,6 +31,7 @@
                 #:register-property)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
+                #:function-case
                 #:register-function-spec #:validate-post-value-variables)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator
@@ -119,8 +120,15 @@ silently picks one or ignores one.  See the bounded-AND addendum in §73.5."
                                          :source-location ',location))))
 
 (defparameter *function-spec-clause-keywords*
-  '(:args :args-generator :pre :returns :post :post-values :signals)
+  '(:args :args-generator :pre :returns :post :post-values :signals :cases)
   "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
+
+(defparameter *function-case-clause-keywords* '(:when :returns :signals :post :post-values)
+  "Clause heads a case inside a DEFSPEC-FUNCTION :CASES clause accepts.
+
+Deliberately short.  A case rules one outcome; per-case :args, :args-generator,
+:pre, nested :cases, :else and priority are not part of this version, and a
+clause that is not listed is refused rather than ignored.")
 
 (defun function-spec-error (form reason)
   "Signal INVALID-FUNCTION-SPEC-FORM for FORM with REASON."
@@ -180,6 +188,100 @@ input compiled into a tautology."
                   *package*)))
     (and home (find-symbol "RESULT" home))))
 
+(defun parse-function-case (case-form args)
+  "Parse one case: a keyword name, one optional docstring, one :WHEN and one outcome.
+
+Returns a plist of :NAME :DOCUMENTATION :WHEN :RETURNS :SIGNALS :POST
+:POST-VALUES and :SOURCE-FORM.  The contract's ARGS are needed here because
+explicit :POST-VALUES names are checked against its argument bindings, exactly as
+the contract-level clause does."
+  (unless (and (consp case-form) (proper-list-p case-form) (keywordp (first case-form)))
+    (function-spec-error case-form "expected a case headed by a keyword name"))
+  (let ((name (first case-form))
+        (body (rest case-form))
+        (documentation nil)
+        (when-clause nil)
+        (returns nil)
+        (signals nil)
+        (post nil)
+        (post-values :primary)
+        (seen '()))
+    (when (stringp (first body))
+      (setf documentation (pop body)))
+    (dolist (clause body)
+      (unless (and (consp clause) (proper-list-p clause) (keywordp (first clause)))
+        (function-spec-error clause "expected a case clause headed by a keyword"))
+      (let ((head (first clause)))
+        (unless (member head *function-case-clause-keywords*)
+          (function-spec-error
+           clause
+           (format nil "~S is not supported in a case; a case accepts ~{~S~^, ~}"
+                   head *function-case-clause-keywords*)))
+        (when (member head seen)
+          (function-spec-error clause (format nil "~S appears more than once in a case" head)))
+        (push head seen)
+        (ecase head
+          (:when
+           (unless (= 2 (length clause))
+             (function-spec-error clause ":when takes exactly one form"))
+           (setf when-clause clause))
+          (:returns
+           (unless (= 2 (length clause))
+             (function-spec-error clause ":returns takes exactly one spec form"))
+           (let ((form (second clause)))
+             (when (and (consp form) (symbolp (first form))
+                        (string= "VALUES" (symbol-name (first form))))
+               (normalize-return-declaration form))
+             (when (null form)
+               ;; The same rule the contract-level :RETURNS has: NIL is the type
+               ;; with no members, so this case would report every value as a
+               ;; violation, including the NIL its author meant.
+               (function-spec-error
+                clause "nothing satisfies the empty type NIL; write NULL instead"))
+             (setf returns form)))
+          (:signals
+           (unless (and (= 2 (length clause)) (second clause))
+             (function-spec-error clause ":signals takes exactly one non-NIL spec form"))
+           (setf signals (second clause)))
+          (:post (setf post (rest clause)))
+          (:post-values
+           (unless (and (>= (length clause) 3) (proper-list-p (second clause)))
+             (function-spec-error
+              clause ":post-values requires a names list and predicate forms"))
+           (setf post-values (second clause) post (cddr clause))))))
+    (unless when-clause
+      (function-spec-error case-form "every case requires exactly one (:when FORM) condition"))
+    (unless (or returns signals)
+      (function-spec-error case-form "a case requires exactly one of :returns and :signals"))
+    (when (and returns signals)
+      (function-spec-error case-form "a case requires exactly one of :returns and :signals"))
+    (when (and signals post)
+      (function-spec-error case-form "a :signals case cannot carry :post or :post-values"))
+    (unless (eq post-values :primary)
+      (unless (and (proper-list-p returns) (symbolp (first returns))
+                   (string= "VALUES" (symbol-name (first returns))))
+        (function-spec-error
+         case-form ":post-values requires a fixed (values ...) return declaration"))
+      (validate-post-value-variables post-values (length (rest returns))
+                                     (call-declaration-variables args)))
+    (list :name name :documentation documentation
+          :when (second when-clause)
+          :returns returns :signals signals :post post :post-values post-values
+          :source-form case-form)))
+
+(defun parse-function-cases (case-clauses args)
+  "Parse every case of a :CASES clause, refusing a name used twice."
+  (let ((cases '())
+        (names '()))
+    (dolist (case-form case-clauses)
+      (let* ((case (parse-function-case case-form args))
+             (name (getf case :name)))
+        (when (member name names)
+          (function-spec-error case-form (format nil "case ~S appears more than once" name)))
+        (push name names)
+        (push case cases)))
+    (nreverse cases)))
+
 (defun parse-function-spec-clauses (name clauses)
   "Split clauses into documentation, arguments, pre/returns/post, generator, signals and post names.
 
@@ -199,6 +301,7 @@ cannot be confused."
         (post nil)
         (post-values :primary)
         (signals nil)
+        (case-clauses nil)
         (argument-generator nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
@@ -232,6 +335,10 @@ cannot be confused."
              (function-spec-error clause ":args-generator takes one generator name"))
            (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
+          (:cases
+           (unless (rest clause)
+             (function-spec-error clause ":cases requires at least one case"))
+           (setf case-clauses (rest clause)))
           (:post (setf post (rest clause)))
           (:post-values
            (unless (and (>= (length clause) 3) (proper-list-p (second clause)))
@@ -263,6 +370,13 @@ cannot be confused."
       (function-spec-error clauses ":post and :post-values are exclusive"))
     (when (and signals (or (member :returns seen) (member :post seen) (member :post-values seen)))
       (function-spec-error clauses ":signals cannot coexist with returns or postconditions"))
+    (when (and case-clauses
+               (or (member :returns seen) (member :post seen)
+                   (member :post-values seen) (member :signals seen)))
+      (function-spec-error
+       clauses
+       ":cases cannot be combined with a top-level :returns, :signals, :post or ~
+:post-values; each case rules its own outcome and there is no shared one"))
     (unless (eq post-values :primary)
       (unless (and (proper-list-p returns) (symbolp (first returns))
                     (string= "VALUES" (symbol-name (first returns))))
@@ -270,7 +384,8 @@ cannot be confused."
          clauses ":post-values requires a fixed (values ...) return declaration"))
       (validate-post-value-variables post-values (length (rest returns))
                                      (call-declaration-variables args)))
-    (values documentation args pre returns post argument-generator signals post-values)))
+    (values documentation args pre returns post argument-generator signals post-values
+            (parse-function-cases case-clauses args))))
 
 (defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -331,57 +446,125 @@ tagged secondary values consumed by the function checker; no form runs twice."
                 value)
            (values nil ,index :cl-spec-post-form-failure)))))
 
+(defun post-result-symbol (post variables)
+  "Return the symbol :POST binds to the return value for VARIABLES.
+
+Refuses a postcondition that cannot tell which symbol names the return value, and
+a parameter that collides with it.  Shared by the contract-level :POST and each
+case's :POST, so one rule governs both and neither can be loosened alone.
+
+Every symbol named RESULT that occurs has to be the one being bound.  The
+candidate is found through the parameters, which is a proxy for the package the
+:POST text was read in and not always a good one: a parameter named by a
+COMMON-LISP symbol (COUNT, LIST, TYPE) sends the lookup to a package with no
+RESULT at all, and one written in another package sends it somewhere the author
+never meant.  Both used to end the same way -- the return value bound to a
+gensym, the author's RESULT left free or, worse, some other package's variable
+captured and the claim compiled into a tautology.  Neither is detectable from the
+result.  Refusing is not the whole answer, but it is never the silent one."
+  (let* ((candidate (return-value-symbol variables))
+         (parameterp (and candidate (member candidate variables) t))
+         (in-post (and candidate (symbol-occurs-p candidate post)))
+         (result (if (and in-post (not parameterp)) candidate (gensym "RESULT"))))
+    (let ((occurring (result-named-symbols post)))
+      (when (and occurring (not (equal occurring (list candidate))))
+        (function-spec-error
+         (cons :post post)
+         (format nil "cannot tell which symbol names the return value: ~
+:post uses ~{~S~^ and ~}, and the contract's own package resolves RESULT to ~
+~:[nothing~;~:*~S~].  Rename the parameter, or write the postcondition in the ~
+package the return value's name belongs to"
+                 occurring candidate))))
+    (when (and in-post parameterp)
+      ;; The :POST predicate binds the return value ahead of the parameters, so a
+      ;; parameter of the same name produced (LAMBDA (RESULT RESULT) ...) and a
+      ;; compiler error about a lambda list the author never wrote.  It is also
+      ;; genuinely ambiguous: the reader cannot tell which of the two the
+      ;; postcondition means.
+      (function-spec-error
+       (cons :post post)
+       (format nil "~S is both a parameter and the name :post uses for the ~
+return value"
+               candidate)))
+    result))
+
+(defun expand-postcondition-function (post post-values variables result)
+  "Return the compiled :POST predicate form, or NIL when POST is empty."
+  (when post
+    (if (eq post-values :primary)
+        `(lambda (,result ,@variables)
+           (declare (ignorable ,result ,@variables))
+           ,(expand-postcondition-forms post))
+        (let ((returned (gensym "RETURNED")))
+          `(lambda (,returned ,@variables)
+             (declare (ignorable ,@variables))
+             (let ((,result (first ,returned))
+                   ,@(loop for name in post-values for index from 0
+                           collect `(,name (nth ,index ,returned))))
+               (declare (ignorable ,result ,@post-values))
+               ,(expand-postcondition-forms post)))))))
+
+(defun expand-guard-check (when-form variables)
+  "Refuse a case :WHEN that refers to the return value, then return WHEN-FORM.
+
+:WHEN runs before the call, exactly as :PRE does, so the return value does not
+exist yet.  Only when RESULT is not itself a parameter: a guard about a parameter
+the contract named RESULT is an ordinary guard."
+  (let* ((candidate (return-value-symbol variables))
+         (parameterp (and candidate (member candidate variables) t)))
+    (when (and candidate (symbol-occurs-p candidate when-form) (not parameterp))
+      (function-spec-error
+       (cons :when when-form)
+       (format nil ":when runs before the call, so it cannot refer to ~S" candidate)))
+    when-form))
+
+(defun expand-function-case (case variables)
+  "Return the MAKE-INSTANCE form that builds one FUNCTION-CASE.
+
+CASE is the plist PARSE-FUNCTION-CASE returned.  The guard and the case
+postcondition are compiled here, at macroexpansion time, because §60 forbids
+runtime EVAL and a stored form cannot be run later."
+  (let* ((post (getf case :post))
+         (post-values (getf case :post-values))
+         (returns (getf case :returns))
+         (signals (getf case :signals))
+         (when-form (expand-guard-check (getf case :when) variables))
+         (result (post-result-symbol post variables)))
+    `(make-instance 'function-case
+                    :name ,(getf case :name)
+                    :documentation ,(getf case :documentation)
+                    :when-forms (list ',when-form)
+                    :when-function
+                    (lambda ,variables
+                      (declare (ignorable ,@variables))
+                      ,when-form)
+                    :outcome-kind ,(if returns :returns :signals)
+                    :outcome-spec ',(or returns signals)
+                    :postconditions ',post
+                    :postcondition-function ,(expand-postcondition-function
+                                              post post-values variables result)
+                    :post-value-variables ',post-values
+                    :source-form ',(getf case :source-form))))
+
 (defun expand-function-spec-definition (whole name clauses source-location)
   "Return the form DEFSPEC-FUNCTION expands into.
 
-Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE
-and :POST forms have to be compiled into real functions: §60 forbids runtime
-EVAL, so a contract kept only as a list could be read but never checked."
-  (multiple-value-bind (documentation args pre returns post argument-generator signals post-values)
+Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE,
+:POST and case :WHEN forms have to be compiled into real functions: §60 forbids
+runtime EVAL, so a contract kept only as a list could be read but never checked."
+  (multiple-value-bind (documentation args pre returns post argument-generator signals
+                        post-values cases)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (call-declaration-variables args))
            (candidate (return-value-symbol variables))
            (parameterp (and candidate (member candidate variables) t))
-           (in-post (and candidate (symbol-occurs-p candidate post)))
            (in-pre (and candidate (symbol-occurs-p candidate pre)))
-           (result (if (and in-post (not parameterp)) candidate (gensym "RESULT"))))
-      ;; Every symbol named RESULT that occurs has to be the one being bound.
-      ;; The candidate is found through the parameters, which is a proxy for
-      ;; the package the :POST text was read in and not always a good one: a
-      ;; parameter named by a COMMON-LISP symbol (COUNT, LIST, TYPE) sends the
-      ;; lookup to a package with no RESULT at all, and one written in another
-      ;; package sends it somewhere the author never meant.  Both used to end
-      ;; the same way -- the return value bound to a gensym, the author's
-      ;; RESULT left free or, worse, some other package's variable captured and
-      ;; the claim compiled into a tautology.  Neither is detectable from the
-      ;; result.  Refusing is not the whole answer, but it is never the silent
-      ;; one.
-      (let ((occurring (result-named-symbols post)))
-        (when (and occurring (not (equal occurring (list candidate))))
-          (function-spec-error
-           (cons :post post)
-           (format nil "cannot tell which symbol names the return value: ~
-:post uses ~{~S~^ and ~}, and the contract's own package resolves RESULT to ~
-~:[nothing~;~:*~S~].  Rename the parameter, or write the postcondition in the ~
-package the return value's name belongs to"
-                   occurring candidate))))
-      (when (and in-post parameterp)
-        ;; The :POST predicate binds the return value ahead of the parameters,
-        ;; so a parameter of the same name produced (LAMBDA (RESULT RESULT) ...)
-        ;; and a compiler error about a lambda list the author never wrote.
-        ;; It is also genuinely ambiguous: the reader cannot tell which of the
-        ;; two the postcondition means.
-        (function-spec-error
-         (cons :post post)
-         (format nil "~S is both a parameter and the name :post uses for the ~
-return value"
-                 candidate)))
+           (result (post-result-symbol post variables)))
       (when (and in-pre (not parameterp))
-        ;; Only when it is not a parameter: a precondition about a parameter
-        ;; the contract itself named RESULT is an ordinary precondition, and
-        ;; refusing it said something about the return value that the form
-        ;; does not do.
+        ;; Only when it is not a parameter: a precondition about a parameter the
+        ;; contract itself named RESULT is an ordinary precondition, and refusing
+        ;; it said something about the return value that the form does not do.
         (function-spec-error
          (cons :pre pre)
          (format nil ":pre runs before the call, so it cannot refer to ~S"
@@ -403,19 +586,10 @@ return value"
                              (declare (ignorable ,@variables))
                              (and ,@pre)))
                        :postcondition-function
-                       ,(when post
-                          (if (eq post-values :primary)
-                              `(lambda (,result ,@variables)
-                                 (declare (ignorable ,result ,@variables))
-                                 ,(expand-postcondition-forms post))
-                              (let ((returned (gensym "RETURNED")))
-                                `(lambda (,returned ,@variables)
-                                   (declare (ignorable ,@variables))
-                                   (let ((,result (first ,returned))
-                                         ,@(loop for name in post-values for index from 0
-                                                 collect `(,name (nth ,index ,returned))))
-                                     (declare (ignorable ,result ,@post-values))
-                                     ,(expand-postcondition-forms post))))))
+                       ,(expand-postcondition-function post post-values variables result)
+                       :cases (list
+                               ,@(mapcar (lambda (case) (expand-function-case case variables))
+                                         cases))
                        :documentation ,documentation
                        :source-form ',whole
                        :source-location ',source-location)))))
@@ -453,11 +627,43 @@ and unknown clauses signal
 INVALID-FUNCTION-SPEC-FORM rather than registering an unchecked claim
 (specification §17, §73.1 D1).
 
-  (defspec-function ranged-random
-    (:args (start integer) (end integer))
-    (:pre (< start end))
-    (:returns integer)
-    (:post (and (>= result start) (< result end))))"
+:CASES names the behaviour required of each admitted input, instead of one
+outcome for all of them.  :CASES appears at most once and holds one or more
+(:NAME [DOCSTRING] (:WHEN FORM) OUTCOME) cases; NAME is a unique keyword,
+:WHEN takes exactly one form, and OUTCOME is exactly one of (:RETURNS SPEC) or
+(:SIGNALS SPEC).  A :RETURNS case may add :POST or :POST-VALUES with the rules
+above; a :SIGNALS case may not, in this version.  :ARGS, :ARGS-GENERATOR and the
+common :PRE stay on the contract; a case cannot declare its own, nest :CASES,
+or use :ELSE or a priority.
+
+Selection is exclusive: after the common :PRE admits an input, every case's
+:WHEN runs in declaration order and exactly one must be true.  :WHEN T is an
+ordinary always-true form, not an implicit :ELSE, and :WHEN NIL is an ordinary
+never-true one.  Zero matches, several matches, and a guard that signals are
+contract-side selection errors: the target is not called, and the result is
+:ERROR / :CONTRACT-ERROR with :FAILURE-PHASE :CASE-SELECTION and a structured
+explanation naming the error and the cases.  A signal from a guard is such an
+error even when it is a SPEC-VIOLATION; only the common :PRE treats that as a
+refusal.  A selected case's own outcome judges the invocation by the established
+rules, and its name joins the failure identity, so shrinking and rechecking stay
+inside that case.
+
+:CASES cannot be combined with a top-level :RETURNS, :SIGNALS, :POST or
+:POST-VALUES.  CHECK-FUNCTION reports the cases that ran, and the ones no trial
+reached, in FUNCTION-CHECK-RESULT-CASE-REPORT; :PASSED means no violation was
+observed in the trials that ran, not that every case ran
+(specification §17.2).
+
+  (defspec-function remaining-balance
+    (:args (balance (range integer 0 1000)) (amount (range integer 1 1000)))
+    (:cases
+      (:sufficient-funds
+        (:when (<= amount balance))
+        (:returns (range integer 0 *))
+        (:post (= result (- balance amount))))
+      (:insufficient-funds
+        (:when (> amount balance))
+        (:signals (type insufficient-funds)))))"
   (expand-function-spec-definition whole name clauses (current-source-location)))
 
 (defparameter *property-option-keywords* '(:about :kind :tags :trials :shrink)

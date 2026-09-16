@@ -45,6 +45,7 @@
                 #:owned-generation-exhaustion-p)
   (:import-from #:cl-spec/src/execution
                 #:snapshot-value #:observe-trial #:observation-failure-p
+                #:observation-failure-phase #:note-trial-outcome
                 #:failure-identities-match-p #:same-value-p
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status
@@ -284,7 +285,10 @@ Return accepted observation, whether another failure occurred, and a bounded rep
   "Generate trials and retain only admitted, observed reductions of the original failure.
 The shrinker's return value is not evidence: some generators transform it after
 the last callback. Reject internal representations and domain violations before
-calling user code, and keep existing evidence if shrinking itself fails."
+calling user code, and keep existing evidence if shrinking itself fails.
+A trial that stopped before the target -- a function-spec case-selection error --
+is reported with its :FAILURE-PHASE and is not shrunk: repeating a failure the
+target never produced is not a reduction of it."
   (let* ((shrink-budget (getf options :shrink-budget 100))
          (context (list :registry (getf options :registry)))
          (trials (getf options :trials))
@@ -323,74 +327,81 @@ calling user code, and keep existing evidence if shrinking itself fails."
                                               :context context)))
                  (when (eq :rejected (trial-observation-status original))
                    (incf rejected))
+                 ;; Ordinary trial only: a shrink candidate is deliberately not counted.
+                 (note-trial-outcome property original)
                  (when (observation-failure-p original)
-                   (let ((accepted nil) (different nil) (report nil))
-                     (handler-case
-                         (with-generation-phase (:shrinking)
-                           (when (typep generator 'custom-value-generator)
-                             (let ((reason (cond ((not shrink-p) :disabled)
-                                                 ((trial-observation-arguments-mutated-p original)
-                                                  :mutation)
-                                                 ((null (custom-value-generator-shrinker generator))
-                                                  :no-shrinker))))
-                               (if reason
-                                   (setf report (list :candidates 0 :budget shrink-budget
-                                                      :termination reason))
-                                   (multiple-value-setq (accepted different report)
-                                     (shrink-custom-arguments generator property original
-                                                              whole-validator context
-                                                              shrink-budget)))))
-                           (when (and (not (typep generator 'custom-value-generator))
-                                      shrink-p (property-arguments property)
-                                      (not (trial-observation-arguments-mutated-p original)))
-                             (handler-case
-                                 (block shrink-search
-                                   (shrink
-                                    generator
-                                    (lambda (arguments)
-                                      (handler-case
-                                          (let ((before (snapshot-value arguments))
-                                                (admitted (and (finite-list-p arguments)
-                                                               (funcall whole-validator arguments))))
-                                            (unless (same-value-p before arguments)
-                                              (return-from shrink-search nil))
-                                            (if (not admitted)
-                                                t
-                                                (let ((candidate
-                                                        (observe-trial property arguments
-                                                                       :context context)))
-                                                  (when (trial-observation-arguments-mutated-p candidate)
-                                                    (return-from shrink-search nil))
-                                                  (cond
-                                                    ((not (observation-failure-p candidate)) t)
-                                                    ((failure-identities-match-p
-                                                      (trial-observation-signature original)
-                                                      (trial-observation-signature candidate))
-                                                     (unless (same-value-p
-                                                              (trial-observation-arguments original)
-                                                              (trial-observation-arguments candidate))
-                                                       (setf accepted candidate))
-                                                     nil)
-                                                    (t (setf different t) t)))))
-                                        (error () (setf different t) t)))))
-                               (generation-budget-exhausted (condition)
-                                 (if (owned-generation-exhaustion-p condition :shrinking)
-                                     (error condition)
-                                     (progn (record-generation-interruption)
-                                            (setf different t))))
-                               (error ()
-                                 (record-generation-interruption)
-                                 (setf different t)))))
-                       (generation-budget-exhausted (condition)
-                         (if (owned-generation-exhaustion-p condition :shrinking)
-                             (when report
-                               (setf (getf report :termination)
-                                     :generation-budget-exhausted))
-                             (error condition))))
+                   (let ((accepted nil) (different nil) (report nil)
+                         (phase (observation-failure-phase original)))
+                     (if phase
+                         (setf report (list :candidates 0 :budget shrink-budget
+                                            :termination :not-a-target-failure))
+                         (handler-case
+                             (with-generation-phase (:shrinking)
+                               (when (typep generator 'custom-value-generator)
+                                 (let ((reason (cond ((not shrink-p) :disabled)
+                                                     ((trial-observation-arguments-mutated-p original)
+                                                      :mutation)
+                                                     ((null (custom-value-generator-shrinker generator))
+                                                      :no-shrinker))))
+                                   (if reason
+                                       (setf report (list :candidates 0 :budget shrink-budget
+                                                          :termination reason))
+                                       (multiple-value-setq (accepted different report)
+                                         (shrink-custom-arguments generator property original
+                                                                  whole-validator context
+                                                                  shrink-budget)))))
+                               (when (and (not (typep generator 'custom-value-generator))
+                                          shrink-p (property-arguments property)
+                                          (not (trial-observation-arguments-mutated-p original)))
+                                 (handler-case
+                                     (block shrink-search
+                                       (shrink
+                                        generator
+                                        (lambda (arguments)
+                                          (handler-case
+                                              (let ((before (snapshot-value arguments))
+                                                    (admitted (and (finite-list-p arguments)
+                                                                   (funcall whole-validator arguments))))
+                                                (unless (same-value-p before arguments)
+                                                  (return-from shrink-search nil))
+                                                (if (not admitted)
+                                                    t
+                                                    (let ((candidate
+                                                            (observe-trial property arguments
+                                                                           :context context)))
+                                                      (when (trial-observation-arguments-mutated-p candidate)
+                                                        (return-from shrink-search nil))
+                                                      (cond
+                                                        ((not (observation-failure-p candidate)) t)
+                                                        ((failure-identities-match-p
+                                                          (trial-observation-signature original)
+                                                          (trial-observation-signature candidate))
+                                                         (unless (same-value-p
+                                                                  (trial-observation-arguments original)
+                                                                  (trial-observation-arguments candidate))
+                                                           (setf accepted candidate))
+                                                         nil)
+                                                        (t (setf different t) t)))))
+                                            (error () (setf different t) t)))))
+                                   (generation-budget-exhausted (condition)
+                                     (if (owned-generation-exhaustion-p condition :shrinking)
+                                         (error condition)
+                                         (progn (record-generation-interruption)
+                                                (setf different t))))
+                                   (error ()
+                                     (record-generation-interruption)
+                                     (setf different t)))))
+                           (generation-budget-exhausted (condition)
+                             (if (owned-generation-exhaustion-p condition :shrinking)
+                                 (when report
+                                   (setf (getf report :termination)
+                                         :generation-budget-exhausted))
+                                 (error condition)))))
                      (return
                        (list :status (trial-observation-status (or accepted original))
                              :trials trial :rejected rejected :capabilities capabilities
                              :failure original :shrunk-failure accepted :shrink-report report
+                             :failure-phase phase
                              :shrunk-outcome (cond (accepted :used)
                                                    (different :different-failure)
                                                    (t :none)))))))

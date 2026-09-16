@@ -64,7 +64,12 @@
                 #:function-spec-documentation
                 #:function-spec-source-form
                 #:function-spec-source-location
-                #:function-spec-metadata)
+                #:function-spec-metadata
+                #:function-spec-cases
+                #:function-case-name #:function-case-documentation
+                #:function-case-when-forms #:function-case-outcome-kind
+                #:function-case-outcome-spec #:function-case-postconditions
+                #:function-case-post-value-variables)
   (:import-from #:cl-spec/src/property
                 #:property-name
                 #:property-arguments
@@ -235,7 +240,18 @@ The body is the author's source rather than the compiled function (§39)."
    :preconditions (<form> ...) :returns <spec-data plist or NIL>
    :signals <spec-data plist or NIL>
    :postconditions (<form> ...) :source-form <form>
-   :source-location (:file <string> :package <string>) :metadata <plist>)
+   :source-location (:file <string> :package <string>) :metadata <plist>
+   [:case-selection :exclusive
+    :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
+             :outcome :returns-or-:signals
+             :returns <spec-data plist or NIL> :signals <spec-data plist or NIL>
+             :postconditions (<form> ...)
+             [:post-value-variables (<symbol> ...)]) ...)])
+
+A case-carrying contract adds :CASE-SELECTION and its ordered :CASES.  A case-less
+contract omits both keys, so its projection is exactly what it was.  Case guards
+and case postconditions are compiled functions and are never projected; their
+source forms are.
 
 This is the projection that answers the two questions a caller asks before
 editing a function: which inputs it accepts, and which output it must return
@@ -257,6 +273,31 @@ Fixed return declarations use :KIND :VALUES with ordered children. Explicit
     (append (definition-metadata contract :registry registry)
             (unless (eq :primary (function-spec-post-value-variables contract))
               (list :post-value-variables (function-spec-post-value-variables contract)))
+            (when (function-spec-cases contract)
+              ;; Ordered and explicit, because the data is what a caller reads
+              ;; before editing a contract; the executable guards and case
+              ;; postconditions stay out of the projection.  Keys are added only
+              ;; when cases exist, so a case-less projection is unchanged.
+              (list :case-selection :exclusive
+                    :cases (loop for case in (function-spec-cases contract)
+                                 for kind = (function-case-outcome-kind case)
+                                 collect
+                                 (append
+                                  (list :name (function-case-name case)
+                                        :documentation (function-case-documentation case)
+                                        :when (first (function-case-when-forms case))
+                                        :outcome kind
+                                        :returns (when (eq :returns kind)
+                                                   (spec->data (function-case-outcome-spec case)
+                                                               registry))
+                                        :signals (when (eq :signals kind)
+                                                   (spec->data (function-case-outcome-spec case)
+                                                               registry))
+                                        :postconditions (function-case-postconditions case))
+                                  (unless (eq :primary
+                                              (function-case-post-value-variables case))
+                                    (list :post-value-variables
+                                          (function-case-post-value-variables case)))))))
             (list :name (function-spec-name contract)
                   ;; KIND is retained for compatibility; ENTITY-KIND routes records.
                   :kind :function-spec
