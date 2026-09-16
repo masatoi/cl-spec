@@ -746,9 +746,10 @@ Return the selected failure explanation; internal post-form tags are excluded.
 
 ```text
 :CONTRACT-ERROR is included because a function-spec case-selection error records
-its structured explanation there.  A contract-side error that records no
-explanation still reads NIL, so the projection of existing contract errors does
-not change.
+its structured explanation there, and :STATE-POSTCONDITION because a violated
+:state-post records the case, form position and source.  A contract-side error
+that records no explanation still reads NIL, so the projection of existing
+contract errors does not change.
 ```
 
 <a name="property-result-failure-reason"></a>
@@ -834,6 +835,11 @@ supply a matching PROFILE.
 
 SEED must be a property-result or a non-negative integer, or an error is
 signalled.
+
+Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
+definition declares state constraints refuses that, before the integer seed is
+extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
+integer SEED starts a new run and stays allowed.
 ```
 
 <a name="result-data"></a>
@@ -869,6 +875,11 @@ PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, w
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
 backend.
+
+A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
+whose definition declares state constraints refuses that with
+UNSUPPORTED-STATEFUL-OPERATION before generation, capture or the target, because
+nothing restores its state.  An integer SEED starts a new run and stays allowed.
 ```
 
 <a name="sample"></a>
@@ -1470,6 +1481,9 @@ Name of the :capture binding whose form signalled.
 Ordered (NAME . VALUE) pairs completed before the failure.
 Only the bindings that finished are present; a later binding is never shown as
 obtained, and a captured NIL is a pair with a NIL value rather than an absence.
+A value the evidence snapshot cannot preserve is reported as an
+(:unavailable :reason :opaque-value :type TYPE) placeholder rather than as a
+live reference.
 
 <a name="capture-error-function"></a>
 ### capture-error-function

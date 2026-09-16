@@ -113,7 +113,7 @@ alone. The outcome contract passes; the state relation does not:
 ;;     :FAILURE-REASON :STATE-POSTCONDITION
 ;;     :SIGNATURE (:CASE :SUFFICIENT-FUNDS :STATE-POSTCONDITION 0)
 ;;     :STATE (:CAPTURE (:STATUS :COMPLETED :DECLARED (BALANCE-BEFORE ID-BEFORE)
-;;                       :VALUES (30 7) :ERROR NIL)
+;;                       :VALUES ((BALANCE-BEFORE . 30) (ID-BEFORE . 7)) :ERROR NIL)
 ;;             :STATE-POST (:STATUS :VIOLATION :REASON NIL :CASE :SUFFICIENT-FUNDS
 ;;                         :INDEX 0 :FORM (= (ACCOUNT-BALANCE ACCOUNT) ...)
 ;;                         :CONDITION-TYPE NIL))
@@ -195,7 +195,11 @@ restores it, so this version does not:
   case-selection failure keeps `:NOT-A-TARGET-FAILURE`, which is accurate for
   it).
 - replay a past result — `check-function` with a result as `:SEED` is refused
-  with `unsupported-stateful-operation` before the target is called, and
+  with `unsupported-stateful-operation` before the target is called. The
+  function-check adapter cannot be replayed through the property runner either:
+  `run-property` with a `property-result` as `:SEED`, and `replay-property` with
+  one, are refused the same way before the result is turned into an integer seed,
+  so generation, capture and the target all run zero extra times.
   `recheck-counterexample` refuses a state-observing resolved definition with
   `:STATEFUL-CONTRACT-UNSUPPORTED`.
 - persist a counterexample artifact — `make-counterexample-artifact` refuses
@@ -229,11 +233,29 @@ observation (`trial-observation-state`), projected into `result-data` under
 ```
 
 `:reason` for a `:NOT-EVALUATED` state-post is one of `:PRECONDITION-REJECTED`,
-`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`. A contract that
-declares neither clause records no state evidence at all, so a featureless
-run's projection is unchanged. A capture that failed halfway never shows a later
-binding as obtained, and a captured `NIL` is a `(NAME . NIL)` entry rather than
-an absence. Nothing is re-executed to build this data.
+`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`. `:values` is an
+ordered `((NAME . VALUE) ...)` alist, so a value is read with `assoc`, and a
+`(NAME . NIL)` entry means the capture returned `NIL` rather than that it did not
+run. A capture that failed halfway never shows a later binding as obtained.
+
+`:state-post` appears when the contract declares a clause — the selected case's,
+or, before a case is selected, the top-level clause or any case's. When no case
+was selected its `:case` is `NIL` and its `:reason` is `:CAPTURE-FAILED` or
+`:CASE-SELECTION-FAILED`, so "no state-post declared" and "declared but stopped
+before selection" stay distinct. A contract that declares neither clause records
+no state evidence at all, so a featureless run's projection is unchanged.
+
+Capture values are projected through the existing evidence snapshot: a cons or
+array as its copy, a self-contained atom as itself. An object the snapshot returns
+by identity — a CLOS instance, structure, hash table, function — is reported as
+`(:unavailable :reason :opaque-value :type TYPE)`, an explicit unprojectable
+placeholder, because a live reference would read like frozen evidence. The
+evaluation path still passes the original value to later capture forms, guards and
+predicates; this is a report projection, not a deep copy. Nothing is re-executed
+to build this data, and the state-post violation's `:kind`/`:case`/`:index`/`:form`
+explanation is readable from `trial-observation-explanation`,
+`property-result-explanation`, `function-check-result-explanation` and
+`result-data`'s `:failure` alike.
 
 ## Failure identities
 
@@ -279,7 +301,7 @@ classification. Because capture and selection errors call no target,
 | `:state-post` | one clause, case-less or per case, after a passed outcome | no common inheritance, no `:SIGNALS` + `:POST` relaxation |
 | Target calls | once per trial; capture and selection failures call it zero times | no `:FINALLY`-style state check after every abnormal exit |
 | Detects | declared observations changing, expected error after mutation, unrelated declared value changing | not all undeclared fields, not atomicity, concurrency, crash safety or absent I/O |
-| Evidence | capture progress, state-post status and position, raw outcome | reuses the existing snapshot; opaque objects are not frozen |
+| Evidence | capture progress, state-post status and position, raw outcome | reuses the existing snapshot; an opaque value is reported as an explicit unprojectable placeholder, not frozen |
 | Shrinking | disabled, `:STATE-RESTORATION-UNAVAILABLE` | not restored, so no candidate is re-run |
 | Replay | result-as-seed refused; integer seed starts a new run | initial state is the author's responsibility |
 | Artifact | refused with `:STATEFUL-CONTRACT-UNSUPPORTED` | no object codec or restoration adapter |

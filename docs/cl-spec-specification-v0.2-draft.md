@@ -1800,12 +1800,28 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 ```
 
 `:not-evaluated`の理由は`:precondition-rejected`・`:capture-failed`・
-`:case-selection-failed`・`:outcome-failed`のいずれかである。どちらの節も宣言しない
-契約は状態証拠を持たず、`:state`を省略するので既存の投影は変わらない。途中で失敗
-したcaptureは後続の束縛を取得済みとして表示せず、取得値NILは`(NAME . NIL)`として
-未取得と区別する。証拠は既存のsnapshotとサイズ制限を再利用し、対応しないopaque値は
-凍結できたふりをしない。投影失敗で元の対象outcomeや確定済み失敗を失わない。成功
-試行のオブジェクトを保持する巨大なログは追加しない。
+`:case-selection-failed`・`:outcome-failed`のいずれかである。`:state-post`は契約が
+節を宣言していれば現れる。ケースが選択される前はトップレベル節またはいずれかの
+ケースの節を指し、そのとき`:case`は`NIL`で理由は`:capture-failed`または
+`:case-selection-failed`となり、「宣言していない」と「宣言はあるが選択・実行の前に
+止まった」を区別する。どちらの節も宣言しない契約は状態証拠を持たず、`:state`を
+省略するので既存の投影は変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
+して表示せず、`:values`は完了した束縛だけの順序付き`((NAME . VALUE) ...)` alistで
+あり、`assoc`で名前から値を引ける。取得値NILは`(NAME . NIL)`として未取得と区別する。
+
+証拠の値は既存のsnapshotで投影する。consとarrayは複製として、number・character・
+symbolなど表現が自己完結したatomはそのまま報告する。snapshotが同一性で返す
+オブジェクト（CLOSインスタンス・構造体・hash-table・関数など）は、内容を保存できない
+ため`(:unavailable :reason :opaque-value :type TYPE)`という明示的な投影不可の
+プレースホルダとして報告し、ライブ参照を凍結済み証拠のように見せない。評価経路は
+元の値を後続のcapture式・guard・述語へそのまま渡す。これは報告用の投影であり、
+deep copyでも新しいsnapshot機構でもない。投影失敗で元の対象outcomeや確定済み失敗を
+失わない。成功試行のオブジェクトを保持する巨大なログは追加しない。
+
+state-post不成立の構造化説明（`:kind`・`:function`・`:case`・`:index`・`:form`）は、
+`trial-observation-explanation`・`property-result-explanation`・
+`function-check-result-explanation`・`result-data`の`:failure`内の`:explanation`の
+いずれからも同じ内容で読める。state-post評価エラーの説明も同様である。
 
 ### 失敗同一性
 
@@ -1881,6 +1897,8 @@ Function Specについて次を採用する。純粋な利用例でも自動判�
   使わない既存Function SpecとPropertyの縮小は変更しない。
 - replay: `check-function`へ過去結果をseedとして渡す経路を、対象を呼ぶ前に
   `unsupported-stateful-operation`（`:operation :replay`）で拒否する。
+  `run-property`へ過去結果をseedとして渡す経路と、`replay-property`へ過去結果を
+  渡す経路も、結果を整数seedへ変換して再適用の事実を失う前に同じ理由で拒否する。
   `recheck-counterexample`はstate観測契約の解決済み定義を、対象呼び出し前に既存の
   `:unsupported`結果と理由`:stateful-contract-unsupported`で拒否する。整数seedを
   指定した「新しいrun」は許可する。seedが再現するのは乱数系列だけで、外部状態や

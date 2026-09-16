@@ -262,8 +262,10 @@ condition are retained.
   `index` (zero-based form position), `form` (the source form), and
   `original-condition`. Accessors and `state-post-error-data` are public.
 - `unsupported-stateful-operation` (`cl-spec-error`): `operation` and
-  `function`. Signalled by `check-function` when a past result is passed as
-  `:seed` for a state-observing contract.
+  `function`. Signalled before generation, capture or the target whenever a past
+  result stands in for a run: `check-function` with a result as `:seed`, and
+  `run-property` / `replay-property` with a result as their seed, so the
+  function-check adapter cannot be replayed through any of those entry points.
 
 The `NIL` state-post failure is a plain `:failed` outcome and carries no
 condition object.
@@ -304,21 +306,32 @@ a state-evidence plist on its observation (new
 ```
 
 - `:capture` is present only when the contract declares `:capture`; its
-  `:values` lists only bindings that completed, so a capture that failed
-  halfway never shows later bindings as obtained, and a captured `NIL` is a
-  `(NAME . NIL)` entry, not an absence.
-- `:state-post` is present only when the contract declares one.
+  `:values` is an ordered `((NAME . VALUE) ...)` alist over the bindings that
+  completed, so a caller reads a value with `assoc` rather than reconstructing
+  the pairing from `:declared`. A capture that failed halfway never shows later
+  bindings as obtained, and a captured `NIL` is a `(NAME . NIL)` entry, not an
+  absence.
+- `:state-post` is present when the contract declares a clause: the selected
+  case's, or, before a case is selected, the top-level clause or any case's. When
+  no case was selected its `:case` is `NIL` and its `:reason` is
+  `:capture-failed` or `:case-selection-failed`, so "no state-post declared" and
+  "declared but stopped before selection" stay distinct.
 - `:reason` for `:not-evaluated` is one of `:precondition-rejected`,
   `:capture-failed`, `:case-selection-failed`, `:outcome-failed`.
 - A contract that declares neither clause has no state evidence at all
   (`trial-observation-state` is `NIL`, and `result-data` omits `:state`), so a
   featureless run's evidence is unchanged.
 
-Values are copied with the existing evidence snapshot and subject to the
-existing size handling. An opaque value the existing snapshot does not copy is
-reported as the value it is, not as a frozen copy; nothing pretends an
-unpreserved state was preserved. A projection failure never discards the
-target outcome or an already-determined failure.
+Values are projected through the existing evidence snapshot: a cons or array is
+reported as its copy, and an atom whose representation is self-contained
+(number, character, symbol) as itself. An object the snapshot returns by
+identity -- a CLOS instance, structure, hash table, function and the like -- is
+reported as `(:unavailable :reason :opaque-value :type TYPE)`, an explicit
+unprojectable placeholder, because the snapshot does not preserve its contents
+and a live reference would read like frozen evidence. The evaluation path still
+passes the original value to later capture forms, guards and predicates; this is
+a report projection, not a deep copy or a new snapshot. A projection failure
+never discards the target outcome or an already-determined failure.
 
 No automatic expected/actual extraction, no generic diagnostic DSL and no
 all-field diff is added. No giant log of every successful trial object is kept;
@@ -442,6 +455,12 @@ state-observing contract:
 - `check-function` with an earlier result as `:seed` is refused before the
   target is called, with `unsupported-stateful-operation` (`:operation
   :replay`).
+- `run-property` with a `property-result` as `:seed`, and `replay-property`
+  with one, are refused the same way before the integer seed is extracted, so the
+  function-check adapter cannot be replayed through those entry points either.
+  Because `replay-property` would otherwise convert the result to an integer
+  seed and lose the fact that it is a replay, its check runs on the result while
+  it is still a result. An integer seed is not a replay and is not refused.
 - `recheck-counterexample` refuses a state-observing resolved definition with
   its existing `:unsupported` outcome and reason
   `:stateful-contract-unsupported`, before the target is called.

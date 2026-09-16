@@ -347,9 +347,13 @@ deep-copy, restore or prove anything stayed unchanged during the call.
 The trial's state evidence is on `trial-observation-state` and in `result-data`
 under `:state`; `function-spec-data` exposes the declaration under `:capture`
 and `:state-post`; `definition-digest` covers names, order, source and the case
-association. `check-function` runs such a contract, but this version does not
+association. Captured values are an ordered `((name . value) ...)` alist, and a
+value the evidence snapshot cannot preserve is reported as an explicit
+`:opaque-value` placeholder rather than a live reference. `check-function` runs
+such a contract, but this version does not
 shrink it (`:shrink-report` says `:state-restoration-unavailable`), replay a past
-result into it (`unsupported-stateful-operation`), save it as a counterexample
+result into it (`unsupported-stateful-operation`, through `check-function` or the
+property runner's `run-property`/`replay-property`), save it as a counterexample
 artifact (`:stateful-contract-unsupported`) or instrument it
 (`:state-constraints-unsupported`); a new run with an integer seed is allowed and
 the author supplies the fresh initial state. Observing equal before and after is
