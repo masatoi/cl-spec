@@ -205,7 +205,29 @@ function spec and is never registered under its own name."))
   (copy-list *function-case-slot-names*))
 
 (defmethod shared-initialize :around ((case function-case) slot-names &rest initargs)
-  "Validate a case and restore its participating slots on refusal."
+  "Validate a case and restore its participating slots on refusal.
+
+A clause's forms and its compiled predicate must change together, on
+construction and on reinitialization alike: new text with the old predicate (or
+the reverse) would run one while introspection and the digest reported the
+other, which is the failure the contract-level :PRE and :POST already refuse.  A
+:post-values change is that failure seen from the return bindings, so it needs
+new post forms and a new compiled predicate as well."
+  (flet ((supplied (key)
+           (loop for (k) on initargs by #'cddr thereis (eq k key))))
+    (dolist (pair '((:when-forms :when-function)
+                    (:postconditions :postcondition-function)))
+      (unless (eq (not (supplied (first pair))) (not (supplied (second pair))))
+        (error 'invalid-function-spec-form :form pair
+               :reason "case clause forms and compiled function must change together")))
+    (when (and (supplied :post-value-variables)
+               (slot-boundp case 'post-value-variables)
+               (not (equal (getf initargs :post-value-variables)
+                           (function-case-post-value-variables case)))
+               (not (and (supplied :postconditions) (supplied :postcondition-function))))
+      (error 'invalid-function-spec-form
+             :form initargs
+             :reason "Case post-value binding changes require new forms and a compiled predicate.")))
   (call-with-definition-rollback
    case (lambda () (apply #'call-next-method case slot-names initargs))))
 
@@ -749,9 +771,15 @@ rejections. The original evidence remains available in every case.")
 
 A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
 :CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
-counters come from the run's own trials and are snapshotted onto the result, so
-two runs of one contract never share them, and a result that did not go through
-a function-check run says :NOT-COLLECTED rather than reporting measured zeros.
+counters come from the run's own ordinary trials and are snapshotted onto the
+result, so two runs of one contract never share them.  A result that did not go
+through a function-check run, and a run whose backend reported no observation at
+all, both say :NOT-COLLECTED rather than reporting measured zeros.
+
+A trial that reached the target is counted for its selected case even when
+classifying the result signalled, because the call happened and the case owned
+it.  A case-selection error called no target, so it is counted separately and
+never appears as a call of any case.
 
 :STATUS :PASSED means no violation was observed in the trials that ran.  It does
 not mean every declared case ran; read :NEVER-CALLED before drawing that
@@ -985,51 +1013,73 @@ explanation, and the target is not called."
          (registry (getf context :registry))
          (cases (function-spec-cases contract))
          (pre (function-spec-precondition-function contract))
-         (outcome nil))
+         (outcome nil)
+         (selected-case nil))
     (flet ((selection-failure (condition)
+             ;; Selection failed, so no case owns this trial and the target was
+             ;; not called; the phase is recorded here rather than inferred later
+             ;; from the condition's class.
              (values :error :contract-error
                      (case-selection-signature condition)
                      (case-selection-error-data condition)
-                     condition nil outcome nil)))
+                     condition nil outcome nil :case-selection))
+           (contract-failure (condition)
+             ;; The target was invoked and then classification itself signalled.
+             ;; The selected case still owns the failure: name it in the evidence
+             ;; and in the identity so the case report counts the call and
+             ;; shrinking and artifacts stay inside the case.  Before selection
+             ;; (a binding or precondition error) there is no case to name.
+             (values :error :contract-error
+                     (if selected-case
+                         (cons :case (cons (function-case-name selected-case)
+                                           (list :contract-error (type-of condition))))
+                         (list :contract-error (type-of condition)))
+                     nil condition nil outcome
+                     (and selected-case (function-case-name selected-case))
+                     nil)))
       (handler-case
           (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                  (values (bound-call-values bound)))
             (if (precondition-refuses-p pre values)
-                (values :rejected nil nil nil nil nil nil nil)
+                (values :rejected nil nil nil nil nil nil nil nil)
                 (multiple-value-bind (case condition)
                     (if cases
                         (function-case-select cases values (function-spec-name contract))
                         (values nil nil))
                   (if condition
                       (selection-failure condition)
-                      (multiple-value-bind (returns signals post post-forms values-post-p)
-                          (function-case-outcome-parts contract case)
-                        (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
-                               (target-condition
-                                 (when (eq :signaled (call-outcome-kind raw-outcome))
-                                   (call-outcome-condition raw-outcome))))
-                          ;; Freeze invocation evidence before contract predicates can
-                          ;; mutate returns.
-                          (setf outcome
-                                (make-call-outcome
-                                 :kind (call-outcome-kind raw-outcome)
-                                 :values (snapshot-value (call-outcome-values raw-outcome))
-                                 :condition target-condition))
-                          (multiple-value-bind
-                                (status reason signature explanation condition value)
-                              (classify-target-outcome returns signals post post-forms
-                                                       values-post-p values raw-outcome registry)
-                            (values status reason
-                                    (if (and case (consp signature))
-                                        (cons :case (cons (function-case-name case) signature))
-                                        signature)
-                                    explanation condition value outcome
-                                    (and case (function-case-name case))))))))))
-        ;; Structural errors in the contract itself still abort an initial trial.
-        ;; The backend rejects these if encountered only during shrinking.
+                      (progn
+                        (setf selected-case case)
+                        (multiple-value-bind (returns signals post post-forms values-post-p)
+                            (function-case-outcome-parts contract case)
+                          (let* ((raw-outcome (invoke-target-once (checked-target property)
+                                                                  arguments))
+                                 (target-condition
+                                   (when (eq :signaled (call-outcome-kind raw-outcome))
+                                     (call-outcome-condition raw-outcome))))
+                            ;; Freeze invocation evidence before contract predicates can
+                            ;; mutate returns.
+                            (setf outcome
+                                  (make-call-outcome
+                                   :kind (call-outcome-kind raw-outcome)
+                                   :values (snapshot-value (call-outcome-values raw-outcome))
+                                   :condition target-condition))
+                            (multiple-value-bind
+                                  (status reason signature explanation condition value)
+                                (classify-target-outcome returns signals post post-forms
+                                                         values-post-p values raw-outcome
+                                                         registry)
+                              (values status reason
+                                      (if (and case (consp signature))
+                                          (cons :case (cons (function-case-name case) signature))
+                                          signature)
+                                      explanation condition value outcome
+                                      (and case (function-case-name case))
+                                      nil)))))))))
+        ;; Structural errors in the contract itself abort the trial; see
+        ;; CONTRACT-FAILURE for what is preserved of a selected case.
         ((and error (not undefined-function) (not program-error)) (condition)
-          (values :error :contract-error (list :contract-error (type-of condition))
-                  nil condition nil outcome nil))))))
+          (contract-failure condition))))))
 
 (defstruct (case-trial-counts (:constructor make-case-trial-counts ()))
   "Target invocations of one case during one function-check run."
@@ -1042,9 +1092,12 @@ explanation, and the target is not called."
   "One function-check run's per-case counters.
 
 Owned by the run, never by the registered definition or a global table: a reused
-contract must not carry counters from an earlier run into a later one."
+contract must not carry counters from an earlier run into a later one.  MEASURED-P
+stays NIL until the backend reports an observation, so a backend that does not
+participate yields :NOT-COLLECTED instead of zeros that read as measurements."
   (cases nil :read-only t)
   (counts nil :read-only t)
+  (measured-p nil)
   (selection-errors 0))
 
 (defvar *case-run* nil
@@ -1065,32 +1118,44 @@ shrinking cannot inflate a case's call count.")
 (defmethod note-trial-outcome ((property function-check-property) observation)
   "Count one ordinary trial of PROPERTY for the active run's case report.
 
+Reaching this method is what makes the report measured: a backend that never
+calls it leaves the run unmeasured, and the report says :NOT-COLLECTED rather
+than reporting zeros for counters nothing kept.
+
 A precondition refusal selected no case and called no target, so it contributes
 nothing.  A case-selection error called no target either and is counted
-separately, so it never appears as a call of any case."
+separately, so it never appears as a call of any case.  A contract error raised
+while classifying a selected case is counted against that case, because the
+target was called for it."
   (let ((run *case-run*))
-    (when (and run (case-run-cases run))
-      (let ((status (trial-observation-status observation))
-            (selected (trial-observation-case observation)))
-        (cond
-          ((eq status :rejected))
-          (selected
-           (let ((counts (gethash selected (case-run-counts run))))
-             (when counts
-               (incf (case-trial-counts-called counts))
-               (ecase status
-                 (:passed (incf (case-trial-counts-passed counts)))
-                 (:failed (incf (case-trial-counts-failed counts)))
-                 (:error (incf (case-trial-counts-error counts)))))))
-          ((eq :case-selection (observation-failure-phase observation))
-           (incf (case-run-selection-errors run))))))))
+    (when run
+      (setf (case-run-measured-p run) t)
+      (when (case-run-cases run)
+        (let ((status (trial-observation-status observation))
+              (selected (trial-observation-case observation)))
+          (cond
+            ((eq status :rejected))
+            (selected
+             (let ((counts (gethash selected (case-run-counts run))))
+               (when counts
+                 (incf (case-trial-counts-called counts))
+                 (ecase status
+                   (:passed (incf (case-trial-counts-passed counts)))
+                   (:failed (incf (case-trial-counts-failed counts)))
+                   (:error (incf (case-trial-counts-error counts)))))))
+            ((eq :case-selection (observation-failure-phase observation))
+             (incf (case-run-selection-errors run)))))))))
 
 (defun case-run-report (run)
-  "Project RUN's counters as the public run report.
+  "Project RUN's counters as the public run report, or :NOT-COLLECTED.
 
 The counters are read, never recomputed: nothing here re-runs a guard or the
 target.  Every declared case appears in :CASES order, and a case the run never
-reached appears in :NEVER-CALLED rather than being silently absent."
+reached appears in :NEVER-CALLED rather than being silently absent.  A run no
+backend reported an observation for has nothing to project, so it answers
+:NOT-COLLECTED instead of measured-looking zeros."
+  (unless (case-run-measured-p run)
+    (return-from case-run-report :not-collected))
   (let ((cases (case-run-cases run))
         (counts (case-run-counts run)))
     (list :selection :exclusive
@@ -1225,10 +1290,14 @@ A contract with :CASES selects exactly one case per admitted trial and judges th
 invocation by that case's outcome.  The result carries a per-case report
 (FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
 outcomes actually observed per case, the case-selection errors, and the cases no
-trial reached.  :PASSED says no violation was observed in the trials that ran; it
-does not say every case ran, so read :NEVER-CALLED as well.  TRIALS minus
-REJECTED is the number of trials that reached case selection, not the number of
-target calls: a case-selection error calls no target."
+trial reached.  A selected case owns its trial even when classifying the result
+signalled -- the target was called, so the contract error is counted as that
+case's :ERROR and keeps the case in its failure identity.  :PASSED says no
+violation was observed in the trials that ran; it does not say every case ran, so
+read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
+reached case selection, not the number of target calls: a case-selection error
+calls no target.  A backend that reports no observation at all leaves the report
+:NOT-COLLECTED rather than measured zeros."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (unless (or (null seed) (typep seed 'property-result)

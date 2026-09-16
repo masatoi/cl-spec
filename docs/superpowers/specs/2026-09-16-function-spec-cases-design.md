@@ -138,6 +138,14 @@ A selection error never invokes the target, so it is neither a target
 counterexample nor a precondition rejection. It is excluded from shrinking, from
 per-case call counts and from generation accounting.
 
+The phase is **recorded where the framework knows it**, not inferred later from
+the condition's class. The classifier marks a trial `:case-selection` when
+selection itself failed; every target observation carries NIL. A target that
+signals the public `CASE-SELECTION-ERROR` condition under any contract is
+therefore an ordinary target observation: it may be shrunk, and its evidence may
+be persisted. Inferring the phase from the condition's class would have made a
+target's own condition a selection error, which it is not.
+
 ## 4. Reuse of the outcome evaluator
 
 After a case is selected, classification is the existing one, applied to the
@@ -154,6 +162,15 @@ No check is relaxed to make a case pass, and the target is invoked once per
 trial. The implementation extracts the existing per-trial classification into
 one internal function used by both the case-less and the case-carrying paths;
 the classification rules exist in one place, not two.
+
+A classification error raised **after** selection — a case postcondition or an
+outcome-spec predicate that signals — is still a `:contract-error`, and it keeps
+everything the trial produced: the selected case is recorded in the evidence, the
+captured target outcome is kept, the failure identity is case-wrapped
+(`(:case NAME :contract-error TYPE)`), and the run's case report counts the call
+as that case's `:error` (so `:never-called` never names a case whose target
+actually ran). Before selection — a binding or common-`:pre` error — there is no
+case to name, and the case-less identity is unchanged.
 
 The selected case and the compiled outcome are carried in a per-trial context.
 The registered contract is never rewritten, and no per-trial outcome is
@@ -210,7 +227,8 @@ as `:case-report`.
   any case's `:called`, not to `:case-selection-errors`.
 - `:called` counts trials in which the target was actually invoked for that case.
   `:passed`, `:failed` and `:error` sum to `:called`. A successful expected-error
-  trial counts as `:passed`.
+  trial counts as `:passed`, and a contract error raised while classifying a
+  selected case counts as that case's `:error` because the target was called.
 - `:case-selection-errors` counts trials that stopped in case selection; those
   trials increase no case's `:called`.
 - `:never-called` lists the declared cases with `:called` equal to zero. It is
@@ -221,7 +239,10 @@ as `:case-report`.
 - The counters belong to one run. They are never stored on the registered
   definition or in a global table; the result receives a snapshot.
 - A result that did not go through a function-check run reports
-  `:not-collected` rather than measured zeros.
+  `:not-collected` rather than measured zeros, and so does a run whose backend
+  reported no observation at all. Reaching the counting hook is what makes a
+  report measured; a backend that never calls it leaves counters nothing filled,
+  and reporting them as zeros would claim a measurement that never happened.
 
 `PROPERTY-RESULT-TRIALS` and `PROPERTY-RESULT-REJECTED` keep their meaning.
 Because a case-selection error calls no target, `trials - rejected` is not always
@@ -251,6 +272,16 @@ the place to read the call counts.
   unique keyword names, at most one outcome, and refusal of case-level
   postconditions on `:signals`. A refused reinitialization rolls back the
   participating slots (existing `call-with-definition-rollback`).
+- A case reinitialization must update a clause's forms and its compiled
+  predicate together, exactly as the contract-level `:pre` and `:post` do:
+  `:when-forms` with `:when-function`, and `:postconditions` with
+  `:postcondition-function`. A `:post-value-variables` change additionally
+  requires new post forms and a new compiled predicate, so the bindings cannot
+  drift from the function that reads them.
+- Inside a case, `:post` and `:post-values` are mutually exclusive, as they are
+  at the contract level; `:post-values` additionally requires a fixed
+  `(values ...)` return declaration and a post predicate. Clause order never
+  decides which of two predicates survives.
 
 ## 8. Instrumentation
 
@@ -295,3 +326,27 @@ This does not forbid a target's intended state change, but this feature does not
 solve reproduction or reset of stateful targets. No timeout or purity check is
 introduced for a single guard call. Reproducibility assumes that guards and
 generators are deterministic in the same effective environment.
+
+## 11. Review follow-ups (2026-09-16)
+
+The first PR revision was reviewed, and two findings plus three consistency gaps
+found alongside them are fixed here:
+
+- A classification error raised after a case was selected used to lose the case:
+  the trial evidence named no case, the signature was unwrapped, and the report
+  counted nothing. The selected case is now carried through that path, so its
+  name, the captured target outcome, the case-wrapped `:contract-error` identity
+  and the per-case call count all survive. (review P1)
+- The failure phase used to be inferred from the condition's class, so a target
+  that signalled the public `CASE-SELECTION-ERROR` was misread as a selection
+  error, its shrinking was suppressed and its artifact refused. The classifier
+  now records the phase, and every target observation is NIL. (review P2)
+- `:post` and `:post-values` were mutually exclusive at the contract level but
+  not inside a case, so clause order silently decided which predicate survived.
+- A `FUNCTION-CASE` reinitialization could change a compiled predicate without
+  its source form (or the reverse), which the contract-level clauses already
+  refuse.
+- `check-function` reported measured-looking zeros when the backend never
+  reported an observation; that now answers `:not-collected`.
+
+No new feature, mutation detection or general state tracking was added for these.

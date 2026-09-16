@@ -255,6 +255,10 @@ the contract-level clause does."
       (function-spec-error case-form "a case requires exactly one of :returns and :signals"))
     (when (and returns signals)
       (function-spec-error case-form "a case requires exactly one of :returns and :signals"))
+    (when (and (member :post seen) (member :post-values seen))
+      ;; The same rule the contract-level clauses have: letting :post-values win
+      ;; because it was written last would silently drop the other predicate.
+      (function-spec-error case-form ":post and :post-values are exclusive"))
     (when (and signals post)
       (function-spec-error case-form "a :signals case cannot carry :post or :post-values"))
     (unless (eq post-values :primary)

@@ -27,7 +27,8 @@
                 #:trial-observation-case #:trial-observation-signature
                 #:failure-identities-match-p
                 #:make-counterexample-artifact #:recheck-counterexample
-                #:counterexample-artifact-data #:serialize-counterexample-artifact
+                #:counterexample-artifact #:counterexample-artifact-data
+                #:serialize-counterexample-artifact
                 #:deserialize-counterexample-artifact
                 #:invalid-counterexample-artifact #:invalid-counterexample-artifact-reason
                 #:case-selection-error #:case-selection-error-kind
@@ -36,7 +37,11 @@
                 #:invalid-function-spec-form)
   (:import-from #:cl-spec/src/function-spec
                 #:function-case #:function-spec
-                #:function-spec-cases)
+                #:function-spec-cases #:function-case-when-forms)
+  (:import-from #:cl-spec/src/generator
+                #:run-generated-test)
+  (:import-from #:cl-spec/src/backends/check-it
+                #:check-it-backend)
   (:import-from #:cl-spec/src/schema
                 #:definition-instrumentation-capability)
   (:import-from #:cl-spec/src/instrument
@@ -174,6 +179,32 @@ decides whether they pass."
   (incf *calls*)
   x)
 
+(defun exploding-post (x)
+  "A target whose case postcondition signals whenever it runs."
+  (incf *calls*)
+  x)
+
+(defun signals-selection-error (x)
+  "Signal the public case-selection condition from the target itself."
+  (declare (ignore x))
+  (incf *calls*)
+  (error (make-condition 'case-selection-error
+                         :kind :no-matching-case
+                         :function 'signals-selection-error)))
+
+(defun measure-probe (x)
+  "An identity used by the unmeasured-backend test."
+  (incf *calls*)
+  x)
+
+(defclass unmeasured-backend (check-it-backend) ()
+  (:documentation "A backend that generates trials without reporting observations."))
+
+(defmethod run-generated-test ((backend unmeasured-backend) property &key options)
+  "Report a passing run without ever calling NOTE-TRIAL-OUTCOME."
+  (declare (ignore backend property options))
+  (list :status :passed :trials 1 :rejected 0))
+
 (defun report-case (report name)
   "Return the :CASES entry of REPORT for NAME."
   (find name (getf report :cases) :key (lambda (entry) (getf entry :name))))
@@ -262,6 +293,14 @@ decides whether they pass."
                   '(cl-spec:defspec-function f
                     (:args (x integer))
                     (:cases (:a (:when t) (:signals error) (:post t))))))))
+  (testing ":post and :post-values are exclusive inside a case"
+    (ok (refuses (macroexpand-1
+                  '(cl-spec:defspec-function f
+                    (:args (x integer))
+                    (:cases (:a (:when t)
+                                (:returns (values integer integer))
+                                (:post t)
+                                (:post-values (a b) t))))))))
   (testing "unknown and duplicated case clauses are refused"
     (ok (refuses (macroexpand-1
                   '(cl-spec:defspec-function f
@@ -960,3 +999,84 @@ decides whether they pass."
                (ok (not (instrumented-function-p 'instrumented-probe)))))
         (when (instrumented-function-p 'instrumented-probe)
           (uninstrument-function 'instrumented-probe))))))
+
+;;; G. Review follow-ups: post-selection errors, recorded phase, edit pairing,
+;;;    and measurement
+
+(deftest a-classification-error-after-selection-keeps-its-case
+  (with-fresh-registry
+    (reset-calls)
+    (cl-spec:defspec-function exploding-post
+      (:args (x integer))
+      (:cases
+        (:only (:when t) (:returns integer)
+               (:post (error "post predicate exploded")))))
+    (let* ((result (check-function 'exploding-post :trials 1 :seed 1))
+           (evidence (property-result-failure-evidence result))
+           (report (function-check-result-case-report result)))
+      (testing "the postcondition error stays a contract error, not a selection error"
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :contract-error (function-check-result-failure-reason result)))
+        (ok (null (property-result-failure-phase result))))
+      (testing "the selected case still owns the failure"
+        (ok (eq :only (trial-observation-case evidence)))
+        (ok (equal '(:case :only :contract-error simple-error)
+                   (trial-observation-signature evidence))))
+      (testing "and the target call is counted for that case"
+        (ok (= 1 (getf (report-case report :only) :called)))
+        (ok (= 1 (getf (report-case report :only) :error)))
+        (ok (null (getf report :never-called)))
+        (ok (= 0 (getf report :case-selection-errors))))
+      (testing "the captured target outcome is kept as evidence"
+        (ok (eq :returned (getf (cl-spec:trial-observation-outcome evidence) :kind)))))))
+
+(deftest a-target-signalling-the-selection-condition-is-a-target-failure
+  (with-fresh-registry
+    (reset-calls)
+    (cl-spec:defspec-function signals-selection-error
+      (:args (x (range integer 0 10)))
+      (:returns integer))
+    (let ((result (check-function 'signals-selection-error :trials 1 :seed 1)))
+      (testing "the recorded phase, not the condition's class, decides"
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :condition (function-check-result-failure-reason result)))
+        (ok (null (property-result-failure-phase result)))
+        (ok (equal '(:target-signal case-selection-error)
+                   (trial-observation-signature
+                    (property-result-failure-evidence result)))))
+      (testing "so the target's own evidence may be persisted"
+        (ok (typep (make-counterexample-artifact result) 'counterexample-artifact))))))
+
+(deftest a-case-edit-updates-its-source-and-predicate-together
+  (with-fresh-registry
+    (cl-spec:defspec-function case-edit
+      (:args (x integer))
+      (:cases (:a (:when (plusp x)) (:returns integer))))
+    (let ((case (first (function-spec-cases (find-function-spec 'case-edit)))))
+      (testing "a new predicate alone, a new form alone, or post forms alone is refused"
+        (ok (refuses (reinitialize-instance case
+                                            :when-function (lambda (x)
+                                                             (declare (ignore x))
+                                                             t))))
+        (ok (refuses (reinitialize-instance case :when-forms '(t))))
+        (ok (refuses (reinitialize-instance case :postconditions '((= result 1))))))
+      (testing "and the case is unchanged"
+        (ok (equal '((plusp x)) (function-case-when-forms case))))
+      (testing "supplying both halves together is accepted"
+        (reinitialize-instance case
+                               :when-forms '((minusp x))
+                               :when-function (lambda (x) (minusp x)))
+        (ok (equal '((minusp x)) (function-case-when-forms case)))))))
+
+(deftest an-unmeasured-backend-reports-not-collected
+  (with-fresh-registry
+    (reset-calls)
+    (cl-spec:defspec-function measure-probe
+      (:args (x integer))
+      (:cases (:always (:when t) (:returns integer))))
+    (let ((cl-spec:*generator-backend* (make-instance 'unmeasured-backend)))
+      (let ((result (check-function 'measure-probe :trials 1 :seed 1)))
+        (testing "a backend that reports no observation leaves the report unmeasured"
+          (ok (eq :passed (property-result-status result)))
+          (ok (eq :not-collected (function-check-result-case-report result)))
+          (ok (eq :not-collected (getf (result-data result) :case-report))))))))

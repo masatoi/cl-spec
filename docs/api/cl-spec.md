@@ -222,10 +222,14 @@ A contract with :CASES selects exactly one case per admitted trial and judges th
 invocation by that case's outcome.  The result carries a per-case report
 (FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
 outcomes actually observed per case, the case-selection errors, and the cases no
-trial reached.  :PASSED says no violation was observed in the trials that ran; it
-does not say every case ran, so read :NEVER-CALLED as well.  TRIALS minus
-REJECTED is the number of trials that reached case selection, not the number of
-target calls: a case-selection error calls no target.
+trial reached.  A selected case owns its trial even when classifying the result
+signalled -- the target was called, so the contract error is counted as that
+case's :ERROR and keeps the case in its failure identity.  :PASSED says no
+violation was observed in the trials that ran; it does not say every case ran, so
+read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
+reached case selection, not the number of target calls: a case-selection error
+calls no target.  A backend that reports no observation at all leaves the report
+:NOT-COLLECTED rather than measured zeros.
 ```
 
 <a name="clear-registry"></a>
@@ -564,7 +568,7 @@ Return a fresh empty HASH-TABLE-REGISTRY.
 <a name="make-trial-observation"></a>
 ### make-trial-observation
 
-*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case)`
+*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case failure-phase)`
 
 Create the evidence record for one invocation.
 
@@ -624,7 +628,9 @@ Return true when OBSERVATION records a failed or signalled trial.
 Evaluate generated objects once, snapshot evidence and record invocation provenance.
 Mutations of conses and arrays, including changed sharing, stop backend shrinking.
 The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
-NIL when none was selected, and is recorded on the observation.
+NIL when none was selected, and is recorded on the observation.  The optional
+ninth is the failure phase the classifier recorded, or NIL for a target
+observation; a recorded :CASE-SELECTION is checked to be consistent with it.
 
 <a name="properties-for"></a>
 ### properties-for
@@ -960,6 +966,10 @@ A case-less contract, a precondition refusal and a case-selection error all have
 no selected case, so this is NIL for them.  A failure of a selected case carries
 the name in its signature as well, which is what keeps shrinking and rechecking
 inside one case.
+
+A contract error raised while classifying a selected case still records that
+case: the target was called for it, so the failure belongs to it and the case
+report must count the call.
 ```
 
 <a name="trial-observation-condition"></a>
@@ -1118,7 +1128,10 @@ Append participating slot names from a definition and its subclasses.
 Evaluate PROPERTY once, returning status, reason, signature,
 explanation, condition and value. Status is :passed, :rejected, :failed or :error.
 The optional seventh value is the captured target call outcome; the optional
-eighth names the selected function-spec case, or NIL when none was selected.
+eighth names the selected function-spec case, or NIL when none was selected; the
+optional ninth is the failure phase the classifier recorded, or NIL for a target
+observation.  A classifier records :CASE-SELECTION only when selection itself
+failed, so nothing infers a phase from a condition's class.
 The first six keep their established meaning, so an existing specialization that
 returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
@@ -1436,9 +1449,15 @@ Per-case report of this run, or :NOT-COLLECTED.
 ```text
 A plist with :SELECTION :EXCLUSIVE, :UNIT :NORMAL-TRIALS, :DECLARED-CASES,
 :CASES, :CASE-SELECTION-ERRORS and :NEVER-CALLED; see CHECK-FUNCTION.  The
-counters come from the run's own trials and are snapshotted onto the result, so
-two runs of one contract never share them, and a result that did not go through
-a function-check run says :NOT-COLLECTED rather than reporting measured zeros.
+counters come from the run's own ordinary trials and are snapshotted onto the
+result, so two runs of one contract never share them.  A result that did not go
+through a function-check run, and a run whose backend reported no observation at
+all, both say :NOT-COLLECTED rather than reporting measured zeros.
+
+A trial that reached the target is counted for its selected case even when
+classifying the result signalled, because the call happened and the case owned
+it.  A case-selection error called no target, so it is counted separately and
+never appears as a call of any case.
 
 :STATUS :PASSED means no violation was observed in the trials that ran.  It does
 not mean every declared case ran; read :NEVER-CALLED before drawing that

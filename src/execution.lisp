@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
-  (:import-from #:cl-spec/src/conditions #:invalid-backend-result #:case-selection-error)
+  (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property #:property #:property-function)
@@ -22,7 +22,8 @@
             (:constructor make-trial-observation
                 (&key run property arguments arguments-mutated-p
                       (status :passed) reason signature explanation condition
-                      condition-report (outcome :not-collected) value case))
+                      condition-report (outcome :not-collected) value case
+                      failure-phase))
             (:copier nil))
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
@@ -39,7 +40,8 @@ text at observation time."
   (condition-report nil :read-only t)
   (outcome :not-collected :read-only t)
   (value nil :read-only t)
-  (case nil :read-only t))
+  (case nil :read-only t)
+  (failure-phase nil :read-only t))
 
 ;; DEFSTRUCT cannot attach a docstring to a slot, and these accessors are part
 ;; of the public API, so their documentation is installed explicitly.  The
@@ -104,7 +106,20 @@ NIL, which the primary VALUE alone cannot.")
 A case-less contract, a precondition refusal and a case-selection error all have
 no selected case, so this is NIL for them.  A failure of a selected case carries
 the name in its signature as well, which is what keeps shrinking and rechecking
-inside one case.")
+inside one case.
+
+A contract error raised while classifying a selected case still records that
+case: the target was called for it, so the failure belongs to it and the case
+report must count the call.")
+
+(setf (documentation 'trial-observation-failure-phase 'function)
+      "Failure phase the classifier recorded for this trial, or NIL.
+
+Recorded where the framework produced the observation -- the function-spec
+classifier marks :CASE-SELECTION when selection itself failed -- rather than
+inferred later from the condition's class.  A target that signals the public
+CASE-SELECTION-ERROR condition is therefore an ordinary target observation, and
+the backend may shrink it and persist it as a counterexample.")
 
 (defun snapshot-value (value)
   "Copy conses and arrays iteratively, preserving cycles and sharing within VALUE.
@@ -226,7 +241,10 @@ evidence that names no case cannot be adopted for a case-carrying failure."
   (:documentation "Evaluate PROPERTY once, returning status, reason, signature,
 explanation, condition and value. Status is :passed, :rejected, :failed or :error.
 The optional seventh value is the captured target call outcome; the optional
-eighth names the selected function-spec case, or NIL when none was selected.
+eighth names the selected function-spec case, or NIL when none was selected; the
+optional ninth is the failure phase the classifier recorded, or NIL for a target
+observation.  A classifier records :CASE-SELECTION only when selection itself
+failed, so nothing infers a phase from a condition's class.
 The first six keep their established meaning, so an existing specialization that
 returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
@@ -276,16 +294,16 @@ Specializations must classify during this invocation, never by rerunning it."))
     (t (error 'invalid-backend-result :reason "unknown target outcome kind"))))
 
 (defun observation-failure-phase (observation)
-  "Return the phase OBSERVATION stopped in, or NIL for a target observation.
+  "Return the failure phase the classifier recorded for OBSERVATION, or NIL.
 
-An observation whose condition is a CASE-SELECTION-ERROR never reached the
-target: the contract could not decide which required behaviour applied.  Naming
-:CASE-SELECTION here lets the runner and the result report that without knowing
-which classifier produced it, and keeps such a trial out of the target-failure
-paths (shrinking, counterexample artifacts)."
-  (when (and (typep observation 'trial-observation)
-             (typep (trial-observation-condition observation) 'case-selection-error))
-    :case-selection))
+The classifier records the phase where it knows it: a function-spec case
+selection failure is marked :CASE-SELECTION, and every target observation is
+NIL.  That keeps a target which signals the public CASE-SELECTION-ERROR
+condition out of the selection-only paths (shrinking suppression, counterexample
+refusal), because the target was called and produced the condition.  The phase
+is never inferred from the condition's class."
+  (when (typep observation 'trial-observation)
+    (trial-observation-failure-phase observation)))
 
 (defgeneric note-trial-outcome (property observation)
   (:documentation "Record one ordinary trial OBSERVATION of PROPERTY, if the run keeps evidence.
@@ -301,10 +319,12 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.
 Mutations of conses and arrays, including changed sharing, stop backend shrinking.
 The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
-NIL when none was selected, and is recorded on the observation."
+NIL when none was selected, and is recorded on the observation.  The optional
+ninth is the failure phase the classifier recorded, or NIL for a target
+observation; a recorded :CASE-SELECTION is checked to be consistent with it."
   (let ((snapshot (snapshot-value arguments)))
     (multiple-value-bind (status reason signature explanation condition value outcome
-                          selected-case)
+                          selected-case failure-phase)
         (evaluate-trial property arguments :context context)
       (unless (and (member status '(:passed :rejected :failed :error))
                    (if (member status '(:failed :error))
@@ -313,7 +333,11 @@ NIL when none was selected, and is recorded on the observation."
                                 (typep condition 'error)
                                 (null condition)))
                        (not (or reason signature explanation condition)))
-                   (or (null selected-case) (keywordp selected-case)))
+                   (or (null selected-case) (keywordp selected-case))
+                   (or (null failure-phase)
+                       (and (eq :case-selection failure-phase)
+                            (eq status :error)
+                            (null selected-case))))
         (error 'invalid-backend-result
                :reason "evaluate-trial returned an invalid status or inconsistent evidence"))
       (make-trial-observation
@@ -327,4 +351,5 @@ NIL when none was selected, and is recorded on the observation."
        :condition-report (render-condition-report condition)
        :outcome (observed-outcome-data outcome)
         :value (snapshot-value value)
-        :case selected-case))))
+        :case selected-case
+        :failure-phase failure-phase))))

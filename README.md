@@ -239,7 +239,10 @@ matches and a guard that signals are contract-side errors reported as `:error` /
 `:contract-error` with `:failure-phase :case-selection`: the target is not
 called, no case is counted, the run is not shrunk, and no target counterexample
 is saved. A `spec-violation` from a guard is such an error; only the common
-`:pre` treats that as a refusal.
+`:pre` treats that as a refusal. The phase is recorded by the classifier where
+selection failed, never inferred from a condition's class, so a target that
+signals the public `case-selection-error` itself stays an ordinary target failure
+whose evidence may be shrunk and persisted.
 
 `function-check-result-case-report` and `result-data`'s `:case-report` report the
 declared cases, the calls and outcomes actually observed per case, the selection
@@ -257,10 +260,15 @@ A successful expected-error trial counts as a pass for its case. `:passed` means
 no violation was observed in the trials that ran, not that every case ran: read
 `:never-called`. Counters cover ordinary trials only, so shrinking and
 precondition refusals are not counted and `trials - rejected` counts trials that
-reached selection rather than target calls. The selected case's name is part of
-the failure identity (`(:case NAME . existing-signature)`), so shrinking, replay
-and counterexample artifacts stay inside that case; `function-spec-data` exposes
-ordered `:cases` with `:case-selection :exclusive`, and the digest covers them.
+reached selection rather than target calls. A contract error raised while
+classifying a selected case is counted as that case's `:error` and keeps the case
+in its evidence and identity, because the target was called. A result that did not
+go through a function-check run, and a run whose backend reported no observation,
+answer `:not-collected` rather than measured zeros. The selected case's name is
+part of the failure identity (`(:case NAME . existing-signature)`), so shrinking,
+replay and counterexample artifacts stay inside that case;
+`function-spec-data` exposes ordered `:cases` with `:case-selection :exclusive`,
+and the digest covers them.
 
 Runtime instrumentation of a case-carrying contract is unavailable:
 `instrument-function` refuses with `unsupported-instrumentation-target` and

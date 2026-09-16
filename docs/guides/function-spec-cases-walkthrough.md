@@ -142,6 +142,11 @@ The three kinds are, in the explanation's `:CASE-ERROR` and in the signature:
 | `:AMBIGUOUS-CASE` | two or more guards are true | `(:case-selection :ambiguous-case)` |
 | `:CASE-GUARD-ERROR` | a guard signalled | `(:case-selection :case-guard-error NAME)` |
 
+`:FAILURE-PHASE` is the phase the classifier recorded where selection failed; it
+is never inferred from a condition's class. A target that signals the public
+`case-selection-error` condition under any contract is therefore an ordinary
+target failure whose evidence may be shrunk and persisted, not a selection error.
+
 A solver is not consulted: exclusivity and coverage are checked for the inputs
 that were actually generated, not proved for every input.
 
@@ -176,11 +181,14 @@ coverage; to reach a rare case, hand the contract a controlled
 
 The counters cover ordinary generation trials only. Shrinking invocations are
 not trials, a precondition refusal belongs to no case, and a case-selection error
-increases no case's `:called`. Because such an error calls no target,
+increases no case's `:called`. A contract error raised while classifying a
+selected case — a case postcondition that signals, say — is counted as that
+case's `:error` and keeps the case in its evidence and identity, because the
+target was called for it. Because a selection error calls no target,
 `TRIALS - REJECTED` is the number of trials that reached selection, not the
 number of target calls. The counters belong to one run and are snapshotted onto
-its result; a result built by hand reports `:NOT-COLLECTED` rather than measured
-zeros.
+its result; a result built by hand, or one whose backend reported no observation,
+answers `:NOT-COLLECTED` rather than measured zeros.
 
 ## What this version does and does not do
 
