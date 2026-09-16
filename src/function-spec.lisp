@@ -1167,9 +1167,10 @@ target was called for it."
 
 The counters are read, never recomputed: nothing here re-runs a guard or the
 target.  Every declared case appears in :CASES order, and a case the run never
-reached appears in :NEVER-CALLED rather than being silently absent.  A run no
-backend reported an observation for has nothing to project, so it answers
-:NOT-COLLECTED instead of measured-looking zeros."
+reached appears in :NEVER-CALLED rather than being silently absent.  Only a run
+whose backend neither opened reporting nor recorded an observation answers
+:NOT-COLLECTED; a run that opened reporting reports its known zeros even when it
+produced no observation at all."
   (unless (case-run-measured-p run)
     (return-from case-run-report :not-collected))
   (let ((cases (case-run-cases run))
