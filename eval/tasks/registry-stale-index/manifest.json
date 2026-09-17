@@ -1,0 +1,30 @@
+{
+  "task_id": "registry-stale-index",
+  "summary": "Re-registering a property leaves the previous definition's target and tag index entries behind.",
+  "core_baseline_commit": "1933cdcf2cd878166068b16a043410f4f5c3a461",
+  "assets_revision": "recorded by eval/make-workcopy.sh from the checkout's HEAD",
+  "faulty_edit": "faults.sexp",
+  "self_spec_targets": [
+    {
+      "kind": "contract",
+      "name": "CL-SPEC:REGISTRY-REGISTER-PROPERTY",
+      "scenario": "replace",
+      "expected_on_fault": "non-pass with reason :state-postcondition"
+    },
+    {
+      "kind": "property",
+      "name": "CL-SPEC/SPECS::REGISTRATION-REPLACEMENT-PRESERVES-UNRELATED-INDEXES",
+      "expected_on_fault": "non-pass with reason :predicate-false"
+    }
+  ],
+  "acceptance": "eval/acceptance-registry.lisp",
+  "allowed_change_paths": ["src/registry.lisp"],
+  "fixed_paths": [
+    "specs.lisp",
+    "self-spec-fixtures.lisp",
+    "tests/self-specs-test.lisp",
+    "tests/self-properties-test.lisp",
+    "tests/self-api-contracts-test.lisp",
+    "eval/"
+  ]
+}

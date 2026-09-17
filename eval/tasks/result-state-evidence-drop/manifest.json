@@ -1,0 +1,24 @@
+{
+  "task_id": "result-state-evidence-drop",
+  "summary": "result-data omits the observed :state evidence from a failing state-observing run.",
+  "core_baseline_commit": "1933cdcf2cd878166068b16a043410f4f5c3a461",
+  "assets_revision": "recorded by eval/make-workcopy.sh from the checkout's HEAD",
+  "faulty_edit": "faults.sexp",
+  "self_spec_targets": [
+    {
+      "kind": "property",
+      "name": "CL-SPEC/SPECS::RESULT-PROJECTION-RETAINS-STATE-EVIDENCE",
+      "expected_on_fault": "non-pass with reason :predicate-false"
+    }
+  ],
+  "acceptance": "eval/acceptance-state.lisp",
+  "allowed_change_paths": ["src/property-runner.lisp"],
+  "fixed_paths": [
+    "specs.lisp",
+    "self-spec-fixtures.lisp",
+    "tests/self-specs-test.lisp",
+    "tests/self-properties-test.lisp",
+    "tests/self-api-contracts-test.lisp",
+    "eval/"
+  ]
+}
