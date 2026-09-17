@@ -1,14 +1,17 @@
 #!/bin/sh
-# Verify that a candidate changed only the files a task allows.
+# Verify that a candidate changed only the paths a task allows.
 #
 # usage: check-integrity.sh TASK WORKDIR
 #
-# make-workcopy.sh baselines every delivered file (WORKDIR.baseline.txt) and
-# records the task's allowed_change_paths.  This script requires every delivered
-# file outside those paths to be present and unchanged and rejects a file added
-# outside them, so the whole work copy is covered rather than a fixed subset.  It
-# judges integrity only; run run-acceptance.sh separately for correctness.
-# Exit 0 clean, 1 violation, 2 missing manifest or baseline.
+# make-workcopy.sh baselines every delivered non-directory entry
+# (WORKDIR.baseline.txt) and records the task's allowed_change_paths.  This
+# script requires every delivered entry outside those paths to be present and
+# unchanged and rejects an entry added outside them, so the whole work copy is
+# covered rather than a fixed subset.  A symlink is an entry: it is compared by
+# its target and is never followed, so a link added outside the allowed paths is
+# a violation and `find -L` is deliberately not used.  It judges integrity only;
+# run run-acceptance.sh separately for correctness.  Exit 0 clean, 1 violation,
+# 2 missing manifest or baseline.
 #
 # Build output (ASDF fasls and similar) and the evaluator's TASK.md are ignored;
 # everything else a candidate leaves behind must have been delivered.
@@ -21,6 +24,7 @@ work=$2
 manifest="$work.manifest.txt"
 baseline="$work.baseline.txt"
 task_manifest="$eval_dir/tasks/$task/manifest.json"
+TAB=$(printf '\t')
 
 if [ ! -f "$manifest" ]; then
   echo "INTEGRITY-UNKNOWN no manifest at $manifest; build the copy with make-workcopy.sh"
@@ -58,38 +62,51 @@ ignored_p() {
   return 1
 }
 
+# entry_kind_value PATH -> prints "KIND<TAB>VALUE" for a regular file, symlink or
+# any other non-directory entry, or nothing when the entry is absent.
+entry_kind_value() {
+  target="$work/$1"
+  if [ -L "$target" ]; then
+    printf 'L\t%s\n' "$(readlink "$target")"
+  elif [ -f "$target" ]; then
+    printf 'F\t%s\n' "$(sha256sum "$target" | cut -d' ' -f1)"
+  elif [ -e "$target" ]; then
+    printf 'X\t-\n'
+  fi
+}
+
 violations=0
 checked=0
 
-# Delivered files that were modified or deleted outside the allowed paths.
-while read -r hash path; do
+# Delivered entries that were modified, retyped or deleted outside allowed paths.
+while IFS="$TAB" read -r kind value path; do
   [ -n "$path" ] || continue
   ignored_p "$path" && continue
   path_allowed_p "$path" && continue
-  target="$work/$path"
-  if [ ! -f "$target" ]; then
-    echo "INTEGRITY-VIOLATION $path (delivered file was deleted)"
+  current=$(entry_kind_value "$path")
+  if [ -z "$current" ]; then
+    echo "INTEGRITY-VIOLATION $path (delivered entry was deleted)"
     violations=$((violations + 1))
     continue
   fi
   checked=$((checked + 1))
-  actual=$(sha256sum "$target" | cut -d' ' -f1)
-  if [ "$actual" != "$hash" ]; then
-    echo "INTEGRITY-VIOLATION $path (delivered file was modified)"
+  if [ "$kind$TAB$value" != "$current" ]; then
+    echo "INTEGRITY-VIOLATION $path (delivered entry was modified)"
     violations=$((violations + 1))
   fi
 done < "$baseline"
 
-# Files that appeared after delivery, outside the allowed paths.
+# Entries that appeared after delivery, outside the allowed paths.  The listing
+# covers every non-directory entry, so a new symlink is reported like a new file.
 baseline_paths=$(mktemp)
 current_paths=$(mktemp)
-cut -d' ' -f2- "$baseline" | sort > "$baseline_paths"
-(cd "$work" && find . -type f | sed 's|^\./||' | sort) > "$current_paths"
+cut -f3 "$baseline" | sort > "$baseline_paths"
+(cd "$work" && find . ! -type d | sed 's|^\./||' | sort) > "$current_paths"
 while read -r path; do
   [ -n "$path" ] || continue
   ignored_p "$path" && continue
   path_allowed_p "$path" && continue
-  echo "INTEGRITY-VIOLATION $path (file was added outside the allowed paths)"
+  echo "INTEGRITY-VIOLATION $path (entry was added outside the allowed paths)"
   violations=$((violations + 1))
 done <<EOF
 $(comm -13 "$baseline_paths" "$current_paths")

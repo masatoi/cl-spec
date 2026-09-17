@@ -83,15 +83,17 @@ a candidate cannot pass by weakening a self-specification or by editing a test.
 They load `cl-spec/check-it` but not `cl-spec/specs`, so they run in both
 conditions.
 
-`make-workcopy.sh` baselines every delivered file and records the task's
-`allowed_change_paths`. `check-integrity.sh` then requires every delivered file
-outside those paths to be present and unchanged and rejects a file added outside
-them, so the whole work copy is covered rather than a fixed subset: editing
-`src/dsl.lisp`, deleting `main.lisp` or adding a new source file is a violation,
-while editing the task's allowed path is not. ASDF build output and the
-evaluator's `TASK.md` are ignored. A candidate that changed a file outside the
-allowed paths is an integrity violation even when acceptance passes; record the
-result as a rule violation, not as a successful repair.
+`make-workcopy.sh` baselines every delivered non-directory entry and records the
+task's `allowed_change_paths`. `check-integrity.sh` then requires every delivered
+entry outside those paths to be present and unchanged and rejects an entry added
+outside them, so the whole work copy is covered rather than a fixed subset:
+editing `src/dsl.lisp`, deleting `main.lisp` or adding a new source file is a
+violation, while editing the task's allowed path is not. A symlink is an entry
+compared by its target and is never followed, so a link added outside the allowed
+paths is a violation too. ASDF build output and the evaluator's `TASK.md` are
+ignored. A candidate that changed a path outside the allowed paths is an
+integrity violation even when acceptance passes; record the result as a rule
+violation, not as a successful repair.
 
 ### Unresolved comparison asymmetry
 

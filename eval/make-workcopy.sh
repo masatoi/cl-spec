@@ -105,13 +105,22 @@ manifest="$dest.manifest.txt"
   done
 } > "$manifest"
 
-# Baseline every delivered file so check-integrity.sh can detect a change,
-# deletion or addition anywhere outside the task's allowed paths.  It is written
-# after every delivery step, so condition A's filtered tests.lisp is baselined as
-# delivered and its intentionally removed bundle files are simply absent.
+# Baseline every delivered non-directory entry so check-integrity.sh can detect a
+# change, deletion or addition anywhere outside the task's allowed paths.  A
+# symlink is recorded as its target rather than followed, so a link added or
+# repointed is an entry like any other.  The baseline is written after every
+# delivery step, so condition A's filtered tests.lisp is baselined as delivered
+# and its intentionally removed bundle files are simply absent.
 baseline="$dest.baseline.txt"
-(cd "$dest" && find . -type f | sed 's|^\./||' | sort) | while read -r path; do
-  printf '%s %s\n' "$(sha256sum "$dest/$path" | cut -d' ' -f1)" "$path"
+(cd "$dest" && find . ! -type d | sed 's|^\./||' | sort) | while read -r path; do
+  target="$dest/$path"
+  if [ -L "$target" ]; then
+    printf 'L\t%s\t%s\n' "$(readlink "$target")" "$path"
+  elif [ -f "$target" ]; then
+    printf 'F\t%s\t%s\n' "$(sha256sum "$target" | cut -d' ' -f1)" "$path"
+  else
+    printf 'X\t-\t%s\n' "$path"
+  fi
 done > "$baseline"
 
 echo "WORKCOPY-CREATED $dest"
