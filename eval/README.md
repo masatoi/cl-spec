@@ -83,13 +83,15 @@ a candidate cannot pass by weakening a self-specification or by editing a test.
 They load `cl-spec/check-it` but not `cl-spec/specs`, so they run in both
 conditions.
 
-`check-integrity.sh` requires the fixed files that the condition delivers to be
-present and unchanged in the work copy, using the delivered hashes recorded by
-`make-workcopy.sh`. Deleting a required file is a violation, as is editing one;
-condition A's intentionally removed bundle files are not in its required set and
-are not reported. A candidate that changed a fixed file is an integrity
-violation even when acceptance passes; record the result as a rule violation,
-not as a successful repair.
+`make-workcopy.sh` baselines every delivered file and records the task's
+`allowed_change_paths`. `check-integrity.sh` then requires every delivered file
+outside those paths to be present and unchanged and rejects a file added outside
+them, so the whole work copy is covered rather than a fixed subset: editing
+`src/dsl.lisp`, deleting `main.lisp` or adding a new source file is a violation,
+while editing the task's allowed path is not. ASDF build output and the
+evaluator's `TASK.md` are ignored. A candidate that changed a file outside the
+allowed paths is an integrity violation even when acceptance passes; record the
+result as a rule violation, not as a successful repair.
 
 ### Unresolved comparison asymmetry
 

@@ -57,7 +57,8 @@ to get wrong.
 2. Run the agent in that copy only. Do not run it in the checkout.
 
 3. Judge with the evaluator-owned checks (never with a test the agent could
-   edit): first that no fixed file was modified or deleted, then correctness.
+   edit): first that no file outside the task's allowed paths was modified,
+   deleted or added, then correctness.
 
    ```sh
    eval/check-integrity.sh registry-stale-index /tmp/task-registry-B

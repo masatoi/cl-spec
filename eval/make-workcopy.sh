@@ -89,9 +89,12 @@ manifest="$dest.manifest.txt"
       printf '  %s %s\n' "$(sha256sum "$root/$f" | cut -d' ' -f1)" "$f"
     fi
   done
-  # The hash is of the delivered copy, so a derived file (condition A's filtered
-  # tests.lisp) is checked against what the candidate received, and a required
-  # file that is missing is a violation rather than nothing to check.
+  # The allowed-change set, copied from the task manifest for the record.
+  echo "allowed_change_paths:"
+  sed -n 's/.*"allowed_change_paths": \[\([^]]*\)\].*/  \1/p' \
+    "$eval_dir/tasks/$task/manifest.json"
+  # The required set is a human-readable summary; the whole-copy baseline below
+  # is what check-integrity.sh checks.
   echo "required_files:"
   for f in tests.lisp $required_files; do
     if [ -f "$dest/$f" ]; then
@@ -102,5 +105,15 @@ manifest="$dest.manifest.txt"
   done
 } > "$manifest"
 
+# Baseline every delivered file so check-integrity.sh can detect a change,
+# deletion or addition anywhere outside the task's allowed paths.  It is written
+# after every delivery step, so condition A's filtered tests.lisp is baselined as
+# delivered and its intentionally removed bundle files are simply absent.
+baseline="$dest.baseline.txt"
+(cd "$dest" && find . -type f | sed 's|^\./||' | sort) | while read -r path; do
+  printf '%s %s\n' "$(sha256sum "$dest/$path" | cut -d' ' -f1)" "$path"
+done > "$baseline"
+
 echo "WORKCOPY-CREATED $dest"
 echo "MANIFEST $manifest"
+echo "BASELINE $baseline"
