@@ -134,6 +134,9 @@ check_acceptance() {
 
 run_task() {
   # run_task TASK KIND NAME SCENARIO SCRIPT FAULT_STATUS FAULT_REASON FAULT_PHASE
+  # The expectation is passed per target because one task can have several
+  # targets with different expected failures; each call matches the target's
+  # entry under self_spec_targets in the task manifest.
   task=$1
   kind=$2
   name=$3

@@ -4,20 +4,21 @@
   "core_baseline_commit": "1933cdcf2cd878166068b16a043410f4f5c3a461",
   "assets_revision": "recorded by eval/make-workcopy.sh from the checkout's HEAD",
   "faulty_edit": "faults.sexp",
-  "expected_fault_status": ":failed",
-  "expected_fault_reason": ":state-postcondition",
-  "expected_fault_phase": ":state-post",
   "self_spec_targets": [
     {
       "kind": "contract",
       "name": "CL-SPEC:REGISTRY-REGISTER-PROPERTY",
       "scenario": "replace",
-      "expected_on_fault": "non-pass with reason :state-postcondition"
+      "expected_status": ":failed",
+      "expected_reason": ":state-postcondition",
+      "expected_phase": ":state-post"
     },
     {
       "kind": "property",
       "name": "CL-SPEC/SPECS::REGISTRATION-REPLACEMENT-PRESERVES-UNRELATED-INDEXES",
-      "expected_on_fault": "non-pass with reason :predicate-false"
+      "expected_status": ":failed",
+      "expected_reason": ":predicate-false",
+      "expected_phase": "any"
     }
   ],
   "acceptance": "eval/acceptance-registry.lisp",

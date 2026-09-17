@@ -33,9 +33,9 @@ requires all four of:
 
 1. baseline self-spec target reports `status=:passed`,
 2. baseline acceptance prints `ACCEPTANCE-RESULT <task> PASS` and exits 0,
-3. faulty self-spec target reports the task's expected `status`, `reason` and
-   `phase` (recorded as `expected_fault_status`/`_reason`/`_phase` in the task's
-   `manifest.json`),
+3. faulty self-spec target reports the expected `status`, `reason` and `phase`
+   (the harness passes them per target; each target's entry under
+   `self_spec_targets` in the task's `manifest.json` records the same fields),
 4. faulty acceptance prints `ACCEPTANCE-RESULT <task> FAIL` and exits 1.
 
 The driver compares the record fields, not just the exit code: a load failure, a
@@ -83,10 +83,13 @@ a candidate cannot pass by weakening a self-specification or by editing a test.
 They load `cl-spec/check-it` but not `cl-spec/specs`, so they run in both
 conditions.
 
-`check-integrity.sh` compares the fixed files still present in a work copy
-against the manifest hashes. A candidate that changed a fixed file is an
-integrity violation even when acceptance passes; record the result as a rule
-violation, not as a successful repair.
+`check-integrity.sh` requires the fixed files that the condition delivers to be
+present and unchanged in the work copy, using the delivered hashes recorded by
+`make-workcopy.sh`. Deleting a required file is a violation, as is editing one;
+condition A's intentionally removed bundle files are not in its required set and
+are not reported. A candidate that changed a fixed file is an integrity
+violation even when acceptance passes; record the result as a rule violation,
+not as a successful repair.
 
 ### Unresolved comparison asymmetry
 

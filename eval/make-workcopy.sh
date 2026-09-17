@@ -51,6 +51,17 @@ fi
 
 cp "$eval_dir/tasks/$task/task.md" "$dest/TASK.md"
 
+# Files the work copy must still contain at judgement time.  Condition A removes
+# the self-specification bundle on purpose, so only tests.lisp is required there;
+# condition B delivers the bundle and the files that import it.
+required_files=""
+if [ "$condition" = "B" ]; then
+  required_files="specs.lisp self-spec-fixtures.lisp api-docs.lisp
+    tests/self-specs-test.lisp tests/self-properties-test.lisp
+    tests/self-api-contracts-test.lisp tests/api-docs-test.lisp
+    tests/instrument-status-integration-test.lisp"
+fi
+
 manifest="$dest.manifest.txt"
 {
   echo "task_id=$task"
@@ -64,8 +75,10 @@ manifest="$dest.manifest.txt"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "work_copy=$dest"
   echo "fixed_files:"
-  for f in specs.lisp self-spec-fixtures.lisp tests/self-specs-test.lisp \
-           tests/self-properties-test.lisp tests/self-api-contracts-test.lisp \
+  for f in specs.lisp self-spec-fixtures.lisp api-docs.lisp \
+           tests/self-specs-test.lisp tests/self-properties-test.lisp \
+           tests/self-api-contracts-test.lisp tests/api-docs-test.lisp \
+           tests/instrument-status-integration-test.lisp \
            eval/acceptance-registry.lisp eval/acceptance-capture.lisp \
            eval/acceptance-state.lisp eval/tasks; do
     if [ -d "$root/$f" ]; then
@@ -74,6 +87,17 @@ manifest="$dest.manifest.txt"
         "$f"
     elif [ -f "$root/$f" ]; then
       printf '  %s %s\n' "$(sha256sum "$root/$f" | cut -d' ' -f1)" "$f"
+    fi
+  done
+  # The hash is of the delivered copy, so a derived file (condition A's filtered
+  # tests.lisp) is checked against what the candidate received, and a required
+  # file that is missing is a violation rather than nothing to check.
+  echo "required_files:"
+  for f in tests.lisp $required_files; do
+    if [ -f "$dest/$f" ]; then
+      printf '  %s %s\n' "$(sha256sum "$dest/$f" | cut -d' ' -f1)" "$f"
+    else
+      printf '  MISSING %s\n' "$f"
     fi
   done
 } > "$manifest"
