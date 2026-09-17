@@ -1,0 +1,26 @@
+{
+  "task_id": "function-spec-capture-drop",
+  "summary": "function-spec-data omits a contract's declared :capture bindings from its projection.",
+  "core_baseline_commit": "1933cdcf2cd878166068b16a043410f4f5c3a461",
+  "assets_revision": "recorded by eval/make-workcopy.sh from the checkout's HEAD",
+  "faulty_edit": "faults.sexp",
+  "self_spec_targets": [
+    {
+      "kind": "property",
+      "name": "CL-SPEC/SPECS::FUNCTION-SPEC-PROJECTION-RETAINS-DECLARED-STATE",
+      "expected_status": ":failed",
+      "expected_reason": ":predicate-false",
+      "expected_phase": "any"
+    }
+  ],
+  "acceptance": "eval/acceptance-capture.lisp",
+  "allowed_change_paths": ["src/introspection.lisp"],
+  "fixed_paths": [
+    "specs.lisp",
+    "self-spec-fixtures.lisp",
+    "tests/self-specs-test.lisp",
+    "tests/self-properties-test.lisp",
+    "tests/self-api-contracts-test.lisp",
+    "eval/"
+  ]
+}

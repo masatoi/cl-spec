@@ -56,10 +56,11 @@ to run every demo:
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for twenty-seven
-public functions and twenty-five semantic Properties. The definitions live in
-[`specs.lisp`](specs.lisp), independently of Rove, and are discoverable through
-the same structured APIs used by cl-mcp:
+Load the optional specification bundle to register contracts for twenty-eight
+public functions and twenty-nine semantic Properties. The definitions live in
+[`specs.lisp`](specs.lisp) with fixtures in
+[`self-spec-fixtures.lisp`](self-spec-fixtures.lisp), independently of Rove, and
+are discoverable through the same structured APIs used by cl-mcp:
 
 ```lisp
 (asdf:load-system "cl-spec/specs")
@@ -99,8 +100,21 @@ fails identically when rechecked. Loading `cl-spec/instrument` and calling
 instrumentation contracts and two install/uninstall laws. Generators exercise a
 finite scalar/composite DSL subset, including `MEMBER`, `VECTOR-OF` and `PLIST`;
 this is not exhaustive API coverage. Custom generators preserve
-original counterexamples; whole-argument generators can supply a shrinker. See specification
-§68.1 for the coverage and remaining work.
+original counterexamples; whole-argument generators can supply a shrinker. See
+[the self-specification guide](docs/guides/self-specification-guide.md) for how
+to isolate the bundle's registry, find a symbol's contract and laws, read
+`:case-report`/`:capture`/`:state-post` evidence, and run the fault-injection
+and repair-comparison tasks, and specification §68.1 for the coverage and
+remaining work.
+
+The bundle now also exercises the newer clauses on its own API: `validate`
+declares named `:conforming` and `:refused` cases in one contract, a
+`registry-register-property` contract captures the target registry's public
+readers before a new, replacement or refused write and checks the after-state
+with `:state-post`, and two laws keep the `function-spec-data` and `result-data`
+projections faithful to the declared cases, captures and state evidence. The
+self-spec suites compare each run against the property's declared `:trials`
+budget instead of assuming a shared trial count.
 
 ### Persisting and directly rechecking a counterexample
 
@@ -909,6 +923,9 @@ explain:
   — runnable named per-condition Function Spec walkthrough
 - [`docs/guides/state-observation-walkthrough.md`](docs/guides/state-observation-walkthrough.md)
   — runnable capture and post-run state constraint walkthrough
+- [`docs/guides/self-specification-guide.md`](docs/guides/self-specification-guide.md)
+  — loading, isolating, exploring and running the executable self-specifications,
+  and the fault-injection and repair-comparison tasks in [`eval/`](eval/README.md)
 - [`docs/cl-spec-specification-v0.2-draft.md`](docs/cl-spec-specification-v0.2-draft.md)
   — the specification
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — design documents, including

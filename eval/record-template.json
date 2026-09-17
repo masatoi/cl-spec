@@ -1,0 +1,61 @@
+{
+  "_comment": "One record per (task, condition, model) run. null means not measured; never write 0 for an unmeasured value.",
+  "task_id": null,
+  "core_baseline_revision": null,
+  "assets_revision": null,
+  "faulty_revision": null,
+  "condition": null,
+  "model": {
+    "identifier": null,
+    "settings": null,
+    "provider": null
+  },
+  "fixed_artifacts": {
+    "revision": null,
+    "files": [
+      {"path": "specs.lisp", "sha256": null},
+      {"path": "self-spec-fixtures.lisp", "sha256": null},
+      {"path": "tests/self-specs-test.lisp", "sha256": null},
+      {"path": "tests/self-properties-test.lisp", "sha256": null},
+      {"path": "tests/self-api-contracts-test.lisp", "sha256": null},
+      {"path": "eval/tasks/", "sha256": null}
+    ],
+    "declaration_digest_note": "A declaration digest is not enough: helper implementations outside its coverage are recorded by file hash too."
+  },
+  "budget": {
+    "wall_clock_seconds": null,
+    "tool_calls": null,
+    "tokens": null
+  },
+  "execution": {
+    "commands": [],
+    "self_spec_targets_run": null,
+    "contracts_run": null,
+    "property_trials_run": null,
+    "inner_cases_run": null,
+    "acceptance_result": "not-run"
+  },
+  "outcome": "not-run",
+  "outcome_kinds": {
+    "success": false,
+    "failure": false,
+    "incomplete": false,
+    "environment_error": false
+  },
+  "agent_effort": {
+    "repair_attempts": null,
+    "tool_calls": null,
+    "elapsed_seconds": null,
+    "tokens": null
+  },
+  "integrity": {
+    "self_spec_weakened": null,
+    "fixed_files_modified": null,
+    "modified_fixed_files": [],
+    "note": null
+  },
+  "unmeasured": [],
+  "unverified_scope": [],
+  "comparison_status": "not-run",
+  "notes": null
+}

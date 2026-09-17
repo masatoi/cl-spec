@@ -42,5 +42,6 @@ Install executable contracts and laws in CL-SPEC:*REGISTRY*.
 Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
 Generators exercise finite subsets. Most API contracts accept broader domains;
-the malformed-normalization contract explicitly names its finite input corpus.
+the malformed-normalization contract and the validate cases explicitly name
+their finite input corpora, and the registry write contract names its scenarios.
 

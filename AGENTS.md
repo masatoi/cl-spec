@@ -112,10 +112,16 @@ Write Rove tests before implementations. Name suites after the unit under test.
 Remaining stubs are tested by asserting they signal `not-implemented` with the
 right operator; replace those assertions with behavioural tests as each module
 is implemented. Executable public API contracts and semantic laws (specification
-§68.1) live in `specs.lisp`, loaded through `cl-spec/specs` and checked by
-`tests/self-specs-test.lisp`. Extend these when adding covered APIs.
-`tests/self-properties-test.lisp` additionally checks generation and replay
-through `run-property` itself.
+§68.1) live in `specs.lisp` with fixtures in `self-spec-fixtures.lisp`, loaded
+through `cl-spec/specs` and checked by `tests/self-specs-test.lisp`. Extend these
+when adding covered APIs. `tests/self-properties-test.lisp` additionally checks
+generation and replay through `run-property` itself.
+`tests/self-api-contracts-test.lisp` keeps the declared contract/property lists,
+the execution set and the registry listings in agreement, and checks the named
+`validate` cases, the registry write scenarios and the projection negative data
+with hand-written expectations. New test files must be listed in `tests.lisp`.
+The fault-injection and repair-comparison tasks are separate from the suite and
+live in `eval/`; they never run during a normal `cl-spec` load or test run.
 
 ## Commit & Pull Request Guidelines
 

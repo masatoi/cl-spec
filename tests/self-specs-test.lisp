@@ -23,6 +23,7 @@
                 #:property-result-status
                 #:property-result-trials
                 #:property-targets
+                #:property-trials
                 #:result-data
                 #:run-property
                 #:spec-data
@@ -106,18 +107,28 @@
         (ok (getf data :body))
         (dolist (target (cl-spec:property-targets (cl-spec:find-property name)))
           (ok (member name (cl-spec:properties-for target))))))
+    ;; Re-registration must not duplicate an index or a registered name: the
+    ;; bundle's declared lists are exactly what the registry holds, twice over.
     (cl-spec:clear-registry)
     (cl-spec/specs:register-specifications)
-    (ok (= 27 (length (cl-spec:list-function-specs))))
-    (ok (= 25 (length (cl-spec:list-properties))))))
+    (let ((contracts (cl-spec:list-function-specs))
+          (properties (cl-spec:list-properties)))
+      (ok (plusp (length contracts)))
+      (ok (plusp (length properties)))
+      (ok (null (set-exclusive-or contracts (cl-spec/specs:contract-names))))
+      (ok (null (set-exclusive-or properties (cl-spec/specs:property-names))))
+      (ok (= (length contracts) (length (remove-duplicates contracts))))
+      (ok (= (length properties) (length (remove-duplicates properties)))))))
 
 (deftest executable-specifications-use-the-current-registry
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (original-validp (fdefinition 'cl-spec:validp)))
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
       (cl-spec/specs:register-specifications)
-      (ok (= 27 (length (cl-spec:list-function-specs))))
-      (ok (= 25 (length (cl-spec:list-properties))))
+      (ok (null (set-exclusive-or (cl-spec:list-function-specs)
+                                  (cl-spec/specs:contract-names))))
+      (ok (null (set-exclusive-or (cl-spec:list-properties)
+                                  (cl-spec/specs:property-names))))
       (ok (eq original-validp (fdefinition 'cl-spec:validp))))
     (ok (null (cl-spec:list-function-specs)))
     (ok (null (cl-spec:list-properties)))))
@@ -234,7 +245,13 @@
             (ok (zerop (cl-spec:property-result-rejected result))))))
       (dolist (name (cl-spec/specs:property-names))
         (testing (format nil "property ~S, seed ~D" name seed)
-          (let ((result (cl-spec:run-property name :seed seed)))
+          (let* ((property (cl-spec:find-property name))
+                 (budget (getf (cl-spec:property-trials property) :normal))
+                 (result (cl-spec:run-property name :seed seed)))
+            ;; A property's :NORMAL budget is its own declaration: the suite
+            ;; compares the run against it instead of assuming one shared count.
+            (ok (and (integerp budget) (plusp budget))
+                (format nil "~S declares no positive :normal budget" name))
             (ok (eq :passed (cl-spec:property-result-status result))
                 (prin1-to-string (cl-spec:result-data result)))
-            (ok (= 50 (cl-spec:property-result-trials result)))))))))
+            (ok (= budget (cl-spec:property-result-trials result)))))))))

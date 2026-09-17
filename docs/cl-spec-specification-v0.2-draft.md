@@ -4214,7 +4214,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | 記述対象 | 実行可能な保証 |
 |---|---|
 | `validp` | 解決可能なspecと値からbooleanを返す |
-| `validate` | 正常入力で同一の値を返す。拒否時の条件・errorsの一致はPropertyで検査 |
+| `validate` | 名前付きcaseで正常系と拒否系を分ける。適合値は同一オブジェクトを返し、不適合値は`spec-violation`を通知する。拒否時の条件・errorsの一致はPropertyでも検査 |
 | `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
@@ -4227,10 +4227,11 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
 | `schema-info` / `make-hash-table-registry` | v1 schema metadataの必須keyと、新規registryが空であること |
-| `function-spec-data` / `property-data` / `definition-description` | v1 envelopeと宣言projectionの必須key |
+| `function-spec-data` / `property-data` / `definition-description` | v1 envelopeと宣言projectionの必須key。`function-spec-data`はcase名・順序・guard・outcome、capture名・順序・source form、caseごとのstate-postも保持する（追加Property） |
+| `result-data` | v1 result envelopeの必須keyとstatus。state-post違反・capture error・case選択停止のstate evidenceを保持し、captureしたNILと未取得を区別する（追加Property） |
+| `registry-register-property` | 明示的なtargets/tagsの新規登録・同名置換・不正索引引数の拒否を、専用registryと`:capture`/`:state-post`で検査する |
 | `property-call-arguments-p` / `property-named-arguments` | 生の呼出し形と束縛へのprojection |
 | `property-argument-schema` / `function-spec-argument-schema` | 引数schemaがSemantic IRのspecオブジェクトであること |
-| `result-data` | v1 result envelopeの必須keyとstatus |
 | `make-counterexample-artifact` / `recheck-counterexample` | 失敗resultからartifactを作り、recheck recordを返す |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
 | registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
@@ -4248,14 +4249,25 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 生成器は整数・文字列・NIL・T・list・vectorの値と、type・range・AND・OR・NOT・
 nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
 狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
-正規化成功まで主張しない。`validate`の正常系は引数集合generatorで構築し、rejectに予算を費やさない。
+正規化成功まで主張しない。`validate`の適合caseは`integer`・`string`・`boolean`・
+`member`・`or`の有限corpusから生成し、同じcorpusが不適合値も供給する。このcorpusは
+公開APIが受け付けるdomain全体ではなく、両caseへ到達することを確かめる標本である。
+境界testは`*scripted-validate-inputs*`に明示列を渡し、乱数seedに到達を依存させない。
 この自己仕様のcustom generatorにはshrinkerを指定していないため、失敗は元の反例を保持する。
 explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
 introspectionへ公開する。valid/errorsの関係のみLisp述語に残す。
+Projectionのshape specはv1の方針どおり未知キーを無視し、必須キーの除去と型の改変を拒否する。
+自己仕様のfixtureは`self-spec-fixtures.lisp`に分離し、試行ごとに専用registryを作る。
+`function-spec-data`/`result-data`の追加Propertyは、外側の自己仕様実行から1試行だけの
+内側runを行い、内外のregistry・counter・seedを混ぜない。
 
-通常profileは各Property 50試行、smokeは10試行。
-`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・不整合データの拒否を検査し、
-27関数契約と24 Propertyをseed 1・42・2026、各50試行で実行する。
+通常profileの試行数は固定値ではなく各Propertyの`:trials`宣言に従う。一括実行testは
+実行結果をその宣言された予算と照合し、`:skipped`・`:pending`・生成枯渇・全事前条件棄却を
+`:passed`へ読み替えない。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
+不整合データの拒否を検査し、28関数契約と29 Propertyをseed 1・42・2026で実行する。
+`tests/self-api-contracts-test.lisp`は一覧と実行対象の集合一致、`validate`境界列、
+registry新規・置換・拒否の各case、projectionのnegative data、意図的に偽のPropertyが
+失敗と報告されることを、独立した期待値で確認する。
 このうち2 Propertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
 保持された縮小反例が引数schemaを満たし再検査で同一失敗を維持することを検査する。
 任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
@@ -4267,7 +4279,12 @@ result/artifactの基本envelope、instrumentationの基本protocolは取り込�
 残る記述範囲は、すべてのkeyword option組合せ、独自のregistry/backend実装、`defspec`自身の不正form、
 shrink候補生成の全過程、未実装の`describe-*`である。
 不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
-`validate`の正常系契約は維持し、拒否とexplain-dataの関係は引き続きPropertyで記述する。
+`validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
+関係は引き続きPropertyで記述する。`registry-register-property`の状態契約は逐次実行を対象とし、
+入力domainを固定scenario集合として宣言する（任意の索引リストへの一般契約ではない）。
+並行実行の原子性や任意のbackend内部エラーからのrollbackまでは新たに保証しない。状態付き自己契約は
+縮小・過去結果replay・artifactを追加しない。誤実装検出とLLM修正比較の手順は`eval/README.md`と
+`docs/guides/self-specification-guide.md`に分離し、比較実験の実測結果はまだ無い。
 追加APIの仕様を実装する際は、このbundleへ契約またはPropertyを追加し、対象名一覧と検査を更新する。
 
 ---
