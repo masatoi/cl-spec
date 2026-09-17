@@ -94,7 +94,10 @@ The core does not load `cl-spec/specs`. Loading that optional bundle registers i
 contracts, generators and laws in the currently bound `cl-spec:*registry*` without
 instrumenting functions. Call `cl-spec/specs:register-specifications` to register
 again after clearing a registry or binding a fresh one. Executing the generated
-checks requires `cl-spec/check-it`.
+checks requires `cl-spec/check-it`. The bundle's fixtures, finite corpora and
+test-support specials live in `self-spec-fixtures.lisp` (package
+`cl-spec/self-spec-fixtures`), which defines no registration and is loaded only
+through `cl-spec/specs`.
 
 ## Package Naming
 
@@ -106,6 +109,7 @@ ASDF `package-inferred-system`: the package name equals the file path.
 | `src/backends/check-it.lisp` | `cl-spec/src/backends/check-it` |
 | `tests/ir-test.lisp` | `cl-spec/tests/ir-test` |
 | `specs.lisp` | `cl-spec/specs` |
+| `self-spec-fixtures.lisp` | `cl-spec/self-spec-fixtures` |
 | `main.lisp` | `cl-spec/main`, nickname `cl-spec` |
 
 Adding a file requires no `.asd` change; dependencies are inferred from
@@ -162,13 +166,15 @@ implemented. Extended argument contracts remain deferred.
 ## Repository Structure
 
 ```
-main.lisp         Public API re-export (no logic)
-specs.lisp        Optional executable self-specification bundle
-tests.lisp        Aggregate test system and rove runner
-src/              Implementation, one responsibility per file
-tests/            Rove suites, mirrored naming (*-test.lisp)
-docs/             Specification and design documents
-prompts/          System prompts for AI agents
+main.lisp           Public API re-export (no logic)
+specs.lisp          Optional executable self-specification bundle
+self-spec-fixtures.lisp  Fixtures, finite corpora and test-support specials for the bundle
+tests.lisp          Aggregate test system and rove runner
+src/                Implementation, one responsibility per file
+tests/              Rove suites, mirrored naming (*-test.lisp)
+docs/               Specification and design documents
+eval/               Fault-injection and repair-comparison tasks (not loaded by the library)
+prompts/            System prompts for AI agents
 ```
 
 

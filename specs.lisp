@@ -25,6 +25,22 @@
                 #:spec-violation-value
                 #:validate
                 #:validp)
+  (:import-from #:cl-spec/self-spec-fixtures
+                #:*function-projection-expectations*
+                #:*scripted-state-inputs*
+                #:*scripted-validate-inputs*
+                #:*state-projection-expectations*
+                #:function-projection-fixtures
+                #:registration-index-shape-p
+                #:registration-scenario
+                #:registration-scenario-tags-p
+                #:registration-scenario-targets-p
+                #:self-registration-name
+                #:*self-state-balance*
+                #:*self-state-calls*
+                #:*self-state-scenario*
+                #:state-projection-fixtures
+                #:validate-corpus-entry)
   (:export #:register-instrumentation-specifications #:register-specifications
            #:contract-names #:property-names))
 
@@ -127,6 +143,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
+     cl-spec:registry-register-property
      cl-spec:find-spec cl-spec:definition-digest
      cl-spec:schema-info cl-spec:make-hash-table-registry
      cl-spec:function-spec-data cl-spec:property-data cl-spec:definition-description
@@ -150,7 +167,12 @@ Malformed lists must not enter a law that promises normalization succeeds."
     run-property-is-reproducible-from-its-seed
     failure-identities-match-reflexively counterexample-artifacts-round-trip
     collection-constraints-are-enforced
-    generated-values-satisfy-their-specs retained-counterexamples-stay-valid))
+    generated-values-satisfy-their-specs retained-counterexamples-stay-valid
+    sample-reports-its-generation-request
+    validate-cases-classify-admitted-and-refused
+    registration-replacement-preserves-unrelated-indexes
+    function-spec-projection-retains-declared-state
+    result-projection-retains-state-evidence))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -289,7 +311,8 @@ the definitions REGISTER-SPECIFICATIONS installs.")
 Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
 Generators exercise finite subsets. Most API contracts accept broader domains;
-the malformed-normalization contract explicitly names its finite input corpus."
+the malformed-normalization contract and the validate cases explicitly name
+their finite input corpora, and the registry write contract names its scenarios."
   (defspec-function cl-spec:deserialize-counterexample-artifact
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))
@@ -346,17 +369,6 @@ the malformed-normalization contract explicitly names its finite input corpus."
   (defgenerator spec-generator () (normalize-spec-form (draw-form)))
   (defgenerator symbol-generator ()
     (nth (random 4) '(validp unknown-self-name nil :keyword)))
-  (defgenerator valid-arguments-generator ()
-    (let* ((value (draw-value))
-           (form (typecase value
-                   (integer `(range integer ,value ,value))
-                   (string 'string)
-                   (null 'null)
-                   (cons (if (= 1 (length value))
-                             '(list-of integer) '(tuple integer string)))
-                   (vector '(vector-of integer))
-                   (t 'boolean))))
-      (list (normalize-spec-form form) value)))
   (defspec malformed-form
     (member 42 "not-a-spec" (range) (tuple . integer) (unknown-primitive)))
   (defspec-function normalize-spec-form
@@ -436,13 +448,30 @@ the malformed-normalization contract explicitly names its finite input corpus."
     (:returns explanation-data)
     (:post (eq value (getf result :value))
            (eq (validp contract-spec value) (getf result :valid))))
+  (defgenerator validate-corpus-generator ()
+    ;; The finite corpus pairs admitted forms with refused values, so a run that
+    ;; reaches both pairs reaches both named cases.  This is a sample of the two
+    ;; outcomes, not the whole DSL or the whole value domain.
+    (destructuring-bind (form value) (validate-corpus-entry)
+      (list (normalize-spec-form form) value)))
   (defspec-function validate
-    "Successful validation returns the identical value; refusal is specified by a Property."
+    "An admitted value is returned identically; a refused value signals SPEC-VIOLATION.
+
+The generated inputs are a finite admitted/refused corpus; the declared domain is
+every resolved designator and value, and the cases classify by the public
+validity predicate, so the contract itself is not limited to the corpus."
     (:args (contract-spec resolved-designator) (value arbitrary-value))
-    (:args-generator valid-arguments-generator)
-    (:pre (validp contract-spec value))
-    (:returns t)
-    (:post (eq result value)))
+    (:args-generator validate-corpus-generator)
+    (:cases
+     (:conforming
+      "The spec admits the value, and validation returns that same object."
+      (:when (validp contract-spec value))
+      (:returns t)
+      (:post (eq result value)))
+     (:refused
+      "The spec refuses the value, and validation reports SPEC-VIOLATION."
+      (:when (not (validp contract-spec value)))
+      (:signals (type spec-violation)))))
   (defspec-function compile-validator
     (:args (contract-spec spec-object))
     (:returns function))
@@ -573,6 +602,57 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
                 (:instrumentation (member :available :unavailable :unknown :none)))))))
      (satisfies digest-details-consistent-p)))
 
+  (defspec capture-declaration-data
+    (plist (:required (:name symbol) (:form t))))
+
+  (defspec function-case-description-data
+    (plist
+     (:required
+      (:name keyword)
+      (:documentation (nullable string))
+      (:when t)
+      (:outcome (member :returns :signals))
+      (:returns t)
+      (:signals t)
+      (:postconditions (list-of t)))
+     (:optional
+      (:post-value-variables (or (member :primary) (list-of symbol)))
+      (:state-post (list-of t)))))
+
+  (defspec capture-evidence-data
+    (plist
+     (:required
+      (:status (member :completed :error :not-evaluated))
+      (:declared (list-of symbol))
+      (:values (nullable (list-of t))))
+     (:optional
+      (:error (nullable
+               (plist (:required (:binding symbol) (:index (range integer 0 *))
+                                 (:condition-type symbol))))))))
+
+  (defspec state-post-evidence-data
+    (plist
+     (:required (:status (member :passed :violation :error :not-evaluated)))
+     (:optional (:reason t) (:case t) (:index t) (:form t) (:condition-type t))))
+
+  (defspec trial-state-evidence-data
+    (plist (:optional (:capture capture-evidence-data)
+                      (:state-post state-post-evidence-data))))
+
+  (defspec result-observation-data
+    (plist
+     (:required
+      (:arguments (list-of t))
+      (:status (member :passed :failed :error :rejected))
+      (:reason t)
+      (:signature t)
+      (:explanation t)
+      (:outcome t)
+      (:value t)
+      (:case t)
+      (:condition-report t))
+     (:optional (:state trial-state-evidence-data))))
+
   (defspec function-spec-description-data
     (and definition-envelope
          (plist
@@ -589,7 +669,13 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
            (:postconditions (list-of t))
            (:source-form t)
            (:source-location t)
-           (:metadata t)))))
+           (:metadata t))
+          (:optional
+           (:capture (list-of capture-declaration-data))
+           (:state-post (list-of t))
+           (:case-selection (member :exclusive))
+           (:cases (list-of function-case-description-data))
+           (:post-value-variables (or (member :primary) (list-of symbol)))))))
 
   (defspec property-description-data
     (and definition-envelope
@@ -634,6 +720,129 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
            (null (cl-spec:list-properties result))
            (null (cl-spec:list-function-specs result))
            (null (cl-spec:list-generators result))))
+
+  (defgenerator registry-registration-arguments ()
+    ;; A fresh scenario per draw: a new registry, a sentinel property sharing a
+    ;; target and a tag with the subject, and a new, replacement or refused write.
+    (registration-scenario))
+
+  (defspec-function cl-spec:registry-register-property
+    "A property write adds, replaces or refuses without leaking stale index entries.
+
+The declared input domain is the finite scenario set REGISTRATION-SCENARIO
+produces, not every index list: the state-post names the scenario's fixed target
+and tag symbols, so a different valid list is outside this contract rather than a
+counterexample.  Within that domain the expected after-state follows from the
+input and the observed before-state, and every observation is a fresh list from a
+public reader, never a captured registry."
+    (:args (registry (instance-of cl-spec:hash-table-registry)) (name symbol)
+           (property (instance-of cl-spec:property))
+           &key ((:targets targets) (satisfies registration-scenario-targets-p))
+                ((:tags tags) (satisfies registration-scenario-tags-p)))
+    (:args-generator registry-registration-arguments)
+    (:capture
+     (names-before (cl-spec:registry-list-properties registry))
+     (old-definition (nth-value 0 (cl-spec:registry-find-property registry name)))
+     (shared-target-before
+      (cl-spec:registry-properties-for registry (self-registration-name :shared-target)))
+     (old-target-before
+      (cl-spec:registry-properties-for registry (self-registration-name :old-target)))
+     (new-target-before
+      (cl-spec:registry-properties-for registry (self-registration-name :new-target)))
+     (shared-tag-before
+      (cl-spec:registry-properties-with-tag registry (self-registration-name :shared-tag)))
+     (old-tag-before
+      (cl-spec:registry-properties-with-tag registry (self-registration-name :old-tag)))
+     (new-tag-before
+      (cl-spec:registry-properties-with-tag registry (self-registration-name :new-tag)))
+     (sentinel-before
+      (nth-value 0 (cl-spec:registry-find-property registry (self-registration-name :sentinel)))))
+    (:cases
+     (:refused
+      "A malformed index argument is refused before the registry changes."
+      (:when (not (registration-index-shape-p targets tags)))
+      (:signals (type type-error))
+      (:state-post
+       (null (set-exclusive-or (cl-spec:registry-list-properties registry) names-before))
+       (eq sentinel-before
+           (nth-value 0 (cl-spec:registry-find-property
+                         registry (self-registration-name :sentinel))))
+       (equal old-target-before
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :old-target)))
+       (equal new-target-before
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :new-target)))
+       (equal old-tag-before
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :old-tag)))
+       (equal new-tag-before
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :new-tag)))))
+     (:new-registration
+      "A fresh name joins the names and every declared reverse index."
+      (:when (and (registration-index-shape-p targets tags) (null old-definition)))
+      (:returns (instance-of cl-spec:property))
+      (:post (eq result property))
+      (:state-post
+       (= (1+ (length names-before)) (length (cl-spec:registry-list-properties registry)))
+       (member name (cl-spec:registry-list-properties registry))
+       (member name
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :new-target)))
+       (member name
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :shared-target)))
+       (member (self-registration-name :sentinel)
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :shared-target)))
+       (null new-target-before)
+       (member name
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :new-tag)))
+       (member name
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :shared-tag)))
+       (member (self-registration-name :sentinel)
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :shared-tag)))
+       (eq sentinel-before
+           (nth-value 0 (cl-spec:registry-find-property
+                         registry (self-registration-name :sentinel))))))
+     (:re-registration
+      "A same-name write replaces the definition and retracts only its stale keys."
+      (:when (and (registration-index-shape-p targets tags) (not (null old-definition))))
+      (:returns (instance-of cl-spec:property))
+      (:post (eq result property))
+      (:state-post
+       (= (length names-before) (length (cl-spec:registry-list-properties registry)))
+       (null (set-exclusive-or (cl-spec:registry-list-properties registry) names-before))
+       (eq property (nth-value 0 (cl-spec:registry-find-property registry name)))
+       (null (cl-spec:registry-properties-for
+              registry (self-registration-name :old-target)))
+       (null (cl-spec:registry-properties-with-tag
+              registry (self-registration-name :old-tag)))
+       (member name
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :new-target)))
+       (member name
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :shared-target)))
+       (member (self-registration-name :sentinel)
+               (cl-spec:registry-properties-for
+                registry (self-registration-name :shared-target)))
+       (member name
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :new-tag)))
+       (member name
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :shared-tag)))
+       (member (self-registration-name :sentinel)
+               (cl-spec:registry-properties-with-tag
+                registry (self-registration-name :shared-tag)))
+       (eq sentinel-before
+           (nth-value 0 (cl-spec:registry-find-property
+                         registry (self-registration-name :sentinel))))))))
 
   (defspec-function cl-spec:function-spec-data
     "The function-spec projection carries the v1 envelope and the contract's clauses."
@@ -700,7 +909,13 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:seed integer)
       (:profile (member :smoke :normal))
       (:shrunk-outcome (nullable (member :used :none :different-failure)))
-      (:elapsed (nullable number)))))
+      (:elapsed (nullable number)))
+     (:optional
+      (:failure (nullable result-observation-data))
+      (:shrunk-failure (nullable result-observation-data))
+      (:failure-phase (nullable keyword))
+      (:failure-reason (nullable keyword))
+      (:case-report t))))
 
   (defspec recheck-record-data
     (plist
@@ -1101,6 +1316,172 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
                                 :status)))))
              '(self-collection-counterexample-target
                self-keyword-counterexample-target))))
+  (defproperty validate-cases-classify-admitted-and-refused ()
+    "The named cases run an explicit admitted/refused sequence through VALIDATE."
+    (:about validate)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let ((*scripted-validate-inputs*
+            '((integer 0) (integer "refused") (string "ok") (string 3)
+              (integer 1) (integer :refused) (boolean t) (boolean 42))))
+      (let* ((result (cl-spec:check-function 'validate :trials 4 :seed 1))
+             (report (cl-spec:function-check-result-case-report result)))
+        (and (eq :passed (cl-spec:property-result-status result))
+             (= 4 (cl-spec:property-result-trials result))
+             (zerop (cl-spec:property-result-rejected result))
+             (equal '(:conforming :refused) (getf report :declared-cases))
+             (null (getf report :never-called))
+             (zerop (getf report :case-selection-errors))
+             (zerop (getf report :capture-errors))
+             (equal '(2 2)
+                    (mapcar (lambda (case) (getf case :called)) (getf report :cases)))
+             (equal '(2 2)
+                    (mapcar (lambda (case) (getf case :passed))
+                            (getf report :cases)))))))
+  (defproperty registration-replacement-preserves-unrelated-indexes ()
+    "A same-name write retracts only the subject's stale keys and keeps the sentinel's."
+    (:about cl-spec:registry-register-property cl-spec:properties-for
+            cl-spec:properties-with-tag)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((registry (cl-spec:make-hash-table-registry))
+           (subject (self-registration-name :subject))
+           (sentinel (self-registration-name :sentinel))
+           (shared-target (self-registration-name :shared-target))
+           (old-target (self-registration-name :old-target))
+           (new-target (self-registration-name :new-target))
+           (shared-tag (self-registration-name :shared-tag))
+           (old-tag (self-registration-name :old-tag))
+           (new-tag (self-registration-name :new-tag))
+           (first (make-instance 'cl-spec:property :name subject
+                                 :arguments '((x integer))
+                                 :function (lambda (x) (declare (ignore x)) t)))
+           (second (make-instance 'cl-spec:property :name subject
+                                  :arguments '((x integer))
+                                  :function (lambda (x) (declare (ignore x)) t))))
+      (cl-spec:registry-register-property registry sentinel
+        (make-instance 'cl-spec:property :name sentinel :arguments '((x integer))
+                       :function (lambda (x) (declare (ignore x)) t))
+        :targets (list shared-target) :tags (list shared-tag))
+      (cl-spec:registry-register-property registry subject first
+        :targets (list shared-target old-target)
+        :tags (list shared-tag old-tag))
+      (let ((before (cl-spec:registry-list-properties registry)))
+        (cl-spec:registry-register-property registry subject second
+          :targets (list new-target shared-target)
+          :tags (list new-tag shared-tag))
+        (and (eq second (nth-value 0 (cl-spec:registry-find-property registry subject)))
+             (= (length before) (length (cl-spec:registry-list-properties registry)))
+             (null (set-exclusive-or before (cl-spec:registry-list-properties registry)))
+             (null (cl-spec:properties-for old-target registry))
+             (member subject (cl-spec:properties-for new-target registry))
+             (member subject (cl-spec:properties-for shared-target registry))
+             (member sentinel (cl-spec:properties-for shared-target registry))
+             (null (cl-spec:properties-with-tag old-tag registry))
+             (member subject (cl-spec:properties-with-tag new-tag registry))
+             (member sentinel (cl-spec:properties-with-tag shared-tag registry))))))
+  (defproperty function-spec-projection-retains-declared-state ()
+    "FUNCTION-SPEC-DATA keeps declared cases, guards, capture and per-case state-post."
+    (:about cl-spec:function-spec-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((fixtures (function-projection-fixtures))
+           (registry (getf fixtures :registry))
+           (expected *function-projection-expectations*)
+           (plain (cl-spec:function-spec-data (getf fixtures :plain) :registry registry))
+           (cases (cl-spec:function-spec-data (getf fixtures :cases) :registry registry))
+           (state (cl-spec:function-spec-data (getf fixtures :state) :registry registry))
+           (declared (getf cases :cases))
+           (declared-state (getf state :cases)))
+      (and
+       ;; A contract that declares none of the clauses invents none of the keys.
+       (null (getf plain :capture))
+       (null (getf plain :state-post))
+       (null (getf plain :cases))
+       (null (getf plain :case-selection))
+       ;; Case names, order, guards and outcomes survive the projection.  The
+       ;; expectations carry the fixture's own symbols, so EQUAL checks symbol
+       ;; identity; a same-named symbol from another package is rejected.
+       (eq (getf expected :case-selection) (getf cases :case-selection))
+       (equal (getf expected :case-names)
+              (mapcar (lambda (case) (getf case :name)) declared))
+       (equal (getf expected :case-outcomes)
+              (mapcar (lambda (case) (getf case :outcome)) declared))
+       (equal (getf expected :admitted-when) (getf (first declared) :when))
+       (equal (getf expected :refused-when) (getf (second declared) :when))
+       (equal (getf expected :admitted-postconditions)
+              (getf (first declared) :postconditions))
+       (null (getf (first declared) :state-post))
+       ;; Capture names, order and source form survive, on the contract not the case.
+       (equal (getf expected :state-capture) (getf state :capture))
+       (null (getf state :state-post))
+       ;; The case state-post stays attached to the case that declared it.
+       (equal (getf expected :state-case-state-post)
+              (getf (first declared-state) :state-post))
+       (null (getf (second declared-state) :state-post)))))
+  (defproperty result-projection-retains-state-evidence ()
+    "RESULT-DATA keeps a state-post violation, a capture error and a stopped case."
+    (:about cl-spec:result-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((fixtures (state-projection-fixtures))
+           (registry (getf fixtures :registry))
+           (expected *state-projection-expectations*)
+           (*self-state-balance* 10)
+           (*self-state-calls* 0)
+           (*self-state-scenario* :correct)
+           (*scripted-state-inputs* nil))
+      (flet ((run (name scenario amount)
+               (setf *self-state-balance* 10 *self-state-calls* 0
+                     *self-state-scenario* scenario
+                     *scripted-state-inputs* (list amount))
+               (values (cl-spec:check-function name :trials 1 :seed 1 :registry registry)
+                       *self-state-calls*)))
+        (multiple-value-bind (violation violation-calls)
+            (run (getf fixtures :observed) :forget 3)
+          (multiple-value-bind (capture capture-calls)
+              (run (getf fixtures :capture) :correct 3)
+            (multiple-value-bind (selection selection-calls)
+                (run (getf fixtures :uncalled) :correct 3)
+              (let* ((violation-data (cl-spec:result-data violation))
+                     (violation-state (getf (getf violation-data :failure) :state))
+                     (capture-data (cl-spec:result-data capture))
+                     (capture-state (getf (getf capture-data :failure) :state))
+                     (selection-data (cl-spec:result-data selection))
+                     (selection-state (getf (getf selection-data :failure) :state)))
+                (and
+                 ;; A violated state-post is retained, with its binding and form position.
+                 (eq :failed (getf violation-data :status))
+                 (eq :state-post (getf violation-data :failure-phase))
+                 (eq :state-postcondition (getf violation-data :failure-reason))
+                 (eq :violation (getf (getf violation-state :state-post) :status))
+                 (eq 0 (getf (getf violation-state :state-post) :index))
+                 ;; A captured NIL is present with a NIL value; a binding whose
+                 ;; form never ran is declared but absent from :VALUES.  The
+                 ;; expectation holds the fixture's own symbols, so EQUAL checks
+                 ;; symbol identity, not just the printed name.
+                 (equal (getf expected :values)
+                        (getf (getf violation-state :capture) :values))
+                 (equal (getf expected :declared)
+                        (getf (getf violation-state :capture) :declared))
+                 (= 1 violation-calls)
+                 ;; A capture error keeps the failure, names the binding, calls no target.
+                 (eq :error (getf capture-data :status))
+                 (eq :capture (getf capture-data :failure-phase))
+                 (eq :error (getf (getf capture-state :capture) :status))
+                 (equal (getf expected :declared)
+                        (getf (getf capture-state :capture) :declared))
+                 (null (getf (getf capture-state :capture) :values))
+                 (equal (getf expected :capture-error-binding)
+                        (getf (getf (getf capture-state :capture) :error) :binding))
+                 (null (getf capture-state :state-post))
+                 (zerop capture-calls)
+                 ;; A stopped case is not a pass: the declared state-post says so.
+                 (eq :error (getf selection-data :status))
+                 (eq :case-selection (getf selection-data :failure-phase))
+                 (eq :not-evaluated (getf (getf selection-state :state-post) :status))
+                 (eq :case-selection-failed (getf (getf selection-state :state-post) :reason))
+                 (zerop selection-calls)))))))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

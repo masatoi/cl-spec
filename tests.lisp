@@ -76,13 +76,14 @@
   (:import-from #:cl-spec/tests/examples-test)
   (:import-from #:cl-spec/tests/function-cases-test)
   (:import-from #:cl-spec/tests/function-spec-cases-example-test)
+  (:import-from #:cl-spec/tests/self-specs-test)
+  (:import-from #:cl-spec/tests/self-properties-test)
+  (:import-from #:cl-spec/tests/self-api-contracts-test)
   (:import-from #:cl-spec/tests/stateful-withdraw-example-test)
   (:import-from #:cl-spec/tests/state-observation-test)
-  (:import-from #:cl-spec/tests/instrument-test)
-  (:import-from #:cl-spec/tests/instrument-status-test)
   (:import-from #:cl-spec/tests/instrument-status-integration-test)
-  (:import-from #:cl-spec/tests/self-specs-test)
-  (:import-from #:cl-spec/tests/self-properties-test))
+  (:import-from #:cl-spec/tests/instrument-test)
+  (:import-from #:cl-spec/tests/instrument-status-test))
 
 (in-package #:cl-spec/tests)
 
