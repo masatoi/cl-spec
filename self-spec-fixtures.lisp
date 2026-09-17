@@ -318,6 +318,16 @@ signals case, and one declares a capture binding and a per-case state-post."
   (incf *self-state-calls*)
   :never)
 
+(defun self-state-nil-post-target (amount)
+  "Target whose declared state-post is the form NIL."
+  (declare (ignore amount))
+  3)
+
+(defun self-state-programmatic-target (amount)
+  "Target whose state-post predicate is hand-written and reports no position."
+  (declare (ignore amount))
+  3)
+
 (defun state-projection-fixtures ()
   "Register the result-projection fixtures and return the registry.
 
@@ -353,7 +363,24 @@ amounts the property supplies."
         (:when (> amount balance-before))
         (:returns integer)
         (:state-post (= *self-state-balance* balance-before)))))
+    (defspec-function self-state-nil-post-target
+      "A contract whose only state-post form is NIL."
+      (:args (amount (range integer 1 10)))
+      (:args-generator self-projection-amounts)
+      (:returns integer)
+      (:state-post nil))
+    (cl-spec:register-function-spec
+     (make-instance 'cl-spec:function-spec
+                    :name 'self-state-programmatic-target
+                    :argument-specs '((amount (range integer 1 10)))
+                    :argument-generator 'self-projection-amounts
+                    :return-spec 'integer
+                    :state-postconditions '(self-state-programmatic-target)
+                    :state-postcondition-function
+                    (lambda (amount) (declare (ignore amount)) nil)))
     (list :registry cl-spec:*registry*
           :observed 'self-state-observed-target
           :capture 'self-state-capture-target
-          :uncalled 'self-state-uncalled-target)))
+          :uncalled 'self-state-uncalled-target
+          :nil-post 'self-state-nil-post-target
+          :programmatic 'self-state-programmatic-target)))

@@ -135,8 +135,8 @@ Malformed lists must not enter a law that promises normalization succeeds."
   "Check a capture report's names, prefix and status against each other.
 
 A completed capture obtained every declared binding; a capture that never ran
-obtained none, and an error obtained exactly the completed prefix and must carry
-the failing binding's name, position and condition type."
+obtained none; a failed capture obtained exactly the declared prefix before the
+failing binding and names that binding, its position and its condition type."
   (let ((status (getf evidence :status))
         (declared (getf evidence :declared))
         (values (getf evidence :values))
@@ -144,41 +144,41 @@ the failing binding's name, position and condition type."
     (and (listp declared)
          (every #'symbolp declared)
          (capture-values-data-p values)
-         (let ((obtained (mapcar #'car values)))
-           (and (equal obtained (subseq declared 0 (min (length obtained) (length declared))))
-                (or (not (eq status :completed)) (= (length obtained) (length declared)))
-                (or (not (eq status :not-evaluated)) (null obtained))
-                (or (not (eq status :error))
-                    (and (consp error)
-                         (getf error :binding)
-                         (symbolp (getf error :binding))
-                         (eql (length obtained) (getf error :index))
-                         (getf error :condition-type)
-                         (symbolp (getf error :condition-type)))))))))
+         (let* ((obtained (mapcar #'car values))
+                (count (length obtained))
+                (prefix (subseq declared 0 (min count (length declared)))))
+           (and (equal obtained prefix)
+                (case status
+                  (:completed (and (= count (length declared)) (null error)))
+                  (:not-evaluated (and (zerop count) (null error)))
+                  (:error (and (< count (length declared))
+                               (consp error)
+                               (eql count (getf error :index))
+                               (eq (nth count declared) (getf error :binding))
+                               (getf error :condition-type)
+                               (symbolp (getf error :condition-type))))
+                  (t nil)))))))
 
 (defun state-post-evidence-consistent-p (evidence)
-  "Check a state-post report's status against its reason, position and form.
+  "Check a state-post report's status against its reason and condition.
 
-A state-post that never ran names why; a violation names the form position and
-the source form; a signalling form names its condition type as well.  Unknown
-keys stay allowed, but a known field may not be left unconstrained."
+Every clause key is present, but an unknown position is NIL rather than a guessed
+integer, and a form whose value is NIL is still the form that was declared.  A
+state-post that never ran names why; a violation carries no condition type; a
+signalling form names its condition type.  Unknown keys stay allowed."
   (let ((status (getf evidence :status))
         (reason (getf evidence :reason))
         (case-name (getf evidence :case))
         (index (getf evidence :index))
-        (form (getf evidence :form))
         (condition-type (getf evidence :condition-type)))
     (and (or (null case-name) (keywordp case-name))
          (or (null index) (and (integerp index) (not (minusp index))))
          (or (null condition-type) (symbolp condition-type))
          (case status
-           (:passed t)
+           (:passed (null reason))
            (:not-evaluated (and reason (keywordp reason)))
-           (:violation (and (integerp index) (not (null form))))
-           (:error (and condition-type
-                        (symbolp condition-type)
-                        (integerp index)
-                        (not (null form))))
+           (:violation (null condition-type))
+           (:error (and condition-type (symbolp condition-type)))
            (t nil)))))
 
 (defun registered-function-spec-p (name)
@@ -691,8 +691,8 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
   (defspec state-post-evidence-data
     (and
      (plist
-      (:required (:status (member :passed :violation :error :not-evaluated)))
-      (:optional (:reason t)
+      (:required (:status (member :passed :violation :error :not-evaluated))
+                 (:reason (nullable keyword))
                  (:case (nullable keyword))
                  (:index (nullable (range integer 0 *)))
                  (:form t)
@@ -1566,7 +1566,15 @@ reader, never a captured registry."
                  (eq :case-selection (getf selection-data :failure-phase))
                  (eq :not-evaluated (getf (getf selection-state :state-post) :status))
                  (eq :case-selection-failed (getf (getf selection-state :state-post) :reason))
-                 (zerop selection-calls)))))))))
+                 (zerop selection-calls)
+                 ;; The strengthened evidence schema accepts the real records the
+                 ;; evaluator produced, not only hand-written lookalikes.
+                 (let ((result-spec
+                         (cl-spec:function-spec-return-spec
+                          (cl-spec:find-function-spec 'cl-spec:result-data))))
+                   (and (cl-spec:validp result-spec violation-data)
+                        (cl-spec:validp result-spec capture-data)
+                        (cl-spec:validp result-spec selection-data)))))))))))
   (values (contract-names) (property-names)))
 
 (register-specifications)

@@ -183,7 +183,8 @@ to fail acceptance. A missing or mismatched record, an unhandled error or a
 timeout is a harness failure, not a detection. It never modifies the checkout
 and never uses git to restore anything. The three tasks, their allowed paths,
 the fixed-file hashes and the fresh-process procedure are documented in
-`eval/README.md`; `eval/run-acceptance.sh` judges a candidate work copy.
+`eval/README.md`; `eval/check-integrity.sh` requires the fixed files to be present
+and unchanged, and `eval/run-acceptance.sh` judges a candidate work copy.
 
 The comparison between an agent that may use the fixed self-specifications
 (condition B) and one that may not (condition A) is **prepared but not run**.

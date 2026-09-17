@@ -349,25 +349,77 @@
                                         :values (123) :error nil))))
         (ok (not (validp capture-spec '(:status :completed :declared (x)
                                         :values nil :error nil)))))
-      (testing "an uncollected capture has no values; a failed one names the binding"
-        (ok (validp capture-spec '(:status :not-evaluated :declared (x)
-                                   :values nil :error nil)))
-        (ok (not (validp capture-spec '(:status :error :declared (x)
-                                        :values nil :error nil))))
+      (testing "a failed capture names the binding at the failure position"
         (ok (validp capture-spec '(:status :error :declared (x) :values nil
                                    :error (:binding x :index 0
-                                           :condition-type simple-error)))))
-      (testing "state-post evidence requires the fields its status implies"
+                                           :condition-type simple-error))))
+        (ok (validp capture-spec '(:status :error :declared (a b)
+                                   :values ((a . 10))
+                                   :error (:binding b :index 1
+                                           :condition-type simple-error))))
+        (ok (not (validp capture-spec '(:status :error :declared (a b)
+                                        :values ((a . 10))
+                                        :error (:binding unrelated :index 1
+                                                :condition-type simple-error)))))
+        (ok (not (validp capture-spec '(:status :error :declared (x)
+                                        :values nil :error nil))))
+        (ok (not (validp capture-spec '(:status :error :declared (a)
+                                        :values ((a . 1))
+                                        :error (:binding a :index 1
+                                                :condition-type simple-error)))))
+        (ok (not (validp capture-spec '(:status :completed :declared (a)
+                                        :values ((a . 1))
+                                        :error (:binding a :index 1
+                                                :condition-type simple-error))))))
+      (testing "an uncollected capture obtained nothing"
+        (ok (validp capture-spec '(:status :not-evaluated :declared (x)
+                                   :values nil :error nil))))
+      (testing "state-post evidence requires the keys its status implies"
         (ok (not (validp state-spec '(:status :not-evaluated :reason nil :case nil
                                       :index nil :form nil :condition-type nil))))
         (ok (validp state-spec '(:status :not-evaluated :reason :not-declared :case nil
                                  :index nil :form nil :condition-type nil)))
-        (ok (validp state-spec '(:status :violation :reason nil :case nil :index 0
-                                 :form (= x 1) :condition-type nil)))
+        ;; A missing clause key is refused, but a NIL form is a form and an
+        ;; unknown position is NIL rather than a guessed integer.
         (ok (not (validp state-spec '(:status :violation :reason nil :case nil
-                                      :index nil :form nil :condition-type nil))))
+                                      :index 0 :condition-type nil))))
+        (ok (validp state-spec '(:status :violation :reason nil :case nil
+                                 :index 0 :form nil :condition-type nil)))
+        (ok (validp state-spec '(:status :violation :reason nil :case nil
+                                 :index nil :form nil :condition-type nil)))
+        (ok (validp state-spec '(:status :error :reason nil :case nil
+                                 :index nil :form nil :condition-type simple-error)))
         (ok (not (validp state-spec '(:status :error :reason nil :case nil :index 0
-                                      :form (= x 1) :condition-type nil)))))
+                                      :form (= x 1) :condition-type nil))))
+        (ok (not (validp state-spec '(:status :passed :reason :why :case nil
+                                      :index nil :form nil :condition-type nil)))))
       (testing "unknown keys stay allowed, as version 1 requires"
         (ok (validp state-spec '(:status :passed :reason nil :case nil :index nil
                                  :form nil :condition-type nil :future t)))))))
+
+(deftest real-state-evidence-satisfies-its-schema
+  ;; Evidence the core actually builds, not a hand-written lookalike: a state-post
+  ;; whose form is NIL, and a programmatic predicate that reports no position.
+  (let* ((fixtures (state-projection-fixtures))
+         (registry (getf fixtures :registry)))
+    (flet ((state-evidence (name)
+             (let ((cl-spec/self-spec-fixtures:*self-state-balance* 10)
+                   (cl-spec/self-spec-fixtures:*self-state-scenario* :correct)
+                   (cl-spec/self-spec-fixtures:*scripted-state-inputs* '(3)))
+               (let ((result (check-function name :trials 1 :seed 1 :registry registry)))
+                 (getf (getf (result-data result) :failure) :state)))))
+      (let ((state-spec (find-spec 'cl-spec/specs::state-post-evidence-data))
+            (nil-form (state-evidence (getf fixtures :nil-post)))
+            (programmatic (state-evidence (getf fixtures :programmatic))))
+        (testing "a state-post whose only form is NIL is accepted"
+          (let ((evidence (getf nil-form :state-post)))
+            (ok (eq :violation (getf evidence :status)))
+            (ok (eql 0 (getf evidence :index)))
+            (ok (null (getf evidence :form)))
+            (ok (validp state-spec evidence))))
+        (testing "a programmatic predicate without a position is accepted"
+          (let ((evidence (getf programmatic :state-post)))
+            (ok (eq :violation (getf evidence :status)))
+            (ok (null (getf evidence :index)))
+            (ok (null (getf evidence :form)))
+            (ok (validp state-spec evidence))))))))
