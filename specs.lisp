@@ -164,10 +164,12 @@ failing binding and names that binding, its position and its condition type."
 
 Every clause key is present, but an unknown position is NIL rather than a guessed
 integer, and a form whose value is NIL is still the form that was declared.  A
-run that passed or never ran the state-post carries no reason, position, form or
-condition type; a violation carries no condition type; a signalling form carries
-a condition type.  Only a run that reached the state-post may report a position
-or a form, and an unknown position stays NIL.  Unknown keys are allowed."
+run that passed carries no reason, position, form or condition type; a run that
+never reached the state-post has a reason but no position, form or condition
+type; a violation carries no reason or condition type; a signalling form carries
+a condition type and no reason.  Only a run that reached the state-post may
+report a position or a form, and an unknown position stays NIL.  Unknown keys are
+allowed."
   (let ((status (getf evidence :status))
         (reason (getf evidence :reason))
         (case-name (getf evidence :case))
