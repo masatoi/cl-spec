@@ -33,6 +33,7 @@
                 #:function-projection-fixtures
                 #:registration-index-shape-p
                 #:registration-scenario
+                #:registration-scenario-state-p
                 #:registration-scenario-tags-p
                 #:registration-scenario-targets-p
                 #:self-registration-name
@@ -124,6 +125,61 @@ Malformed lists must not enter a law that promises normalization succeeds."
   (if (getf data :definition-digest-complete)
       (and (stringp (getf data :definition-digest)) (null (getf data :digest-omissions)))
       (and (null (getf data :definition-digest)) (consp (getf data :digest-omissions)))))
+
+(defun capture-values-data-p (values)
+  "True when VALUES is a list of (NAME . VALUE) capture entries with symbol names."
+  (and (listp values)
+       (every (lambda (entry) (and (consp entry) (symbolp (car entry)))) values)))
+
+(defun capture-evidence-consistent-p (evidence)
+  "Check a capture report's names, prefix and status against each other.
+
+A completed capture obtained every declared binding; a capture that never ran
+obtained none, and an error obtained exactly the completed prefix and must carry
+the failing binding's name, position and condition type."
+  (let ((status (getf evidence :status))
+        (declared (getf evidence :declared))
+        (values (getf evidence :values))
+        (error (getf evidence :error)))
+    (and (listp declared)
+         (every #'symbolp declared)
+         (capture-values-data-p values)
+         (let ((obtained (mapcar #'car values)))
+           (and (equal obtained (subseq declared 0 (min (length obtained) (length declared))))
+                (or (not (eq status :completed)) (= (length obtained) (length declared)))
+                (or (not (eq status :not-evaluated)) (null obtained))
+                (or (not (eq status :error))
+                    (and (consp error)
+                         (getf error :binding)
+                         (symbolp (getf error :binding))
+                         (eql (length obtained) (getf error :index))
+                         (getf error :condition-type)
+                         (symbolp (getf error :condition-type)))))))))
+
+(defun state-post-evidence-consistent-p (evidence)
+  "Check a state-post report's status against its reason, position and form.
+
+A state-post that never ran names why; a violation names the form position and
+the source form; a signalling form names its condition type as well.  Unknown
+keys stay allowed, but a known field may not be left unconstrained."
+  (let ((status (getf evidence :status))
+        (reason (getf evidence :reason))
+        (case-name (getf evidence :case))
+        (index (getf evidence :index))
+        (form (getf evidence :form))
+        (condition-type (getf evidence :condition-type)))
+    (and (or (null case-name) (keywordp case-name))
+         (or (null index) (and (integerp index) (not (minusp index))))
+         (or (null condition-type) (symbolp condition-type))
+         (case status
+           (:passed t)
+           (:not-evaluated (and reason (keywordp reason)))
+           (:violation (and (integerp index) (not (null form))))
+           (:error (and condition-type
+                        (symbolp condition-type)
+                        (integerp index)
+                        (not (null form))))
+           (t nil)))))
 
 (defun registered-function-spec-p (name)
   "Return true when NAME names a function spec in the current registry."
@@ -620,20 +676,28 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:state-post (list-of t)))))
 
   (defspec capture-evidence-data
-    (plist
-     (:required
-      (:status (member :completed :error :not-evaluated))
-      (:declared (list-of symbol))
-      (:values (nullable (list-of t))))
-     (:optional
-      (:error (nullable
-               (plist (:required (:binding symbol) (:index (range integer 0 *))
-                                 (:condition-type symbol))))))))
+    (and
+     (plist
+      (:required
+       (:status (member :completed :error :not-evaluated))
+       (:declared (list-of symbol))
+       (:values (satisfies capture-values-data-p)))
+      (:optional
+       (:error (nullable
+                (plist (:required (:binding symbol) (:index (range integer 0 *))
+                                  (:condition-type symbol)))))))
+     (satisfies capture-evidence-consistent-p)))
 
   (defspec state-post-evidence-data
-    (plist
-     (:required (:status (member :passed :violation :error :not-evaluated)))
-     (:optional (:reason t) (:case t) (:index t) (:form t) (:condition-type t))))
+    (and
+     (plist
+      (:required (:status (member :passed :violation :error :not-evaluated)))
+      (:optional (:reason t)
+                 (:case (nullable keyword))
+                 (:index (nullable (range integer 0 *)))
+                 (:form t)
+                 (:condition-type (nullable symbol))))
+     (satisfies state-post-evidence-consistent-p)))
 
   (defspec trial-state-evidence-data
     (plist (:optional (:capture capture-evidence-data)
@@ -729,17 +793,19 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
   (defspec-function cl-spec:registry-register-property
     "A property write adds, replaces or refuses without leaking stale index entries.
 
-The declared input domain is the finite scenario set REGISTRATION-SCENARIO
-produces, not every index list: the state-post names the scenario's fixed target
-and tag symbols, so a different valid list is outside this contract rather than a
-counterexample.  Within that domain the expected after-state follows from the
-input and the observed before-state, and every observation is a fresh list from a
-public reader, never a captured registry."
+The declared input domain is the whole finite scenario REGISTRATION-SCENARIO
+builds: the argument values and, through the common :PRE, the registry's initial
+state.  The state-post names the scenario's fixed index symbols, so a registry
+with some other history is outside the contract rather than a counterexample.
+Within that domain every expected after-state is derived from the input and the
+observed before-state, and every observation is a fresh list from a public
+reader, never a captured registry."
     (:args (registry (instance-of cl-spec:hash-table-registry)) (name symbol)
            (property (instance-of cl-spec:property))
            &key ((:targets targets) (satisfies registration-scenario-targets-p))
                 ((:tags tags) (satisfies registration-scenario-tags-p)))
     (:args-generator registry-registration-arguments)
+    (:pre (registration-scenario-state-p registry name targets tags))
     (:capture
      (names-before (cl-spec:registry-list-properties registry))
      (old-definition (nth-value 0 (cl-spec:registry-find-property registry name)))
@@ -764,15 +830,23 @@ public reader, never a captured registry."
       (:signals (type type-error))
       (:state-post
        (null (set-exclusive-or (cl-spec:registry-list-properties registry) names-before))
+       (eq old-definition
+           (nth-value 0 (cl-spec:registry-find-property registry name)))
        (eq sentinel-before
            (nth-value 0 (cl-spec:registry-find-property
                          registry (self-registration-name :sentinel))))
+       (equal shared-target-before
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :shared-target)))
        (equal old-target-before
               (cl-spec:registry-properties-for
                registry (self-registration-name :old-target)))
        (equal new-target-before
               (cl-spec:registry-properties-for
                registry (self-registration-name :new-target)))
+       (equal shared-tag-before
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :shared-tag)))
        (equal old-tag-before
               (cl-spec:registry-properties-with-tag
                registry (self-registration-name :old-tag)))
@@ -787,25 +861,33 @@ public reader, never a captured registry."
       (:state-post
        (= (1+ (length names-before)) (length (cl-spec:registry-list-properties registry)))
        (member name (cl-spec:registry-list-properties registry))
-       (member name
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :new-target)))
-       (member name
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :shared-target)))
-       (member (self-registration-name :sentinel)
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :shared-target)))
-       (null new-target-before)
-       (member name
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :new-tag)))
-       (member name
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :shared-tag)))
-       (member (self-registration-name :sentinel)
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :shared-tag)))
+       ;; The passed definition, not only the return value, is what was stored.
+       (eq property (nth-value 0 (cl-spec:registry-find-property registry name)))
+       ;; Each index gains exactly this name on top of the observed before-set.
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :new-target))
+              (adjoin name new-target-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :new-tag))
+              (adjoin name new-tag-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :shared-target))
+              (adjoin name shared-target-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :shared-tag))
+              (adjoin name shared-tag-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :old-target))
+              old-target-before))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :old-tag))
+              old-tag-before))
        (eq sentinel-before
            (nth-value 0 (cl-spec:registry-find-property
                          registry (self-registration-name :sentinel))))))
@@ -818,28 +900,31 @@ public reader, never a captured registry."
        (= (length names-before) (length (cl-spec:registry-list-properties registry)))
        (null (set-exclusive-or (cl-spec:registry-list-properties registry) names-before))
        (eq property (nth-value 0 (cl-spec:registry-find-property registry name)))
-       (null (cl-spec:registry-properties-for
-              registry (self-registration-name :old-target)))
-       (null (cl-spec:registry-properties-with-tag
-              registry (self-registration-name :old-tag)))
-       (member name
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :new-target)))
-       (member name
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :shared-target)))
-       (member (self-registration-name :sentinel)
-               (cl-spec:registry-properties-for
-                registry (self-registration-name :shared-target)))
-       (member name
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :new-tag)))
-       (member name
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :shared-tag)))
-       (member (self-registration-name :sentinel)
-               (cl-spec:registry-properties-with-tag
-                registry (self-registration-name :shared-tag)))
+       ;; Old indexes lose exactly this name; new and shared indexes gain it.
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :old-target))
+              (remove name old-target-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :old-tag))
+              (remove name old-tag-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :new-target))
+              (adjoin name new-target-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :new-tag))
+              (adjoin name new-tag-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-for
+               registry (self-registration-name :shared-target))
+              (adjoin name shared-target-before)))
+       (null (set-exclusive-or
+              (cl-spec:registry-properties-with-tag
+               registry (self-registration-name :shared-tag))
+              (adjoin name shared-tag-before)))
        (eq sentinel-before
            (nth-value 0 (cl-spec:registry-find-property
                          registry (self-registration-name :sentinel))))))))

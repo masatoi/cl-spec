@@ -19,6 +19,7 @@
                 #:defproperty
                 #:find-function-spec
                 #:find-property
+                #:find-spec
                 #:function-check-result-case-report
                 #:function-spec-argument-schema
                 #:function-spec-data
@@ -29,6 +30,7 @@
                 #:normalize-spec-form
                 #:properties-for
                 #:properties-with-tag
+                #:property-result-rejected
                 #:property-result-status
                 #:property-result-trials
                 #:property-targets
@@ -46,6 +48,8 @@
                 #:*self-state-calls*
                 #:*self-state-scenario*
                 #:function-projection-fixtures
+                #:registration-scenario
+                #:registration-scenario-state-p
                 #:self-registration-name
                 #:state-projection-fixtures)
   (:import-from #:cl-spec/src/backends/check-it))
@@ -292,7 +296,7 @@
       (ok (string= (symbol-name fixture-n) (symbol-name foreign)))
       (ok (not (equal (getf expected :admitted-when) mutated))))))
 
-(deftest registry-contract-declares-its-finite-domain
+(deftest registry-contract-declares-its-whole-scenario
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
     (let* ((contract (find-function-spec 'cl-spec:registry-register-property))
@@ -301,21 +305,69 @@
            (property (make-instance 'cl-spec:property :name subject
                                     :arguments '((x integer))
                                     :function (lambda (x) (declare (ignore x)) t)))
-           (in-domain (list (make-hash-table-registry) subject property
-                            :targets (list (self-registration-name :new-target)
-                                           (self-registration-name :shared-target))
-                            :tags (list (self-registration-name :new-tag)
-                                        (self-registration-name :shared-tag))))
-           (refused-in-domain (list (make-hash-table-registry) subject property
-                                    :targets 42
-                                    :tags (list (self-registration-name :new-tag)
-                                                (self-registration-name :shared-tag))))
-           (outside-domain (list (make-hash-table-registry) subject property
+           (scenario-values (list (make-hash-table-registry) subject property
+                                  :targets (list (self-registration-name :new-target)
+                                                 (self-registration-name :shared-target))
+                                  :tags (list (self-registration-name :new-tag)
+                                              (self-registration-name :shared-tag))))
+           (refused-values (list (make-hash-table-registry) subject property
+                                 :targets 42
+                                 :tags (list (self-registration-name :new-tag)
+                                             (self-registration-name :shared-tag))))
+           (outside-values (list (make-hash-table-registry) subject property
                                  :targets (list 'some-other-target)
                                  :tags (list (self-registration-name :new-tag)
                                              (self-registration-name :shared-tag)))))
-      (testing "the scenario inputs, including the refused one, are in the domain"
-        (ok (validp schema in-domain))
-        (ok (validp schema refused-in-domain)))
-      (testing "a valid but out-of-scenario target list is outside the declared domain"
-        (ok (not (validp schema outside-domain)))))))
+      (testing "the argument schema admits the scenario values, including the refused one"
+        (ok (validp schema scenario-values))
+        (ok (validp schema refused-values)))
+      (testing "an out-of-scenario target value is rejected by the argument schema"
+        (ok (not (validp schema outside-values)))))
+    (testing "the precondition admits the fixture's registry and rejects an unprepared one"
+      (let ((*scripted-registration-scenarios* '(:replace)))
+        (destructuring-bind (registry name property &key targets tags)
+            (registration-scenario)
+          (declare (ignore property))
+          (ok (registration-scenario-state-p registry name targets tags))
+          (ok (not (registration-scenario-state-p (make-hash-table-registry)
+                                                  name targets tags))))))
+    (testing "every scenario runs through the contract to a pass with no rejected trial"
+      (let ((*scripted-registration-scenarios* '(:new :replace :refused-targets :refused-tags)))
+        (let ((result (check-function 'cl-spec:registry-register-property :trials 4 :seed 1)))
+          (ok (eq :passed (property-result-status result)))
+          (ok (zerop (property-result-rejected result))))))))
+
+(deftest diagnostic-evidence-specs-refuse-malformed-records
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((capture-spec (find-spec 'cl-spec/specs::capture-evidence-data))
+          (state-spec (find-spec 'cl-spec/specs::state-post-evidence-data)))
+      (testing "capture values are named pairs and agree with the status"
+        (ok (validp capture-spec '(:status :completed :declared (x)
+                                   :values ((x . 1)) :error nil)))
+        (ok (not (validp capture-spec '(:status :completed :declared (x)
+                                        :values (123) :error nil))))
+        (ok (not (validp capture-spec '(:status :completed :declared (x)
+                                        :values nil :error nil)))))
+      (testing "an uncollected capture has no values; a failed one names the binding"
+        (ok (validp capture-spec '(:status :not-evaluated :declared (x)
+                                   :values nil :error nil)))
+        (ok (not (validp capture-spec '(:status :error :declared (x)
+                                        :values nil :error nil))))
+        (ok (validp capture-spec '(:status :error :declared (x) :values nil
+                                   :error (:binding x :index 0
+                                           :condition-type simple-error)))))
+      (testing "state-post evidence requires the fields its status implies"
+        (ok (not (validp state-spec '(:status :not-evaluated :reason nil :case nil
+                                      :index nil :form nil :condition-type nil))))
+        (ok (validp state-spec '(:status :not-evaluated :reason :not-declared :case nil
+                                 :index nil :form nil :condition-type nil)))
+        (ok (validp state-spec '(:status :violation :reason nil :case nil :index 0
+                                 :form (= x 1) :condition-type nil)))
+        (ok (not (validp state-spec '(:status :violation :reason nil :case nil
+                                      :index nil :form nil :condition-type nil))))
+        (ok (not (validp state-spec '(:status :error :reason nil :case nil :index 0
+                                      :form (= x 1) :condition-type nil)))))
+      (testing "unknown keys stay allowed, as version 1 requires"
+        (ok (validp state-spec '(:status :passed :reason nil :case nil :index nil
+                                 :form nil :condition-type nil :future t)))))))

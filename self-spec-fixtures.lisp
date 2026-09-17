@@ -15,6 +15,9 @@
                 #:defspec-function
                 #:make-hash-table-registry
                 #:property
+                #:registry-find-property
+                #:registry-properties-for
+                #:registry-properties-with-tag
                 #:registry-register-property)
   (:export
    #:*function-projection-expectations*
@@ -27,6 +30,7 @@
    #:index-keys-shape-p
    #:registration-index-shape-p
    #:registration-scenario
+   #:registration-scenario-state-p
    #:registration-scenario-tags-p
    #:registration-scenario-targets-p
    #:self-registration-name
@@ -107,6 +111,44 @@ domain instead of T."
   (or (equal tags "not-a-symbol")
       (equal tags (list (self-registration-name :new-tag)
                         (self-registration-name :shared-tag)))))
+
+(defun registration-scenario-state-p (registry name targets tags)
+  "True when REGISTRY is in exactly the initial state REGISTRATION-SCENARIO builds.
+
+The state contract's expected index keys are the scenario's fixed symbols, so the
+common :PRE has to admit the whole scenario, not only the argument values.  A
+registry that carries the same argument values but some other history is outside
+the contract, not a counterexample to it."
+  (labels ((same-name-set-p (left right)
+             (null (set-exclusive-or left right))))
+    (let* ((subject (self-registration-name :subject))
+           (sentinel (self-registration-name :sentinel))
+           (new-target (self-registration-name :new-target))
+           (old-target (self-registration-name :old-target))
+           (shared-target (self-registration-name :shared-target))
+           (new-tag (self-registration-name :new-tag))
+           (old-tag (self-registration-name :old-tag))
+           (shared-tag (self-registration-name :shared-tag))
+           (subject-present (nth-value 1 (registry-find-property registry subject))))
+      (and (eq name subject)
+           (nth-value 1 (registry-find-property registry sentinel))
+           (same-name-set-p (registry-properties-for registry new-target) nil)
+           (same-name-set-p (registry-properties-for registry old-target)
+                            (when subject-present (list subject)))
+           (same-name-set-p (registry-properties-for registry shared-target)
+                            (if subject-present (list subject sentinel) (list sentinel)))
+           (same-name-set-p (registry-properties-with-tag registry new-tag) nil)
+           (same-name-set-p (registry-properties-with-tag registry old-tag)
+                            (when subject-present (list subject)))
+           (same-name-set-p (registry-properties-with-tag registry shared-tag)
+                            (if subject-present (list subject sentinel) (list sentinel)))
+           ;; The argument values agree with the observed initial state.
+           (if (eql targets 42)
+               subject-present
+               (equal targets (list new-target shared-target)))
+           (if (equal tags "not-a-symbol")
+               subject-present
+               (equal tags (list new-tag shared-tag)))))))
 
 ;;; Test support.  Each special, when bound, replaces a finite random draw with a
 ;;; caller-supplied sequence, so a boundary test can name the exact inputs it runs
