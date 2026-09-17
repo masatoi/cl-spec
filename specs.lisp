@@ -164,21 +164,25 @@ failing binding and names that binding, its position and its condition type."
 
 Every clause key is present, but an unknown position is NIL rather than a guessed
 integer, and a form whose value is NIL is still the form that was declared.  A
-state-post that never ran names why; a violation carries no condition type; a
-signalling form names its condition type.  Unknown keys stay allowed."
+run that passed or never ran the state-post carries no reason, position, form or
+condition type; a violation carries no condition type; a signalling form carries
+a condition type.  Only a run that reached the state-post may report a position
+or a form, and an unknown position stays NIL.  Unknown keys are allowed."
   (let ((status (getf evidence :status))
         (reason (getf evidence :reason))
         (case-name (getf evidence :case))
         (index (getf evidence :index))
+        (form (getf evidence :form))
         (condition-type (getf evidence :condition-type)))
     (and (or (null case-name) (keywordp case-name))
          (or (null index) (and (integerp index) (not (minusp index))))
          (or (null condition-type) (symbolp condition-type))
          (case status
-           (:passed (null reason))
-           (:not-evaluated (and reason (keywordp reason)))
-           (:violation (null condition-type))
-           (:error (and condition-type (symbolp condition-type)))
+           (:passed (and (null reason) (null index) (null form) (null condition-type)))
+           (:not-evaluated (and reason (keywordp reason)
+                                (null index) (null form) (null condition-type)))
+           (:violation (and (null reason) (null condition-type)))
+           (:error (and (null reason) condition-type (symbolp condition-type)))
            (t nil)))))
 
 (defun registered-function-spec-p (name)

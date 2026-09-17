@@ -393,6 +393,20 @@
                                       :form (= x 1) :condition-type nil))))
         (ok (not (validp state-spec '(:status :passed :reason :why :case nil
                                       :index nil :form nil :condition-type nil)))))
+      (testing "a status that never reached the state-post carries no failure data"
+        (ok (not (validp state-spec '(:status :passed :reason nil :case nil
+                                      :index 0 :form (= x 1) :condition-type nil))))
+        (ok (not (validp state-spec '(:status :passed :reason nil :case nil
+                                      :index nil :form nil :condition-type simple-error))))
+        (ok (not (validp state-spec '(:status :not-evaluated :reason :outcome-failed
+                                      :case nil :index 0 :form (= x 1)
+                                      :condition-type simple-error))))
+        (ok (not (validp state-spec '(:status :violation :reason :outcome-failed
+                                      :case nil :index 0 :form (= x 1)
+                                      :condition-type nil))))
+        (ok (not (validp state-spec '(:status :error :reason :outcome-failed
+                                      :case nil :index 0 :form (= x 1)
+                                      :condition-type simple-error)))))
       (testing "unknown keys stay allowed, as version 1 requires"
         (ok (validp state-spec '(:status :passed :reason nil :case nil :index nil
                                  :form nil :condition-type nil :future t)))))))
