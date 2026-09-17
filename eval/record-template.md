@@ -56,12 +56,16 @@ to get wrong.
 
 2. Run the agent in that copy only. Do not run it in the checkout.
 
-3. Judge with the evaluator-owned acceptance check (never with a test the agent
-   could edit):
+3. Judge with the evaluator-owned checks (never with a test the agent could
+   edit): first that no fixed file was modified, then correctness.
 
    ```sh
+   eval/check-integrity.sh registry-stale-index /tmp/task-registry-B
    eval/run-acceptance.sh registry-stale-index /tmp/task-registry-B
    ```
+
+   A passing acceptance with an integrity violation is a rule violation, not a
+   successful repair; record it under `integrity`.
 
 4. Fill one record from `record-template.json`, then remove the work copy.
 

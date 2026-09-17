@@ -31,17 +31,19 @@ For every task and every target it builds a disposable source snapshot, runs the
 correct baseline and the faulty copy in separate fresh Lisp processes, and
 requires all four of:
 
-1. baseline self-spec target passes,
-2. baseline acceptance passes,
-3. faulty self-spec target does not pass,
-4. faulty acceptance fails.
+1. baseline self-spec target reports `status=:passed`,
+2. baseline acceptance prints `ACCEPTANCE-RESULT <task> PASS` and exits 0,
+3. faulty self-spec target reports the task's expected `status`, `reason` and
+   `phase` (recorded as `expected_fault_status`/`_reason`/`_phase` in the task's
+   `manifest.json`),
+4. faulty acceptance prints `ACCEPTANCE-RESULT <task> FAIL` and exits 1.
 
-A load failure, a missing dependency, a timeout or an unrelated exception
-produces no `DETECT-RESULT` line and fails the corresponding step; it is never
-counted as a detection. Expected per-fault results are recorded in each
-`manifest.json` (`:state-postcondition` for the registry contract,
-`:predicate-false` for the properties). The script exits `0` only when every
-case matched, and removes every temporary copy on exit.
+The driver compares the record fields, not just the exit code: a load failure, a
+missing dependency, an unrelated exception or a record that does not match the
+expectation is a harness failure, never a detection. Each process runs under
+`timeout` (`PROCESS_TIMEOUT`, default 900s) and a timeout is reported as its own
+failure. The script exits `0` only when every case matched, and removes every
+temporary copy on exit.
 
 Individual runs:
 
@@ -60,6 +62,7 @@ checkout, not to the snapshot, and the fault is invisible.
 
 ```sh
 eval/make-workcopy.sh registry-stale-index B /tmp/task-registry-B
+eval/check-integrity.sh registry-stale-index /tmp/task-registry-B
 eval/run-acceptance.sh registry-stale-index /tmp/task-registry-B
 ```
 
@@ -79,6 +82,11 @@ The acceptance checks under `eval/acceptance-*.lisp` are independent of
 a candidate cannot pass by weakening a self-specification or by editing a test.
 They load `cl-spec/check-it` but not `cl-spec/specs`, so they run in both
 conditions.
+
+`check-integrity.sh` compares the fixed files still present in a work copy
+against the manifest hashes. A candidate that changed a fixed file is an
+integrity violation even when acceptance passes; record the result as a rule
+violation, not as a successful repair.
 
 ### Unresolved comparison asymmetry
 
