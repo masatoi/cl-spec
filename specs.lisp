@@ -37,6 +37,7 @@
                 #:registration-scenario-tags-p
                 #:registration-scenario-targets-p
                 #:self-registration-name
+                #:self-state-observed-target
                 #:*self-state-balance*
                 #:*self-state-calls*
                 #:*self-state-scenario*
@@ -234,7 +235,9 @@ allowed."
     validate-cases-classify-admitted-and-refused
     registration-replacement-preserves-unrelated-indexes
     function-spec-projection-retains-declared-state
-    result-projection-retains-state-evidence))
+    result-projection-retains-state-evidence
+    one-shot-check-reuses-the-single-trial-classifier
+    one-shot-check-observes-a-named-case-and-state-once))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -1581,6 +1584,96 @@ reader, never a captured registry."
                    (and (cl-spec:validp result-spec violation-data)
                         (cl-spec:validp result-spec capture-data)
                         (cl-spec:validp result-spec selection-data)))))))))))
+  (defproperty one-shot-check-reuses-the-single-trial-classifier ()
+    "CHECK-CALL classifies one concrete invocation with the shared trial path."
+    (:about cl-spec:check-call cl-spec:call-check-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    ;; Anonymous contracts are accepted directly as designators, so the law
+    ;; needs no registration and cannot collide with another definition.
+    (let* ((passing-contract
+             (make-instance 'cl-spec:function-spec :name 'list
+                            :argument-specs '((x integer))
+                            :return-spec 'list
+                            :postconditions '((equal result (list x)))
+                            :postcondition-function (lambda (result x)
+                                                      (equal result (list x)))))
+           (failing-contract
+             (make-instance 'cl-spec:function-spec :name 'list
+                            :argument-specs '((x integer))
+                            :return-spec 'string))
+           (refusing-contract
+             (make-instance 'cl-spec:function-spec :name 'list
+                            :argument-specs '((x integer))
+                            :return-spec 'list
+                            :preconditions '((> x 100))
+                            :precondition-function (lambda (x) (> x 100))))
+           (passing (cl-spec:check-call passing-contract (list 5)))
+           (failing (cl-spec:check-call failing-contract (list 5)))
+           (rejected (cl-spec:check-call refusing-contract (list 5)))
+           (data (cl-spec:call-check-data passing)))
+      (and (eq :passed (cl-spec:call-check-result-status passing))
+           (equal '(5) (cl-spec:trial-observation-value
+                        (cl-spec:call-check-result-observation passing)))
+           (equal '(5) (cl-spec:call-check-result-arguments passing))
+           (eq :result (getf data :record-kind))
+           (eq :function-spec (getf data :entity-kind))
+           (eq :passed (getf data :status))
+           (equal '(5) (getf data :arguments))
+           (eq :passed (getf (getf data :observation) :status))
+           (member (getf data :definition-digest-complete) '(t nil))
+           (eq :failed (cl-spec:call-check-result-status failing))
+           (eq :return-spec (cl-spec:trial-observation-reason
+                             (cl-spec:call-check-result-observation failing)))
+           (eq :rejected (cl-spec:call-check-result-status rejected))
+           (null (cl-spec:trial-observation-reason
+                  (cl-spec:call-check-result-observation rejected))))))
+  (defproperty one-shot-check-observes-a-named-case-and-state-once
+      ((amount (range integer 1 10)))
+    "CHECK-CALL selects one case and checks captured state after one call."
+    (:about cl-spec:check-call cl-spec:call-check-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      ;; The target is the counting fixture; the contract is declared here so
+      ;; the law reads a named case and a state-post it wrote itself.
+      (cl-spec:defspec-function self-state-observed-target
+        (:args (amount (range integer 1 10)))
+        (:capture (before *self-state-balance*))
+        (:cases
+         (:observed
+          (:when (>= amount 1))
+          (:returns integer)
+          (:post (= result amount))
+          (:state-post (= *self-state-balance* (- before amount))))))
+      (let ((*self-state-balance* 30)
+            (*self-state-calls* 0)
+            (*self-state-scenario* :correct))
+        (let* ((passing (cl-spec:check-call 'self-state-observed-target (list amount)))
+               (observation (cl-spec:call-check-result-observation passing))
+               (state (cl-spec:trial-observation-state observation)))
+          (and (eq :passed (cl-spec:call-check-result-status passing))
+               (eq :observed (cl-spec:trial-observation-case observation))
+               (= 1 *self-state-calls*)
+               (eq :completed (getf (getf state :capture) :status))
+               (eq :passed (getf (getf state :state-post) :status))
+               (let ((*self-state-balance* 30)
+                     (*self-state-calls* 0)
+                     (*self-state-scenario* :forget))
+                 (let* ((failing (cl-spec:check-call 'self-state-observed-target
+                                                     (list amount)))
+                        (failing-observation (cl-spec:call-check-result-observation failing))
+                        (failing-state (cl-spec:trial-observation-state failing-observation))
+                        (data (cl-spec:call-check-data failing)))
+                   (and (eq :failed (cl-spec:call-check-result-status failing))
+                        (eq :state-post (cl-spec:call-check-result-failure-phase failing))
+                        (eq :state-postcondition (cl-spec:trial-observation-reason
+                                                  failing-observation))
+                        (eq :violation (getf (getf failing-state :state-post) :status))
+                        (= 1 *self-state-calls*)
+                        (eq :failed (getf data :status))
+                        (eq :state-post (getf data :failure-phase))
+                        (eq :failed (getf (getf data :observation) :status))))))))))
   (values (contract-names) (property-names)))
 
 (register-specifications)
