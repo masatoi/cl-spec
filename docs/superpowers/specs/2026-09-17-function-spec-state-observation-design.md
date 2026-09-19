@@ -336,8 +336,12 @@ self-contained atoms (numbers, characters, symbols) as themselves. A capture
 value that is, or contains at any depth, an object outside that range -- a CLOS
 instance, structure, hash table, function and the like -- is reported **whole**
 as `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
-where `TYPE` names the object that could not be projected, and claims no
-`:value`. Reporting only the outer copy would leave a live reference to the
+where `TYPE` is ordinary data describing the object that could not be projected,
+and claims no `:value`. A named class or type is its name symbol; an instance of
+an anonymous CLOS class, whose `type-of` may legally return the live class
+object, is `(:kind :anonymous-class :metaclass NAME)`, so the record never
+carries a class object. Reporting only the outer copy would leave a live
+reference to the
 inner object inside "frozen" evidence, so a later change to that object would be
 visible through the diagnostic; the whole-value record prevents that. The walk
 is bounded by the value's own structure and visits cycles and sharing once.

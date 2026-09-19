@@ -484,6 +484,9 @@ shape for every kind."
              :documentation "Ordered per-binding records completed before the failure.
 Each record is (:name NAME :availability :collected :value VALUE) or
 (:name NAME :availability :unavailable :reason :opaque-value :type TYPE).
+TYPE is ordinary data -- a named type symbol, or
+(:kind :anonymous-class :metaclass NAME) for a class with no name -- never a
+live class object.
 Only the bindings that finished are present; a later binding is never shown as
 obtained, and a captured NIL is a :collected record with a NIL value rather
 than an absence.  A value the diagnostic projection cannot preserve, or that

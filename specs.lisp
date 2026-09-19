@@ -128,24 +128,53 @@ Malformed lists must not enter a law that promises normalization succeeds."
       (and (stringp (getf data :definition-digest)) (null (getf data :digest-omissions)))
       (and (null (getf data :definition-digest)) (consp (getf data :digest-omissions)))))
 
+(defun plist-key-present-p (plist key)
+  "True when KEY is an indicator of PLIST, even when its value is NIL.
+
+MEMBER is wrong for this question: it also matches KEY in a value position, so
+a record with no :VALUE key could pass merely because some field's value is
+:VALUE.  GET-PROPERTIES reports the indicator itself (its first value), which
+distinguishes an absent key from one whose value is NIL."
+  (multiple-value-bind (indicator value) (get-properties plist (list key))
+    (declare (ignore value))
+    (not (null indicator))))
+
+(defun diagnostic-type-data-p (value)
+  "True for the ordinary-data domain of a capture record's :TYPE.
+
+A named type is a symbol.  An anonymous CLOS class is described by the plist
+\(:kind :anonymous-class :metaclass SYMBOL), which never carries the live class
+object TYPE-OF may return for an unnamed class."
+  (or (symbolp value)
+      (and (finite-list-p value)
+           (evenp (length value))
+           (eq :anonymous-class (getf value :kind))
+           (plist-key-present-p value :metaclass)
+           (symbolp (getf value :metaclass)))))
+
 (defun capture-value-record-p (record)
   "True for one explicit capture-availability record.
 
-A :COLLECTED record carries the application value under :VALUE, which may be
-any Lisp value at all -- including a plist equal to this framework's own
-unavailability metadata.  An :UNAVAILABLE record carries a keyword :REASON and
-a symbol :TYPE and claims no :VALUE.  The two are told apart by :AVAILABILITY,
-never by the shape of a value."
+The union is enforced by plist key presence, never by searching values:
+:VALUE counts only when it is an indicator, so a record whose :VALUE appears
+solely as another field's value is malformed.  :NAME and :AVAILABILITY are
+always required.  :COLLECTED requires :VALUE (NIL is a value) and forbids
+:REASON and :TYPE.  :UNAVAILABLE forbids :VALUE and requires a keyword :REASON
+and a diagnostic :TYPE in DIAGNOSTIC-TYPE-DATA-P's domain."
   (and (finite-list-p record)
        (evenp (length record))
+       (plist-key-present-p record :name)
        (symbolp (getf record :name))
+       (plist-key-present-p record :availability)
        (case (getf record :availability)
-         (:collected (and (member :value record)
-                          (null (getf record :reason))
-                          (null (getf record :type))))
-         (:unavailable (and (not (member :value record))
+         (:collected (and (plist-key-present-p record :value)
+                          (not (plist-key-present-p record :reason))
+                          (not (plist-key-present-p record :type))))
+         (:unavailable (and (not (plist-key-present-p record :value))
+                            (plist-key-present-p record :reason)
                             (keywordp (getf record :reason))
-                            (symbolp (getf record :type))))
+                            (plist-key-present-p record :type)
+                            (diagnostic-type-data-p (getf record :type))))
          (t nil))))
 
 (defun capture-values-data-p (values)
@@ -704,12 +733,18 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:post-value-variables (or (member :primary) (list-of symbol)))
       (:state-post (list-of t)))))
 
+  (defspec capture-diagnostic-type-data
+    (or symbol
+        (plist (:required (:kind (member :anonymous-class))
+                          (:metaclass symbol)))))
+
   (defspec capture-value-record-data
     (and
      (plist
       (:required (:name symbol)
                  (:availability (member :collected :unavailable)))
-      (:optional (:value t) (:reason keyword) (:type symbol)))
+      (:optional (:value t) (:reason keyword)
+                 (:type capture-diagnostic-type-data)))
      (satisfies capture-value-record-p)))
 
   (defspec capture-evidence-data
@@ -807,6 +842,7 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:record-kinds (list-of keyword))
       (:capture-value-states (list-of keyword))
       (:capture-value-keys (list-of keyword))
+      (:capture-value-type-forms (list-of keyword))
       (:digest-algorithm (member :fnv1a64-v1))
       (:digest-covers (member :declaration-and-registered-dependencies))
       (:digest-excludes (list-of keyword))

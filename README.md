@@ -442,7 +442,11 @@ unavailable shape itself — and stays `:collected`; `:value` is application dat
 and appears only for `:collected`, where a captured `NIL` is
 `(:name NAME :availability :collected :value nil)`. A value the evidence
 snapshot cannot preserve is reported `:unavailable` and claims no value rather
-than exposing a live reference. This tagged representation is schema version 1;
+than exposing a live reference. Its `:type` is ordinary data: a named type
+symbol such as `account` or `hash-table`, or
+`(:kind :anonymous-class :metaclass standard-class)` for a CLOS class with no
+name, so no live class object ever enters the record. This tagged
+representation is schema version 1;
 the earlier raw `((name . value) ...)` alist was a pre-release implementation
 shape, never a published v1 contract. `check-function` runs
 such a contract, but this version does not

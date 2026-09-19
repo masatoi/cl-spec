@@ -47,6 +47,8 @@
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property-runner
                 #:observation-data)
+  (:import-from #:cl-spec/specs
+                #:register-specifications)
   (:import-from #:cl-spec/src/instrument
                 #:instrument-function #:instrumented-function-p
                 #:unsupported-instrumentation-target
@@ -228,6 +230,34 @@ checks after the call that the observed values moved the way it requires."
 An unavailable record claims no value, so this returns NIL there too; callers
 that care must read :AVAILABILITY rather than the value's shape."
   (getf (capture-record name values) :value))
+
+(defun record-key-present-p (record key)
+  "True when KEY is an indicator of RECORD, even when its value is NIL.
+
+Mirrors the production key-presence rule: MEMBER would also match KEY in a
+value position, so it cannot answer this question.  GET-PROPERTIES returns the
+indicator first, then its value."
+  (multiple-value-bind (indicator value) (get-properties record (list key))
+    (declare (ignore value))
+    (not (null indicator))))
+
+(defun live-class-object-reachable-p (value)
+  "True when a live class object is reachable from VALUE."
+  (let ((seen (make-hash-table :test #'eq)))
+    (labels ((walk (item)
+               (cond
+                 ((typep item 'class) t)
+                 ((consp item)
+                  (unless (gethash item seen)
+                    (setf (gethash item seen) t)
+                    (or (walk (car item)) (walk (cdr item)))))
+                 ((arrayp item)
+                  (unless (gethash item seen)
+                    (setf (gethash item seen) t)
+                    (dotimes (index (array-total-size item))
+                      (when (walk (row-major-aref item index)) (return t)))))
+                 (t nil))))
+      (walk value))))
 
 (defun report-case (report name)
   "Return the :CASES entry of REPORT for NAME."
@@ -978,7 +1008,7 @@ that care must read :AVAILABILITY rather than the value's shape."
           (ok (equal '(:name box :availability :unavailable
                        :reason :opaque-value :type opaque-box)
                      record))
-          (ok (not (member :value record))))))))
+          (ok (not (record-key-present-p record :value))))))))
 
 (deftest a-nested-opaque-capture-value-is-also-unprojectable
   (with-fresh-registry
@@ -1007,8 +1037,8 @@ that care must read :AVAILABILITY rather than the value's shape."
           (ok vector-entry)
           (ok (equal list-placeholder list-entry))
           (ok (equal vector-placeholder vector-entry))
-          (ok (not (member :value list-entry)))
-          (ok (not (member :value vector-entry))))
+          (ok (not (record-key-present-p list-entry :value)))
+          (ok (not (record-key-present-p vector-entry :value))))
         (testing "no live reference remains, so a later change is not visible"
           (ok (not (eq *probe-object* list-entry)))
           (ok (eq 10 (probe-value *probe-object*)))
@@ -1411,7 +1441,7 @@ force a recorded failure observation so the evidence can be read."
             (ok (eq :opaque-value (getf record :reason)))
             (ok (eq 'opaque-box (getf record :type))))
           (testing "no application value is claimed or leaked"
-            (ok (not (member :value record)))
+            (ok (not (record-key-present-p record :value)))
             (ok (not (typep (getf record :value) 'opaque-box)))))))))
 
 (deftest an-opaque-structure-capture-is-unavailable-with-no-value
@@ -1425,7 +1455,7 @@ force a recorded failure observation so the evidence can be read."
           (ok (eq :unavailable (getf record :availability)))
           (ok (eq :opaque-value (getf record :reason)))
           (ok (eq 'account (getf record :type)))
-          (ok (not (member :value record)))
+          (ok (not (record-key-present-p record :value)))
           (ok (not (typep (getf record :value) 'account))))))))
 
 (deftest an-opaque-hash-table-capture-is-unavailable-with-no-value
@@ -1439,7 +1469,7 @@ force a recorded failure observation so the evidence can be read."
           (ok (eq :unavailable (getf record :availability)))
           (ok (eq :opaque-value (getf record :reason)))
           (ok (eq 'hash-table (getf record :type)))
-          (ok (not (member :value record)))
+          (ok (not (record-key-present-p record :value)))
           (ok (not (hash-table-p (getf record :value)))))))))
 
 (deftest several-captures-keep-declaration-order-and-names
@@ -1545,3 +1575,84 @@ force a recorded failure observation so the evidence can be read."
           (testing "even the historical marker shape is not what makes this unavailable"
             (ok (not (equal '(:unavailable :reason :opaque-value :type :hash-table)
                             record)))))))))
+
+;;; H. Anonymous-class diagnostic type metadata
+;;;
+;;; TYPE-OF may return the live class object for an instance of an anonymous
+;;; CLOS class.  The evidence projection must never publish it.
+
+(defun make-anonymous-class-instance ()
+  "Return a fresh instance of an anonymous CLOS class, or NIL when unsupported.
+
+Building an unnamed class is an AMOP operation rather than ANSI CL, so it is
+isolated here; the producer API and its public contract stay portable."
+  (handler-case
+      (let ((class (make-instance 'standard-class)))
+        (make-instance class))
+    (error () nil)))
+
+(deftest an-anonymous-class-capture-does-not-leak-its-class-object
+  (with-fresh-registry
+    (with-live-generator (g12-args)
+      (let ((instance (make-anonymous-class-instance)))
+        (if (null instance)
+            (testing "anonymous-class construction unsupported; producer is unaffected"
+              (ok t))
+            (with-capture-contract (g12-target g12-args (anonymous instance))
+              (reset-counters)
+              (let* ((result (run-scenario :name 'g12-target :scenario :correct))
+                     (state (observation-state result))
+                     (record (capture-record 'anonymous (capture-records state)))
+                     (type (getf record :type)))
+                (testing "the anonymous instance is unavailable and claims no value"
+                  (ok (eq :unavailable (getf record :availability)))
+                  (ok (eq :opaque-value (getf record :reason)))
+                  (ok (not (record-key-present-p record :value))))
+                (testing "the diagnostic type is ordinary data naming the metaclass"
+                  (ok (not (typep type 'class)))
+                  (ok (or (symbolp type)
+                          (and (eq :anonymous-class (getf type :kind))
+                               (symbolp (getf type :metaclass))))))
+                (testing "no live class object reaches the record or the result"
+                  (ok (not (live-class-object-reachable-p record)))
+                  (ok (not (live-class-object-reachable-p state)))
+                  (ok (not (live-class-object-reachable-p (result-data result)))))
+                (testing "OBSERVATION-DATA and RESULT-DATA preserve the record"
+                  (let ((projected (observation-data (failing-evidence result)))
+                        (public (result-data result)))
+                    (ok (equal record
+                               (capture-record
+                                'anonymous
+                                (capture-records (getf projected :state)))))
+                    (ok (equal record
+                               (capture-record
+                                'anonymous
+                                (capture-records
+                                 (getf (getf public :failure) :state)))))))
+                (testing "the produced record satisfies the public self-spec"
+                  (register-specifications)
+                  (ok (cl-spec:validp
+                       (cl-spec:find-spec
+                        'cl-spec/specs::capture-value-record-data)
+                       record))))))))))
+
+(deftest every-produced-capture-record-satisfies-the-public-self-spec
+  (with-fresh-registry
+    (with-live-generator (g13-args)
+      (with-capture-contract (g13-target g13-args
+                            (integer-value 100)
+                            (nil-value nil)
+                            (list-value (list 1 2 3))
+                            (box (make-instance 'opaque-box)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g13-target :scenario :correct))
+               (records (capture-records (observation-state result))))
+          (register-specifications)
+          (let ((spec (cl-spec:find-spec
+                       'cl-spec/specs::capture-value-record-data)))
+            (testing "collected and unavailable producer records all validate"
+              (ok (= 4 (length records)))
+              (ok (every (lambda (record) (cl-spec:validp spec record)) records))
+              (ok (equal '(:collected :collected :collected :unavailable)
+                         (mapcar (lambda (record) (getf record :availability))
+                                 records))))))))))

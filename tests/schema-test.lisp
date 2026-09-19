@@ -27,7 +27,10 @@
       (ok (member :availability (getf info :capture-value-keys)))
       (ok (member :value (getf info :capture-value-keys)))
       (ok (member :reason (getf info :capture-value-keys)))
-      (ok (member :type (getf info :capture-value-keys))))))
+      (ok (member :type (getf info :capture-value-keys))))
+    (testing "the diagnostic type forms are named"
+      (ok (equal '(:named :anonymous-class)
+                 (getf info :capture-value-type-forms))))))
 
 (deftest result-records-carry-the-version-1-envelope
   (let ((*registry* (make-hash-table-registry)))

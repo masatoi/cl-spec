@@ -64,7 +64,10 @@ where :AVAILABILITY is framework metadata and :VALUE is application data.
 :VALUE appears only when availability is :COLLECTED, so a legal application
 value that happens to look like the unavailable plist is still collected.
 :CAPTURE-VALUE-STATES names the :AVAILABILITY values and :CAPTURE-VALUE-KEYS
-the record keys."
+the record keys.  An :UNAVAILABLE record's :TYPE is ordinary data:
+:CAPTURE-VALUE-TYPE-FORMS names its forms -- a named type is a symbol, and an
+anonymous CLOS class is (:kind :anonymous-class :metaclass NAME) -- so a live
+class object never enters the record."
   (list :schema-version 1 :format :lisp-plist :unknown-keys :ignore
         :required-metadata
         '(:schema-version :record-kind :entity-kind :definition-digest
@@ -76,6 +79,7 @@ the record keys."
         :record-kinds '(:definition :result)
         :capture-value-states '(:collected :unavailable)
         :capture-value-keys '(:name :availability :value :reason :type)
+        :capture-value-type-forms '(:named :anonymous-class)
         :digest-algorithm :fnv1a64-v1
         :digest-covers :declaration-and-registered-dependencies
         :digest-excludes (digest-exclusions)

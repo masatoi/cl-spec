@@ -454,7 +454,7 @@ returns one value yields an unknown position rather than a guessed one."
       (values nil nil nil condition))))
 
 (defun unprojectable-diagnostic-leaf (value)
-  "Return the TYPE of an opaque value reachable from VALUE, or NIL when none.
+  "Return an opaque object reachable from VALUE, or NIL when none.
 
 The evidence snapshot copies conses and arrays and keeps other objects by
 identity.  A reachable object it does not copy and that is not a self-contained
@@ -463,7 +463,8 @@ reporting a copy of the outer structure would still carry a live reference to th
 inner object, so a later change to that object would be visible through
 \"saved\" diagnostics.  Cycles and shared structure are visited once.  This
 defines the diagnostic projection's supported range; it is not a statement about
-the object and adds no copy support."
+the object and adds no copy support.  The returned object is not published; the
+caller projects its diagnostic type through DIAGNOSTIC-TYPE-DATA."
   (let ((seen (make-hash-table :test #'eq))
         (pending (list value)))
     (loop while pending
@@ -479,8 +480,29 @@ the object and adds no copy support."
                 (dotimes (index (array-total-size item))
                   (push (row-major-aref item index) pending)))
                ((or (numberp item) (characterp item) (symbolp item)))
-               (t (return-from unprojectable-diagnostic-leaf (type-of item)))))
+               (t (return-from unprojectable-diagnostic-leaf item))))
     nil))
+
+(defun diagnostic-type-data (object)
+  "Return stable ordinary data describing OBJECT's diagnostic type.
+
+A named type -- a CLOS, structure or condition class name, or a built-in type
+such as HASH-TABLE or COMPILED-FUNCTION -- is reported as its name symbol, so
+the common cases stay readable.  An object whose class has no name (an
+anonymous CLOS class) has no such symbol, and TYPE-OF may legally return the
+live class object itself; that is reported as
+\(:KIND :ANONYMOUS-CLASS :METACLASS NAME), where NAME is the metaclass's name
+\(or :ANONYMOUS-CLASS when even the metaclass is unnamed), so no class object is
+embedded in historical evidence.  Any other type specifier degrades to :UNKNOWN
+rather than carrying an implementation object.  The result is always ordinary
+data: a symbol or a two-key plist."
+  (let ((type (type-of object)))
+    (cond
+      ((symbolp type) type)
+      ((typep type 'class)
+       (list :kind :anonymous-class
+             :metaclass (or (class-name (class-of type)) :anonymous-class)))
+      (t :unknown))))
 
 (defun capture-value-data (value)
   "Return VALUE as an explicit availability record for capture evidence.
@@ -493,7 +515,10 @@ where SNAPSHOT is the application value projected as historical evidence, or
 
   (:availability :unavailable :reason :opaque-value :type TYPE)
 
-where TYPE names the reachable object the snapshot cannot freeze.
+where TYPE is ordinary data describing the reachable object the snapshot cannot
+freeze: a named type symbol, or (:kind :anonymous-class :metaclass NAME) for an
+anonymous CLOS class whose TYPE-OF is the live class object.  No class object or
+other live application object is ever published as the TYPE.
 
 The diagnostic projection supports conses, arrays and self-contained atoms
 \(numbers, characters, symbols); the existing evidence snapshot copies the first
@@ -510,7 +535,8 @@ of :VALUE.  This is a report projection, not a deep copy and not a new snapshot;
 the evaluation path keeps the original value."
   (let ((unprojectable (unprojectable-diagnostic-leaf value)))
     (if unprojectable
-        (list :availability :unavailable :reason :opaque-value :type unprojectable)
+        (list :availability :unavailable :reason :opaque-value
+              :type (diagnostic-type-data unprojectable))
         (list :availability :collected :value (snapshot-value value)))))
 
 (defun project-capture-values (contract captured)

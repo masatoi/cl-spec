@@ -267,8 +267,12 @@ supported diagnostic range is conses, arrays and self-contained atoms (numbers,
 characters, symbols). A capture value that is, **or contains at any depth**, an
 object outside that range — a CLOS instance, structure, hash table, function — is
 reported **whole** as `(:name NAME :availability :unavailable :reason
-:opaque-value :type TYPE)`, where `TYPE` names the object that could not be
-projected, and no `:value` is claimed. Reporting only the outer copy would leave
+:opaque-value :type TYPE)`, where `TYPE` is ordinary data describing the object
+that could not be projected, and no `:value` is claimed. A named class or type is
+its name symbol (`account`, `hash-table`); an instance of an anonymous CLOS class
+— whose `type-of` may legally return the live class object — is
+`(:kind :anonymous-class :metaclass standard-class)`, so the record never carries
+a class object. Reporting only the outer copy would leave
 a live reference to the inner object inside "frozen" evidence, so a later change
 to that object would be visible through the diagnostic. The evaluation path still
 passes the original value to later capture forms, guards and predicates; this is
