@@ -170,6 +170,17 @@
       (list (invalid-call-arguments-reason condition)
             (invalid-call-arguments-errors condition)))))
 
+(defun standard-error-datum-p (datum)
+  "True when DATUM carries the EXPLAIN-DATA keys an agent reads uniformly.
+
+Every refusal, including a shape refusal for a non-list or a vector, has to
+support the same GETF calls as an ordinary argument-spec error."
+  (and (consp datum)
+       (member :kind datum)
+       (member :path datum)
+       (member :actual datum)
+       (member :expected datum)))
+
 (defun observation (result)
   (call-check-result-observation result))
 
@@ -312,12 +323,71 @@
         (ok (zerop *calls*))))
     (testing "a non-list is a shape refusal and calls no target"
       (reset-counters)
-      (ok (eq :shape (first (refusal (lambda () (check-call 'dyad-target 1))))))
+      (let ((refusal (refusal (lambda () (check-call 'dyad-target 1)))))
+        (ok (eq :shape (first refusal)))
+        (testing "the shape error is a standard EXPLAIN-DATA datum"
+          (ok (standard-error-datum-p (first (second refusal))))))
       (ok (zerop *calls*)))
     (testing "a vector of the right length is still not a call list"
       (reset-counters)
       (ok (eq :shape (first (refusal (lambda () (check-call 'dyad-target (vector 1 2)))))))
+      (ok (zerop *calls*)))
+    (testing "a dotted list is a shape refusal"
+      (reset-counters)
+      (ok (eq :shape (first (refusal (lambda () (check-call 'dyad-target (cons 1 2)))))))
+      (ok (zerop *calls*)))
+    (testing "a circular list is a shape refusal, not a hang"
+      (reset-counters)
+      (let ((circular (list 1)))
+        (setf (cdr circular) circular)
+        (let ((refusal (refusal (lambda () (check-call 'dyad-target circular)))))
+          (ok (eq :shape (first refusal)))
+          (ok (standard-error-datum-p (first (second refusal))))))
       (ok (zerop *calls*)))))
+
+(deftest a-composite-argument-spec-failure-is-an-argument-spec-refusal
+  ;; The call shape is valid in every case below; the same error kinds an
+  ;; argument value can produce must not be read as a malformed call.
+  (testing "a tuple of the wrong length"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x (tuple integer integer)))
+        (:returns t))
+      (reset-counters)
+      (let ((refusal (refusal (lambda () (check-call 'unary-target (list '(1)))))))
+        (ok (eq :argument-spec (first refusal)))
+        (ok (standard-error-datum-p (first (second refusal))))
+        (ok (zerop *calls*)))))
+  (testing "a value that is not a list at all"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x (list-of integer)))
+        (:returns t))
+      (reset-counters)
+      (let ((refusal (refusal (lambda () (check-call 'unary-target (list 5))))))
+        (ok (eq :argument-spec (first refusal)))
+        (ok (eql :not-a-list (getf (first (second refusal)) :kind)))
+        (ok (zerop *calls*)))))
+  (testing "a value that is not a sequence for a tuple"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x (tuple integer integer)))
+        (:returns t))
+      (reset-counters)
+      (let ((refusal (refusal (lambda () (check-call 'unary-target (list 5))))))
+        (ok (eq :argument-spec (first refusal)))
+        (ok (eql :not-a-sequence (getf (first (second refusal)) :kind)))
+        (ok (zerop *calls*)))))
+  (testing "an unknown key inside a closed plist argument"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x (plist (:required (:id integer)) (:closed t))))
+        (:returns t))
+      (reset-counters)
+      (let ((refusal (refusal (lambda () (check-call 'unary-target (list '(:id 1 :extra 2)))))))
+        (ok (eq :argument-spec (first refusal)))
+        (ok (eql :unknown-key (getf (first (second refusal)) :kind)))
+        (ok (zerop *calls*))))))
 
 (deftest an-argument-outside-its-declared-spec-is-refused-before-the-target
   (with-fresh-registry
@@ -710,6 +780,36 @@
         (ok (eq :rejected (call-check-result-status result)))
         (ok (null (trial-observation-reason (observation result))))
         (ok (null (trial-observation-signature (observation result))))
+        (ok (zerop *calls*))))))
+
+(deftest structurally-broken-contract-code-propagates
+  ;; The shared single-trial path excludes UNDEFINED-FUNCTION and PROGRAM-ERROR
+  ;; from its contract-error classifier, so a mistyped or mis-called predicate
+  ;; is never reported as a target finding.  CHECK-CALL inherits that behavior
+  ;; rather than converting it into a result.
+  (testing "an undefined helper in :pre propagates"
+    (with-fresh-registry
+      (cl-spec:defspec-function dyad-target
+        (:args (a integer) (b integer))
+        (:pre (funcall 'check-call-undefined-helper-xyz a))
+        (:returns integer))
+      (reset-counters)
+      (setf *scenario* :sum)
+      (signals (check-call 'dyad-target (list 1 2)) 'undefined-function)
+      (ok (zerop *calls*))))
+  (testing "a mis-called precondition predicate propagates"
+    (with-fresh-registry
+      (let ((contract (make-instance 'cl-spec:function-spec
+                                     :name 'dyad-target
+                                     :argument-specs '((a integer) (b integer))
+                                     :return-spec 'integer
+                                     :preconditions '((broken-pre a b))
+                                     :precondition-function (lambda (a)
+                                                              (declare (ignore a))
+                                                              t))))
+        (reset-counters)
+        (setf *scenario* :sum)
+        (signals (check-call contract (list 1 2)) 'program-error)
         (ok (zerop *calls*))))))
 
 (deftest a-contract-object-is-an-accepted-designator

@@ -43,6 +43,7 @@
                 #:normalize-return-declaration #:return-values-spec #:call-declaration-variables
                 #:normalize-call-declarations #:call-layout-required-only-p
                 #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
+                #:call-layout-shape-error
                 #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
                 #:call-arguments-spec)
   (:import-from #:cl-spec/src/call-validation)
@@ -1909,54 +1910,33 @@ not the initial object state, which the author must build."
 
 ;;; One concrete caller-supplied invocation (no generation).
 
-(defparameter *call-shape-error-kinds*
-  '(:not-a-list :not-a-sequence :wrong-length :odd-keyword-arguments
-    :non-keyword-argument :unknown-key)
-  "EXPLAIN-DATA error kinds that describe a call's shape rather than a value.
-
-Used to say why CHECK-CALL refused a raw argument list: a shape refusal is about
-arity or keyword syntax, while any other kind is a present argument that missed
-the spec the contract declares for it.  The list is deliberately closed, so an
-unrecognized kind is reported as :ARGUMENT-SPEC -- the reading that says a value
-was refused rather than the call's layout.")
-
-(defun call-argument-refusal-reason (errors)
-  "Return :SHAPE or :ARGUMENT-SPEC for the EXPLAIN-DATA ERRORS of a raw call."
-  (if (loop for datum in errors
-            thereis (member (getf datum :kind) *call-shape-error-kinds*))
-      :shape
-      :argument-spec))
-
 (defun validate-call-arguments (contract name arguments registry)
   "Refuse ARGUMENTS unless they are an admitted call of CONTRACT.
 
-Returns NIL when the list satisfies CONTRACT's argument schema, otherwise
-signals INVALID-CALL-ARGUMENTS before any target is called.  The schema is the
-one the generator validates its draws against -- the contract's own call layout,
-including presence-aware optionals and keyword policy -- so a direct check
-admits exactly the invocations a generated check could supply.  An omitted
-optional is not validated, matching the layout's presence semantics.
+Returns NIL when the call satisfies CONTRACT's layout and declared argument
+specs, otherwise signals INVALID-CALL-ARGUMENTS before any target is called.
 
-A finite proper list is required first, because the raw list is what APPLY
-receives and the tuple schema the required-only layout derives would otherwise
-accept a vector of the right length.  Shape and value errors then come from one
-EXPLAIN-DATA pass, so a refusal carries the same structured data an agent reads
-from the generated path's argument validator."
+The call layout answers the shape question, not the error kind: the same
+:WRONG-LENGTH, :UNKNOWN-KEY or :NOT-A-SEQUENCE datum is produced by a malformed
+call and by a value that misses a composite argument spec, so only
+CALL-LAYOUT-SHAPE-ERROR can say which happened.  A layout refusal is :SHAPE; a
+call the layout accepts whose value fails a declared argument spec is
+:ARGUMENT-SPEC.
+
+Errors come from a CALL-ARGUMENTS-SPEC built on that layout, the same
+presence-aware validator the generated path uses, so every refusal carries
+standard EXPLAIN-DATA datums -- a non-list, vector, dotted or circular argument
+list included -- and an omitted optional is not validated."
   (let* ((layout (function-spec-call-layout contract))
-         (schema (function-spec-argument-schema contract layout)))
-    (unless (finite-list-p arguments)
+         (schema (make-instance 'call-arguments-spec :layout layout))
+         (shape-error (call-layout-shape-error layout arguments))
+         (explanation (explain-data schema arguments :registry registry)))
+    (unless (getf explanation :valid)
       (error 'invalid-call-arguments
              :function name
              :arguments (snapshot-value arguments)
-             :reason :shape
-             :errors (list (list :kind :not-a-list))))
-    (let ((explanation (explain-data schema arguments :registry registry)))
-      (unless (getf explanation :valid)
-        (error 'invalid-call-arguments
-               :function name
-               :arguments (snapshot-value arguments)
-               :reason (call-argument-refusal-reason (getf explanation :errors))
-               :errors (getf explanation :errors))))
+             :reason (if shape-error :shape :argument-spec)
+             :errors (getf explanation :errors)))
     nil))
 
 (defclass call-check-result ()
@@ -2055,8 +2035,12 @@ target is not fbound, and INVALID-CALL-ARGUMENTS when ARGUMENTS is not an
 admissible call of the contract -- the last covers both a refused call shape and
 a present argument that fails its declared spec, and calls no target.  A :PRE
 refusal is not an error: it is reported as a result whose status is :REJECTED.
-Contract-side errors (:CAPTURE, case selection, classification) are reported as
-results with status :ERROR, exactly as generated checking reports them.
+Ordinary contract-side evaluation errors (:CAPTURE, case selection,
+classification) are reported as results with status :ERROR, exactly as generated
+checking reports them.  As in CHECK-FUNCTION, UNDEFINED-FUNCTION and
+PROGRAM-ERROR raised by structurally broken contract code are not turned into
+results or target findings; they propagate to the caller, so a mistyped or
+mis-called predicate is never reported as a counterexample.
 
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
