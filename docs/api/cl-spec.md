@@ -315,20 +315,27 @@ No input is generated, no seed is drawn, no shrinking or replay happens and no
 trial count is reported.  The contract's common :PRE is applied, :CAPTURE runs,
 exactly one named case is selected, the target is called at most once, and the
 effective :RETURNS / :SIGNALS / :POST / :POST-VALUES outcome and :STATE-POST are
-classified by the shared single-trial path.  A non-NIL result is always returned
-for an admitted invocation, passing or failing.
+classified by the shared single-trial path.  When that evaluator produces an
+observation, a non-NIL CALL-CHECK-RESULT is returned, passing or failing; an
+evaluation that propagates a condition returns nothing.
 
 Signals UNKNOWN-FUNCTION-SPEC for an unregistered name, UNBOUND-TARGET when the
 target is not fbound, and INVALID-CALL-ARGUMENTS when ARGUMENTS is not an
 admissible call of the contract -- the last covers both a refused call shape and
 a present argument that fails its declared spec, and calls no target.  A :PRE
 refusal is not an error: it is reported as a result whose status is :REJECTED.
-Ordinary contract-side evaluation errors (:CAPTURE, case selection,
-classification) are reported as results with status :ERROR, exactly as generated
-checking reports them.  As in CHECK-FUNCTION, UNDEFINED-FUNCTION and
-PROGRAM-ERROR raised by structurally broken contract code are not turned into
-results or target findings; they propagate to the caller, so a mistyped or
-mis-called predicate is never reported as a counterexample.
+
+Error handling is the shared evaluator's, unchanged.  Ordinary contract-side
+evaluation errors are reported as results with status :ERROR exactly as generated
+checking reports them; :CAPTURE, a case guard and :STATE-POST each observe every
+ERROR, so an UNDEFINED-FUNCTION or PROGRAM-ERROR there becomes that clause's
+structured contract error (:CAPTURE-ERROR, CASE-SELECTION-ERROR or
+STATE-POST-ERROR) with the matching failure phase.  Where the evaluator does not
+intercept them -- a broken :PRE, :POST or return/signal-spec predicate --
+UNDEFINED-FUNCTION and PROGRAM-ERROR propagate to the caller rather than being
+published as a counterexample, exactly as in CHECK-FUNCTION.  A target that
+signals either condition is an ordinary target observation with reason
+:CONDITION.
 
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible

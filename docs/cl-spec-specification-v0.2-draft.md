@@ -1991,9 +1991,15 @@ validatorで、shape（arity、keyword tail、未知key、非list・vector・dot
 - `:capture`やcase選択の失敗、分類中の通常の契約側エラーは`:error`の結果、宣言outcomeの
   違反は`:failed`の結果として報告する。targetが予期しないconditionを送出した場合は
   `:error`／`:condition`であり、これも生成検査と同じ意味である。
-- `check-function`と同様、契約側コードの`undefined-function`と`program-error`は
-  result化せず呼び出し側へ伝播する。predicateのtypoやarityの誤りをtargetの反例として
-  報告しないための既存仕様をそのまま維持する。
+- error処理は既存single-trial evaluatorの意味論をそのまま継承し、新しい方針を
+  持ち込まない。`:capture`・case guard・`:state-post`はすべての`error`を観測するため、
+  `undefined-function`や`program-error`もそこで捕捉され、それぞれ
+  `capture-error`・`case-selection-error`・`state-post-error`のstructured result
+  （`:error`／`:contract-error`と対応するfailure phase）になる。既存evaluatorが
+  捕捉しない箇所（壊れた`:pre`・`:post`・return/signal specの述語）では
+  `undefined-function`と`program-error`が呼び出し側へ伝播し、predicateのtypoや
+  arityの誤りをtargetの反例として報告しない。target自身が送出した場合は
+  `:error`／`:condition`のtarget observationである。
 
 ### target呼び出し回数
 

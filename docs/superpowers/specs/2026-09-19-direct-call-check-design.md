@@ -128,7 +128,9 @@ The boundary between "you called it wrong" and "the contract refused it" is:
 | target condition the contract did not expect | result with `:status :error`, reason `:condition` |
 | declared-outcome violation (returns, signals, post, state-post) | result with `:status :failed` |
 | invocation satisfies the contract | result with `:status :passed` |
-| `undefined-function` / `program-error` in broken contract code | propagates, as in `check-function` |
+| `undefined-function` / `program-error` in `:pre`, `:post` or a spec predicate | propagates, as in `check-function` |
+| `undefined-function` / `program-error` in `:capture`, a case guard or `:state-post` | result with `:status :error` and that clause's phase |
+| target signals `undefined-function` / `program-error` | result with `:status :error`, reason `:condition` |
 
 `invalid-call-arguments` is a new `cl-spec-error` carrying `:function`,
 `:arguments`, a `:reason` (`:shape` or `:argument-spec`) and the structured
@@ -136,10 +138,13 @@ The boundary between "you called it wrong" and "the contract refused it" is:
 malformed or inadmissible call is API misuse, not a finding about the target.
 Precondition refusal is deliberately *not* a signal: it uses
 `precondition-refuses-p`, including its treatment of `spec-violation`, and is a
-structured result. `undefined-function` and `program-error` are deliberately
-*not* results either: the shared classifier exempts them so a mistyped or
-mis-called predicate is never published as a counterexample, and `check-call`
-inherits that.
+structured result. How `undefined-function` and `program-error` surface is the
+shared evaluator's decision, not a new policy: the clauses that observe errors
+explicitly (`:capture`, case selection, `:state-post`) turn them into their own
+structured contract errors, the clauses the evaluator does not intercept
+(`:pre`, `:post`, spec predicates) let them propagate so a mistyped or
+mis-called predicate is never published as a counterexample, and a target that
+signals one is an ordinary `:error` / `:condition` target observation.
 
 ## 6. Target call count
 

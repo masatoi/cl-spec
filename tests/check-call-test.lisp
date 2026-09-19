@@ -163,6 +163,12 @@
   (setf (car items) :mutated)
   items)
 
+(defun broken-target (x)
+  "Signal PROGRAM-ERROR from the target itself."
+  (declare (ignore x))
+  (incf *calls*)
+  (error 'program-error))
+
 (defun refusal (thunk)
   "Return (REASON ERRORS) when THUNK signals INVALID-CALL-ARGUMENTS, else NIL."
   (handler-case (progn (funcall thunk) nil)
@@ -811,6 +817,69 @@ support the same GETF calls as an ordinary argument-spec error."
         (setf *scenario* :sum)
         (signals (check-call contract (list 1 2)) 'program-error)
         (ok (zerop *calls*))))))
+
+(deftest observed-clauses-turn-broken-conditions-into-contract-errors
+  ;; Where the evaluator observes an error -- :capture, a case guard and
+  ;; :state-post all catch every ERROR -- a broken helper becomes that clause's
+  ;; structured contract error instead of escaping to the caller.  This pins the
+  ;; boundary between propagation and structured results.
+  (testing "a broken :capture form becomes a capture error and calls no target"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x integer))
+        (:capture (old (funcall 'check-call-undefined-helper-xyz x)))
+        (:returns integer))
+      (reset-counters)
+      (let* ((result (check-call 'unary-target (list 1)))
+             (observation (observation result)))
+        (ok (eq :error (call-check-result-status result)))
+        (ok (eq :capture (call-check-result-failure-phase result)))
+        (ok (eq :contract-error (trial-observation-reason observation)))
+        (ok (typep (trial-observation-condition observation) 'cl-spec:capture-error))
+        (ok (zerop *calls*)))))
+  (testing "a broken case guard becomes a case-selection error and calls no target"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x integer))
+        (:cases
+         (:a (:when (funcall 'check-call-undefined-helper-xyz x)) (:returns integer))))
+      (reset-counters)
+      (let* ((result (check-call 'unary-target (list 1)))
+             (observation (observation result)))
+        (ok (eq :error (call-check-result-status result)))
+        (ok (eq :case-selection (call-check-result-failure-phase result)))
+        (ok (eq :contract-error (trial-observation-reason observation)))
+        (ok (typep (trial-observation-condition observation)
+                   'cl-spec:case-selection-error))
+        (ok (zerop *calls*)))))
+  (testing "a broken :state-post becomes a state-post error after one call"
+    (with-fresh-registry
+      (cl-spec:defspec-function unary-target
+        (:args (x integer))
+        (:returns integer)
+        (:state-post (funcall 'check-call-undefined-helper-xyz x)))
+      (reset-counters)
+      (setf *scenario* :identity)
+      (let* ((result (check-call 'unary-target (list 1)))
+             (observation (observation result)))
+        (ok (eq :error (call-check-result-status result)))
+        (ok (eq :state-post (call-check-result-failure-phase result)))
+        (ok (eq :contract-error (trial-observation-reason observation)))
+        (ok (typep (trial-observation-condition observation) 'cl-spec:state-post-error))
+        (ok (= 1 *calls*)))))
+  (testing "a target that signals PROGRAM-ERROR stays an ordinary target observation"
+    (with-fresh-registry
+      (cl-spec:defspec-function broken-target
+        (:args (x integer))
+        (:returns integer))
+      (reset-counters)
+      (let* ((result (check-call 'broken-target (list 1)))
+             (observation (observation result)))
+        (ok (eq :error (call-check-result-status result)))
+        (ok (null (call-check-result-failure-phase result)))
+        (ok (eq :condition (trial-observation-reason observation)))
+        (ok (typep (trial-observation-condition observation) 'program-error))
+        (ok (= 1 *calls*))))))
 
 (deftest a-contract-object-is-an-accepted-designator
   (with-fresh-registry

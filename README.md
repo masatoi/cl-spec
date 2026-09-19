@@ -358,10 +358,13 @@ the shared validation, `check-call` uses the same single-trial path as
 entry points classify the same invocation identically. The target is called
 exactly once when the input reaches the invocation, and zero times when the
 shape is invalid, a declared argument spec fails, `:pre` refuses the input,
-`:capture` signals or case selection fails. As in `check-function`,
-`undefined-function` and `program-error` raised by structurally broken
-contract-side code are not results or target findings; they propagate to the
-caller.
+`:capture` signals or case selection fails. Error handling is the shared
+evaluator's, unchanged: `:capture`, case guards and `:state-post` observe every
+error (including `undefined-function` and `program-error`) and report their own
+structured contract errors (`capture-error`, `case-selection-error`,
+`state-post-error`), while a broken `:pre`, `:post` or spec predicate lets those
+conditions propagate to the caller rather than becoming a target finding. A
+target that signals either is an ordinary `:error` / `:condition` observation.
 
 The result is a `call-check-result`, not a `property-result`: there is no seed,
 trial budget, profile, shrink report or generation report to report, and
