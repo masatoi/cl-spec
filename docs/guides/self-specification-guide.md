@@ -205,6 +205,7 @@ more than self-spec availability; `eval/README.md` records this explicitly.
 | `:capture`/`:state-post` registration contract | `registry-register-property` | `registration-replacement-preserves-unrelated-indexes` | `self-specs-test`, `self-api-contracts-test` | `registry-stale-index` |
 | Function Spec projection | `function-spec-data` | `function-spec-projection-retains-declared-state` | `self-specs-test`, `self-api-contracts-test` | `function-spec-capture-drop` |
 | Result projection | `result-data` | `result-projection-retains-state-evidence` | `self-specs-test`, `self-api-contracts-test` | `result-state-evidence-drop` |
+| One-shot concrete invocation | `check-call` | `one-shot-check-reuses-the-single-trial-classifier`, `one-shot-check-observes-a-named-case-and-state-once` | `check-call-test`, `self-specs-test`, `self-api-contracts-test` | — |
 
 What is not covered by the bundle today: every keyword-option combination, custom
 registry or backend implementations, a malformed `defspec` form itself, the whole
