@@ -271,8 +271,9 @@ reported **whole** as `(:name NAME :availability :unavailable :reason
 that could not be projected, and no `:value` is claimed. A named class or type is
 its name symbol (`account`, `hash-table`); an instance of an anonymous CLOS class
 — whose `type-of` may legally return the live class object — is
-`(:kind :anonymous-class :metaclass standard-class)`, so the record never carries
-a class object. Reporting only the outer copy would leave
+`(:kind :anonymous-class :metaclass standard-class)`, and a type specifier this
+projection cannot name degrades to `:unknown`; in every case the record never
+carries a class object. Reporting only the outer copy would leave
 a live reference to the inner object inside "frozen" evidence, so a later change
 to that object would be visible through the diagnostic. The evaluation path still
 passes the original value to later capture forms, guards and predicates; this is

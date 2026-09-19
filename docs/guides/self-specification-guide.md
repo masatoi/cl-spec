@@ -145,8 +145,9 @@ For a contract run:
 - A capture value that is or contains an opaque object is projected as
   `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
   claiming no `:value`, rather than as frozen evidence. `TYPE` is ordinary data:
-  a named type symbol, or `(:kind :anonymous-class :metaclass NAME)` for a class
-  with no name, so no live class object is published. Availability is
+  a named type symbol, `(:kind :anonymous-class :metaclass NAME)` for a class
+  with no name, or the `:unknown` fallback, so no live class object is
+  published. Availability is
   framework metadata and is never inferred from the shape of the value, so an
   application value may legally equal any plist — including the unavailable
   shape itself. Capture observes a value and does not copy or restore it.

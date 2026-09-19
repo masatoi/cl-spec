@@ -516,8 +516,9 @@ where SNAPSHOT is the application value projected as historical evidence, or
   (:availability :unavailable :reason :opaque-value :type TYPE)
 
 where TYPE is ordinary data describing the reachable object the snapshot cannot
-freeze: a named type symbol, or (:kind :anonymous-class :metaclass NAME) for an
-anonymous CLOS class whose TYPE-OF is the live class object.  No class object or
+freeze: a named type symbol, (:kind :anonymous-class :metaclass NAME) for an
+anonymous CLOS class whose TYPE-OF is the live class object, or the :UNKNOWN
+fallback for a type specifier this projection cannot name.  No class object or
 other live application object is ever published as the TYPE.
 
 The diagnostic projection supports conses, arrays and self-contained atoms

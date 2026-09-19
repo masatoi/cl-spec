@@ -432,6 +432,12 @@
                                 :type (:kind :anonymous-class
                                        :metaclass standard-class)))
                       :error nil)))
+        ;; The :UNKNOWN fallback is a symbol and part of the documented domain.
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :unavailable
+                                :reason :opaque-value :type :unknown))
+                      :error nil)))
         (ok (not (validp capture-spec
                          '(:status :completed :declared (x)
                            :values ((:name x :availability :unavailable

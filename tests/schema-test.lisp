@@ -29,7 +29,7 @@
       (ok (member :reason (getf info :capture-value-keys)))
       (ok (member :type (getf info :capture-value-keys))))
     (testing "the diagnostic type forms are named"
-      (ok (equal '(:named :anonymous-class)
+      (ok (equal '(:named :anonymous-class :unknown)
                  (getf info :capture-value-type-forms))))))
 
 (deftest result-records-carry-the-version-1-envelope

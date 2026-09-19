@@ -1014,9 +1014,10 @@ where :AVAILABILITY is framework metadata and :VALUE is application data.
 value that happens to look like the unavailable plist is still collected.
 :CAPTURE-VALUE-STATES names the :AVAILABILITY values and :CAPTURE-VALUE-KEYS
 the record keys.  An :UNAVAILABLE record's :TYPE is ordinary data:
-:CAPTURE-VALUE-TYPE-FORMS names its forms -- a named type is a symbol, and an
-anonymous CLOS class is (:kind :anonymous-class :metaclass NAME) -- so a live
-class object never enters the record.
+:CAPTURE-VALUE-TYPE-FORMS names its forms -- :NAMED is a named type symbol,
+:ANONYMOUS-CLASS is (:kind :anonymous-class :metaclass NAME) for a class with no
+name, and :UNKNOWN is the symbol fallback for a type specifier this projection
+cannot name -- so a live class object never enters the record.
 ```
 
 <a name="semantic-data"></a>

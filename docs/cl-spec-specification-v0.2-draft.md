@@ -1843,7 +1843,8 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`
 として報告し、`:value`は主張しない。`TYPE`は通常のデータであり、名前を持つ型は
 その名前symbol、名前を持たない匿名CLOSクラスは
-`(:kind :anonymous-class :metaclass NAME)`とする。`type-of`がライブなclass
+`(:kind :anonymous-class :metaclass NAME)`、投影が名前を付けられない型指定子は
+`:unknown`とする。`type-of`がライブなclass
 オブジェクトを返し得る場合でも、classオブジェクトを証拠に埋め込まない。
 外側だけを複製して内部のライブ参照を残すと、
 「保存済みの診断」から後の変更が見えてしまうためである。走査は値自身の構造に
@@ -3050,9 +3051,11 @@ capture状態証拠（§17.3）の`:capture`の`:values`は、各completed bindi
 未取得と区別する。`:value`の有無はrecordのindicator位置で判定し、値位置に現れる
 `:value`をkeyの存在と見なさない。`schema-info`の`:capture-value-states`が
 `:availability`の列挙、`:capture-value-keys`がrecordのkey、
-`:capture-value-type-forms`が`:type`の形（`:named`と`:anonymous-class`）を列挙する。
+`:capture-value-type-forms`が`:type`の形（`:named`・`:anonymous-class`・
+`:unknown`）を列挙する。
 `:unavailable`の`:type`は通常のデータであり、名前を持つ型は名前symbol、名前を持たない
-匿名CLOSクラスは`(:kind :anonymous-class :metaclass NAME)`とする。`type-of`がライブな
+匿名CLOSクラスは`(:kind :anonymous-class :metaclass NAME)`、投影が名前を付けられない
+型指定子は`:unknown`とする。`type-of`がライブな
 classオブジェクトを返し得る場合でも、classオブジェクトを証拠に埋め込まない。なお、
 `:values`を`((NAME . VALUE) ...)` alistとし、投影できない値を値位置の
 `(:unavailable :reason :opaque-value :type TYPE)` plistで表す形は、公開v1契約ではなく

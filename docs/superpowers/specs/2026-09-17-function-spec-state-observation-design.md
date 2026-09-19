@@ -339,7 +339,8 @@ as `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
 where `TYPE` is ordinary data describing the object that could not be projected,
 and claims no `:value`. A named class or type is its name symbol; an instance of
 an anonymous CLOS class, whose `type-of` may legally return the live class
-object, is `(:kind :anonymous-class :metaclass NAME)`, so the record never
+object, is `(:kind :anonymous-class :metaclass NAME)`; a type specifier this
+projection cannot name degrades to `:unknown`; in every case the record never
 carries a class object. Reporting only the outer copy would leave a live
 reference to the
 inner object inside "frozen" evidence, so a later change to that object would be
