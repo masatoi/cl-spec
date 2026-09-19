@@ -223,7 +223,10 @@ observation (`trial-observation-state`), projected into `result-data` under
 ```text
 (:capture (:status :not-evaluated | :completed | :error
            :declared (NAME ...)
-           :values ((NAME . VALUE) ...)          ; only completed bindings
+           :values                                ; only completed bindings
+           ((:name NAME :availability :collected :value VALUE) ...
+            (:name NAME :availability :unavailable
+             :reason :opaque-value :type TYPE) ...)
            :error (:binding NAME :index I :condition-type T))
  :state-post (:status :not-evaluated | :passed | :violation | :error
              :reason REASON                      ; when :not-evaluated
@@ -234,9 +237,18 @@ observation (`trial-observation-state`), projected into `result-data` under
 
 `:reason` for a `:NOT-EVALUATED` state-post is one of `:PRECONDITION-REJECTED`,
 `:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`. `:values` is an
-ordered `((NAME . VALUE) ...)` alist, so a value is read with `assoc`, and a
-`(NAME . NIL)` entry means the capture returned `NIL` rather than that it did not
-run. A capture that failed halfway never shows a later binding as obtained.
+ordered list of per-binding records. `:name` associates each record with its
+binding, so a reader finds one by name rather than reconstructing the pairing
+from `:declared`; `:availability` is framework metadata and is **never** inferred
+from the shape of the value. A `:collected` record's `:value` is the captured
+application value projected as historical evidence, and a captured `NIL` is
+`(:name NAME :availability :collected :value nil)`. An `:unavailable` record
+claims no `:value` at all and uses `:reason`/`:type` to explain why. An
+application value may legally equal any plist, including
+`(:unavailable :reason :opaque-value :type :hash-table)`: it stays `:collected`
+with that plist under `:value`, because the surrounding record — not the value's
+shape — says what it is. A capture that failed halfway never shows a later
+binding as obtained.
 
 `:state-post` appears when the contract declares a clause — the selected case's,
 or, before a case is selected, the top-level clause or any case's. When no case
@@ -245,20 +257,25 @@ was selected its `:case` is `NIL` and its `:reason` is `:CAPTURE-FAILED` or
 before selection" stay distinct. A contract that declares neither clause records
 no state evidence at all, so a featureless run's projection is unchanged.
 
+Earlier development builds used an ordered `((NAME . VALUE) ...)` alist and put
+the unavailable plist directly in the value position. That pre-release shape was
+never a published v1 contract and is not accepted or reinterpreted; the
+per-binding record above is the v1 representation.
+
 Capture values are projected through the existing evidence snapshot. The
 supported diagnostic range is conses, arrays and self-contained atoms (numbers,
 characters, symbols). A capture value that is, **or contains at any depth**, an
 object outside that range — a CLOS instance, structure, hash table, function — is
-reported **whole** as `(:unavailable :reason :opaque-value :type TYPE)`, where
-`TYPE` names the object that could not be projected. Reporting only the outer copy
-would leave a live reference to the inner object inside "frozen" evidence, so a
-later change to that object would be visible through the diagnostic. The
-evaluation path still passes the original value to later capture forms, guards and
-predicates; this is a report projection, not a deep copy. Nothing is re-executed
-to build this data, and the state-post violation's `:kind`/`:case`/`:index`/`:form`
-explanation is readable from `trial-observation-explanation`,
-`property-result-explanation`, `function-check-result-explanation` and
-`result-data`'s `:failure` alike.
+reported **whole** as `(:name NAME :availability :unavailable :reason
+:opaque-value :type TYPE)`, where `TYPE` names the object that could not be
+projected, and no `:value` is claimed. Reporting only the outer copy would leave
+a live reference to the inner object inside "frozen" evidence, so a later change
+to that object would be visible through the diagnostic. The evaluation path still
+passes the original value to later capture forms, guards and predicates; this is
+a report projection, not a deep copy. Nothing is re-executed to build this data,
+and the state-post violation's `:kind`/`:case`/`:index`/`:form` explanation is
+readable from `trial-observation-explanation`, `property-result-explanation`,
+`function-check-result-explanation` and `result-data`'s `:failure` alike.
 
 ## Failure identities
 

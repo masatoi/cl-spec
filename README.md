@@ -433,9 +433,18 @@ deep-copy, restore or prove anything stayed unchanged during the call.
 The trial's state evidence is on `trial-observation-state` and in `result-data`
 under `:state`; `function-spec-data` exposes the declaration under `:capture`
 and `:state-post`; `definition-digest` covers names, order, source and the case
-association. Captured values are an ordered `((name . value) ...)` alist, and a
-value the evidence snapshot cannot preserve is reported as an explicit
-`:opaque-value` placeholder rather than a live reference. `check-function` runs
+association. Each completed capture binding is an explicit record
+`(:name NAME :availability :collected :value VALUE)` or
+`(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`.
+`:availability` is framework metadata and is never inferred from the shape of
+the value, so an application value may legally equal any plist — including the
+unavailable shape itself — and stays `:collected`; `:value` is application data
+and appears only for `:collected`, where a captured `NIL` is
+`(:name NAME :availability :collected :value nil)`. A value the evidence
+snapshot cannot preserve is reported `:unavailable` and claims no value rather
+than exposing a live reference. This tagged representation is schema version 1;
+the earlier raw `((name . value) ...)` alist was a pre-release implementation
+shape, never a published v1 contract. `check-function` runs
 such a contract, but this version does not
 shrink it (`:shrink-report` says `:state-restoration-unavailable`), replay a past
 result into it (`unsupported-stateful-operation`, through `check-function` or the

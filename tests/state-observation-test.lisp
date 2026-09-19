@@ -45,6 +45,8 @@
   (:import-from #:cl-spec/src/schema
                 #:definition-instrumentation-capability #:definition-shrink-enabled-p
                 #:definition-state-constraints)
+  (:import-from #:cl-spec/src/property-runner
+                #:observation-data)
   (:import-from #:cl-spec/src/instrument
                 #:instrument-function #:instrumented-function-p
                 #:unsupported-instrumentation-target
@@ -207,6 +209,25 @@ checks after the call that the observed values moved the way it requires."
   "Return the state evidence of RESULT's selected failure, or NIL."
   (let ((evidence (failing-evidence result)))
     (when evidence (trial-observation-state evidence))))
+
+(defun capture-records (state)
+  "Return the :VALUES capture records of STATE's :CAPTURE half, or NIL."
+  (getf (getf state :capture) :values))
+
+(defun capture-record (name values)
+  "Return the per-binding capture record for NAME in VALUES, or NIL."
+  (find name values :key (lambda (record) (getf record :name))))
+
+(defun capture-availability (name values)
+  "Return the :AVAILABILITY of binding NAME in capture VALUES, or NIL."
+  (getf (capture-record name values) :availability))
+
+(defun captured-value (name values)
+  "Return binding NAME's :VALUE from a collected record, or NIL.
+
+An unavailable record claims no value, so this returns NIL there too; callers
+that care must read :AVAILABILITY rather than the value's shape."
+  (getf (capture-record name values) :value))
 
 (defun report-case (report name)
   "Return the :CASES entry of REPORT for NAME."
@@ -381,7 +402,8 @@ checks after the call that the observed values moved the way it requires."
              (capture (getf (observation-state result) :capture)))
         (testing "the later form read the earlier capture value"
           (ok (eq :failed (property-result-status result)))
-          (ok (equal '((first-value . 30) (second-value . 40))
+          (ok (equal '((:name first-value :availability :collected :value 30)
+                       (:name second-value :availability :collected :value 40))
                      (getf capture :values))))
         (testing "the declaration order is reported"
           (ok (equal '(first-value second-value) (getf capture :declared)))
@@ -411,8 +433,9 @@ checks after the call that the observed values moved the way it requires."
         (testing "a captured NIL is reported as completed with a NIL value"
           (ok (eq :failed (property-result-status result)))
           (ok (eq :completed (getf capture :status)))
-          (ok (equal '((observed . nil)) (getf capture :values)))
-          (ok (null (cdr (assoc 'observed (getf capture :values)))))))
+          (ok (equal '((:name observed :availability :collected :value nil))
+                     (getf capture :values)))
+          (ok (null (captured-value 'observed (getf capture :values))))))
       (testing "a predicate may test the NIL value it captured"
         (define-target nil-pass-target)
         (cl-spec:defspec-function nil-pass-target
@@ -582,8 +605,10 @@ checks after the call that the observed values moved the way it requires."
         (testing "only the completed bindings are recorded, as a named alist"
           (ok (eq :error (getf capture :status)))
           (ok (equal '(a b c) (getf capture :declared)))
-          (ok (equal '((a . 30)) (getf capture :values)))
-          (ok (equal '((a . 30)) (capture-error-captured condition))))))))
+          (ok (equal '((:name a :availability :collected :value 30))
+                     (getf capture :values)))
+          (ok (equal '((:name a :availability :collected :value 30))
+                     (capture-error-captured condition))))))))
 
 (deftest selection-and-guard-errors-call-no-target
   (with-fresh-registry
@@ -943,16 +968,17 @@ checks after the call that the observed values moved the way it requires."
       (reset-counters)
       (let* ((result (run-scenario :name 'opaque-target :scenario :no-update))
              (state (observation-state result))
-             (entry (assoc 'box (getf (getf state :capture) :values))))
+             (record (capture-record 'box (capture-records state))))
         (testing "the failure is intact and names the failing form"
           (ok (eq :failed (property-result-status result)))
           (ok (equal '(:state-postcondition 0)
                      (trial-observation-signature (failing-evidence result)))))
-        (testing "the diagnostic value is an explicit unprojectable placeholder"
-          (ok entry)
-          (ok (equal '(:unavailable :reason :opaque-value :type opaque-box)
-                     (cdr entry)))
-          (ok (not (typep (cdr entry) 'opaque-box))))))))
+        (testing "the diagnostic value is an explicit unprojectable record"
+          (ok record)
+          (ok (equal '(:name box :availability :unavailable
+                       :reason :opaque-value :type opaque-box)
+                     record))
+          (ok (not (member :value record))))))))
 
 (deftest a-nested-opaque-capture-value-is-also-unprojectable
   (with-fresh-registry
@@ -969,21 +995,25 @@ checks after the call that the observed values moved the way it requires."
       (reset-counters)
       (let* ((result (run-scenario :name 'nested-target :scenario :no-update))
              (evidence (failing-evidence result))
-             (values (getf (getf (observation-state result) :capture) :values))
-             (list-entry (assoc 'in-list values))
-             (vector-entry (assoc 'in-vector values))
-             (placeholder '(:unavailable :reason :opaque-value
-                            :type projection-probe)))
+             (values (capture-records (observation-state result)))
+             (list-entry (capture-record 'in-list values))
+             (vector-entry (capture-record 'in-vector values))
+             (list-placeholder '(:name in-list :availability :unavailable
+                                 :reason :opaque-value :type projection-probe))
+             (vector-placeholder '(:name in-vector :availability :unavailable
+                                   :reason :opaque-value :type projection-probe)))
         (testing "a capture value containing an opaque object is unprojectable whole"
           (ok list-entry)
           (ok vector-entry)
-          (ok (equal placeholder (cdr list-entry)))
-          (ok (equal placeholder (cdr vector-entry))))
+          (ok (equal list-placeholder list-entry))
+          (ok (equal vector-placeholder vector-entry))
+          (ok (not (member :value list-entry)))
+          (ok (not (member :value vector-entry))))
         (testing "no live reference remains, so a later change is not visible"
-          (ok (not (eq *probe-object* (cdr list-entry))))
+          (ok (not (eq *probe-object* list-entry)))
           (ok (eq 10 (probe-value *probe-object*)))
           (setf (probe-value *probe-object*) 99)
-          (ok (equal placeholder (cdr list-entry))))
+          (ok (equal list-placeholder list-entry)))
         (testing "the original failure and outcome are intact"
           (ok (eq :failed (property-result-status result)))
           (ok (equal '(:state-postcondition 0)
@@ -1006,11 +1036,14 @@ checks after the call that the observed values moved the way it requires."
       (reset-counters)
       (let* ((result (run-scenario :name 'supported-capture-target
                                    :scenario :no-update))
-             (values (getf (getf (observation-state result) :capture) :values)))
+             (values (capture-records (observation-state result))))
         (testing "conses, arrays and self-contained atoms project as copies"
-          (ok (equal '(1 "two" three) (cdr (assoc 'pair values))))
-          (ok (equalp #(1 2) (cdr (assoc 'vector-value values))))
-          (ok (eql 42 (cdr (assoc 'scalar values)))))))))
+          (ok (equal '(1 "two" three) (captured-value 'pair values)))
+          (ok (equalp #(1 2) (captured-value 'vector-value values)))
+          (ok (eql 42 (captured-value 'scalar values))))
+        (testing "every supported value is explicitly collected"
+          (ok (every (lambda (record) (eq :collected (getf record :availability)))
+                     values)))))))
 
 (deftest runs-do-not-share-captures-or-counters
   (with-fresh-registry
@@ -1023,7 +1056,8 @@ checks after the call that the observed values moved the way it requires."
                                       :balance 40 :amount 5 :seed 2)))
         (ok (eq :failed (property-result-status first-run)))
         (ok (eq :passed (property-result-status second-run)))
-        (ok (equal '((balance-before . 30) (id-before . 7))
+        (ok (equal '((:name balance-before :availability :collected :value 30)
+                     (:name id-before :availability :collected :value 7))
                    (getf (getf (observation-state first-run) :capture) :values)))
         (ok (null (observation-state second-run)))
         (ok (not (eq (function-check-result-case-report first-run)
@@ -1288,3 +1322,226 @@ checks after the call that the observed values moved the way it requires."
         (ok (= 3 (property-result-rejected result)))
         (ok (= 0 *capture-runs*))
         (ok (= 0 *calls*))))))
+
+;;; G. Captured-value availability records
+;;;
+;;; Each completed binding projects to an explicit per-binding record:
+;;; (:NAME NAME :AVAILABILITY :COLLECTED :VALUE VALUE) or
+;;; (:NAME NAME :AVAILABILITY :UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE).
+;;; Availability is framework metadata; :VALUE is application data.  Nothing is
+;;; classified from the shape of the application value.
+
+(defmacro with-capture-contract ((name generator &rest capture) &body body)
+  "Define target NAME with GENERATOR and the given :CAPTURE bindings, then BODY.
+
+The target returns its argument list; the contract's :STATE-POST is only used to
+force a recorded failure observation so the evidence can be read."
+  `(progn
+     (define-target ,name)
+     (cl-spec:defspec-function ,name
+       (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+       (:args-generator ,generator)
+       (:capture ,@capture)
+       (:returns (satisfies listp))
+       (:state-post (eql ,(first (first capture)) :never)))
+     ,@body))
+
+(deftest a-simple-captured-value-is-collected
+  (with-fresh-registry
+    (with-live-generator (g1-args)
+      (with-capture-contract (g1-target g1-args (hundred 100))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g1-target :scenario :correct))
+               (records (capture-records (observation-state result))))
+          (testing "an integer is collected with an explicit availability"
+            (ok (equal '(:name hundred :availability :collected :value 100)
+                       (capture-record 'hundred records)))
+            (ok (eq :collected (capture-availability 'hundred records)))
+            (ok (eql 100 (captured-value 'hundred records)))))))))
+
+(deftest a-captured-nil-is-collected-not-unavailable
+  (with-fresh-registry
+    (with-live-generator (g2-args)
+      (with-capture-contract (g2-target g2-args (previous-owner nil))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g2-target :scenario :correct))
+               (records (capture-records (observation-state result))))
+          (testing "a captured NIL is a collected value, never missing evidence"
+            (ok (equal '(:name previous-owner :availability :collected :value nil)
+                       (capture-record 'previous-owner records)))
+            (ok (eq :collected (capture-availability 'previous-owner records)))
+            (ok (null (captured-value 'previous-owner records)))))))))
+
+(deftest an-old-opaque-marker-is-ordinary-application-data
+  (with-fresh-registry
+    (with-live-generator (g3-args)
+      (with-capture-contract (g3-target g3-args
+                            (diagnostic '(:unavailable :reason :opaque-value
+                                          :type :hash-table)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g3-target :scenario :correct))
+               (records (capture-records (observation-state result)))
+               (record (capture-record 'diagnostic records)))
+          (testing "the marker-shaped application value is collected, not metadata"
+            (ok (eq :collected (getf record :availability)))
+            (ok (equal '(:unavailable :reason :opaque-value :type :hash-table)
+                       (getf record :value)))
+            (ok (not (eq :unavailable (getf record :availability)))))
+          (testing "the framework's unavailability keys are not present"
+            (ok (null (getf record :reason)))
+            (ok (null (getf record :type))))
+          (testing "the same record reads as collected through the public projection"
+            (let* ((data (result-data result))
+                   (state (getf (getf data :failure) :state))
+                   (public (capture-record 'diagnostic (capture-records state))))
+              (ok (eq :collected (getf public :availability)))
+              (ok (equal '(:unavailable :reason :opaque-value :type :hash-table)
+                         (getf public :value))))))))))
+
+(deftest an-opaque-clos-capture-is-unavailable-with-no-value
+  (with-fresh-registry
+    (with-live-generator (g4-args)
+      (with-capture-contract (g4-target g4-args (account-before (make-instance 'opaque-box)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g4-target :scenario :correct))
+               (records (capture-records (observation-state result)))
+               (record (capture-record 'account-before records)))
+          (testing "an unfreezable CLOS instance is reported unavailable"
+            (ok (eq :unavailable (getf record :availability)))
+            (ok (eq :opaque-value (getf record :reason)))
+            (ok (eq 'opaque-box (getf record :type))))
+          (testing "no application value is claimed or leaked"
+            (ok (not (member :value record)))
+            (ok (not (typep (getf record :value) 'opaque-box)))))))))
+
+(deftest an-opaque-structure-capture-is-unavailable-with-no-value
+  (with-fresh-registry
+    (with-live-generator (g5-args)
+      (with-capture-contract (g5-target g5-args (snapshot (make-account 100 7)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g5-target :scenario :correct))
+               (records (capture-records (observation-state result)))
+               (record (capture-record 'snapshot records)))
+          (ok (eq :unavailable (getf record :availability)))
+          (ok (eq :opaque-value (getf record :reason)))
+          (ok (eq 'account (getf record :type)))
+          (ok (not (member :value record)))
+          (ok (not (typep (getf record :value) 'account))))))))
+
+(deftest an-opaque-hash-table-capture-is-unavailable-with-no-value
+  (with-fresh-registry
+    (with-live-generator (g6-args)
+      (with-capture-contract (g6-target g6-args (seen (make-hash-table)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g6-target :scenario :correct))
+               (records (capture-records (observation-state result)))
+               (record (capture-record 'seen records)))
+          (ok (eq :unavailable (getf record :availability)))
+          (ok (eq :opaque-value (getf record :reason)))
+          (ok (eq 'hash-table (getf record :type)))
+          (ok (not (member :value record)))
+          (ok (not (hash-table-p (getf record :value)))))))))
+
+(deftest several-captures-keep-declaration-order-and-names
+  (with-fresh-registry
+    (with-live-generator (g7-args)
+      (with-capture-contract (g7-target g7-args
+                            (first-value (account-balance account))
+                            (diagnostic '(:unavailable :reason :opaque-value :type :hash-table))
+                            (last-value nil))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g7-target :scenario :correct
+                                     :balance 30))
+               (capture (getf (observation-state result) :capture))
+               (records (getf capture :values)))
+          (testing "the declaration order is preserved"
+            (ok (equal '(first-value diagnostic last-value)
+                       (mapcar (lambda (record) (getf record :name)) records)))
+            (ok (equal '(first-value diagnostic last-value)
+                       (getf capture :declared))))
+          (testing "each record is associated with its own name"
+            (ok (equal '(:name first-value :availability :collected :value 30)
+                       (capture-record 'first-value records)))
+            (ok (eq :collected (capture-availability 'diagnostic records)))
+            (ok (equal '(:name last-value :availability :collected :value nil)
+                       (capture-record 'last-value records)))))))))
+
+(deftest a-partial-capture-failure-projects-only-the-completed-prefix
+  (with-fresh-registry
+    (with-live-generator (g8-args)
+      (with-capture-contract (g8-target g8-args
+                            (a (account-balance account))
+                            (b (error 'insufficient-funds :balance 0 :amount 0))
+                            (c (progn (incf *capture-runs*) (account-id account))))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g8-target :scenario :correct :balance 30))
+               (capture (getf (observation-state result) :capture))
+               (records (getf capture :values))
+               (error (getf capture :error)))
+          (testing "only the completed binding has a record and no later one is fabricated"
+            (ok (equal '((:name a :availability :collected :value 30)) records))
+            (ok (= 0 *capture-runs*)))
+          (testing "the error still identifies the failing binding, index and type"
+            (ok (eq :error (getf capture :status)))
+            (ok (equal '(a b c) (getf capture :declared)))
+            (ok (eq 'b (getf error :binding)))
+            (ok (= 1 (getf error :index)))
+            (ok (eq 'insufficient-funds (getf error :condition-type))))
+          (testing "the capture condition carries the same tagged records"
+            (ok (equal records
+                       (capture-error-captured
+                        (property-result-condition result))))))))))
+
+(deftest capture-records-survive-observation-data
+  (with-fresh-registry
+    (with-live-generator (g9-args)
+      (with-capture-contract (g9-target g9-args
+                            (balance-before (account-balance account))
+                            (diagnostic '(:unavailable :reason :opaque-value
+                                          :type :hash-table)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g9-target :scenario :correct :balance 12))
+               (projected (observation-data (failing-evidence result)))
+               (records (capture-records (getf projected :state))))
+          (testing "OBSERVATION-DATA keeps the tagged capture records"
+            (ok (consp (getf projected :state)))
+            (ok (equal '(:name balance-before :availability :collected :value 12)
+                       (capture-record 'balance-before records)))
+            (ok (eq :collected (capture-availability 'diagnostic records)))
+            (ok (equal '(:unavailable :reason :opaque-value :type :hash-table)
+                       (captured-value 'diagnostic records)))))))))
+
+(deftest capture-records-survive-result-data
+  (with-fresh-registry
+    (with-live-generator (g10-args)
+      (with-capture-contract (g10-target g10-args
+                            (balance-before (account-balance account))
+                            (diagnostic '(:unavailable :reason :opaque-value
+                                          :type :hash-table)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g10-target :scenario :correct :balance 12))
+               (data (result-data result))
+               (records (capture-records (getf (getf data :failure) :state))))
+          (testing "RESULT-DATA keeps the tagged capture records"
+            (ok (eq 1 (getf data :schema-version)))
+            (ok (equal '(:name balance-before :availability :collected :value 12)
+                       (capture-record 'balance-before records)))
+            (ok (eq :collected (capture-availability 'diagnostic records)))
+            (ok (equal '(:unavailable :reason :opaque-value :type :hash-table)
+                       (captured-value 'diagnostic records)))))))))
+
+(deftest an-unavailable-record-never-appears-as-a-collected-value
+  (with-fresh-registry
+    (with-live-generator (g11-args)
+      (with-capture-contract (g11-target g11-args
+                            (box (make-instance 'opaque-box)))
+        (reset-counters)
+        (let* ((result (run-scenario :name 'g11-target :scenario :correct))
+               (records (capture-records (observation-state result)))
+               (record (capture-record 'box records)))
+          (testing "unavailable evidence is proved by :availability, not by shape"
+            (ok (eq :unavailable (getf record :availability)))
+            (ok (not (eq :collected (getf record :availability)))))
+          (testing "even the historical marker shape is not what makes this unavailable"
+            (ok (not (equal '(:unavailable :reason :opaque-value :type :hash-table)
+                            record)))))))))

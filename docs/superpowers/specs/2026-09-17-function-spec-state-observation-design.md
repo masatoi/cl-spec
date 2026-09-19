@@ -255,9 +255,9 @@ condition are retained.
 ### 5.1 Conditions
 
 - `capture-error` (`cl-spec-error`): `function`, `binding` (name), `index`
-  (zero-based binding position), `captured` (the ordered `(NAME . VALUE)`
-  alist completed before the failure), and `original-condition`. Accessors and
-  `capture-error-data` (structured explanation) are public.
+  (zero-based binding position), `captured` (the ordered list of per-binding
+  availability records completed before the failure), and `original-condition`.
+  Accessors and `capture-error-data` (structured explanation) are public.
 - `state-post-error` (`cl-spec-error`): `function`, `case` (name or `NIL`),
   `index` (zero-based form position), `form` (the source form), and
   `original-condition`. Accessors and `state-post-error-data` are public.
@@ -296,7 +296,10 @@ a state-evidence plist on its observation (new
 ```text
 (:capture (:status :not-evaluated | :completed | :error
            :declared (NAME ...)
-           :values ((NAME . VALUE) ...)          ; only completed bindings
+           :values                                ; only completed bindings
+           ((:name NAME :availability :collected :value VALUE) ...
+            (:name NAME :availability :unavailable
+             :reason :opaque-value :type TYPE) ...)
            :error (:binding NAME :index I :condition-type T))
  :state-post (:status :not-evaluated | :passed | :violation | :error
              :reason REASON                        ; when :not-evaluated
@@ -306,11 +309,16 @@ a state-evidence plist on its observation (new
 ```
 
 - `:capture` is present only when the contract declares `:capture`; its
-  `:values` is an ordered `((NAME . VALUE) ...)` alist over the bindings that
-  completed, so a caller reads a value with `assoc` rather than reconstructing
-  the pairing from `:declared`. A capture that failed halfway never shows later
-  bindings as obtained, and a captured `NIL` is a `(NAME . NIL)` entry, not an
-  absence.
+  `:values` is an ordered list of per-binding records over the bindings that
+  completed, each `(:name NAME :availability :collected :value VALUE)` or
+  `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
+  so a caller finds a value by name rather than reconstructing the pairing from
+  `:declared`. A capture that failed halfway never shows later bindings as
+  obtained, and a captured `NIL` is a `:collected` record with a NIL `:value`,
+  not an absence. `:availability` is framework metadata and is never classified
+  from the shape of `:value`; `:value` is the application data and appears only
+  under `:collected`, so an application value may legally equal any plist,
+  including the unavailable shape itself.
 - `:state-post` is present when the contract declares a clause: the selected
   case's, or, before a case is selected, the top-level clause or any case's. When
   no case was selected its `:case` is `NIL` and its `:reason` is
@@ -327,16 +335,16 @@ diagnostic range is explicit: conses and arrays are reported as copies, and
 self-contained atoms (numbers, characters, symbols) as themselves. A capture
 value that is, or contains at any depth, an object outside that range -- a CLOS
 instance, structure, hash table, function and the like -- is reported **whole**
-as `(:unavailable :reason :opaque-value :type TYPE)`, where `TYPE` names the
-object that could not be projected. Reporting only the outer copy would leave a
-live reference to the inner object inside "frozen" evidence, so a later change
-to that object would be visible through the diagnostic; the whole-value
-placeholder prevents that. The walk is bounded by the value's own structure and
-visits cycles and sharing once. This is a report projection, not a deep copy and
-not a new snapshot, and it adds no copy support for opaque objects; the
-evaluation path still passes the original value to later capture forms, guards
-and predicates. A projection failure never discards the target outcome or an
-already-determined failure.
+as `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
+where `TYPE` names the object that could not be projected, and claims no
+`:value`. Reporting only the outer copy would leave a live reference to the
+inner object inside "frozen" evidence, so a later change to that object would be
+visible through the diagnostic; the whole-value record prevents that. The walk
+is bounded by the value's own structure and visits cycles and sharing once.
+This is a report projection, not a deep copy and not a new snapshot, and it adds
+no copy support for opaque objects; the evaluation path still passes the
+original value to later capture forms, guards and predicates. A projection
+failure never discards the target outcome or an already-determined failure.
 
 No automatic expected/actual extraction, no generic diagnostic DSL and no
 all-field diff is added. No giant log of every successful trial object is kept;

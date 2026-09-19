@@ -482,45 +482,63 @@ the object and adds no copy support."
                (t (return-from unprojectable-diagnostic-leaf (type-of item)))))
     nil))
 
-(defun project-capture-value (value)
-  "Return VALUE as capture-report data, or an explicit unprojectable placeholder.
+(defun capture-value-data (value)
+  "Return VALUE as an explicit availability record for capture evidence.
+
+The result is either
+
+  (:availability :collected :value SNAPSHOT)
+
+where SNAPSHOT is the application value projected as historical evidence, or
+
+  (:availability :unavailable :reason :opaque-value :type TYPE)
+
+where TYPE names the reachable object the snapshot cannot freeze.
 
 The diagnostic projection supports conses, arrays and self-contained atoms
 \(numbers, characters, symbols); the existing evidence snapshot copies the first
 two and returns the rest unchanged.  A value that is, or contains at any depth,
 an object the snapshot keeps by identity -- a CLOS instance, structure, hash
-table, function and the like -- is reported whole as
-\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE), where TYPE names the value that
-could not be projected.  A live reference inside a copied outer structure is
-never published as if it were frozen evidence.  This is a report projection, not
-a deep copy and not a new snapshot; the evaluation path keeps the original
-value."
+table, function and the like -- is reported unavailable whole: a live reference
+inside a copied outer structure is never published as if it were frozen
+evidence.
+
+Availability is framework metadata and :VALUE is application data, so a legal
+application value that happens to look like an earlier placeholder is still
+:COLLECTED with that value under :VALUE; nothing is classified from the shape
+of :VALUE.  This is a report projection, not a deep copy and not a new snapshot;
+the evaluation path keeps the original value."
   (let ((unprojectable (unprojectable-diagnostic-leaf value)))
     (if unprojectable
-        (list :unavailable :reason :opaque-value :type unprojectable)
-        (snapshot-value value))))
+        (list :availability :unavailable :reason :opaque-value :type unprojectable)
+        (list :availability :collected :value (snapshot-value value)))))
 
 (defun project-capture-values (contract captured)
   "Zip the completed capture values CAPTURED with their binding names.
 
-Returns an ordered ((NAME . VALUE) ...) alist over the bindings that completed,
-or NIL when CONTRACT declares no capture.  Each value is projected for the
-report by PROJECT-CAPTURE-VALUE, so a caller reads a value with ASSOC rather
-than reconstructing the pairing from :DECLARED.  The raw value list stays the
-evaluation form passed to later capture forms, guards and predicates."
+Returns an ordered list of per-binding records
+\(:NAME NAME :AVAILABILITY ...) over the bindings that completed, or NIL when
+CONTRACT declares no capture.  Each record carries its binding NAME explicitly,
+so a caller reads it by name rather than reconstructing the pairing from
+:DECLARED, and an application value is never confused with unavailability
+metadata: :VALUE appears only under :AVAILABILITY :COLLECTED.  The raw value
+list stays the evaluation form passed to later capture forms, guards and
+predicates."
   (when (function-spec-capture-bindings contract)
     (loop for binding in (function-spec-capture-bindings contract)
           for value in captured
-          collect (cons (first binding) (project-capture-value value)))))
+          collect (list* :name (first binding) (capture-value-data value)))))
 
 (defun capture-evidence (contract status captured condition index)
   "Return the :CAPTURE half of a trial's state evidence, or NIL when undeclared.
 
 STATUS is :NOT-EVALUATED, :COMPLETED or :ERROR.  CAPTURED holds only the value
 of the bindings that completed, in declaration order, so a capture that failed
-halfway never shows a later binding as obtained.  :VALUES pairs each completed
-value with its binding name as ((NAME . VALUE) ...), and a captured NIL is a
-(NAME . NIL) entry rather than an absence."
+halfway never shows a later binding as obtained.  :VALUES is an ordered list of
+per-binding records (:NAME NAME :AVAILABILITY ...): a collected binding carries
+its application value under :VALUE, an unavailable one carries :REASON and
+:TYPE and claims no value, and a captured NIL is a :COLLECTED record with a NIL
+:VALUE rather than an absence."
   (when (function-spec-capture-bindings contract)
     (let ((bindings (function-spec-capture-bindings contract)))
       (list :status status

@@ -50,7 +50,21 @@
         :external-state :source-location :backend))
 
 (defun schema-info ()
-  "Describe version 1 of the Lisp definition/result schema, independent of MCP JSON."
+  "Describe version 1 of the Lisp definition/result schema, independent of MCP JSON.
+
+A completed capture binding is an explicit tagged record
+
+  (:name NAME :availability :collected :value VALUE)
+
+or
+
+  (:name NAME :availability :unavailable :reason :opaque-value :type TYPE)
+
+where :AVAILABILITY is framework metadata and :VALUE is application data.
+:VALUE appears only when availability is :COLLECTED, so a legal application
+value that happens to look like the unavailable plist is still collected.
+:CAPTURE-VALUE-STATES names the :AVAILABILITY values and :CAPTURE-VALUE-KEYS
+the record keys."
   (list :schema-version 1 :format :lisp-plist :unknown-keys :ignore
         :required-metadata
         '(:schema-version :record-kind :entity-kind :definition-digest
@@ -60,6 +74,8 @@
                                  :opaque-value :uninterned-symbol :resource-limit)
         :entity-kinds '(:spec :property :function-spec)
         :record-kinds '(:definition :result)
+        :capture-value-states '(:collected :unavailable)
+        :capture-value-keys '(:name :availability :value :reason :type)
         :digest-algorithm :fnv1a64-v1
         :digest-covers :declaration-and-registered-dependencies
         :digest-excludes (digest-exclusions)
@@ -509,7 +525,7 @@ This reports support, not whether the target is currently instrumented.")
 
 (defun definition-metadata (definition &key (registry *registry*)
                                           (capabilities nil capabilities-p))
-  "Return v1 metadata for a spec, property or function-spec definition.
+  "Return version 1 metadata for a spec, property or function-spec definition.
 Other objects, including custom-generator dependencies, signal TYPE-ERROR.
 CAPABILITIES, when supplied, replaces the backend probe; execution uses this
 to avoid compiling a disposable generator before constructing the actual one."

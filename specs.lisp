@@ -3,6 +3,7 @@
 (defpackage #:cl-spec/specs
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:hash-table-registry #:registry-find-spec)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/main
                 #:compile-explainer
                 #:compile-validator
@@ -127,10 +128,29 @@ Malformed lists must not enter a law that promises normalization succeeds."
       (and (stringp (getf data :definition-digest)) (null (getf data :digest-omissions)))
       (and (null (getf data :definition-digest)) (consp (getf data :digest-omissions)))))
 
+(defun capture-value-record-p (record)
+  "True for one explicit capture-availability record.
+
+A :COLLECTED record carries the application value under :VALUE, which may be
+any Lisp value at all -- including a plist equal to this framework's own
+unavailability metadata.  An :UNAVAILABLE record carries a keyword :REASON and
+a symbol :TYPE and claims no :VALUE.  The two are told apart by :AVAILABILITY,
+never by the shape of a value."
+  (and (finite-list-p record)
+       (evenp (length record))
+       (symbolp (getf record :name))
+       (case (getf record :availability)
+         (:collected (and (member :value record)
+                          (null (getf record :reason))
+                          (null (getf record :type))))
+         (:unavailable (and (not (member :value record))
+                            (keywordp (getf record :reason))
+                            (symbolp (getf record :type))))
+         (t nil))))
+
 (defun capture-values-data-p (values)
-  "True when VALUES is a list of (NAME . VALUE) capture entries with symbol names."
-  (and (listp values)
-       (every (lambda (entry) (and (consp entry) (symbolp (car entry)))) values)))
+  "True when VALUES is an ordered list of explicit capture-value records."
+  (and (finite-list-p values) (every #'capture-value-record-p values)))
 
 (defun capture-evidence-consistent-p (evidence)
   "Check a capture report's names, prefix and status against each other.
@@ -142,10 +162,10 @@ failing binding and names that binding, its position and its condition type."
         (declared (getf evidence :declared))
         (values (getf evidence :values))
         (error (getf evidence :error)))
-    (and (listp declared)
+    (and (finite-list-p declared)
          (every #'symbolp declared)
          (capture-values-data-p values)
-         (let* ((obtained (mapcar #'car values))
+         (let* ((obtained (mapcar (lambda (record) (getf record :name)) values))
                 (count (length obtained))
                 (prefix (subseq declared 0 (min count (length declared)))))
            (and (equal obtained prefix)
@@ -684,13 +704,21 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:post-value-variables (or (member :primary) (list-of symbol)))
       (:state-post (list-of t)))))
 
+  (defspec capture-value-record-data
+    (and
+     (plist
+      (:required (:name symbol)
+                 (:availability (member :collected :unavailable)))
+      (:optional (:value t) (:reason keyword) (:type symbol)))
+     (satisfies capture-value-record-p)))
+
   (defspec capture-evidence-data
     (and
      (plist
       (:required
        (:status (member :completed :error :not-evaluated))
        (:declared (list-of symbol))
-       (:values (satisfies capture-values-data-p)))
+       (:values (list-of capture-value-record-data)))
       (:optional
        (:error (nullable
                 (plist (:required (:binding symbol) (:index (range integer 0 *))
@@ -777,6 +805,8 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
       (:digest-omission-kinds (list-of keyword))
       (:entity-kinds (list-of keyword))
       (:record-kinds (list-of keyword))
+      (:capture-value-states (list-of keyword))
+      (:capture-value-keys (list-of keyword))
       (:digest-algorithm (member :fnv1a64-v1))
       (:digest-covers (member :declaration-and-registered-dependencies))
       (:digest-excludes (list-of keyword))
