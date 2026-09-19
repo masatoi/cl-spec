@@ -341,10 +341,14 @@ receive it, and `:registry` (default `cl-spec:*registry*`). The list follows the
 declared call layout, so required, `&optional`, explicit `&key`,
 `&allow-other-keys` and `&rest` all bind as they do in generated checking, and
 present values are validated against the declared argument specs before the
-target is reached. Unknown names signal `unknown-function-spec`, a missing
-function signals `unbound-target`, and an inadmissible call signals
-`invalid-call-arguments` with a `:reason` of `:shape` or `:argument-spec` and
-the structured `:errors`.
+target is reached. The reason is decided by the call layout, not by the error
+kind: `:shape` means the call itself was malformed, while `:argument-spec` means
+the layout was fine but a value missed a declared spec (including a composite
+spec's own arity, key or sequence errors). Unknown names signal
+`unknown-function-spec`, a missing function signals `unbound-target`, and an
+inadmissible call signals `invalid-call-arguments` with a `:reason` of `:shape`
+or `:argument-spec` and standard EXPLAIN-DATA `:errors` (`:kind`, `:path`,
+`:actual`, `:expected`) even for a non-list, vector, dotted or circular list.
 
 A `:pre` refusal is not an error: it is a result whose status is `:rejected`,
 using the same `precondition-refuses-p` semantics as generated checking. Beyond
@@ -354,7 +358,10 @@ the shared validation, `check-call` uses the same single-trial path as
 entry points classify the same invocation identically. The target is called
 exactly once when the input reaches the invocation, and zero times when the
 shape is invalid, a declared argument spec fails, `:pre` refuses the input,
-`:capture` signals or case selection fails.
+`:capture` signals or case selection fails. As in `check-function`,
+`undefined-function` and `program-error` raised by structurally broken
+contract-side code are not results or target findings; they propagate to the
+caller.
 
 The result is a `call-check-result`, not a `property-result`: there is no seed,
 trial budget, profile, shrink report or generation report to report, and

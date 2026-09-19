@@ -1968,22 +1968,32 @@ failure identityは、すべて生成検査と同じsingle-trial経路が生成�
 
 ### 引数の受理と拒否
 
-`arguments`は契約自身のcall layoutから導いた引数schema
-（`function-spec-argument-schema`）に対して`explain-data`で検査する。これは
-generatorが生成値を検証するのと同じschemaで、shape（arity、keyword tail、未知key）と、
-与えられた各引数の宣言specを検査する。省略された`&optional`は検証しない。
+`arguments`は契約自身のcall layoutから導いた`call-arguments-spec`
+（`explain-data`で検査する）で検査する。これはgenerated pathと同じpresence-aware
+validatorで、shape（arity、keyword tail、未知key、非list・vector・dotted・circular）
+と、与えられた各引数の宣言specを検査する。省略された`&optional`は検証しない。
 `&allow-other-keys`などのkeyword policyもcall layoutがそのまま決める。
 
+`:shape`と`:argument-spec`の区別は**error kindではなくcall layout自身**が決める。
+`:wrong-length`・`:unknown-key`・`:not-a-sequence`などは、呼び出し形の不正でも、
+複合引数specを満たさない値でも同じkindで現れるためである。`call-layout-shape-error`
+が拒否した場合は`:shape`、layoutが受理したうえで値が宣言specを満たさない場合は
+`:argument-spec`とする。
+
 - 生引数が不正な場合は`invalid-call-arguments`を送出し、targetは呼ばない。
-  `:reason`は`:shape`（呼び出し形の拒否）か`:argument-spec`（与えられた引数が宣言
-  specを満たさない）、`:errors`はstructured explain data。
+  `:reason`は`:shape`か`:argument-spec`、`:errors`はstandardなEXPLAIN-DATA datumの
+  列（`:kind`・`:path`・`:actual`・`:expected`など）で、非listやvectorの拒否も
+  同じ形を取る。
 - `unknown-function-spec`（未登録）と`unbound-target`（関数未定義）は既存どおり
   送出する。
 - 共通`:pre`の拒否はsignalではなく`:rejected`の結果として報告する。判定は既存の
   `precondition-refuses-p`（preconditionの`spec-violation`を拒否として扱う）である。
-- `:capture`やcase選択の失敗、分類中の契約側エラーは`:error`の結果、宣言outcomeの
+- `:capture`やcase選択の失敗、分類中の通常の契約側エラーは`:error`の結果、宣言outcomeの
   違反は`:failed`の結果として報告する。targetが予期しないconditionを送出した場合は
   `:error`／`:condition`であり、これも生成検査と同じ意味である。
+- `check-function`と同様、契約側コードの`undefined-function`と`program-error`は
+  result化せず呼び出し側へ伝播する。predicateのtypoやarityの誤りをtargetの反例として
+  報告しないための既存仕様をそのまま維持する。
 
 ### target呼び出し回数
 

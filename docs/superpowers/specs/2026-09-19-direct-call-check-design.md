@@ -99,14 +99,22 @@ No second evaluator, classifier, case selector or evidence builder exists.
 
 ## 5. Argument admission, rejection and errors
 
-The raw argument list is checked against
-`(function-spec-argument-schema contract (function-spec-call-layout contract))`
-with `explain-data` before `observe-trial` runs. This is the same schema the
-generator validates its draws against, so an argument outside the declared
-schema is refused exactly as a generated value would be. It covers shape
-(arity, malformed keyword tails, unknown keys) and every present argument's
-declared spec; an omitted `&optional` is not validated, matching
-`call-arguments-spec` presence semantics.
+The raw argument list is checked with `explain-data` against a
+`call-arguments-spec` built on the contract's own call layout before
+`observe-trial` runs. This is the same presence-aware validator the generated
+path uses, so an argument outside the declared schema is refused exactly as a
+generated value would be. It covers shape (arity, malformed keyword tails,
+unknown keys, and a non-list, vector, dotted or circular argument list) and every
+present argument's declared spec; an omitted `&optional` is not validated.
+
+Whether the call itself was malformed is answered by
+`call-layout-shape-error`, not by the error kind: the same `:wrong-length`,
+`:unknown-key` and `:not-a-sequence` datums are produced both by a malformed
+call and by a value that misses a composite argument spec. A layout refusal is
+`:shape`; a call the layout accepts whose value fails a declared spec is
+`:argument-spec`. Every refusal carries standard EXPLAIN-DATA datums, so a
+non-list or vector refusal supports the same `:kind` / `:path` / `:actual` /
+`:expected` reads as an argument-spec refusal.
 
 The boundary between "you called it wrong" and "the contract refused it" is:
 
@@ -116,10 +124,11 @@ The boundary between "you called it wrong" and "the contract refused it" is:
 | target not fbound | signal `unbound-target` |
 | raw arguments invalid (shape or argument spec) | signal `invalid-call-arguments` |
 | `:pre` refuses the admitted input | result with `:status :rejected` |
-| contract-side error (`:capture`, case selection, classifier) | result with `:status :error` |
+| ordinary contract-side error (`:capture`, case selection, classifier) | result with `:status :error` |
 | target condition the contract did not expect | result with `:status :error`, reason `:condition` |
 | declared-outcome violation (returns, signals, post, state-post) | result with `:status :failed` |
 | invocation satisfies the contract | result with `:status :passed` |
+| `undefined-function` / `program-error` in broken contract code | propagates, as in `check-function` |
 
 `invalid-call-arguments` is a new `cl-spec-error` carrying `:function`,
 `:arguments`, a `:reason` (`:shape` or `:argument-spec`) and the structured
@@ -127,7 +136,10 @@ The boundary between "you called it wrong" and "the contract refused it" is:
 malformed or inadmissible call is API misuse, not a finding about the target.
 Precondition refusal is deliberately *not* a signal: it uses
 `precondition-refuses-p`, including its treatment of `spec-violation`, and is a
-structured result.
+structured result. `undefined-function` and `program-error` are deliberately
+*not* results either: the shared classifier exempts them so a mistyped or
+mis-called predicate is never published as a counterexample, and `check-call`
+inherits that.
 
 ## 6. Target call count
 

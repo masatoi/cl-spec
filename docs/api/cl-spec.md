@@ -323,8 +323,12 @@ target is not fbound, and INVALID-CALL-ARGUMENTS when ARGUMENTS is not an
 admissible call of the contract -- the last covers both a refused call shape and
 a present argument that fails its declared spec, and calls no target.  A :PRE
 refusal is not an error: it is reported as a result whose status is :REJECTED.
-Contract-side errors (:CAPTURE, case selection, classification) are reported as
-results with status :ERROR, exactly as generated checking reports them.
+Ordinary contract-side evaluation errors (:CAPTURE, case selection,
+classification) are reported as results with status :ERROR, exactly as generated
+checking reports them.  As in CHECK-FUNCTION, UNDEFINED-FUNCTION and
+PROGRAM-ERROR raised by structurally broken contract code are not turned into
+results or target findings; they propagate to the caller, so a mistyped or
+mis-called predicate is never reported as a counterexample.
 
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
