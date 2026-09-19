@@ -38,6 +38,11 @@
            #:invalid-generator-form-reason
            #:invalid-generated-arguments #:invalid-generated-arguments-generator
            #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
+           #:invalid-call-arguments
+           #:invalid-call-arguments-function
+           #:invalid-call-arguments-arguments
+           #:invalid-call-arguments-reason
+           #:invalid-call-arguments-errors
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
@@ -271,6 +276,38 @@ produce values from a body called without the bindings its author wrote."))
                      (invalid-generated-arguments-generator condition)
                      (invalid-generated-arguments-reason condition))))
   (:documentation "Signalled before invoking a target when an argument-set draw is invalid."))
+
+(define-condition invalid-call-arguments (cl-spec-error)
+  ((function :initarg :function
+             :reader invalid-call-arguments-function
+             :documentation "Name of the function spec the raw call was checked against.")
+   (arguments :initarg :arguments
+              :reader invalid-call-arguments-arguments
+              :documentation "Raw argument list the caller supplied.")
+   (reason :initarg :reason
+           :initform :shape
+           :reader invalid-call-arguments-reason
+           :documentation "Which admission rule the list broke: :SHAPE or :ARGUMENT-SPEC.")
+   (errors :initarg :errors
+           :initform nil
+           :reader invalid-call-arguments-errors
+           :documentation "Structured EXPLAIN-DATA errors for the refused argument list."))
+  (:report (lambda (condition stream)
+             (let ((*print-circle* t)
+                   (*print-length* 20)
+                   (*print-level* 8))
+               (format stream "~S is not a valid call of ~S~@[: ~S~]."
+                       (invalid-call-arguments-arguments condition)
+                       (invalid-call-arguments-function condition)
+                       (invalid-call-arguments-reason condition)))))
+  (:documentation "Signalled by CHECK-CALL when caller-supplied arguments are inadmissible.
+
+Distinct from a precondition refusal and from a target contract violation: the
+list is not an admitted invocation of the contract at all, so no target is
+called.  :REASON is :SHAPE when the call layout refuses the list (arity,
+malformed keyword tail, unknown key), and :ARGUMENT-SPEC when a present
+argument fails the spec the contract declares for it.  :ERRORS carries the
+structured EXPLAIN-DATA errors, so a caller does not have to re-run validation."))
 
 (define-condition generator-unavailable (cl-spec-error)
   ((spec :initarg :spec
