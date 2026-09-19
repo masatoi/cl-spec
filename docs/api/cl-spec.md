@@ -443,7 +443,7 @@ Extension programming errors propagate rather than becoming incompleteness.
 
 *Function* · `(definition &key (registry *registry*) (capabilities nil capabilities-p))`
 
-Return v1 metadata for a spec, property or function-spec definition.
+Return version 1 metadata for a spec, property or function-spec definition.
 Other objects, including custom-generator dependencies, signal TYPE-ERROR.
 CAPABILITIES, when supplied, replaces the backend probe; execution uses this
 to avoid compiling a disposable generator before constructing the actual one.
@@ -999,6 +999,26 @@ from an agent.
 *Function*
 
 Describe version 1 of the Lisp definition/result schema, independent of MCP JSON.
+
+```text
+A completed capture binding is an explicit tagged record
+
+  (:name NAME :availability :collected :value VALUE)
+
+or
+
+  (:name NAME :availability :unavailable :reason :opaque-value :type TYPE)
+
+where :AVAILABILITY is framework metadata and :VALUE is application data.
+:VALUE appears only when availability is :COLLECTED, so a legal application
+value that happens to look like the unavailable plist is still collected.
+:CAPTURE-VALUE-STATES names the :AVAILABILITY values and :CAPTURE-VALUE-KEYS
+the record keys.  An :UNAVAILABLE record's :TYPE is ordinary data:
+:CAPTURE-VALUE-TYPE-FORMS names its forms -- :NAMED is a named type symbol,
+:ANONYMOUS-CLASS is (:kind :anonymous-class :metaclass NAME) for a class with no
+name, and :UNKNOWN is the symbol fallback for a type specifier this projection
+cannot name -- so a live class object never enters the record.
+```
 
 <a name="semantic-data"></a>
 ### semantic-data
@@ -1616,12 +1636,17 @@ Name of the :capture binding whose form signalled.
 
 *Accessor* of `capture-error` · `(condition)`
 
-Ordered (NAME . VALUE) pairs completed before the failure.
+Ordered per-binding records completed before the failure.
+Each record is (:name NAME :availability :collected :value VALUE) or
+(:name NAME :availability :unavailable :reason :opaque-value :type TYPE).
+TYPE is ordinary data -- a named type symbol, or
+(:kind :anonymous-class :metaclass NAME) for a class with no name -- never a
+live class object.
 Only the bindings that finished are present; a later binding is never shown as
-obtained, and a captured NIL is a pair with a NIL value rather than an absence.
-A value the diagnostic projection cannot preserve, or that contains one at any
-depth, is reported whole as an (:unavailable :reason :opaque-value :type TYPE)
-placeholder rather than as a live reference.
+obtained, and a captured NIL is a :collected record with a NIL value rather
+than an absence.  A value the diagnostic projection cannot preserve, or that
+contains one at any depth, is reported unavailable whole and claims no :value
+rather than exposing a live reference.
 
 <a name="capture-error-function"></a>
 ### capture-error-function

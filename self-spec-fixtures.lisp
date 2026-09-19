@@ -85,12 +85,14 @@ package is therefore rejected; comparing only symbol names would accept it.")
 
 (defparameter *state-projection-expectations*
   (list :declared '(balance-before marker)
-        :values (list (cons 'balance-before 10) (cons 'marker nil))
+        :values (list (list :name 'balance-before :availability :collected :value 10)
+                      (list :name 'marker :availability :collected :value nil))
         :capture-error-binding 'balance-before)
   "Explicit expected state evidence for the scripted :FORGET run.
 
-:VALUES keeps a captured NIL, (MARKER . NIL), distinct from a binding that was
-declared but never obtained.")
+:VALUES keeps a captured NIL, (:NAME MARKER :AVAILABILITY :COLLECTED :VALUE
+NIL), distinct from a binding that was declared but never obtained; availability
+is read from :AVAILABILITY, never from the shape of the value.")
 
 (defun registration-scenario-targets-p (targets)
   "True for exactly the explicit target arguments REGISTRATION-SCENARIO returns.

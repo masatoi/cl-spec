@@ -8,13 +8,37 @@
   (:import-from #:cl-spec/src/introspection #:spec-data #:property-data #:function-spec-data)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
   (:import-from #:cl-spec/src/schema
-                #:definition-digest #:definition-description #:definition-constraints)
+                #:definition-digest #:definition-description #:definition-constraints
+                #:schema-info)
   (:import-from #:cl-spec/src/property-runner #:run-property #:result-data)
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/generator #:*generator-backend*)
   (:import-from #:cl-spec/src/backends/check-it))
 
 (in-package #:cl-spec/tests/schema-test)
+
+(deftest schema-info-publishes-the-capture-value-union
+  (let ((info (schema-info)))
+    (testing "the public schema is version 1"
+      (ok (eql 1 (getf info :schema-version))))
+    (testing "the capture-value union is named explicitly"
+      (ok (equal '(:collected :unavailable) (getf info :capture-value-states)))
+      (ok (member :name (getf info :capture-value-keys)))
+      (ok (member :availability (getf info :capture-value-keys)))
+      (ok (member :value (getf info :capture-value-keys)))
+      (ok (member :reason (getf info :capture-value-keys)))
+      (ok (member :type (getf info :capture-value-keys))))
+    (testing "the diagnostic type forms are named"
+      (ok (equal '(:named :anonymous-class :unknown)
+                 (getf info :capture-value-type-forms))))))
+
+(deftest result-records-carry-the-version-1-envelope
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty always-true-law ((x (range integer 1 10))) (:trials (:normal 1))
+      (integerp x))
+    (let ((data (result-data (run-property 'always-true-law :seed 42))))
+      (ok (eql 1 (getf data :schema-version)))
+      (ok (eq :result (getf data :record-kind))))))
 
 #+sbcl
 (deftest nonfinite-floats-have-an-incomplete-digest

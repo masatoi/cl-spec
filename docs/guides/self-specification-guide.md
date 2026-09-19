@@ -135,14 +135,22 @@ For a contract run:
   `:not-collected`, which is different from measured zeros.
 - `:failure-phase` says where the trial stopped: `:case-selection` before the
   target, `:capture` before the target, `:state-post` after a passed outcome.
-- `:failure :state` carries `:capture` (`:status`, `:declared`, `:values` as a
-  `(NAME . VALUE)` alist, optional `:error`) and `:state-post` (`:status`,
-  `:reason`, `:case`, `:index`, `:form`, `:condition-type`). A captured NIL is
-  an entry such as `(NAME . NIL)`; a binding whose form never ran is absent from
-  `:values` but still listed in `:declared`.
+- `:failure :state` carries `:capture` (`:status`, `:declared`, `:values` as an
+  ordered list of per-binding records, optional `:error`) and `:state-post`
+  (`:status`, `:reason`, `:case`, `:index`, `:form`, `:condition-type`). Each
+  record is `(:name NAME :availability :collected :value VALUE)` or
+  `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`.
+  A captured NIL is a `:collected` record with a NIL `:value`; a binding whose
+  form never ran is absent from `:values` but still listed in `:declared`.
 - A capture value that is or contains an opaque object is projected as
-  `(:unavailable :reason :opaque-value :type TYPE)` rather than as frozen
-  evidence. Capture observes a value and does not copy or restore it.
+  `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`,
+  claiming no `:value`, rather than as frozen evidence. `TYPE` is ordinary data:
+  a named type symbol, `(:kind :anonymous-class :metaclass NAME)` for a class
+  with no name, or the `:unknown` fallback, so no live class object is
+  published. Availability is
+  framework metadata and is never inferred from the shape of the value, so an
+  application value may legally equal any plist — including the unavailable
+  shape itself. Capture observes a value and does not copy or restore it.
 
 ## 6. What the state-observing self-contracts do not do
 

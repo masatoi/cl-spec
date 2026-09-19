@@ -1806,7 +1806,10 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 ```text
 (:capture (:status :not-evaluated | :completed | :error
            :declared (NAME ...)
-           :values ((NAME . VALUE) ...)          ; 完了した束縛だけ
+           :values                                ; 完了した束縛だけ
+           ((:name NAME :availability :collected :value VALUE) ...
+            (:name NAME :availability :unavailable
+             :reason :opaque-value :type TYPE) ...)
            :error (:binding NAME :index I :condition-type T))
  :state-post (:status :not-evaluated | :passed | :violation | :error
              :reason REASON                      ; :not-evaluatedのとき
@@ -1822,15 +1825,28 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 `:case-selection-failed`となり、「宣言していない」と「宣言はあるが選択・実行の前に
 止まった」を区別する。どちらの節も宣言しない契約は状態証拠を持たず、`:state`を
 省略するので既存の投影は変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
-して表示せず、`:values`は完了した束縛だけの順序付き`((NAME . VALUE) ...)` alistで
-あり、`assoc`で名前から値を引ける。取得値NILは`(NAME . NIL)`として未取得と区別する。
+して表示せず、`:values`は完了した束縛だけの順序付きper-binding recordのリストで
+あり、`:name`で名前から引ける。各recordは
+`(:name NAME :availability :collected :value VALUE)`または
+`(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`である。
+`:availability`はフレームワークのメタデータであり、値の形状から分類しない。`:value`は
+アプリケーションのデータで、`:collected`のときだけ現れる。取得値NILは
+`(:name NAME :availability :collected :value nil)`として未取得と区別する。
+アプリケーション値は任意のplist——旧placeholderと同じ形を含む——を取り得るが、
+周囲のrecordが意味を決めるため衝突しない。`:value`の有無はrecordのindicator位置で
+判定し、値位置に現れる`:value`をkeyの存在と見なさない。
 
 証拠の値は既存のsnapshotで投影する。診断の投影可能範囲を明示する。consとarrayは
 複製として、number・character・symbolなど表現が自己完結したatomはそのまま報告する。
 この範囲外のオブジェクト（CLOSインスタンス・構造体・hash-table・関数など）を
-**その値自身が、または任意の深さで内包する**場合、その束縛の診断値全体を
-`(:unavailable :reason :opaque-value :type TYPE)`（`TYPE`は投影できなかった
-オブジェクトの型）として報告する。外側だけを複製して内部のライブ参照を残すと、
+**その値自身が、または任意の深さで内包する**場合、その束縛のrecord全体を
+`(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`
+として報告し、`:value`は主張しない。`TYPE`は通常のデータであり、名前を持つ型は
+その名前symbol、名前を持たない匿名CLOSクラスは
+`(:kind :anonymous-class :metaclass NAME)`、投影が名前を付けられない型指定子は
+`:unknown`とする。`type-of`がライブなclass
+オブジェクトを返し得る場合でも、classオブジェクトを証拠に埋め込まない。
+外側だけを複製して内部のライブ参照を残すと、
 「保存済みの診断」から後の変更が見えてしまうためである。走査は値自身の構造に
 よって束縛され、循環と共有は一度だけ訪問する。評価経路は元の値を後続のcapture式・
 guard・述語へそのまま渡す。これは報告用の投影であり、deep copyでも新しいsnapshot
@@ -3025,7 +3041,26 @@ Introspection-firstの原則はconsumer側にも及ぶ。consumerはregistryが 
 | `:definition-digest-covers` | `:declaration-and-registered-dependencies` |
 | `:capabilities` | `:generation`、`:shrinking`、`:instrumentation`のplist |
 
-既存の`:kind`を変更せず保持する。`:entity-type`などの別名は追加しない。
+capture状態証拠（§17.3）の`:capture`の`:values`は、各completed bindingを
+`(:name NAME :availability :collected :value VALUE)`または
+`(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`の
+明示的なtagged recordとする。`:availability`は`:collected`／`:unavailable`の列挙で
+フレームワークのメタデータ、`:value`はアプリケーションのデータであり、`:collected`の
+ときだけ現れる。値の形状から意味を推測しないので、捕捉した合法な値がunavailable plistと
+同じ形でも`:collected`のまま`:value`に入る。取得値NILは`:collected`と`:value nil`で表し、
+未取得と区別する。`:value`の有無はrecordのindicator位置で判定し、値位置に現れる
+`:value`をkeyの存在と見なさない。`schema-info`の`:capture-value-states`が
+`:availability`の列挙、`:capture-value-keys`がrecordのkey、
+`:capture-value-type-forms`が`:type`の形（`:named`・`:anonymous-class`・
+`:unknown`）を列挙する。
+`:unavailable`の`:type`は通常のデータであり、名前を持つ型は名前symbol、名前を持たない
+匿名CLOSクラスは`(:kind :anonymous-class :metaclass NAME)`、投影が名前を付けられない
+型指定子は`:unknown`とする。`type-of`がライブな
+classオブジェクトを返し得る場合でも、classオブジェクトを証拠に埋め込まない。なお、
+`:values`を`((NAME . VALUE) ...)` alistとし、投影できない値を値位置の
+`(:unavailable :reason :opaque-value :type TYPE)` plistで表す形は、公開v1契約ではなく
+リリース前の実装shapeであり、互換性の対象にしない。
+
 consumerは未知のキーを無視し、未知のversionを既知のschemaとして解釈しない。
 v1の必須キーで`NIL`は「欠落」の代用ではなく、上表に定義した値である。
 versionの無い旧recordは旧protocolとして扱う。新しい省略可能キーの追加はversionを維持し、

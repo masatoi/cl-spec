@@ -454,7 +454,7 @@ returns one value yields an unknown position rather than a guessed one."
       (values nil nil nil condition))))
 
 (defun unprojectable-diagnostic-leaf (value)
-  "Return the TYPE of an opaque value reachable from VALUE, or NIL when none.
+  "Return an opaque object reachable from VALUE, or NIL when none.
 
 The evidence snapshot copies conses and arrays and keeps other objects by
 identity.  A reachable object it does not copy and that is not a self-contained
@@ -463,7 +463,8 @@ reporting a copy of the outer structure would still carry a live reference to th
 inner object, so a later change to that object would be visible through
 \"saved\" diagnostics.  Cycles and shared structure are visited once.  This
 defines the diagnostic projection's supported range; it is not a statement about
-the object and adds no copy support."
+the object and adds no copy support.  The returned object is not published; the
+caller projects its diagnostic type through DIAGNOSTIC-TYPE-DATA."
   (let ((seen (make-hash-table :test #'eq))
         (pending (list value)))
     (loop while pending
@@ -479,48 +480,92 @@ the object and adds no copy support."
                 (dotimes (index (array-total-size item))
                   (push (row-major-aref item index) pending)))
                ((or (numberp item) (characterp item) (symbolp item)))
-               (t (return-from unprojectable-diagnostic-leaf (type-of item)))))
+               (t (return-from unprojectable-diagnostic-leaf item))))
     nil))
 
-(defun project-capture-value (value)
-  "Return VALUE as capture-report data, or an explicit unprojectable placeholder.
+(defun diagnostic-type-data (object)
+  "Return stable ordinary data describing OBJECT's diagnostic type.
+
+A named type -- a CLOS, structure or condition class name, or a built-in type
+such as HASH-TABLE or COMPILED-FUNCTION -- is reported as its name symbol, so
+the common cases stay readable.  An object whose class has no name (an
+anonymous CLOS class) has no such symbol, and TYPE-OF may legally return the
+live class object itself; that is reported as
+\(:KIND :ANONYMOUS-CLASS :METACLASS NAME), where NAME is the metaclass's name
+\(or :ANONYMOUS-CLASS when even the metaclass is unnamed), so no class object is
+embedded in historical evidence.  Any other type specifier degrades to :UNKNOWN
+rather than carrying an implementation object.  The result is always ordinary
+data: a symbol or a two-key plist."
+  (let ((type (type-of object)))
+    (cond
+      ((symbolp type) type)
+      ((typep type 'class)
+       (list :kind :anonymous-class
+             :metaclass (or (class-name (class-of type)) :anonymous-class)))
+      (t :unknown))))
+
+(defun capture-value-data (value)
+  "Return VALUE as an explicit availability record for capture evidence.
+
+The result is either
+
+  (:availability :collected :value SNAPSHOT)
+
+where SNAPSHOT is the application value projected as historical evidence, or
+
+  (:availability :unavailable :reason :opaque-value :type TYPE)
+
+where TYPE is ordinary data describing the reachable object the snapshot cannot
+freeze: a named type symbol, (:kind :anonymous-class :metaclass NAME) for an
+anonymous CLOS class whose TYPE-OF is the live class object, or the :UNKNOWN
+fallback for a type specifier this projection cannot name.  No class object or
+other live application object is ever published as the TYPE.
 
 The diagnostic projection supports conses, arrays and self-contained atoms
 \(numbers, characters, symbols); the existing evidence snapshot copies the first
 two and returns the rest unchanged.  A value that is, or contains at any depth,
 an object the snapshot keeps by identity -- a CLOS instance, structure, hash
-table, function and the like -- is reported whole as
-\(:UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE), where TYPE names the value that
-could not be projected.  A live reference inside a copied outer structure is
-never published as if it were frozen evidence.  This is a report projection, not
-a deep copy and not a new snapshot; the evaluation path keeps the original
-value."
+table, function and the like -- is reported unavailable whole: a live reference
+inside a copied outer structure is never published as if it were frozen
+evidence.
+
+Availability is framework metadata and :VALUE is application data, so a legal
+application value that happens to look like an earlier placeholder is still
+:COLLECTED with that value under :VALUE; nothing is classified from the shape
+of :VALUE.  This is a report projection, not a deep copy and not a new snapshot;
+the evaluation path keeps the original value."
   (let ((unprojectable (unprojectable-diagnostic-leaf value)))
     (if unprojectable
-        (list :unavailable :reason :opaque-value :type unprojectable)
-        (snapshot-value value))))
+        (list :availability :unavailable :reason :opaque-value
+              :type (diagnostic-type-data unprojectable))
+        (list :availability :collected :value (snapshot-value value)))))
 
 (defun project-capture-values (contract captured)
   "Zip the completed capture values CAPTURED with their binding names.
 
-Returns an ordered ((NAME . VALUE) ...) alist over the bindings that completed,
-or NIL when CONTRACT declares no capture.  Each value is projected for the
-report by PROJECT-CAPTURE-VALUE, so a caller reads a value with ASSOC rather
-than reconstructing the pairing from :DECLARED.  The raw value list stays the
-evaluation form passed to later capture forms, guards and predicates."
+Returns an ordered list of per-binding records
+\(:NAME NAME :AVAILABILITY ...) over the bindings that completed, or NIL when
+CONTRACT declares no capture.  Each record carries its binding NAME explicitly,
+so a caller reads it by name rather than reconstructing the pairing from
+:DECLARED, and an application value is never confused with unavailability
+metadata: :VALUE appears only under :AVAILABILITY :COLLECTED.  The raw value
+list stays the evaluation form passed to later capture forms, guards and
+predicates."
   (when (function-spec-capture-bindings contract)
     (loop for binding in (function-spec-capture-bindings contract)
           for value in captured
-          collect (cons (first binding) (project-capture-value value)))))
+          collect (list* :name (first binding) (capture-value-data value)))))
 
 (defun capture-evidence (contract status captured condition index)
   "Return the :CAPTURE half of a trial's state evidence, or NIL when undeclared.
 
 STATUS is :NOT-EVALUATED, :COMPLETED or :ERROR.  CAPTURED holds only the value
 of the bindings that completed, in declaration order, so a capture that failed
-halfway never shows a later binding as obtained.  :VALUES pairs each completed
-value with its binding name as ((NAME . VALUE) ...), and a captured NIL is a
-(NAME . NIL) entry rather than an absence."
+halfway never shows a later binding as obtained.  :VALUES is an ordered list of
+per-binding records (:NAME NAME :AVAILABILITY ...): a collected binding carries
+its application value under :VALUE, an unavailable one carries :REASON and
+:TYPE and claims no value, and a captured NIL is a :COLLECTED record with a NIL
+:VALUE rather than an absence."
   (when (function-spec-capture-bindings contract)
     (let ((bindings (function-spec-capture-bindings contract)))
       (list :status status

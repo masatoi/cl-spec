@@ -220,7 +220,10 @@ contract errors does not change."
 the evaluator reported state evidence; a featureless failure omits it, so its
 projection is unchanged.  The state plist says whether capture ran to completion
 and whether state-post was not evaluated (with a reason), passed, was violated or
-itself signalled."
+itself signalled.  Each completed capture binding is a per-binding record
+\(:NAME NAME :AVAILABILITY :COLLECTED :VALUE VALUE) or
+\(:NAME NAME :AVAILABILITY :UNAVAILABLE :REASON :OPAQUE-VALUE :TYPE TYPE), so a
+reader never has to classify application data by its shape."
   (when observation
     (append
      (list :arguments (trial-observation-arguments observation)

@@ -481,12 +481,17 @@ shape for every kind."
    (captured :initarg :captured
              :initform nil
              :reader capture-error-captured
-             :documentation "Ordered (NAME . VALUE) pairs completed before the failure.
+             :documentation "Ordered per-binding records completed before the failure.
+Each record is (:name NAME :availability :collected :value VALUE) or
+(:name NAME :availability :unavailable :reason :opaque-value :type TYPE).
+TYPE is ordinary data -- a named type symbol, or
+(:kind :anonymous-class :metaclass NAME) for a class with no name -- never a
+live class object.
 Only the bindings that finished are present; a later binding is never shown as
-obtained, and a captured NIL is a pair with a NIL value rather than an absence.
-A value the diagnostic projection cannot preserve, or that contains one at any
-depth, is reported whole as an (:unavailable :reason :opaque-value :type TYPE)
-placeholder rather than as a live reference.")
+obtained, and a captured NIL is a :collected record with a NIL value rather
+than an absence.  A value the diagnostic projection cannot preserve, or that
+contains one at any depth, is reported unavailable whole and claims no :value
+rather than exposing a live reference.")
    (original-condition :initarg :original-condition
                        :initform nil
                        :reader capture-error-original-condition

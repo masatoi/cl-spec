@@ -342,35 +342,146 @@
     (register-specifications)
     (let ((capture-spec (find-spec 'cl-spec/specs::capture-evidence-data))
           (state-spec (find-spec 'cl-spec/specs::state-post-evidence-data)))
-      (testing "capture values are named pairs and agree with the status"
-        (ok (validp capture-spec '(:status :completed :declared (x)
-                                   :values ((x . 1)) :error nil)))
+      (testing "capture values are explicit availability records"
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :collected :value 1))
+                      :error nil)))
         (ok (not (validp capture-spec '(:status :completed :declared (x)
                                         :values (123) :error nil))))
+        ;; The pre-release ((NAME . VALUE) ...) alist is not the v1 shape and
+        ;; is not accepted as a compatibility form.
+        (ok (not (validp capture-spec '(:status :completed :declared (x)
+                                        :values ((x . 1)) :error nil))))
         (ok (not (validp capture-spec '(:status :completed :declared (x)
                                         :values nil :error nil)))))
+      (testing "availability separates metadata from an application value"
+        ;; A collected application value may equal the old marker plist; it is
+        ;; still a value because :AVAILABILITY says so, never because of shape.
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :collected
+                                :value (:unavailable :reason :opaque-value
+                                        :type :hash-table)))
+                      :error nil))))
+      (testing "the union is enforced by plist key presence, not by searching values"
+        ;; A present :VALUE whose value is NIL is a collected value.
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :collected :value nil))
+                      :error nil)))
+        ;; No :VALUE indicator at all.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :collected))
+                           :error nil))))
+        ;; :VALUE appears only as the value of :NAME, never as an indicator.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name :value :availability :collected))
+                           :error nil))))
+        ;; A symbol in a value position does not stand in for a missing :NAME.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:availability :collected :value 1))
+                           :error nil))))
+        ;; An unavailable record claims no value.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :unavailable
+                                     :reason :opaque-value :type hash-table
+                                     :value 1))
+                           :error nil))))
+        ;; An unavailable record requires both :REASON and :TYPE.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :unavailable
+                                     :type hash-table))
+                           :error nil))))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :unavailable
+                                     :reason :opaque-value))
+                           :error nil))))
+        ;; A collected record carries no unavailable-only metadata, NIL or not.
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :collected :value 1
+                                     :reason :opaque-value))
+                           :error nil))))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :collected :value 1
+                                     :type hash-table))
+                           :error nil))))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :collected :value 1
+                                     :reason nil))
+                           :error nil)))))
+      (testing "the diagnostic :TYPE is ordinary data, never a live class object"
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :unavailable
+                                :reason :opaque-value :type hash-table))
+                      :error nil)))
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :unavailable
+                                :reason :opaque-value
+                                :type (:kind :anonymous-class
+                                       :metaclass standard-class)))
+                      :error nil)))
+        ;; The :UNKNOWN fallback is a symbol and part of the documented domain.
+        (ok (validp capture-spec
+                    '(:status :completed :declared (x)
+                      :values ((:name x :availability :unavailable
+                                :reason :opaque-value :type :unknown))
+                      :error nil)))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :unavailable
+                                     :reason :opaque-value
+                                     :type (:kind :named :name hash-table)))
+                           :error nil))))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (x)
+                           :values ((:name x :availability :unavailable
+                                     :reason :opaque-value :type 42))
+                           :error nil))))
+        (let ((class (make-instance 'standard-class)))
+          (ok (not (validp capture-spec
+                           (list :status :completed :declared '(x)
+                                 :values (list (list :name 'x
+                                                     :availability :unavailable
+                                                     :reason :opaque-value
+                                                     :type class))
+                                 :error nil))))))
       (testing "a failed capture names the binding at the failure position"
         (ok (validp capture-spec '(:status :error :declared (x) :values nil
                                    :error (:binding x :index 0
                                            :condition-type simple-error))))
-        (ok (validp capture-spec '(:status :error :declared (a b)
-                                   :values ((a . 10))
-                                   :error (:binding b :index 1
-                                           :condition-type simple-error))))
-        (ok (not (validp capture-spec '(:status :error :declared (a b)
-                                        :values ((a . 10))
-                                        :error (:binding unrelated :index 1
-                                                :condition-type simple-error)))))
+        (ok (validp capture-spec
+                    '(:status :error :declared (a b)
+                      :values ((:name a :availability :collected :value 10))
+                      :error (:binding b :index 1 :condition-type simple-error))))
+        (ok (not (validp capture-spec
+                         '(:status :error :declared (a b)
+                           :values ((:name a :availability :collected :value 10))
+                           :error (:binding unrelated :index 1
+                                   :condition-type simple-error)))))
         (ok (not (validp capture-spec '(:status :error :declared (x)
                                         :values nil :error nil))))
-        (ok (not (validp capture-spec '(:status :error :declared (a)
-                                        :values ((a . 1))
-                                        :error (:binding a :index 1
-                                                :condition-type simple-error)))))
-        (ok (not (validp capture-spec '(:status :completed :declared (a)
-                                        :values ((a . 1))
-                                        :error (:binding a :index 1
-                                                :condition-type simple-error))))))
+        (ok (not (validp capture-spec
+                         '(:status :error :declared (a)
+                           :values ((:name a :availability :collected :value 1))
+                           :error (:binding a :index 1
+                                   :condition-type simple-error)))))
+        (ok (not (validp capture-spec
+                         '(:status :completed :declared (a)
+                           :values ((:name a :availability :collected :value 1))
+                           :error (:binding a :index 1
+                                   :condition-type simple-error))))))
       (testing "an uncollected capture obtained nothing"
         (ok (validp capture-spec '(:status :not-evaluated :declared (x)
                                    :values nil :error nil))))
@@ -407,7 +518,7 @@
         (ok (not (validp state-spec '(:status :error :reason :outcome-failed
                                       :case nil :index 0 :form (= x 1)
                                       :condition-type simple-error)))))
-      (testing "unknown keys stay allowed, as version 1 requires"
+      (testing "unknown keys stay allowed, as the open schema requires"
         (ok (validp state-spec '(:status :passed :reason nil :case nil :index nil
                                  :form nil :condition-type nil :future t)))))))
 
