@@ -18,7 +18,8 @@ documents live in `docs/superpowers/specs/`.
 **Current status: MVP vertical slice.** Normalization, validation, structured
 explain, spec introspection, the check-it generator backend, `defproperty` and
 the property runner with seed, replay and shrinking are implemented, as are
-function specs (`defspec-function`, `check-function`, `function-spec-data`) in
+function specs (`defspec-function`, `check-function`, `check-call`,
+`function-spec-data`) in
 their expanded §73.1 D1 range: required/optional positional, keyword and rest arguments,
 primary or fixed multiple return values, and explicit `:post-values` bindings,
 or a required error outcome via `:signals`. A function spec may instead declare
@@ -36,7 +37,12 @@ capture or state-post failure keeps the recorded phase and evidence rather than
 inferring either from a condition's class, and such a state-observing contract
 is not shrunk, replayed from a past result, persisted as a counterexample
 artifact or instrumented in this version. Capture observes a value and does not
-copy it, and this feature does not restore anything.
+copy it, and this feature does not restore anything. A direct one-shot check
+(`check-call`, `call-check-result`, `call-check-data`) validates one
+caller-supplied raw argument list through the same single-trial path -- binding,
+`:pre`, `:capture`, exclusive case selection, one target call, outcome and
+`:state-post` classification -- with no generation, shrinking or replay, and it
+works in the core system without check-it.
 Custom generators (`defgenerator`, no-argument bodies), whole-argument generators,
 and scoped runtime instrumentation (`:input`, `:output`, `:post`) are implemented.
 Field-aware keyword plist specs support required/optional keys, closed records,

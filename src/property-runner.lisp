@@ -34,7 +34,8 @@
                 #:make-seed
                 #:seed->random-state)
   (:export #:property-result-shrink-report #:property-result-options #:property-result-provenance
-           #:result-data #:property-result-schema-metadata #:property-result-budget
+           #:result-data #:observation-data
+           #:property-result-schema-metadata #:property-result-budget
            #:property-result-generation-report #:property-result-failure-phase
            #:property-result-entity-kind
            #:property-result-case-report

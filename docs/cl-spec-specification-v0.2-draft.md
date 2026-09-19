@@ -73,7 +73,8 @@
 | AND合成の生成 | 実装済み | 生成元を一つ選び、残余の連言を共有予算のbounded filterで課す。既定`1000 × N`、枯渇は`generation-budget-exhausted`で報告する（§10、§73.4、§73.5 addendum） |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
-| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| Function Spec | 実装済み（最小範囲） | `defspec-function`、`check-function`、`function-spec-data`、`check-call`。必須・optional・key・rest引数、主値または固定個数の多値。全引数を生成する`(:args-generator NAME)`にも対応。§17〜19、§73.1 D1 |
+| 一回限りの具象呼び出し検査 | 実装済み | `check-call`と`call-check-result`／`call-check-data`。generator・trial loop・shrinking・replayを使わず、呼び出し側が渡したraw引数リストを既存のsingle-trial経路で検査する。生引数の不正は`invalid-call-arguments`、`:pre`拒否は`:rejected`の結果。coreのみで動作しcheck-itを要求しない（§17.4） |
 | 名前付き条件別Function Spec | 実装済み | `defspec-function`の`:cases`。入力条件ごとに`:returns`か`:signals`を要求し、exclusiveに選択する。ケース別reportは`function-check-result-case-report`。ケース付きinstrumentationは非対応（§17.2） |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの生成元選択は§10・§73.4に従い、競合するcustom generator指定が一つだけならそれを優先してAND全体のvalidatorでfilterし、複数なら`generator-unavailable`とする。AND全体へのgenerator指定は可能 |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
@@ -166,6 +167,21 @@ Propertyを削除したり、入力domainや試行予算を縮小したりしな
 棄却した場合と、`:trials`が0の場合の両方でこれになる。実際に検査された件数は
 「試行数 − 棄却数」であり、これが0の実行は`:passed`ではなく`:skipped`として
 報告されるので、`:passed`かつ0という状態は存在しない。詳細は§17〜19。
+
+generatorを書く前に、手元の具体的な値で契約を一度だけ検査する：
+
+```lisp
+;; ACCOUNTとAMOUNTは呼び出し側が用意した実オブジェクト。
+(let ((result (cl-spec:check-call 'target (list account amount))))
+  (values (cl-spec:call-check-result-status result)         ; :passed/:failed/:error/:rejected
+          (cl-spec:call-check-result-failure-phase result)  ; 例 :state-post、通常はNIL
+          (cl-spec:call-check-data result)))                ; v1 structured record
+```
+
+`check-call`は生成・shrinking・replayを行わず、raw引数を既存のsingle-trial経路で
+検査する。targetは入力が呼び出しに到達したときだけ正確に1回呼ばれる。生引数の
+不正は`invalid-call-arguments`、`:pre`拒否は`:rejected`の結果として報告される。
+詳細は§17.4。
 
 ---
 
@@ -1928,6 +1944,95 @@ Function Specについて次を採用する。純粋な利用例でも自動判�
 限り共通evaluatorを使う。入力生成の共有予算・棄却数・終了理由は変更せず、capture
 errorやstate-post errorを生成棄却や生成枯渇へ混ぜない。
 
+## 17.4 一回限りの具象呼び出し検査（check-call）
+
+> **位置付け:** 実装済み。登録済みFunction Specを、呼び出し側が用意した1つのraw
+> 引数リストに対して、generator・trial loop・shrinking・replayを使わずに検査する。
+
+```lisp
+(cl-spec:check-call function-designator arguments &key registry)
+```
+
+- `function-designator`は登録名または`function-spec`オブジェクト。
+- `arguments`はtargetに`apply`する形のraw引数リスト。
+- `registry`は既存APIと同じく明示でき、既定は`*registry*`。
+
+### 再利用する実行経路
+
+新しいevaluator・classifier・case選択・evidence構築は追加しない。`check-function`と
+同じ`function-check-property`を作り、`observe-trial`を1回呼ぶ。共通`:pre`
+（`precondition-refuses-p`）、`:capture`、exclusiveなcase選択、targetの1回呼び出し、
+`:returns`／`:signals`／`:post`／`:post-values`の分類、`:state-post`、evidence、
+failure identityは、すべて生成検査と同じsingle-trial経路が生成する。したがって
+同じ入力に対する生成検査とone-shot検査は同じ分類と同じfailure identityを返す。
+
+### 引数の受理と拒否
+
+`arguments`は契約自身のcall layoutから導いた`call-arguments-spec`
+（`explain-data`で検査する）で検査する。これはgenerated pathと同じpresence-aware
+validatorで、shape（arity、keyword tail、未知key、非list・vector・dotted・circular）
+と、与えられた各引数の宣言specを検査する。省略された`&optional`は検証しない。
+`&allow-other-keys`などのkeyword policyもcall layoutがそのまま決める。
+
+`:shape`と`:argument-spec`の区別は**error kindではなくcall layout自身**が決める。
+`:wrong-length`・`:unknown-key`・`:not-a-sequence`などは、呼び出し形の不正でも、
+複合引数specを満たさない値でも同じkindで現れるためである。`call-layout-shape-error`
+が拒否した場合は`:shape`、layoutが受理したうえで値が宣言specを満たさない場合は
+`:argument-spec`とする。
+
+- 生引数が不正な場合は`invalid-call-arguments`を送出し、targetは呼ばない。
+  `:reason`は`:shape`か`:argument-spec`、`:errors`はstandardなEXPLAIN-DATA datumの
+  列（`:kind`・`:path`・`:actual`・`:expected`など）で、非listやvectorの拒否も
+  同じ形を取る。
+- `unknown-function-spec`（未登録）と`unbound-target`（関数未定義）は既存どおり
+  送出する。
+- 共通`:pre`の拒否はsignalではなく`:rejected`の結果として報告する。判定は既存の
+  `precondition-refuses-p`（preconditionの`spec-violation`を拒否として扱う）である。
+- `:capture`やcase選択の失敗、分類中の通常の契約側エラーは`:error`の結果、宣言outcomeの
+  違反は`:failed`の結果として報告する。targetが予期しないconditionを送出した場合は
+  `:error`／`:condition`であり、これも生成検査と同じ意味である。
+- error処理は既存single-trial evaluatorの意味論をそのまま継承し、新しい方針を
+  持ち込まない。`:capture`・case guard・`:state-post`はすべての`error`を観測するため、
+  `undefined-function`や`program-error`もそこで捕捉され、それぞれ
+  `capture-error`・`case-selection-error`・`state-post-error`のstructured result
+  （`:error`／`:contract-error`と対応するfailure phase）になる。既存evaluatorが
+  捕捉しない箇所（壊れた`:pre`・`:post`・return/signal specの述語）では
+  `undefined-function`と`program-error`が呼び出し側へ伝播し、predicateのtypoや
+  arityの誤りをtargetの反例として報告しない。target自身が送出した場合は
+  `:error`／`:condition`のtarget observationである。
+
+### target呼び出し回数
+
+targetはraw引数のshapeが不正な場合、引数specが失敗した場合、`:pre`が拒否した場合、
+`:capture`が失敗した場合、case選択が失敗した場合に0回、入力が呼び出しに到達した
+ときだけ`invoke-target-once`により正確に1回呼ばれる。resultの表示・projection・
+introspectionはtarget・guard・capture・postを再実行しない。
+
+### 結果
+
+`check-call`は`call-check-result`を返す。これは`property-result`ではなく、seed・
+trial budget・profile・shrink report・generation reportを持たない。
+`call-check-result-observation`が共有の`trial-observation`を返し、status・reason・
+signature・explanation・condition・観測outcome・value・選択case・state evidenceは
+生成検査と同じ意味を持つ。`call-check-result-status`は`:passed`／`:failed`／
+`:error`／`:rejected`、`call-check-result-failure-phase`は`:case-selection`／
+`:capture`／`:state-post`またはNILを返す。
+
+`call-check-data`はversion 1のresult envelope（`:schema-version 1`、
+`:record-kind :result`、`:entity-kind :function-spec`、`:definition-digest`）に、
+`:name`、`:status`、`:arguments`、`:failure-phase`、`:observation`を加えた
+structured plistを返す。digestは宣言と登録依存を識別し、target実装のdigestでは
+ない。成功したone-shot検査も結果として返し、case・outcome・state evidence・
+宣言metadataを保持する。
+
+### 制限
+
+`check-call`は生成・shrinking・replayを行わず、seedを作らず、trial数を報告せず、
+replay可能性を主張しない。状態を観測する契約を1回だけ検査できるのは、呼び出し側が
+freshな状態を明示的に用意する場合に限られ、その状態を再現・復元・永続化可能には
+しない。§17.3のstateful制限（縮小・replay・artifact・instrumentationの非対応）は
+変更しない。coreの`cl-spec`のみで動作し、check-it backendを要求しない。
+
 # 18. 自動generative function test
 
 > **位置付け:** 実装済み。`check-function`が以下を行う。
@@ -3460,6 +3565,7 @@ sample
 defspec-function
 find-function-spec
 check-function
+check-call
 
 ```
 

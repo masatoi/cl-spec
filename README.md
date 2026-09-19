@@ -9,13 +9,15 @@ designed for both humans and LLM coding agents.
 **Status: MVP vertical slice.** Normalization, validation, structured explain,
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
-function specs (`defspec-function`, `check-function`, `function-spec-data`) for
+function specs (`defspec-function`, `check-function`, `check-call`,
+`function-spec-data`) for
 required/optional positional, keyword and rest arguments, primary or fixed multiple
 return values, or a required error outcome,
 named per-condition `:cases`, and explicit pre-observation (`:capture`) plus
 post-run state constraints (`:state-post`),
 including custom generators
-for whole argument sets. Custom generators are
+for whole argument sets. `check-call` checks one caller-supplied invocation
+through the same single-trial path, with no generation. Custom generators are
 implemented for functions of no arguments. Runtime instrumentation supports input,
 output and postcondition scopes through the optional `cl-spec/instrument` system;
 a state-observing contract refuses instrumentation.
@@ -57,7 +59,7 @@ to run every demo:
 ## cl-spec's own executable specifications
 
 Load the optional specification bundle to register contracts for twenty-eight
-public functions and twenty-nine semantic Properties. The definitions live in
+public functions and thirty-one semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp) with fixtures in
 [`self-spec-fixtures.lisp`](self-spec-fixtures.lisp), independently of Rove, and
 are discoverable through the same structured APIs used by cl-mcp:
@@ -112,9 +114,13 @@ declares named `:conforming` and `:refused` cases in one contract, a
 `registry-register-property` contract captures the target registry's public
 readers before a new, replacement or refused write and checks the after-state
 with `:state-post`, and two laws keep the `function-spec-data` and `result-data`
-projections faithful to the declared cases, captures and state evidence. The
-self-spec suites compare each run against the property's declared `:trials`
-budget instead of assuming a shared trial count.
+projections faithful to the declared cases, captures and state evidence. Two more
+laws cover `check-call`: one pins the passing, failing-return and
+precondition-rejected classifications and the `call-check-data` envelope against
+anonymous contracts, and one declares a named case with capture and state-post on
+the counting fixture and checks both the passing and the violating one-shot
+result. The self-spec suites compare each run against the property's declared
+`:trials` budget instead of assuming a shared trial count.
 
 ### Persisting and directly rechecking a counterexample
 
@@ -302,6 +308,72 @@ reason `:named-cases-unsupported`, before changing the function.
 For a runnable tour of both behaviours, the duplicate and missing conditions, and
 an unchecked case, see the
 [cases walkthrough](docs/guides/function-spec-cases-walkthrough.md).
+
+## Checking one concrete invocation
+
+`check-call` checks one caller-supplied argument list against a registered
+Function Spec without generating, shrinking or replaying anything:
+
+```lisp
+(defun withdraw (account amount)
+  (decf (account-balance account) amount)
+  amount)
+
+(cl-spec:defspec-function withdraw
+  (:args (account (satisfies account-p)) (amount (range integer 1 200)))
+  (:capture (balance-before (account-balance account)))
+  (:returns integer)
+  (:post (= result amount))
+  (:state-post (= (account-balance account) (- balance-before amount))))
+
+(cl-spec:check-call 'withdraw (list account 40))
+;; => a CALL-CHECK-RESULT; (:status :passed) when the one call satisfies the contract
+
+(let ((result (cl-spec:check-call 'withdraw (list account 40))))
+  (cl-spec:call-check-result-status result)        ; :passed / :failed / :error / :rejected
+  (cl-spec:call-check-result-failure-phase result) ; e.g. :state-post, or NIL
+  (cl-spec:call-check-data result))                ; version 1 structured record
+```
+
+`check-call` takes a Function Spec designator (a name or the `function-spec`
+object), the explicit raw argument list exactly as `apply` on the target would
+receive it, and `:registry` (default `cl-spec:*registry*`). The list follows the
+declared call layout, so required, `&optional`, explicit `&key`,
+`&allow-other-keys` and `&rest` all bind as they do in generated checking, and
+present values are validated against the declared argument specs before the
+target is reached. The reason is decided by the call layout, not by the error
+kind: `:shape` means the call itself was malformed, while `:argument-spec` means
+the layout was fine but a value missed a declared spec (including a composite
+spec's own arity, key or sequence errors). Unknown names signal
+`unknown-function-spec`, a missing function signals `unbound-target`, and an
+inadmissible call signals `invalid-call-arguments` with a `:reason` of `:shape`
+or `:argument-spec` and standard EXPLAIN-DATA `:errors` (`:kind`, `:path`,
+`:actual`, `:expected`) even for a non-list, vector, dotted or circular list.
+
+A `:pre` refusal is not an error: it is a result whose status is `:rejected`,
+using the same `precondition-refuses-p` semantics as generated checking. Beyond
+the shared validation, `check-call` uses the same single-trial path as
+`check-function` -- case selection, one target invocation, `:returns` /
+`:signals` / `:post` / `:post-values` classification and `:state-post` -- so both
+entry points classify the same invocation identically. The target is called
+exactly once when the input reaches the invocation, and zero times when the
+shape is invalid, a declared argument spec fails, `:pre` refuses the input,
+`:capture` signals or case selection fails. Error handling is the shared
+evaluator's, unchanged: `:capture`, case guards and `:state-post` observe every
+error (including `undefined-function` and `program-error`) and report their own
+structured contract errors (`capture-error`, `case-selection-error`,
+`state-post-error`), while a broken `:pre`, `:post` or spec predicate lets those
+conditions propagate to the caller rather than becoming a target finding. A
+target that signals either is an ordinary `:error` / `:condition` observation.
+
+The result is a `call-check-result`, not a `property-result`: there is no seed,
+trial budget, profile, shrink report or generation report to report, and
+`call-check-data` reuses only the version 1 schema envelope, the declaration
+digest and the existing observation projection. A state-observing contract may
+be checked once because the caller supplies the fresh state, but this does not
+make that state restorable, reproducible or persistable, and it relaxes none of
+the existing stateful restrictions. No generator backend is required: `check-call`
+works with only the core `cl-spec` system loaded.
 
 ## State observation and post-run constraints
 

@@ -50,6 +50,11 @@
                 #:invalid-generator-form
                 #:invalid-generated-arguments #:invalid-generated-arguments-generator
                 #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
+                #:invalid-call-arguments
+                #:invalid-call-arguments-function
+                #:invalid-call-arguments-arguments
+                #:invalid-call-arguments-reason
+                #:invalid-call-arguments-errors
                 #:invalid-generator-form-form
                 #:invalid-generator-form-reason
                 #:generator-unavailable
@@ -239,7 +244,17 @@
                 #:function-check-result-explanation
                 #:function-check-result-shrunk-outcome
                 #:function-check-result-case-report
-                #:check-function)
+                #:check-function
+                #:check-call
+                #:call-check-result
+                #:call-check-result-name
+                #:call-check-result-arguments
+                #:call-check-result-observation
+                #:call-check-result-status
+                #:call-check-result-failure-phase
+                #:call-check-result-source-form
+                #:call-check-result-definition
+                #:call-check-data)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator
                 #:custom-generator-name
@@ -293,6 +308,11 @@
            #:invalid-generator-form
            #:invalid-generated-arguments #:invalid-generated-arguments-generator
            #:invalid-generated-arguments-value #:invalid-generated-arguments-reason
+           #:invalid-call-arguments
+           #:invalid-call-arguments-function
+           #:invalid-call-arguments-arguments
+           #:invalid-call-arguments-reason
+           #:invalid-call-arguments-errors
            #:invalid-generator-form-form
            #:invalid-generator-form-reason
            #:generator-unavailable
@@ -480,6 +500,16 @@
            #:function-check-result-shrunk-outcome
            #:function-check-result-case-report
            #:check-function
+           #:check-call
+           #:call-check-result
+           #:call-check-result-name
+           #:call-check-result-arguments
+           #:call-check-result-observation
+           #:call-check-result-status
+           #:call-check-result-failure-phase
+           #:call-check-result-source-form
+           #:call-check-result-definition
+           #:call-check-data
            ;; Custom generators
            #:custom-generator
            #:custom-generator-name
