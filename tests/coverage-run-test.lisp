@@ -223,6 +223,18 @@
       (ok (every (lambda (entry) (eq :unsupported (getf entry :status)))
                  (getf (getf report :plan) :entries))))))
 
+(deftest exercise-boundary-failure-shrinks-from-forced-value
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defproperty boundary-failure
+      ((payload (plist (:required (:n (range integer -4 4))) (:closed t))))
+      (:trials (:normal 3)) (declare (ignore payload)) nil)
+    (let ((result (cl-spec:run-property 'boundary-failure :seed 1
+                    :options '(:coverage (:mode :exercise)))))
+      (ok (eq :failed (cl-spec:property-result-status result)))
+      (ok (equal '(payload (:n -4)) (cl-spec:property-result-counterexample result)))
+      (ok (equal '(payload (:n 0)) (cl-spec:property-result-shrunk-counterexample result)))
+      (ok (= 1 (getf (coverage-data result) :trials))))))
+
 (deftest extra-key-pool-collisions-never-produce-duplicate-keys
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
     (cl-spec:defproperty collisions

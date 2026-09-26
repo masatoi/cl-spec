@@ -160,7 +160,9 @@ where it can validate and observe the complete correlated candidate."
                          (and (not (eq directive :absent)) (zerop (random 2))))
                  (setf value (append value
                                      (list (field-key field)
-                                           (if (eq directive :value) forced (generate child))))))))
+                                           (if (eq directive :value)
+                                               (setf (cached-value child) forced)
+                                               (generate child))))))))
     (let ((key (planned-extra-key source)))
       (when key (setf value (append value (list key nil)))))
     (setf (cached-value generator) value)))
