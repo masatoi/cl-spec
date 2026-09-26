@@ -32,6 +32,13 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest coverage-apis-have-executable-contracts
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (name '(cl-spec:coverage-schema cl-spec:coverage-data))
+      (ok (find-function-spec name))
+      (ok (eq :passed (property-result-status (check-function name :trials 5 :seed 42)))))))
+
 (deftest evidence-apis-have-executable-contracts
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

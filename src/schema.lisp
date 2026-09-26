@@ -79,6 +79,14 @@ cannot name -- so a live class object never enters the record."
                                  :opaque-value :uninterned-symbol :resource-limit)
         :entity-kinds '(:spec :property :function-spec)
         :record-kinds '(:definition :result)
+        :coverage-protocol
+        '(:schema-version 1 :provider-version :plist-v1
+          :record-kinds (:coverage-schema :coverage-report)
+          :modes (:observe :exercise)
+          :stages (:generated :domain-valid :pre-admitted :target-observed :checked)
+          :availability-states (:collected :not-collected :not-applicable)
+          :dimension-kinds (:field-presence :extra-key-presence :numeric-boundary)
+          :discovery-states (:complete :partial :unsupported))
         :evidence-protocol
         '(:schema-version 1 :policy-version 1
           :record-kinds (:evidence-summary :evidence-assessment)

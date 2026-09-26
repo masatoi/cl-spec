@@ -251,7 +251,7 @@ allowed."
 
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
-  '(cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
+  '(cl-spec:coverage-schema cl-spec:coverage-data cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
@@ -452,6 +452,18 @@ their finite input corpora, and the registry write contract names its scenarios.
                                 (:record-kind (member :fixture-check))
                                 (:status (member :passed)) (:recipe (member 7)))))
     (:post (eq :completed (getf (getf result :lifecycle) :cleanup))))
+  (defspec-function cl-spec:coverage-schema
+    "Coverage discovery returns bounded declaration facts without running the target."
+    (:args (contract fresh-fixture-contract-input))
+    (:returns (plist (:required (:schema-version (member 1))
+                                (:record-kind (member :coverage-schema))
+                                (:dimensions list) (:unexpanded list))))
+    (:post (stringp (getf (getf result :subject) :definition-digest))))
+  (defspec-function cl-spec:coverage-data
+    "A result saved without coverage reports explicit missing measurement."
+    (:args (observation fresh-fixture-result))
+    (:returns (plist (:required (:availability (member :not-collected))
+                                (:reason (member :disabled))))))
   (defspec-function cl-spec:evidence-summary
     "A saved direct observation is summarized without an implicit policy."
     (:args (observation fresh-fixture-result))

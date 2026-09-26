@@ -183,3 +183,13 @@ not zero. Execution status and evidence assessment remain independent. Generated
 and direct result projections include additive `:evidence` summaries; outer
 schema/artifact versions are unchanged. See
 `docs/guides/evidence-sufficiency.md` for the policy and backend protocols.
+
+## Coverage protocol
+
+Opt-in coverage lives in `src/coverage.lisp`, `src/coverage-report.lisp` and
+`src/coverage-plist.lisp`. The check-it targeting provider is separate in
+`src/backends/check-it-coverage.lisp`. Coverage counts ordinary trials only, does
+not add predicate calls and saves bucket snapshots before target mutation.
+Missing measurement is not zero. Fixture recipes are not call-argument coverage;
+checked coverage waits for cleanup. See `docs/guides/coverage.md` and the approved
+`docs/superpowers/specs/2026-09-27-coverage-protocol-design.md`.
