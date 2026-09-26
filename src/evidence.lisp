@@ -129,7 +129,12 @@
     (loop for (kind absent partial) in
           '((:field-presence :no-optional-field-coverage :partial-optional-field-coverage)
             (:numeric-boundary :no-boundary-coverage :partial-boundary-coverage))
-          collect (if (find kind rows :key (lambda (row) (getf row :kind)))
+          collect (if (some (lambda (row)
+                               (and (eq kind (getf row :kind))
+                                    (some (lambda (stage)
+                                            (eq :collected (getf stage :availability)))
+                                          (getf row :stages))))
+                             rows)
                       partial absent))))
 
 (defun summary-from-facts (facts)
