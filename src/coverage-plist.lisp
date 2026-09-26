@@ -39,6 +39,20 @@
                   (walk (resolve-spec (reference-spec-target node) registry) name path
                         (cons node ancestors) (1+ depth)
                         (and targetable (null (spec-generator-name node)))))
+                 ((and path (typep node 'range-spec))
+                  (let ((lo (and (realp (range-spec-minimum node))
+                                 (ceiling (range-spec-minimum node))))
+                        (hi (and (realp (range-spec-maximum node))
+                                 (floor (range-spec-maximum node)))))
+                    (if (and (eq 'integer (range-spec-base-type node))
+                             (integerp lo) (integerp hi) (<= lo hi))
+                        (add name path :numeric-boundary '(:lower :upper :interior)
+                             (list :minimum lo :maximum hi
+                                   :inapplicable-buckets
+                                   (when (<= (- hi lo) 1) '(:interior))
+                                   :targetable
+                                   (and targetable (null (spec-generator-name node)))))
+                        (omit (cons name path) :unsupported-boundary))))
                  ((typep node 'plist-spec)
                   (let* ((fields (field-spec-fields node))
                          (keys (mapcar #'field-key fields))
@@ -52,22 +66,8 @@
                         (unless (field-required-p field)
                           (add name child-path :field-presence '(:present :absent)
                                (list :targetable targetable)))
-                        (if (typep child 'range-spec)
-                            (let ((lo (and (realp (range-spec-minimum child))
-                                           (ceiling (range-spec-minimum child))))
-                                  (hi (and (realp (range-spec-maximum child))
-                                           (floor (range-spec-maximum child)))))
-                              (if (and (eq 'integer (range-spec-base-type child))
-                                       (integerp lo) (integerp hi) (<= lo hi))
-                                  (add name child-path :numeric-boundary '(:lower :upper :interior)
-                                       (list :minimum lo :maximum hi
-                                             :inapplicable-buckets
-                                             (when (<= (- hi lo) 1) '(:interior))
-                                             :targetable
-                                             (and targetable (null (spec-generator-name child)))))
-                                  (omit (cons name child-path) :unsupported-boundary)))
-                            (walk child name child-path (cons node ancestors) (1+ depth)
-                                  targetable))))))
+                        (walk child name child-path (cons node ancestors) (1+ depth)
+                              targetable)))))
                  ((spec-children node) (omit (cons name path) :unsupported-composite)))))
       (catch 'discovery-limit
         (dolist (root roots) (walk (second root) (first root) nil nil 0 t))))

@@ -202,6 +202,27 @@
       (dolist (bucket '(:lower :upper :interior))
         (ok (plusp (count-bucket report :numeric-boundary :checked bucket)))))))
 
+(deftest exercise-resolves-named-field-boundaries
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec small-integer (range integer 1 3))
+    (cl-spec:defspec aliased-integer small-integer)
+    (cl-spec:defproperty named-boundary
+      ((payload (plist (:required (:n aliased-integer)) (:closed t))))
+      (:trials (:normal 3)) (listp payload))
+    (let* ((result (cl-spec:run-property 'named-boundary :seed 1
+                     :options '(:coverage (:mode :exercise))))
+           (report (coverage-data result)))
+      (dolist (bucket '(:lower :upper :interior))
+        (ok (= 1 (or (count-bucket report :numeric-boundary :checked bucket) 0)))))
+    (cl-spec:defgenerator fixed-middle () 2)
+    (cl-spec:defspec small-integer (range integer 1 3) (:generator fixed-middle))
+    (let* ((result (cl-spec:run-property 'named-boundary :seed 1
+                     :options '(:coverage (:mode :exercise))))
+           (report (coverage-data result)))
+      (ok (= 3 (or (count-bucket report :numeric-boundary :checked :interior) 0)))
+      (ok (every (lambda (entry) (eq :unsupported (getf entry :status)))
+                 (getf (getf report :plan) :entries))))))
+
 (deftest extra-key-pool-collisions-never-produce-duplicate-keys
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
     (cl-spec:defproperty collisions
