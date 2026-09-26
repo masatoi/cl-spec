@@ -5534,3 +5534,34 @@ non-participating backend answers `:not-collected`.
 
 構文、実行例、診断と制限は
 [reproducible-stateful-contracts guide](guides/reproducible-stateful-contracts.md)を参照。
+
+
+## Evidence sufficiency implementation addendum (2026-09-26)
+
+Execution status and sufficiency of evidence are separate core protocols.
+`evidence-summary` projects saved facts without an implicit policy;
+`assess-evidence` accepts a closed version-one policy with
+`:min-checked-trials`, `:all-declared-cases`, and
+`:requested-trials-completed` requirements. Its assessment is
+`:satisfied`, `:insufficient`, `:unknown`, or `:not-assessed` and never
+changes execution status. Known gaps take precedence over missing measurements;
+all-inapplicable requirements yield `:not-assessed`.
+
+Only ordinary trials with final passed/failed verdicts count as checked. Error,
+rejection, shrink candidates, and generation filtering are excluded. Run-owned
+reports check provenance, one-time reporting, completion, counts, and agreement
+with named-case reports. Nonparticipating backends retain unknown measurements.
+Direct calls retain the declared-case snapshot and use single-call scope, with
+no generated budget. Summaries and assessments never re-execute targets, consult
+the current registry, or infer target implementation identity from a declaration
+digest. Returned data is defensively copied.
+
+Existing result and counterexample schema versions remain unchanged. Data
+projections gain an additive, independently versioned `:evidence` record.
+Policy validation refuses unknown or malformed requirements instead of ignoring
+them. Optional-field/boundary/combination coverage and aggregation across runs
+remain outside version one.
+
+The detailed protocol and runnable examples are in
+[the evidence sufficiency guide](guides/evidence-sufficiency.md), with rationale
+in [the design](superpowers/specs/2026-09-26-evidence-sufficiency-design.md).

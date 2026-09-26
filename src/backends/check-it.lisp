@@ -7,6 +7,8 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/generator #:backend-trial-reporting)
+  (:import-from #:cl-spec/src/trial-report #:end-trial-report)
   (:import-from #:cl-spec/src/ir #:spec-metadata)
   (:import-from #:cl-spec/src/function-spec #:fixture-check-property)
   (:import-from #:cl-spec/src/generator #:backend-trial-lifecycle)
@@ -511,6 +513,12 @@ Lists can shrink in length even when their element generator cannot shrink."
     (error () (list :generation :unavailable :shrinking :unavailable))))
 
 (defmethod backend-trial-lifecycle ((backend check-it-backend)) :fixture-v1)
+
+(defmethod run-generated-test :after ((backend check-it-backend) property &key options)
+  (declare (ignore options))
+  (end-trial-report property))
+
+(defmethod backend-trial-reporting ((backend check-it-backend)) (when (eq (class-of backend) (find-class 'check-it-backend)) :trial-report-v1))
 
 (defun fixture-custom-shrinker (generator budget)
   "Lift a direct recipe custom shrinker to the runner's one-argument representation."

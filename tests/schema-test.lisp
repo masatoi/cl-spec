@@ -39,6 +39,13 @@
     (ok (eq :fixture-recipe (getf fixture :input-kind)))
     (ok (equal '(:fresh) (getf fixture :isolations)))))
 
+(deftest schema-info-describes-evidence-policy-grammar
+  (let ((protocol (getf (schema-info) :evidence-protocol)))
+    (ok (eql 1 (getf protocol :policy-version)))
+    (ok (member :unknown (getf protocol :assessments)))
+    (ok (member :all-declared-cases (getf protocol :requirement-kinds)))
+    (ok (member :not-collected (getf protocol :availability-states)))))
+
 (deftest result-records-carry-the-version-1-envelope
   (let ((*registry* (make-hash-table-registry)))
     (defproperty always-true-law ((x (range integer 1 10))) (:trials (:normal 1))

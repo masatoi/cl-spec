@@ -7,6 +7,10 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/evidence-test)
+  (:import-from #:cl-spec/tests/evidence-run-test)
+  (:import-from #:cl-spec/tests/trial-report-test)
+  (:import-from #:cl-spec/tests/evidence-direct-test)
   (:import-from #:cl-spec/tests/fixture-test)
   (:import-from #:cl-spec/tests/fixture-function-test)
   (:import-from #:cl-spec/tests/fixture-generation-test)

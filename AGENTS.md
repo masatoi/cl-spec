@@ -172,3 +172,14 @@ runs fixture hooks. Fixtures remain unsupported by instrumentation.
 The scope is fresh in-memory state; worker supervision and external rollback
 remain separate. `examples/reproducible-withdraw.lisp` and its mirrored test
 exercise construction, shrinking, artifact roundtrip and generator-free recheck.
+
+## Evidence sufficiency protocol
+
+`src/evidence.lisp` projects saved facts and assesses explicit version-one policies;
+it never resolves the registry or executes user code. `src/trial-report.lisp` owns
+normal-trial counting and backend report validation. Checked means passed + failed,
+excluding rejected/error trials and all shrink candidates. Missing measurement is
+not zero. Execution status and evidence assessment remain independent. Generated
+and direct result projections include additive `:evidence` summaries; outer
+schema/artifact versions are unchanged. See
+`docs/guides/evidence-sufficiency.md` for the policy and backend protocols.
