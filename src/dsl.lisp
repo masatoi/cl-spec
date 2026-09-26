@@ -10,6 +10,8 @@
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
+  (:import-from #:cl-spec/src/fixture #:trial-fixture)
+  (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/conditions
@@ -120,7 +122,7 @@ silently picks one or ignores one.  See the bounded-AND addendum in §73.5."
                                          :source-location ',location))))
 
 (defparameter *function-spec-clause-keywords*
-  '(:args :args-generator :pre :capture :returns :post :post-values :signals
+  '(:args :args-generator :fixture :pre :capture :returns :post :post-values :signals
     :state-post :cases)
   "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
 
@@ -350,6 +352,55 @@ return names of a contract-level or case-level :POST-VALUES."
              (refuse name "collides with a case :post-values name"))))))
     capture))
 
+(defun expand-fixture-clause (clause)
+  "Validate an inline fixture and expand its compiled recipe hooks."
+  (let ((entries (rest clause)) (seen nil))
+    (unless (and (proper-list-p entries) (finite-definition-form-p entries))
+      (function-spec-error clause "fixture clauses must be finite"))
+    (dolist (entry entries)
+      (unless (and (proper-list-p entry) (consp entry)
+                   (member (first entry) '(:isolation :version :recipe :setup :cleanup))
+                   (not (member (first entry) seen)))
+        (function-spec-error entry "invalid or duplicate fixture clause"))
+      (push (first entry) seen))
+    (unless (= (length seen) 5)
+      (function-spec-error clause "fixture requires isolation, version, recipe, setup and cleanup"))
+    (let* ((isolation (assoc :isolation entries))
+           (version (assoc :version entries))
+           (recipe (assoc :recipe entries))
+           (setup (assoc :setup entries))
+           (cleanup (assoc :cleanup entries)))
+      (unless (and (= 2 (length isolation)) (eq :fresh (second isolation))
+                   (= 2 (length version)) (typep (second version) '(integer 1 *))
+                   (= 2 (length recipe)) (proper-list-p (second recipe))
+                   (= 2 (length (second recipe))))
+        (function-spec-error clause "invalid fixture isolation, version or recipe"))
+      (let ((name (first (second recipe))))
+        (flet ((binding-p (symbol)
+                 (and symbol (symbolp symbol) (not (keywordp symbol))
+                      (not (constantp symbol))
+                      (not (lambda-list-keyword-name-p symbol)))))
+          (unless (binding-p name)
+            (function-spec-error recipe "invalid recipe binding"))
+          (dolist (hook (list setup cleanup))
+            (unless (and (>= (length hook) 3) (proper-list-p (second hook))
+                         (= 1 (length (second hook)))
+                         (binding-p (first (second hook)))
+                         (not (eq name (first (second hook)))))
+              (function-spec-error hook "hook requires one distinct context binding and body"))))
+        `(make-instance 'trial-fixture
+                        :isolation :fresh :version ,(second version)
+                        :recipe-name ',name :recipe-spec ',(second (second recipe))
+                        :setup-forms ',(cddr setup) :cleanup-forms ',(cddr cleanup)
+                        :setup-function
+                        (lambda (,name ,@(second setup))
+                          (declare (ignorable ,name ,@(second setup)))
+                          ,@(cddr setup))
+                        :cleanup-function
+                        (lambda (,name ,@(second cleanup))
+                          (declare (ignorable ,name ,@(second cleanup)))
+                          ,@(cddr cleanup)))))))
+
 (defun parse-function-spec-clauses (name clauses)
   "Split clauses into documentation, arguments, pre/returns/post, generator, signals and post names.
 
@@ -372,7 +423,8 @@ cannot be confused."
         (capture nil)
         (state-post nil)
         (case-clauses nil)
-        (argument-generator nil))
+        (argument-generator nil)
+        (fixture nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
     ;; property with no body.  DEFSPEC-FUNCTION has no body forms and a string
@@ -398,6 +450,7 @@ cannot be confused."
         (push head seen)
         (ecase head
           (:args (setf args (rest clause)))
+          (:fixture (setf fixture (expand-fixture-clause clause)))
           (:args-generator
            (unless (and (= 2 (length clause))
                         (second clause) (symbolp (second clause))
@@ -461,10 +514,12 @@ shared one"))
          clauses ":post-values requires a fixed (values ...) return declaration"))
       (validate-post-value-variables post-values (length (rest returns))
                                      (call-declaration-variables args)))
+    (when (and fixture argument-generator)
+      (function-spec-error clauses ":fixture and :args-generator are exclusive"))
     (let ((cases (parse-function-cases case-clauses args)))
       (check-capture-collisions capture args post-values cases)
       (values documentation args pre returns post argument-generator signals post-values
-              capture state-post cases))))
+              capture state-post cases fixture))))
 
 (defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -713,7 +768,7 @@ Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE,
 functions: §60 forbids runtime EVAL, so a contract kept only as a list could be
 read but never checked."
   (multiple-value-bind (documentation args pre returns post argument-generator signals
-                        post-values capture state-post cases)
+                        post-values capture state-post cases fixture)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (call-declaration-variables args))
@@ -734,6 +789,7 @@ read but never checked."
       `(register-function-spec
         (make-instance 'function-spec
                        :name ',name
+                       :fixture ,fixture
                        :argument-specs
                        ',args
                        :argument-generator ',argument-generator

@@ -7,6 +7,11 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/fixture-test)
+  (:import-from #:cl-spec/tests/fixture-function-test)
+  (:import-from #:cl-spec/tests/fixture-generation-test)
+  (:import-from #:cl-spec/tests/fixture-counterexample-test)
+  (:import-from #:cl-spec/tests/reproducible-withdraw-example-test)
   (:import-from #:cl-spec/tests/instrument-binding-test)
   (:import-from #:cl-spec/tests/return-values-schema-test)
   (:import-from #:cl-spec/tests/multiple-values-function-test)

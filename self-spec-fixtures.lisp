@@ -19,7 +19,7 @@
                 #:registry-properties-for
                 #:registry-properties-with-tag
                 #:registry-register-property)
-  (:export
+  (:export #:fresh-fixture-contract
    #:*function-projection-expectations*
    #:*scripted-registration-scenarios*
    #:*scripted-state-inputs*
@@ -59,6 +59,25 @@
     :old-tag self-old-tag
     :new-tag self-new-tag)
   "Fixed symbols the registry state contract declares, indexes and then checks.")
+
+(defun self-fresh-increment (cell)
+  "Increment one freshly allocated cell and return its new integer."
+  (incf (car cell)))
+
+(defun fresh-fixture-contract ()
+  "Build a fresh-state contract in a private registry without changing the caller's registry."
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function self-fresh-increment
+      (:args (cell (list-of integer)))
+      (:fixture
+        (:isolation :fresh) (:version 1)
+        (:recipe (recipe integer))
+        (:setup (context) (declare (ignore context)) (list (list recipe)))
+        (:cleanup (context) (declare (ignore recipe)) (clrhash context)))
+      (:capture (before (car cell)))
+      (:returns integer)
+      (:state-post (= (car cell) (1+ before))))
+    (cl-spec:find-function-spec 'self-fresh-increment)))
 
 (defun self-registration-name (key)
   "Return the fixed registration symbol named by KEY.

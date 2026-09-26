@@ -32,6 +32,17 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest fixture-apis-have-executable-contracts
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (name '(cl-spec:check-fixture cl-spec:fixture-check-data))
+      (ok (find-function-spec name))
+      (ok (eq :passed (property-result-status
+                       (check-function name :trials 5 :seed 42)))))
+    (ok (eq :passed
+            (property-result-status
+             (run-property 'cl-spec/specs::fixture-reconstruction-is-independent :seed 42))))))
+
 (deftest rest-projection-has-an-executable-law
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

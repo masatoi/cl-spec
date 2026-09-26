@@ -7,6 +7,11 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/function-spec #:fixture-check-property)
+  (:import-from #:cl-spec/src/generator #:backend-trial-lifecycle)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-lifecycle #:trial-observation-reason
+                #:trial-observation-condition)
   (:import-from #:cl-spec/src/backends/call-generators
                 #:call-arguments-generator #:call-generator-children #:call-generator-removable-p
                 #:call-generator-rest-driven-p)
@@ -236,10 +241,10 @@ Return accepted observation, whether another failure occurred, and a bounded rep
         (current (trial-observation-arguments original))
         (visited (make-hash-table :test #'eql)))
     (push (snapshot-value current) (gethash (candidate-bucket-key current) visited))
-    (labels ((finish (reason)
+    (labels ((finish (reason &optional abort)
                (return-from shrink-custom-arguments
                  (values accepted different
-                         (list :candidates count :budget budget :termination reason)))))
+                         (list :candidates count :budget budget :termination reason) abort))))
       (loop
         (when (= count budget) (finish :budget-exhausted))
         (let* ((input (snapshot-value current))
@@ -267,7 +272,9 @@ Return accepted observation, whether another failure occurred, and a bounded rep
                       (let ((observation
                               (handler-case (observe-trial property arguments :context context)
                                 (error () (finish :execution-error)))))
-                        (when (trial-observation-arguments-mutated-p observation)
+                        (when (eq :fixture (observation-failure-phase observation))
+                           (finish :fixture-error observation))
+                         (when (trial-observation-arguments-mutated-p observation)
                           (finish :mutation))
                         (when (observation-failure-p observation)
                           (if (failure-identities-match-p
@@ -496,6 +503,141 @@ Lists can shrink in length even when their element generator cannot shrink."
   (handler-case
       (compiled-capabilities (compile-generator backend spec :context (list :registry registry)))
     (error () (list :generation :unavailable :shrinking :unavailable))))
+
+(defmethod backend-trial-lifecycle ((backend check-it-backend)) :fixture-v1)
+
+(defun fixture-custom-shrinker (generator budget)
+  "Lift a direct recipe custom shrinker to the runner's one-argument representation."
+  (let ((child (when (typep generator 'tuple-generator)
+                 (first (sub-generators generator)))))
+    (when (and (typep child 'custom-value-generator)
+               (custom-value-generator-shrinker child))
+      (make-instance
+       'custom-value-generator :function (lambda () (cached-value generator))
+       :shrinker
+       (lambda (arguments)
+         (let ((candidates (funcall (custom-value-generator-shrinker child) (first arguments))))
+           (when (bounded-candidate-list candidates budget)
+             (error "Recipe shrinker exceeded the candidate budget"))
+           (mapcar #'list candidates)))))))
+
+(defun shrink-fixture-arguments (generator property original validator context budget)
+  "Shrink recipes only, aborting at the first fixture lifecycle failure."
+  (let ((custom (fixture-custom-shrinker generator budget)))
+    (when custom
+      (return-from shrink-fixture-arguments
+        (shrink-custom-arguments custom property original validator context budget))))
+  (let ((accepted nil) (different nil) (count 0) (abort nil) (termination :exhausted))
+    (block search
+      (handler-case
+          (shrink generator
+                  (lambda (arguments)
+                    (when (>= count budget)
+                      (setf termination :budget-exhausted)
+                      (return-from search nil))
+                    (incf count)
+                    (let* ((before (snapshot-value arguments))
+                           (admitted (and (finite-list-p arguments)
+                                          (funcall validator arguments))))
+                      (unless (same-value-p before arguments)
+                        (setf termination :mutation)
+                        (return-from search nil))
+                      (if (not admitted)
+                          t
+                          (let ((observation (observe-trial property arguments :context context)))
+                            (when (eq :fixture (observation-failure-phase observation))
+                              (setf abort observation termination :fixture-error)
+                              (return-from search nil))
+                            (cond
+                              ((not (observation-failure-p observation)) t)
+                              ((failure-identities-match-p
+                                (trial-observation-signature original)
+                                (trial-observation-signature observation))
+                               (unless (same-value-p (trial-observation-arguments original)
+                                                     (trial-observation-arguments observation))
+                                 (setf accepted observation))
+                               nil)
+                              (t (setf different t) t)))))))
+        (generation-budget-exhausted (condition)
+          (if (owned-generation-exhaustion-p condition :shrinking)
+              (setf termination :generation-budget-exhausted)
+              (error condition)))
+        (error () (setf termination :shrinker-error))))
+    (values accepted different
+            (list :candidates count :budget budget :termination termination) abort)))
+
+(defmethod run-generated-test ((backend check-it-backend) (property fixture-check-property)
+                               &key options)
+  "Run recipe trials and bounded shrinking through the shared fixture observer."
+  (let* ((budget (getf options :trials))
+         (shrink-budget (getf options :shrink-budget 100))
+         (context (list :registry (getf options :registry)))
+         (schema (property-argument-schema property))
+         (validator (compile-validator schema :context context))
+         (compiled (compile-generator backend schema :context context))
+         (generator (compiled-generator-generator compiled))
+         (shrink-p (getf (property-metadata property) :shrink t))
+         (strategy (or (generator-shrink-strategy-p generator)
+                       (fixture-custom-shrinker generator shrink-budget)))
+         (capabilities (list :generation :available :shrinking
+                             (if (and shrink-p strategy) :available :none)))
+         (rejected 0))
+    (check-type shrink-budget (integer 0 100000))
+    (begin-trial-report property)
+    (labels ((finish (trials &key original accepted different report abort)
+               (append
+                (list :status (cond (abort :error)
+                                    (original (trial-observation-status (or accepted original)))
+                                    (t :passed))
+                      :trials trials :rejected rejected :capabilities capabilities)
+                (when original
+                  (list :failure original :shrunk-failure accepted
+                        :failure-phase (observation-failure-phase (or accepted original))
+                        :shrink-report report
+                        :shrunk-outcome (cond (accepted :used) (different :different-failure)
+                                              (t :none))))
+                (when abort
+                  (list :run-error abort :failure-reason (trial-observation-reason abort)
+                        :condition (trial-observation-condition abort))))))
+      (with-generation-environment ((max *base-size* (compiled-generator-size compiled))
+                                    :trials budget)
+        (loop for trial from 1 to budget
+              do (handler-case
+                     (progn (generate generator) (record-generated-value))
+                   (generation-budget-exhausted (condition)
+                     (if (owned-generation-exhaustion-p condition :generation)
+                         (return-from run-generated-test
+                           (list :status :error :trials (1- trial) :rejected rejected
+                                 :capabilities capabilities
+                                 :failure-reason :generation-budget-exhausted
+                                 :failure-phase :generation :condition condition))
+                         (error condition))))
+                 (let ((original (observe-trial property (cached-value generator)
+                                                :context context)))
+                   (note-trial-outcome property original)
+                   (cond
+                     ((eq :fixture (observation-failure-phase original))
+                      (return (finish trial :abort original)))
+                     ((eq :rejected (trial-observation-status original)) (incf rejected))
+                     ((observation-failure-p original)
+                      (if (and shrink-p strategy
+                               (getf (trial-observation-lifecycle original) :target-called))
+                          (multiple-value-bind (accepted different report abort)
+                              (with-generation-phase (:shrinking)
+                                (shrink-fixture-arguments generator property original validator
+                                                          context shrink-budget))
+                            (return (finish trial :original original :accepted accepted
+                                            :different different :report report :abort abort)))
+                          (return
+                            (finish trial :original original
+                                    :report (list :candidates 0 :budget shrink-budget
+                                                  :termination
+                                                  (cond ((not shrink-p) :disabled)
+                                                        ((not (getf (trial-observation-lifecycle original)
+                                                                    :target-called))
+                                                         :not-a-target-failure)
+                                                        (t :no-shrinker)))))))))
+              finally (return (finish budget)))))))
 
 (defun install-check-it-backend ()
   "Install a CHECK-IT-BACKEND into *GENERATOR-BACKEND* and return it.

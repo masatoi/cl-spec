@@ -6,6 +6,22 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/fixture
+                #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
+                #:fixture-version #:fixture-data #:fixture-error)
+  (:import-from #:cl-spec/src/fixture-execution #:call-with-fixture #:copy-recipe)
+  (:import-from #:cl-spec/src/execution
+                #:make-trial-observation #:*trial-observations*
+                #:trial-observation-reason #:trial-observation-signature
+                #:trial-observation-explanation #:trial-observation-condition
+                #:trial-observation-condition-report #:trial-observation-outcome
+                #:trial-observation-value #:trial-observation-state
+                #:trial-observation-lifecycle #:trial-observation-call-evidence
+                #:render-condition-report)
+  (:export #:function-spec-fixture #:fixture-check-property #:make-fixture-check-property
+           #:check-fixture #:fixture-check-result #:fixture-check-data
+           #:fixture-check-result-observation #:fixture-check-result-definition
+           #:fixture-check-result-name)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots #:call-with-definition-rollback
@@ -35,7 +51,7 @@
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
                 #:resolve-definition #:definition-instrumentation-capability
                 #:definition-shrink-enabled-p #:definition-state-constraints
-                #:definition-metadata)
+                #:definition-metadata #:definition-fixture-metadata #:definition-digest)
   (:import-from #:cl-spec/src/ir #:tuple-spec #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/call-schema
                 #:make-call-layout #:bind-call-arguments #:bound-call-values
@@ -58,7 +74,7 @@
                 #:property-result
                 #:property-result-case-report
                 #:property-result-schema-metadata #:property-result-budget
-                #:property-result-options #:property-result-provenance
+                #:property-result-options #:property-result-provenance #:property-result-run-error
                 #:property-result-status
                 #:property-result-property
                 #:property-result-trials
@@ -685,7 +701,9 @@ outcome and the selected case, and neither is re-run for the report."
                                             :state-case case)))))))))
 
 (defclass function-spec ()
-  ((call-layout-cache :initform nil)
+  ((fixture :initarg :fixture :initform nil :reader function-spec-fixture
+            :documentation "Explicit fresh-state recipe fixture, or NIL.")
+   (call-layout-cache :initform nil)
    (call-layout-declarations :initform nil)
    (call-layout-bindings-snapshot :initform nil)
    (name :initarg :name
@@ -813,7 +831,7 @@ The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
-  '(name argument-specs argument-generator return-spec signal-spec preconditions postconditions
+  '(fixture name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
     source-form source-location metadata cases
     capture-bindings capture-functions state-postconditions state-postcondition-function
@@ -946,7 +964,8 @@ Such a contract observes state and never restores it, so automatic shrinking,
 replay of a past result and counterexample artifacts are unsupported for it.
 The decision is structural: a pure-looking use is not exempted by inspecting
 the target or the predicate bodies."
-  (or (function-spec-capture-bindings contract)
+  (or (function-spec-fixture contract)
+      (function-spec-capture-bindings contract)
       (function-spec-state-postconditions contract)
       (some (lambda (case) (function-case-state-postconditions case))
             (function-spec-cases contract))))
@@ -956,7 +975,8 @@ the target or the predicate bodies."
 
 (defmethod definition-shrink-enabled-p ((contract function-spec))
   "Automatic shrinking is unsupported for a state-observing contract."
-  (not (state-observing-contract-p contract)))
+  (or (not (null (function-spec-fixture contract)))
+      (not (state-observing-contract-p contract))))
 
 (defmethod validate-definition ((contract function-spec))
   "Refuse a contract that could not be honoured, and normalize what can be.
@@ -1002,6 +1022,12 @@ predicate cannot be recovered from the forms"
                   (format nil "~A was given without ~A, so the predicate ~
 would run while introspection reported no such clause"
                           function-initarg forms-initarg)))))
+    (when (function-spec-fixture contract)
+      (unless (typep (function-spec-fixture contract) 'trial-fixture)
+        (refuse :fixture "expected a trial-fixture"))
+      (when (function-spec-argument-generator contract)
+        (refuse :fixture "fixture and argument-generator are exclusive"))
+      (validate-definition (function-spec-fixture contract)))
     (unless (and (symbolp (function-spec-name contract))
                  (function-spec-name contract)
                  (not (keywordp (function-spec-name contract)))
@@ -1785,12 +1811,17 @@ closure reaches the digest."
 (defmethod definition-entity-kind ((contract function-spec)) :function-spec)
 
 (defmethod definition-generation-schema ((contract function-spec))
-  (function-spec-argument-schema contract))
+  (if (function-spec-fixture contract)
+      (make-instance 'tuple-spec :element-specs
+                     (list (fixture-recipe-spec (function-spec-fixture contract))))
+      (function-spec-argument-schema contract)))
 
 (defmethod definition-description ((contract function-spec))
   "Describe the contract declaration, not the target implementation."
   (values
    (append
+    (when (function-spec-fixture contract)
+      (list :fixture (fixture-data (function-spec-fixture contract))))
     (unless (eq :primary (function-spec-post-value-variables contract))
       (list :post-value-variables (function-spec-post-value-variables contract)))
     ;; Capture names, order and source, and the case-less state-post forms, are
@@ -1824,7 +1855,8 @@ closure reaches the digest."
            ;; and post bindings are digested by the same walk.  A case is described
            ;; by DEFINITION-DESCRIPTION ((CASE FUNCTION-CASE)) and contributes no
            ;; executable closure to the record.
-           (function-spec-cases contract))
+           (function-spec-cases contract)
+           (when (function-spec-fixture contract) (list (function-spec-fixture contract))))
    (when (function-spec-argument-generator contract)
      (list (cons :generator (function-spec-argument-generator contract))))
    (and (eq (class-name (class-of contract)) 'function-spec)
@@ -1864,6 +1896,140 @@ closure reaches the digest."
                    :source-location (function-spec-source-location contract)
                    :metadata (list :shrink (definition-shrink-enabled-p contract)
                                    :state-constraints (definition-state-constraints contract)))))
+
+(defclass fixture-check-property (function-check-property)
+  ((inner :initarg :inner :reader fixture-inner-property)
+   (fixture :initarg :fixture :reader checked-fixture))
+  (:documentation "Adapt immutable recipe arguments to fresh function-call trials."))
+
+(defmethod property-argument-schema ((property fixture-check-property))
+  (make-instance 'tuple-spec
+                 :element-specs (list (fixture-recipe-spec (checked-fixture property)))))
+
+(defmethod property-call-arguments-p ((property fixture-check-property) arguments)
+  (and (finite-list-p arguments) (= 1 (length arguments))))
+
+(defmethod property-named-arguments ((property fixture-check-property) arguments)
+  (list (fixture-recipe-name (checked-fixture property)) (first arguments)))
+
+(defmethod definition-shrink-enabled-p ((property fixture-check-property)) t)
+
+(defun fixture-call-data (observation)
+  "Freeze diagnostic call evidence without retaining opaque application objects."
+  (when observation
+    (let ((data (observation-data observation)))
+      (dolist (key '(:arguments :value :outcome :explanation))
+        (setf (getf data key) (capture-value-data (getf data key))))
+      data)))
+
+(defmethod observe-trial ((property fixture-check-property) arguments &key context)
+  "Evaluate one recipe with fresh state and retain cleanup independently of the contract."
+  (let* ((inner (fixture-inner-property property))
+         (contract (checked-contract property))
+         (registry (or (getf context :registry) *registry*))
+         (observation nil) (call-data nil) (arguments-error nil)
+         (result
+           (call-with-fixture
+            (checked-fixture property) (first arguments)
+            (lambda (raw)
+              (handler-case
+                  (validate-call-arguments contract (function-spec-name contract) raw registry)
+                (error (condition) (setf arguments-error condition)))
+              (unless arguments-error
+                (setf observation (observe-trial inner raw :context context)
+                      call-data (fixture-call-data observation)))
+              observation)
+            :registry registry))
+         (reason (or (getf result :reason)
+                     (when arguments-error :fixture-arguments-error)))
+         (condition (or (getf result :condition) arguments-error))
+         (lifecycle (getf result :lifecycle)))
+    (when arguments-error
+      (setf (getf lifecycle :evaluation) :error
+            (getf lifecycle :completion) :aborted)
+      (push (list :phase :arguments :reason :fixture-arguments-error
+                  :condition-type (type-of arguments-error)
+                  :condition-report (render-condition-report arguments-error))
+            (getf lifecycle :errors)))
+    (setf (getf lifecycle :target-called)
+          (and observation (consp (trial-observation-outcome observation)) t))
+    (make-trial-observation
+     :run *trial-observations* :property property
+     :arguments (list (getf result :recipe))
+     :status (if reason :error (trial-observation-status observation))
+     :reason (or reason (and observation (trial-observation-reason observation)))
+     :signature (if reason (list :fixture reason)
+                    (trial-observation-signature observation))
+     :condition (or condition (and observation (trial-observation-condition observation)))
+     :condition-report (if condition (render-condition-report condition)
+                           (and observation (trial-observation-condition-report observation)))
+     :explanation (and observation (getf call-data :explanation))
+     :value (and observation (getf call-data :value))
+     :outcome (and observation (getf call-data :outcome))
+     :case (and observation (trial-observation-case observation))
+     :state (and observation (trial-observation-state observation))
+     :failure-phase (if reason :fixture
+                        (and observation (observation-failure-phase observation)))
+     :lifecycle lifecycle :call-evidence call-data)))
+
+(defmethod definition-fixture-metadata ((contract function-spec))
+  (when (function-spec-fixture contract)
+    (fixture-data (function-spec-fixture contract))))
+
+(defmethod definition-fixture-metadata ((property fixture-check-property))
+  (fixture-data (checked-fixture property)))
+
+(defun make-fixture-check-property (contract &key (budget 0))
+  "Build a recipe adapter while retaining the ordinary call evaluator."
+  (let ((fixture (function-spec-fixture contract)))
+    (unless fixture (error 'fixture-error :reason :fixture-required))
+    (validate-definition fixture)
+    (make-instance 'fixture-check-property
+                   :contract contract :target (function-spec-target contract)
+                   :inner (make-function-check-property contract :budget budget)
+                   :fixture fixture :name (function-spec-name contract)
+                   :arguments (list (list (fixture-recipe-name fixture)
+                                          (fixture-recipe-spec fixture)))
+                   :targets (list (function-spec-name contract)) :kind :function-spec
+                   :trials (list :normal budget)
+                   :source-form (snapshot-value (function-spec-source-form contract))
+                   :source-location (function-spec-source-location contract)
+                   :metadata (list :shrink t :state-constraints :present :fixture t))))
+
+(defclass fixture-check-result ()
+  ((name :initarg :name :reader fixture-check-result-name)
+   (observation :initarg :observation :reader fixture-check-result-observation)
+   (definition :initarg :definition :reader fixture-check-result-definition))
+  (:documentation "One recipe execution, with independent contract and lifecycle evidence."))
+
+(defun fixture-check-data (result)
+  "Return a version-two record for a one-shot fixture execution."
+  (let* ((observation (fixture-check-result-observation result))
+         (metadata (copy-list (fixture-check-result-definition result))))
+    (setf (getf metadata :schema-version) 2
+          (getf metadata :record-kind) :fixture-check)
+    (snapshot-value
+     (append metadata
+             (list :name (fixture-check-result-name result)
+                   :execution-mode :fixture
+                   :recipe (first (trial-observation-arguments observation))
+                   :status (trial-observation-status observation)
+                   :reason (trial-observation-reason observation)
+                   :failure-phase (observation-failure-phase observation)
+                   :lifecycle (trial-observation-lifecycle observation)
+                   :observation (trial-observation-call-evidence observation))))))
+
+(defun check-fixture (function-designator recipe &key (registry *registry*))
+  "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
+  (let* ((contract (resolve-function-spec function-designator registry))
+         (property (make-fixture-check-property contract))
+         (metadata (definition-metadata
+                    contract :registry registry
+                    :capabilities '(:generation :unknown :shrinking :unknown))))
+    (make-instance 'fixture-check-result :name (function-spec-name contract)
+                   :definition metadata
+                   :observation (observe-trial property (list recipe)
+                                               :context (list :registry registry)))))
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
@@ -1911,7 +2077,9 @@ not the initial object state, which the author must build."
          (seed (if seed-result (property-result-seed seed-result) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
-         (property (make-function-check-property contract :budget budget))
+         (property (if (function-spec-fixture contract)
+                       (make-fixture-check-property contract :budget budget)
+                       (make-function-check-property contract :budget budget)))
          (source (property-source-form property))
          (case-run (make-case-run contract))
          (result (progn
@@ -1919,17 +2087,20 @@ not the initial object state, which the author must build."
                    ;; reapply the saved inputs to a target whose state was never
                    ;; restored.  Refuse before the target is called.  An integer
                    ;; seed starts a new run and stays allowed.
-                   (when (and seed-result (state-observing-contract-p contract))
+                   (when (and seed-result (state-observing-contract-p contract)
+                              (not (function-spec-fixture contract)))
                      (error 'unsupported-stateful-operation :operation :replay
                             :function name))
                    (let ((*case-run* case-run))
                      (run-property property
-                                   :seed seed
+                                   :seed (if (and seed-result (function-spec-fixture contract))
+                                             seed-result seed)
                                    :options (or options
                                                 (and seed-result
                                                      (property-result-options seed-result)))
                                    :registry registry)))))
     (make-instance 'function-check-result
+                   :run-error (property-result-run-error result)
                    :schema-metadata (property-result-schema-metadata result)
                    :options (property-result-options result)
                    :provenance (property-result-provenance result)
@@ -2111,6 +2282,9 @@ or persistable, and it does not relax any existing stateful restriction."
                        :capabilities '(:generation :unknown :shrinking :unknown)))
           (observation (observe-trial property arguments
                                       :context (list :registry registry))))
+      (when (function-spec-fixture contract)
+        (remf definition :input-kind)
+        (setf (getf definition :execution-mode) :direct-call))
       (make-instance 'call-check-result
                      :name name
                      ;; The observation snapshot was taken before the target

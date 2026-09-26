@@ -7,6 +7,8 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/function-spec #:function-spec-fixture)
+  (:import-from #:cl-spec/src/fixture #:fixture-data #:fixture-recipe-spec)
   (:import-from #:cl-spec/src/call-schema
                 #:call-arguments-spec #:call-arguments-spec-layout #:call-layout-data
                 #:call-layout-policy-data
@@ -282,6 +284,13 @@ Fixed return declarations use :KIND :VALUES with ordered children. Explicit
 :POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (append (definition-metadata contract :registry registry)
+            (when (function-spec-fixture contract)
+              (list :fixture
+                    (append (fixture-data (function-spec-fixture contract))
+                            (list :recipe-spec
+                                  (spec->data (fixture-recipe-spec
+                                               (function-spec-fixture contract))
+                                              registry)))))
             (unless (eq :primary (function-spec-post-value-variables contract))
               (list :post-value-variables (function-spec-post-value-variables contract)))
             (when (function-spec-cases contract)

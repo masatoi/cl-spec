@@ -6,7 +6,8 @@
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property #:property #:property-function)
-  (:export #:*trial-observations* #:trial-observation #:make-trial-observation
+  (:export #:trial-observation-lifecycle #:trial-observation-call-evidence
+           #:*trial-observations* #:trial-observation #:make-trial-observation
            #:trial-observation-arguments #:trial-observation-arguments-mutated-p
            #:trial-observation-outcome #:trial-observation-status
            #:trial-observation-reason #:trial-observation-signature
@@ -25,7 +26,7 @@
                 (&key run property arguments arguments-mutated-p
                       (status :passed) reason signature explanation condition
                       condition-report (outcome :not-collected) value case
-                      state failure-phase))
+                      state failure-phase lifecycle call-evidence))
             (:copier nil))
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
@@ -44,7 +45,9 @@ text at observation time."
   (value nil :read-only t)
   (case nil :read-only t)
   (state nil :read-only t)
-  (failure-phase nil :read-only t))
+  (failure-phase nil :read-only t)
+  (lifecycle nil :read-only t)
+  (call-evidence nil :read-only t))
 
 ;; DEFSTRUCT cannot attach a docstring to a slot, and these accessors are part
 ;; of the public API, so their documentation is installed explicitly.  The
@@ -345,7 +348,10 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
     (declare (ignore property observation))
     nil))
 
-(defun observe-trial (property arguments &key context)
+(defgeneric observe-trial (property arguments &key context)
+  (:documentation "Observe one execution input through its property's trial lifecycle."))
+
+(defmethod observe-trial ((property property) arguments &key context)
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.
 Mutations of conses and arrays, including changed sharing, stop backend shrinking.
 The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or

@@ -2,6 +2,14 @@
 
 (defpackage #:cl-spec/src/counterexample
   (:use #:cl)
+  (:import-from #:cl-spec/src/function-spec
+                #:fixture-check-result #:fixture-check-result-observation
+                #:fixture-check-result-definition #:fixture-check-result-name
+                #:check-fixture #:fixture-check-data #:function-spec-fixture)
+  (:import-from #:cl-spec/src/fixture #:fixture-version)
+  (:import-from #:cl-spec/src/property-runner #:property-result-run-error)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-lifecycle #:trial-observation-state)
   (:import-from #:cl-spec/src/utils/artifact-values
                 #:serialize-artifact-value #:deserialize-artifact-value
                 #:encode-artifact-value #:decode-artifact-value
@@ -134,6 +142,9 @@ never reached the target -- and is refused before this point."
        (member (getf data :mutated-p) '(nil t))))
 
 (defun validate-artifact-data (data)
+  (when (and (finite-list-p data) (evenp (length data))
+             (eql 2 (getf data :artifact-version)))
+    (return-from validate-artifact-data (validate-fixture-artifact-data data)))
   (unless
       (and (record-p data '(:artifact-version :record-kind :entity-kind :name
                            :definition-digest :definition-digest-complete :capabilities
@@ -216,6 +227,179 @@ never reached the target -- and is refused before this point."
         ;; Evidence still must fit: this retry never drops arguments or failure identity.
         (checked-codec #'serialize-artifact-value data)))))
 
+(defun completed-fixture-lifecycle-p (data)
+  "Recognize a completed, released trial with a recorded target invocation."
+  (and (record-p data '(:setup :evaluation :cleanup :state :errors :completion :target-called))
+       (eq :completed (getf data :setup))
+       (eq :completed (getf data :evaluation))
+       (eq :completed (getf data :cleanup))
+       (eq :completed (getf data :completion))
+       (eq :released (getf data :state))
+       (eq t (getf data :target-called))
+       (null (getf data :errors))))
+
+(defun fixture-evidence-data (observation)
+  "Project a clean fixture counterexample as a saved recipe and failure identity."
+  (unless (and observation (observation-failure-p observation)
+               (completed-fixture-lifecycle-p (trial-observation-lifecycle observation))
+               (not (eq :fixture (observation-failure-phase observation))))
+    (reject-artifact :fixture-lifecycle-incomplete))
+  (append (evidence-data observation)
+          (list :lifecycle (snapshot-value (trial-observation-lifecycle observation))
+                :state (snapshot-value (trial-observation-state observation)))))
+
+(defun valid-fixture-signature-p (data)
+  "Recognize legacy function failures and explicit state-post failures for v2."
+  (or (valid-signature-p data :function-spec)
+      (multiple-value-bind (case-name signature wrapped)
+          (case-signature-parts (getf data :signature))
+        (and (or (not wrapped) (keywordp case-name))
+             (finite-list-p signature)
+             (case (getf data :reason)
+               (:state-postcondition
+                (and (eq :failed (getf data :status))
+                     (= 2 (length signature)) (eq :state-postcondition (first signature))
+                     (typep (second signature) '(integer 0 *))))
+               (:contract-error
+                (and (eq :error (getf data :status))
+                     (= 4 (length signature)) (eq :state-post (first signature))
+                     (typep (second signature) '(integer 0 *))
+                     (eq :contract-error (third signature))
+                     (symbolp (fourth signature)))))))))
+
+(defun valid-fixture-evidence-p (data)
+  "Validate one persisted recipe observation independently of live definitions."
+  (and (record-p data '(:arguments :status :reason :signature :mutated-p :lifecycle :state))
+       (finite-list-p (getf data :arguments)) (= 1 (length (getf data :arguments)))
+       (member (getf data :status) '(:failed :error))
+       (null (getf data :mutated-p))
+       (finite-list-p (getf data :signature))
+       (completed-fixture-lifecycle-p (getf data :lifecycle))
+       (valid-fixture-signature-p data)))
+
+(defun validate-fixture-artifact-data (data)
+  "Validate the fixture-specific v2 record without changing stateless v1."
+  (unless
+      (and (record-p data '(:artifact-version :record-kind :entity-kind :name
+                           :definition-digest :definition-digest-complete
+                           :input-kind :fixture-version :capabilities
+                           :original :shrunk :selection :seed :profile :budget
+                           :options :provenance)
+                     '(:metadata-omissions :digest-omissions :digest-exclusions :shrink-report))
+           (eql 2 (getf data :artifact-version))
+           (eq :counterexample (getf data :record-kind))
+           (eq :function-spec (getf data :entity-kind))
+           (eq :fixture-recipe (getf data :input-kind))
+           (typep (getf data :fixture-version) '(integer 1 *))
+           (symbolp (getf data :name)) (getf data :name)
+           (eq t (getf data :definition-digest-complete))
+           (stringp (getf data :definition-digest))
+           (valid-fixture-evidence-p (getf data :original))
+           (or (null (getf data :shrunk))
+               (and (valid-fixture-evidence-p (getf data :shrunk))
+                    (failure-identities-match-p
+                     (getf (getf data :original) :signature)
+                     (getf (getf data :shrunk) :signature))))
+           (member (getf data :selection) '(:original :shrunk))
+           (getf data (getf data :selection))
+           (typep (getf data :seed) '(or null (integer 0 *)))
+           (typep (getf data :budget) '(or null (integer 0 *))))
+    (reject-artifact :invalid-record))
+  data)
+
+(defun make-fixture-artifact (result selection)
+  "Freeze fixture recipe evidence from a direct check or a generated run."
+  (unless (member selection '(:selected :original :shrunk))
+    (reject-artifact :invalid-selection))
+  (let* ((direct (typep result 'fixture-check-result))
+         (metadata (if direct (fixture-check-result-definition result)
+                       (property-result-schema-metadata result)))
+         (original (if direct (fixture-check-result-observation result)
+                       (property-result-failure-evidence result)))
+         (shrunk (unless direct (property-result-shrunk-evidence result)))
+         (choice (if (eq :selected selection) (if shrunk :shrunk :original) selection))
+         (omissions nil))
+    (unless (and (getf metadata :definition-digest-complete)
+                 (eq :fixture-recipe (getf metadata :input-kind)))
+      (reject-artifact :incomplete-fixture-definition))
+    (when (and (not direct) (property-result-run-error result))
+      (reject-artifact :fixture-lifecycle-incomplete))
+    (when (and (eq choice :shrunk) (null shrunk))
+      (reject-artifact :missing-shrunk-evidence))
+    (labels ((optional-data (value field)
+               (multiple-value-bind (copy omission) (persistable-metadata value field)
+                 (when omission (push omission omissions))
+                 copy)))
+      (let ((data
+              (list :artifact-version 2 :record-kind :counterexample :entity-kind :function-spec
+                    :name (if direct (fixture-check-result-name result)
+                              (property-result-property result))
+                    :definition-digest (getf metadata :definition-digest)
+                    :definition-digest-complete t :input-kind :fixture-recipe
+                    :fixture-version (getf (getf metadata :fixture) :version)
+                    :digest-omissions (optional-data (getf metadata :digest-omissions)
+                                                    :digest-omissions)
+                    :digest-exclusions (optional-data (getf metadata :digest-exclusions)
+                                                     :digest-exclusions)
+                    :capabilities (optional-data (getf metadata :capabilities) :capabilities)
+                    :original (fixture-evidence-data original)
+                    :shrunk (when shrunk (fixture-evidence-data shrunk))
+                    :selection choice
+                    :seed (unless direct (property-result-seed result))
+                    :profile (unless direct (property-result-profile result))
+                    :budget (unless direct (property-result-budget result))
+                    :options (optional-data (unless direct (property-result-options result)) :options)
+                    :provenance
+                    (optional-data
+                     (if direct '(:collection-states (:seed :not-collected :profile :not-collected
+                                                     :budget :not-collected))
+                         (property-result-provenance result))
+                     :provenance)
+                    :shrink-report
+                    (optional-data (if direct :not-collected (property-result-shrink-report result))
+                                   :shrink-report))))
+        (when omissions (setf (getf data :metadata-omissions) (nreverse omissions)))
+        (validate-fixture-artifact-data data)
+        (%make-counterexample-artifact (artifact-record-wire data))))))
+
+(defun recheck-fixture-artifact (data registry state-policy target-revision)
+  "Reconstruct one saved recipe through the core checker, without a generator."
+  (let* ((saved (getf data (getf data :selection)))
+         (definition (resolve-definition (getf data :name) :function-spec registry)))
+    (labels ((result (status &optional detail observation)
+               (list :schema-version 2 :record-kind :recheck :status status
+                     :name (getf data :name) :entity-kind :function-spec
+                     :input-kind :fixture-recipe :selection (getf data :selection)
+                     :target-revision target-revision :detail detail
+                     :observation observation)))
+      (unless definition (return-from recheck-fixture-artifact (result :definition-missing)))
+      (unless (function-spec-fixture definition)
+        (return-from recheck-fixture-artifact (result :definition-mismatch)))
+      (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
+        (unless complete
+          (return-from recheck-fixture-artifact (result :incomparable-definition)))
+        (unless (and (equal digest (getf data :definition-digest))
+                     (= (fixture-version (function-spec-fixture definition))
+                        (getf data :fixture-version)))
+          (return-from recheck-fixture-artifact (result :definition-mismatch))))
+      (unless (eq state-policy :fixture)
+        (return-from recheck-fixture-artifact (result :unsupported :state-unconfirmed)))
+      (let* ((check (check-fixture definition (first (getf saved :arguments)) :registry registry))
+             (observation (fixture-check-result-observation check))
+             (projected (fixture-check-data check)))
+        (cond
+          ((eq :fixture (observation-failure-phase observation))
+           (result :fixture-error (trial-observation-reason observation) projected))
+          ((eq :rejected (trial-observation-status observation))
+           (result :precondition-rejected nil projected))
+          ((eq :passed (trial-observation-status observation)) (result :passed nil projected))
+          ((eq :contract-error (trial-observation-reason observation))
+           (result :contract-error nil projected))
+          (t (result (if (failure-identities-match-p
+                          (getf saved :signature) (trial-observation-signature observation))
+                         :same-failure :different-failure)
+                     nil projected)))))))
+
 (defun make-counterexample-artifact (result &key (selection :selected))
   "Freeze original and accepted shrunk evidence from RESULT.
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
@@ -223,6 +407,15 @@ evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
 A case-selection error never reached the target, so it is refused here rather
 than persisted as a call that never happened."
+  (let ((metadata (typecase result
+                    (fixture-check-result (fixture-check-result-definition result))
+                    (property-result (property-result-schema-metadata result)))))
+    (unless (and (finite-list-p metadata) (evenp (length metadata)))
+      (reject-artifact :invalid-definition-metadata)))
+  (when (or (typep result 'fixture-check-result)
+            (and (typep result 'property-result)
+                 (eq :fixture-recipe (getf (property-result-schema-metadata result) :input-kind))))
+    (return-from make-counterexample-artifact (make-fixture-artifact result selection)))
   (check-type result property-result)
   (unless (member selection '(:selected :original :shrunk))
     (reject-artifact :invalid-selection))
@@ -284,6 +477,9 @@ Returns a :RECHECK record; never mutates the saved artifact or original result."
   (let* ((data (counterexample-artifact-data artifact))
          (kind (getf data :entity-kind))
          (saved (getf data (getf data :selection))))
+    (when (eql 2 (getf data :artifact-version))
+      (return-from recheck-counterexample
+        (recheck-fixture-artifact data registry state-policy target-revision)))
     (labels ((outcome (status &optional detail observation)
                (list :schema-version 1 :record-kind :recheck :status status
                      :name (getf data :name) :entity-kind kind

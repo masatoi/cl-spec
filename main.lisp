@@ -5,6 +5,10 @@
 (defpackage #:cl-spec/main
   (:nicknames #:cl-spec)
   (:use #:cl)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec-fixture #:check-fixture #:fixture-check-result
+                #:fixture-check-data)
+  (:export #:function-spec-fixture #:check-fixture #:fixture-check-result #:fixture-check-data)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots)
   (:export #:validate-definition #:definition-validation-slots)
