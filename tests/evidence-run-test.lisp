@@ -22,6 +22,22 @@
         (ok (= (- 10 (cl-spec:property-result-rejected result)) (getf dimension :value)))
         (ok (eq :not-assessed (getf (getf (cl-spec:result-data result) :evidence) :assessment)))))))
 
+(deftest unknown-target-revisions-remain-explicit-limitations
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defproperty revision-probe ((x integer)) (:trials (:normal 1)) t)
+    (dolist (options '(nil (:target-revision nil) (:target-revision :unknown)
+                      (:target-revision "commit-123")))
+      (let* ((result (cl-spec:run-property 'revision-probe :seed 1 :options options))
+             (summary (evidence-summary result))
+             (assessment (assess-evidence result
+                           '(:policy-version 1 :requirements
+                             ((:kind :min-checked-trials :count 1)))))
+             (unknown (not (equal "commit-123" (getf options :target-revision)))))
+        (dolist (data (list summary assessment))
+          (ok (eql unknown
+                   (not (null (member :target-revision-unknown (getf data :limitations)))))))
+        (ok (eq :satisfied (getf assessment :assessment)))))))
+
 (deftest zero-and-all-rejected-are-measured-zero
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defspec-function identity (:args (x integer)) (:pre nil) (:returns integer))
