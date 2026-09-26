@@ -15,6 +15,7 @@
            #:trial-observation-condition-report #:trial-observation-value
            #:trial-observation-case #:trial-observation-state
            #:begin-trial-report #:note-trial-outcome
+           #:claim-observation-report #:observation-reported-to-p
            #:observation-failure-phase
            #:observation-from-current-run-p #:evaluate-trial #:observe-trial #:observation-failure-p
            #:failure-identities-match-p #:snapshot-value #:same-value-p))
@@ -31,6 +32,8 @@
   "Evidence from one invocation, with snapshots of its conses and arrays. Arbitrary objects and external state are not
 checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
 text at observation time."
+  ;; Internal one-time reporting ownership; deliberately absent from the constructor.
+  (report-token nil)
   (run nil :read-only t)
   (property nil :read-only t)
   (arguments nil :read-only t)
@@ -299,6 +302,17 @@ Specializations must classify during this invocation, never by rerunning it."))
   (and *trial-observations*
        (eq *trial-observations* (trial-observation-run observation))
        (eq property (trial-observation-property observation))))
+
+(defun observation-reported-to-p (observation token)
+  "Return true when OBSERVATION was submitted to the report identified by TOKEN."
+  (and (typep observation 'trial-observation)
+       (eq token (trial-observation-report-token observation))))
+
+(defun claim-observation-report (observation token)
+  "Mark OBSERVATION as reported once, without retaining it in a run-owned table."
+  (when (trial-observation-report-token observation)
+    (error 'invalid-backend-result :reason "duplicate normal-trial observation"))
+  (setf (trial-observation-report-token observation) token))
 
 (defun observed-outcome-data (outcome)
   "Freeze target observations separately from contract classification."

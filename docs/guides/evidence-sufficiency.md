@@ -146,5 +146,7 @@ They open reporting with `begin-trial-report`, submit each ordinary observation
 exactly once with `note-trial-outcome`, and close with
 `cl-spec/src/trial-report:end-trial-report`. The runner owns the resulting report
 and rejects backend-supplied `:trial-report` keys, wrong-run/duplicate observations,
-incomplete reporting, or inconsistent trial/case counts. The shipped check-it
+incomplete reporting, inconsistent trial/case counts, or execution status that
+contradicts the reported verdicts. Duplicate detection does not retain completed
+observations. A retained original failure must have been reported as an ordinary trial. The shipped check-it
 class opts in; subclasses overriding execution must opt in explicitly.

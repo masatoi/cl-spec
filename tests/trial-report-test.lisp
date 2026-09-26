@@ -17,6 +17,41 @@
   (list :status :passed :trials (getf options :trials) :rejected 0
         :trial-report '(:collection :complete :checked 100 :counts (:passed 100))))
 
+(defclass unreported-failure-backend () ())
+
+(defmethod run-generated-test ((backend unreported-failure-backend) property &key options)
+  (declare (ignore backend options))
+  (begin-trial-report property)
+  (note-trial-outcome property (observe-trial property '(1)))
+  (let ((unreported (observe-trial property '(2))))
+    (end-trial-report property)
+    (list :status :failed :trials 1 :rejected 0 :failure unreported :shrunk-outcome :none)))
+
+(defmethod backend-trial-reporting ((backend unreported-failure-backend)) :trial-report-v1)
+
+(defclass retention-backend () ())
+
+#+sbcl
+(defmethod run-generated-test ((backend retention-backend) property &key options)
+  (declare (ignore backend options) (notinline report-collectable-observation))
+  (begin-trial-report property)
+  (let ((pointer (report-collectable-observation property)))
+    (sb-sys:scrub-control-stack)
+    (sb-ext:gc :full t)
+    (ok (null (sb-ext:weak-pointer-value pointer))
+        "Completed successful observations are collectable before the run ends."))
+  (end-trial-report property)
+  (list :status :passed :trials 1 :rejected 0))
+
+#+sbcl
+(defun report-collectable-observation (property)
+  (declare (notinline observe-trial))
+  (let ((observation (observe-trial property '(1))))
+    (note-trial-outcome property observation)
+    (sb-ext:make-weak-pointer observation)))
+
+(defmethod backend-trial-reporting ((backend retention-backend)) :trial-report-v1)
+
 (defclass reporting-backend ()
   ((mode :initarg :mode :reader mode)))
 
@@ -66,3 +101,25 @@
     (ok (cl-spec/src/trial-report::validate-case-trial-report
          report '(:declared-cases (:only)
                   :cases ((:name :only :called 1 :passed 1 :failed 0 :error 0)))))))
+
+(deftest reported-failures-cannot-be-presented-as-passed
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*generator-backend* (make-instance 'reporting-backend :mode :normal)))
+    (cl-spec:defproperty hidden-failure ((x integer)) (:trials (:normal 1)) nil)
+    (ok (handler-case (progn (cl-spec:run-property 'hidden-failure :seed 1) nil)
+          (cl-spec:invalid-backend-result () t)))))
+
+(deftest retained-original-must-have-been-reported
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*generator-backend* (make-instance 'unreported-failure-backend)))
+    (cl-spec:defproperty unreported-failure ((x integer)) (:trials (:normal 1)) nil)
+    (ok (handler-case (progn (cl-spec:run-property 'unreported-failure :seed 1) nil)
+          (cl-spec:invalid-backend-result () t)))))
+
+#+sbcl
+(deftest normal-reporting-does-not-retain-observation-graphs
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*generator-backend* (make-instance 'retention-backend)))
+    (cl-spec:defproperty collectable ((x integer)) (:trials (:normal 1)) t)
+    (ok (eq :passed (cl-spec:property-result-status
+                    (cl-spec:run-property 'collectable :seed 1))))))
