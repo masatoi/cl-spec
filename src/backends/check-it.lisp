@@ -327,8 +327,7 @@ target never produced is not a reduction of it."
     ;; instead of :NOT-COLLECTED.
     (begin-trial-report property)
     (begin-coverage-report property)
-    (when (or custom-name (and (typep generator 'call-arguments-generator)
-                              (not (call-generator-rest-driven-p generator))))
+    (when (or custom-name (typep generator 'call-arguments-generator))
       (unless (deferred-coverage-p) (coverage-enable-stage :domain-valid)))
     (with-generation-environment
         ((max *base-size* (compiled-generator-size compiled))
@@ -352,6 +351,8 @@ target never produced is not a reduction of it."
                (let ((original
                         (observe-coverage-trial
                          property (cached-value generator) :context context :generated t
+                         :domain-valid (and (typep generator 'call-arguments-generator)
+                                            (call-generator-rest-driven-p generator))
                          :validator
                          (when (or custom-name
                                    (and (typep generator 'call-arguments-generator)

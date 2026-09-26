@@ -156,6 +156,22 @@
       (ok (plusp baseline))
       (ok (= baseline *coverage-predicate-calls*)))))
 
+(deftest rest-generation-reports-existing-domain-validation
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (*coverage-predicate-calls* 0))
+    (cl-spec:defspec-function list
+      (:args &rest (tail (plist (:required (:n (and integer (satisfies counted-integer-p))))
+                               (:optional (:memo integer)))))
+      (:returns t))
+    (cl-spec:check-function 'list :trials 3 :seed 1)
+    (let ((baseline *coverage-predicate-calls*))
+      (setf *coverage-predicate-calls* 0)
+      (let* ((result (cl-spec:check-function 'list :trials 3 :seed 1
+                       :options '(:coverage (:mode :observe))))
+             (report (coverage-data result)))
+        (ok (= baseline *coverage-predicate-calls*))
+        (ok (= 3 (+ (or (count-bucket report :field-presence :domain-valid :present) 0)
+                    (or (count-bucket report :field-presence :domain-valid :absent) 0))))))))
+
 (deftest generated-coverage-excludes-pre-rejections-and-shrinking
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defspec-function identity
