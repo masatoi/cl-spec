@@ -7,7 +7,7 @@
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
   (:import-from #:cl-spec/src/coverage
-                #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
+                #:definition-coverage-schema #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
@@ -75,7 +75,7 @@
                 #:normalize-call-declarations #:call-layout-required-only-p
                 #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
                 #:call-layout-shape-error
-                #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
+                #:argument-binding-kind #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
                 #:call-arguments-spec)
   (:import-from #:cl-spec/src/call-validation)
   (:import-from #:cl-spec/src/call-outcome
@@ -1485,6 +1485,9 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod coverage-inputs ((property function-check-property))
   (coverage-inputs (checked-contract property)))
 
+(defmethod definition-coverage-schema ((property function-check-property) registry options)
+  (definition-coverage-schema (checked-contract property) registry options))
+
 (defun classify-target-outcome (return-spec signal-spec post post-forms values-post-p
                                 bound-values captures raw-outcome registry)
   "Classify one target invocation against an effective outcome declaration.
@@ -1928,6 +1931,19 @@ closure reaches the digest."
 (defmethod coverage-inputs ((contract function-spec))
   (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
         collect (list (argument-binding-name binding) (argument-binding-spec binding))))
+
+(defmethod definition-coverage-schema :around ((contract function-spec) registry options)
+  (declare (ignore registry options))
+  (let ((schema (call-next-method))
+        (omittable (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+                         when (member (argument-binding-kind binding) '(:optional :key))
+                         collect (argument-binding-name binding))))
+    (loop for cell on (getf schema :dimensions)
+          for dimension = (car cell)
+          when (member (getf dimension :argument) omittable)
+            do (setf (getf dimension :targetable) nil
+                     (car cell) (list* :targeting-reason :argument-supply-not-targeted dimension)))
+    schema))
 
 (defmethod coverage-identity ((definition function-spec) registry)
   (coverage-identity-from-metadata

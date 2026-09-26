@@ -239,6 +239,24 @@
       (ok (every (lambda (entry) (eq :unsupported (getf entry :status)))
                  (getf (getf report :plan) :entries))))))
 
+(deftest exercise-does-not-promise-optional-argument-targeting
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (flet ((check ()
+             (let* ((result (cl-spec:check-function 'list :trials 3 :seed 1
+                              :options '(:coverage (:mode :exercise))))
+                    (report (coverage-data result)))
+               (ok (getf (getf report :plan) :entries))
+               (ok (every (lambda (entry) (eq :unsupported (getf entry :status)))
+                          (getf (getf report :plan) :entries))))))
+      (cl-spec:defspec-function list
+        (:args &optional (payload (plist (:optional (:n (range integer 1 3))))))
+        (:returns t))
+      (check)
+      (cl-spec:defspec-function list
+        (:args &key ((:payload payload) (plist (:optional (:n (range integer 1 3))))))
+        (:returns t))
+      (check))))
+
 (deftest exercise-boundary-failure-shrinks-from-forced-value
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defproperty boundary-failure

@@ -58,6 +58,9 @@ report `:single-call` scope. Exercise is refused because these APIs do not gener
 Fixture reports describe reconstructed call arguments, never recipe fields;
 their generated stage is inapplicable and checked counts wait for cleanup.
 Fixture recipes and custom generator output are not rewritten for targeting.
+Plist fields beneath optional or keyword arguments are observable but their
+targeting is unsupported (`:argument-supply-not-targeted`): this provider does not
+force the outer argument to be supplied.
 `:input-unavailable` counts trials without observable input; the bounded
 `:input-unavailable-reasons` counters distinguish recipe validation, setup, argument binding and
 unknown reasons.
