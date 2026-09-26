@@ -33,10 +33,15 @@
                                          (or (not extra) (and (eq :exercise (getf options :mode))
                                                               keys)))
                     collect (list :bucket bucket
-                                  :generation (if supported :supported :unknown)
+                                  :generation (cond (supported :supported)
+                                                    ((not applicable) :not-applicable)
+                                                    ((getf d :targetable) :unsupported)
+                                                    (t :unknown))
                                   :targeting (if supported :supported :unsupported)
                                   :reason (cond ((not applicable) :not-applicable)
                                                 ((not (getf d :targetable)) :custom-generator)
+                                                ((and extra (eq :observe (getf options :mode)))
+                                                 :ordinary-generator-omits-extra-keys)
                                                 ((and extra (not keys)) :extra-key-pool-exhausted)
                                                 (t nil)))))))
 
@@ -67,7 +72,7 @@
   "Save a bounded one-pass plan; whole custom generators and fixture recipes are not targeted."
   (when (and *coverage-context*
              (eq :exercise (getf (coverage-context-options *coverage-context*) :mode)))
-    (let* ((schema (coverage-context-schema *coverage-context*))
+    (let ((schema (coverage-context-schema *coverage-context*))
            (options (coverage-context-options *coverage-context*))
            (safe (and (not (coverage-fixture-p definition))
                       (null (spec-generator-name (property-argument-schema definition)))))

@@ -33,6 +33,17 @@
       (setf (getf report :scope) :changed)
       (ok (eq :single-call (getf (coverage-data result) :scope))))))
 
+(deftest coverage-schema-and-report-carry-definition-identity
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:optional (:memo integer))))) (:returns t))
+    (let* ((contract (cl-spec:find-function-spec 'identity))
+           (schema (coverage-schema contract))
+           (result (cl-spec:check-call 'identity (list nil) :coverage '(:mode :observe)))
+           (saved (getf (coverage-data result) :schema)))
+      (ok (stringp (getf (getf schema :subject) :definition-digest)))
+      (ok (equal (getf schema :subject) (getf saved :subject))))))
+
 (deftest direct-stages-reflect-pre-and-post-errors
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defspec-function identity
@@ -46,6 +57,18 @@
       (ok (= 0 (count-bucket rejected :field-presence :target-observed :absent)))
       (ok (= 1 (count-bucket error :field-presence :target-observed :present)))
       (ok (= 0 (count-bucket error :field-presence :checked :present))))))
+
+(deftest omitted-optional-argument-is-not-present-nil-plist
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function list
+      (:args &optional (payload (plist (:optional (:memo t)))))
+      (:returns t))
+    (let* ((result (cl-spec:check-call 'list nil :coverage '(:mode :observe)))
+           (data (coverage-data result))
+           (row (find :checked (getf (first (getf data :dimensions)) :stages)
+                      :key (lambda (s) (getf s :stage)))))
+      (ok (= 1 (getf row :not-applicable-trials)))
+      (ok (= 0 (count-bucket data :field-presence :checked :absent))))))
 
 (deftest fixture-coverage-waits-for-cleanup-and-keeps-input-space
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (cleanup-error nil))
@@ -65,6 +88,19 @@
                                   :coverage '(:mode :observe)))))
       (ok (= 1 (count-bucket report :field-presence :target-observed :present)))
       (ok (= 0 (count-bucket report :field-presence :checked :present))))))
+
+(deftest evidence-summary-preserves-coverage-scope
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:optional (:memo (range integer 0 2)))))) (:returns t))
+    (let* ((result (cl-spec:check-call 'identity (list nil) :coverage '(:mode :observe)))
+           (summary (cl-spec:evidence-summary result)))
+      (ok (equal (coverage-data result) (getf summary :coverage)))
+      (ok (member :partial-optional-field-coverage (getf summary :limitations)))
+      (ok (member :partial-boundary-coverage (getf summary :limitations)))
+      (ok (not (member :no-optional-field-coverage (getf summary :limitations))))
+      (ok (eq :passed (getf summary :execution-status)))
+      (ok (eq :not-assessed (getf summary :assessment))))))
 
 (deftest direct-coverage-disabled-and-exercise-refusal
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))

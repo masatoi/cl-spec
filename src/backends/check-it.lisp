@@ -7,6 +7,8 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/coverage-report #:coverage-enable-stage
+                #:begin-coverage-report #:end-coverage-report)
   (:import-from #:cl-spec/src/coverage #:backend-coverage-protocol #:backend-coverage-capabilities)
   (:import-from #:cl-spec/src/backends/check-it-coverage
                 #:check-it-coverage-capabilities #:prepare-coverage-plan
@@ -324,6 +326,10 @@ target never produced is not a reduction of it."
     ;; exhausts the generation budget -- still reports the zeros it knows
     ;; instead of :NOT-COLLECTED.
     (begin-trial-report property)
+    (begin-coverage-report property)
+    (when (or custom-name (and (typep generator 'call-arguments-generator)
+                              (not (call-generator-rest-driven-p generator))))
+      (coverage-enable-stage :domain-valid))
     (with-generation-environment
         ((max *base-size* (compiled-generator-size compiled))
          :trials trials)
@@ -527,7 +533,8 @@ Lists can shrink in length even when their element generator cannot shrink."
 
 (defmethod run-generated-test :after ((backend check-it-backend) property &key options)
   (declare (ignore options))
-  (end-trial-report property))
+  (end-trial-report property)
+  (end-coverage-report property))
 
 (defmethod backend-trial-reporting ((backend check-it-backend)) (when (eq (class-of backend) (find-class 'check-it-backend)) :trial-report-v1))
 
@@ -615,6 +622,8 @@ Lists can shrink in length even when their element generator cannot shrink."
          (rejected 0))
     (check-type shrink-budget (integer 0 100000))
     (begin-trial-report property)
+    (begin-coverage-report property)
+    (prepare-coverage-plan property (getf options :registry))
     (labels ((finish (trials &key original accepted different report abort)
                (append
                 (list :status (cond (abort :error)

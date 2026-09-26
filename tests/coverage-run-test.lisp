@@ -8,6 +8,26 @@
   (:import-from #:cl-spec/tests/coverage-direct-test #:count-bucket))
 (in-package #:cl-spec/tests/coverage-run-test)
 
+(defclass incomplete-backend () ())
+
+(defmethod cl-spec/src/generator:run-generated-test
+    ((backend incomplete-backend) property &key options)
+  (declare (ignore backend property))
+  (list :status :passed :trials (getf options :trials) :rejected 0))
+
+(defmethod cl-spec/src/coverage:backend-coverage-protocol ((backend incomplete-backend))
+  :coverage-v1)
+
+(deftest participating-backend-must-complete-coverage
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (cl-spec:*generator-backend* (make-instance 'incomplete-backend)))
+    (cl-spec:defproperty incomplete ((payload (plist (:optional (:memo integer)))))
+      (:trials (:normal 1)) t)
+    (ok (handler-case
+            (progn (cl-spec:run-property 'incomplete :seed 1
+                     :options '(:coverage (:mode :observe))) nil)
+          (cl-spec:invalid-backend-result () t)))))
+
 (deftest observe-does-not-change-seeded-inputs
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
     (cl-spec:defproperty probe ((payload (plist (:optional (:memo integer)))))
@@ -54,3 +74,57 @@
       (ok (plusp (count-bucket report :numeric-boundary :checked :upper)))
       (ok (getf report :plan))
       (ok (equal report (coverage-data (cl-spec:run-property 'planned :seed result)))))))
+
+(deftest extra-key-pool-collisions-never-produce-duplicate-keys
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
+    (cl-spec:defproperty collisions
+      ((payload (plist (:required (:coverage-extra integer)) (:optional (:memo integer)))))
+      (:trials (:normal 5)) (push payload seen) t)
+    (let ((data (coverage-data (cl-spec:run-property 'collisions :seed 4
+                                :options '(:coverage (:mode :exercise
+                                                      :extra-keys (:coverage-extra)))))))
+      (ok (every (lambda (p) (= 1 (count :coverage-extra p))) seen))
+      (ok (= 0 (count-bucket data :extra-key-presence :generated :present)))
+      (ok (eq :unsupported
+              (getf (first (getf (getf data :plan) :entries)) :status))))))
+
+(deftest zero-budget-and-short-plan-report-unattempted-work
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:optional (:memo integer))))) (:returns t))
+    (dolist (budget '(0 1))
+      (let* ((result (cl-spec:check-function
+                      'identity :trials budget :seed 5
+                      :options '(:coverage (:mode :exercise))))
+             (data (coverage-data result))
+             (entries (getf (getf data :plan) :entries)))
+        (ok (= budget (getf data :trials)))
+        (ok (some (lambda (e) (eq :pending (getf e :status))) entries))
+        (ok (= budget (+ (count-bucket data :field-presence :generated :present)
+                         (count-bucket data :field-presence :generated :absent))))))))
+
+(deftest custom-whole-generators-are-observed-but-never-targeted
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defgenerator whole () (list (list :memo 7)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:optional (:memo integer)))))
+      (:args-generator whole) (:returns t))
+    (let* ((data (coverage-data (cl-spec:check-function 'identity :trials 2 :seed 1
+                                 :options '(:coverage (:mode :exercise)))))
+           (capabilities (getf data :capabilities)))
+      (ok (= 2 (count-bucket data :field-presence :checked :present)))
+      (ok (every (lambda (d)
+                   (every (lambda (b) (not (eq :supported (getf b :targeting))))
+                          (getf d :buckets))) capabilities)))))
+
+(deftest missing-domain-measurement-does-not-publish-zero
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defproperty plain ((payload (plist (:optional (:memo integer)))))
+      (:trials (:normal 1)) t)
+    (let* ((data (coverage-data (cl-spec:run-property 'plain :seed 1
+                                :options '(:coverage (:mode :observe)))))
+           (row (find :domain-valid (getf (first (getf data :dimensions)) :stages)
+                      :key (lambda (s) (getf s :stage)))))
+      (ok (eq :not-collected (getf row :availability)))
+      (ok (not (member :buckets row)))
+      (ok (not (member :observed-trials row))))))

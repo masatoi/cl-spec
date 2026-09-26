@@ -13,6 +13,15 @@
    (list (list 'payload (cl-spec:normalize-spec-form form)))
    cl-spec:*registry* (or (getf options :limit) 1024) (or (getf options :depth) 32)))
 
+(deftest coverage-public-api-and-schema-discovery
+  (dolist (name '("COVERAGE-SCHEMA" "COVERAGE-DATA" "INVALID-COVERAGE-OPTIONS"
+                  "INVALID-COVERAGE-OPTIONS-REASON" "UNSUPPORTED-COVERAGE-OPERATION"))
+    (ok (eq :external (nth-value 1 (find-symbol name :cl-spec)))))
+  (let ((protocol (getf (cl-spec:schema-info) :coverage-protocol)))
+    (ok (eql 1 (getf protocol :schema-version)))
+    (ok (equal '(:generated :domain-valid :pre-admitted :target-observed :checked)
+               (getf protocol :stages)))))
+
 (deftest coverage-options-are-bounded-and-closed
   (ok (null (normalize-coverage-options nil)))
   (ok (eq :observe (getf (normalize-coverage-options '(:mode :observe)) :mode)))
@@ -53,3 +62,14 @@
     (ok (member :interior (getf dimension :inapplicable-buckets))))
   (ok (eq :partial (getf (schema '(plist (:optional (:a t) (:b t))) :limit 1) :discovery)))
   (ok (getf (schema '(list-of (plist (:optional (:a t))))) :unexpanded)))
+
+(deftest discovery-bounds-metadata-and-rounds-integer-endpoints
+  (let* ((data (schema '(plist (:required (:n (range integer 1/2 7/2))) (:closed t))))
+         (dimension (first (getf data :dimensions))))
+    (ok (= 1 (getf dimension :minimum 0)))
+    (ok (= 3 (getf dimension :maximum 0))))
+  (let* ((roots (loop for i below 100 collect
+                 (list i (cl-spec:normalize-spec-form '(plist (:optional (:a t)))))))
+         (data (plist-coverage-schema roots cl-spec:*registry* 1 32)))
+    (ok (= 1 (length (getf data :dimensions))))
+    (ok (= 1 (length (getf data :unexpanded))))))

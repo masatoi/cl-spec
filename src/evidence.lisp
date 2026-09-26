@@ -123,6 +123,15 @@
   "Find a dimension by its stable protocol name."
   (find kind dimensions :key (lambda (entry) (getf entry :kind))))
 
+(defun coverage-limitations (facts)
+  "Describe the measured scope without implying that its buckets are sufficient."
+  (let ((rows (getf (getf facts :coverage) :dimensions)))
+    (loop for (kind absent partial) in
+          '((:field-presence :no-optional-field-coverage :partial-optional-field-coverage)
+            (:numeric-boundary :no-boundary-coverage :partial-boundary-coverage))
+          collect (if (find kind rows :key (lambda (row) (getf row :kind)))
+                      partial absent))))
+
 (defun summary-from-facts (facts)
   "Project facts without applying an implicit sufficiency threshold."
   (let ((dimensions (evidence-dimensions facts)) (gaps nil) (unknowns nil))
@@ -145,11 +154,11 @@
     (list :schema-version 1 :record-kind :evidence-summary :assessment :not-assessed
           :execution-status (getf facts :execution-status)
           :scope (getf facts :scope) :subject (getf facts :subject)
+          :coverage (getf facts :coverage '(:availability :not-collected :reason :legacy-result))
           :dimensions dimensions :gaps (nreverse gaps) :unknowns (nreverse unknowns)
           :limitations (append
-                        '(:single-execution-only :no-optional-field-coverage
-                          :no-boundary-coverage :no-combination-coverage
-                          :no-correctness-proof)
+                        '(:single-execution-only :no-combination-coverage :no-correctness-proof)
+                        (coverage-limitations facts)
                         (unless (getf (getf facts :subject) :definition-digest-complete)
                           '(:incomplete-definition-identity))
                         (when (member (getf (getf facts :subject) :target-revision :unknown)

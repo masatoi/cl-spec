@@ -985,6 +985,15 @@ Backend implementers must supply explicit nonnegative `:trials` counts and
 observations for failures. Missing counts or contradictory evidence signal
 `invalid-backend-result`; see specification §14 for the outcome protocol.
 
+## Input coverage
+
+Opt-in coverage separates generated inputs, validated inputs, precondition admission,
+target observations and completed checks. `coverage-schema` describes dimensions;
+`coverage-data` reads saved facts. The first provider covers plist optional fields,
+extra keys and finite integer field boundaries. `:observe` preserves seeded draws;
+`:exercise` attempts a bounded bucket plan. Neither changes `:passed` or evidence
+policy version 1. See the [coverage guide](docs/guides/coverage.md).
+
 ## Testing
 
 ```bash

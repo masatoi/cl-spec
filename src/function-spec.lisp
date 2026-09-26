@@ -7,12 +7,12 @@
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
   (:import-from #:cl-spec/src/coverage
-                #:coverage-inputs #:coverage-bindings #:coverage-data #:copy-coverage-data
+                #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
                 #:coverage-report-data #:coverage-capture-input #:coverage-mark-stage
-                #:coverage-fixture-p)
+                #:coverage-fixture-p #:coverage-precondition-observed-p)
   (:import-from #:cl-spec/src/execution #:observe-coverage-trial)
   (:import-from #:cl-spec/src/call-schema #:bound-call-presence)
   (:import-from #:cl-spec/src/trial-report #:validate-case-trial-report)
@@ -1436,6 +1436,8 @@ as its reduction.  The shapes come from the nested errors instead."
    (target :initarg :target :reader checked-target))
   (:documentation "Internal property adapter whose trial evaluation records the contract outcome."))
 
+(defmethod coverage-precondition-observed-p ((property function-check-property)) t)
+
 (defmethod definition-validation-slots append ((property function-check-property))
   '(contract target))
 
@@ -1925,6 +1927,11 @@ closure reaches the digest."
   (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
         collect (list (argument-binding-name binding) (argument-binding-spec binding))))
 
+(defmethod coverage-identity ((definition function-spec) registry)
+  (coverage-identity-from-metadata
+   (definition-metadata definition :registry registry
+                        :capabilities '(:generation :unknown :shrinking :unknown))))
+
 (defun make-function-check-property (contract &key (budget 0))
   "Adapt CONTRACT to trial execution without requiring a generator backend."
   (unless (typep budget '(integer 0 *))
@@ -2089,9 +2096,10 @@ closure reaches the digest."
   (copy-coverage-data (fixture-check-result-coverage result)))
 
 (defmethod evidence-facts ((result fixture-check-result))
-  (direct-evidence-facts
-   (fixture-check-result-name result) (fixture-check-result-definition result)
-   (fixture-check-result-observation result) (fixture-check-result-declared-cases result)))
+  (append (list :coverage (coverage-data result))
+          (direct-evidence-facts
+           (fixture-check-result-name result) (fixture-check-result-definition result)
+           (fixture-check-result-observation result) (fixture-check-result-declared-cases result))))
 
 (defun fixture-check-data (result)
   "Return a version-two record for a one-shot fixture execution."
@@ -2308,9 +2316,10 @@ version 1 result envelope.  Created only by CHECK-CALL."))
   (copy-coverage-data (call-check-result-coverage result)))
 
 (defmethod evidence-facts ((result call-check-result))
-  (direct-evidence-facts
-   (call-check-result-name result) (call-check-result-definition result)
-   (call-check-result-observation result) (call-check-result-declared-cases result)))
+  (append (list :coverage (coverage-data result))
+          (direct-evidence-facts
+           (call-check-result-name result) (call-check-result-definition result)
+           (call-check-result-observation result) (call-check-result-declared-cases result))))
 
 (defun call-check-result-status (result)
   "Return the status of the invocation RESULT checked.

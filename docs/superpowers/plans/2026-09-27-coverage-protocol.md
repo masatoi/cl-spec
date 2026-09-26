@@ -27,37 +27,37 @@ Backend targeting is distinct from observation. Results save copied reports; evi
 Files: src/coverage.lisp, src/coverage-plist.lisp, tests/coverage-test.lisp, tests.lisp.
 Interfaces: coverage-schema, definition-coverage-schema, normalize-coverage-options,
 coverage-bindings; plist schema dimensions and input bucket projection.
-- [ ] RED tests: optional NIL/value-position keyword, nested absent, finite integer bounds,
+- [x] RED tests: optional NIL/value-position keyword, nested absent, finite integer bounds,
   open/closed keys, cyclic/malformed options, limits and unsupported composites.
-- [ ] Implement static schema/observer without executing user predicates.
-- [ ] Run tests; commit.
+- [x] Implement static schema/observer without executing user predicates.
+- [x] Run tests; commit.
 
 ## Task 2: Collector and direct execution
 Files: src/coverage-report.lisp, execution.lisp, function-spec.lisp,
 tests/coverage-direct-test.lisp.
 Interfaces: run-owned context, per-trial bucket snapshot and stage marks,
 coverage-data generic, saved direct reports.
-- [ ] RED tests: direct success/pre-refusal/capture error/post error, mutations,
+- [x] RED tests: direct success/pre-refusal/capture error/post error, mutations,
   fixture cleanup/setup failure, disabled/legacy, copy/registry independence.
-- [ ] Connect existing evaluation checkpoints; direct :coverage supports observe only.
-- [ ] Full suite; commit.
+- [x] Connect existing evaluation checkpoints; direct :coverage supports observe only.
+- [x] Full suite; commit.
 
 ## Task 3: Generated execution and check-it exercise
 Files: generator.lisp, property-runner.lisp, backends/check-it*.lisp,
 tests/coverage-run-test.lisp.
 Interfaces: backend-coverage-protocol/capabilities, plan iterator, bounded extra-key targeting.
-- [ ] RED tests: budget0/shortfall/pre-all-refused, seed stability observe vs disabled,
+- [x] RED tests: budget0/shortfall/pre-all-refused, seed stability observe vs disabled,
   replay, extra-key collisions/closed/custom generators, bounds and nested targeting.
-- [ ] Observe generated roots and confirmed stages only; finalize normal reports.
-- [ ] Integrate targeting into built-in plist generation, without altering custom outputs.
-- [ ] Full suite; commit.
+- [x] Observe generated roots and confirmed stages only; finalize normal reports.
+- [x] Integrate targeting into built-in plist generation, without altering custom outputs.
+- [x] Full suite; commit.
 
 ## Task 4: Public discovery, evidence and documentation
 Files: main.lisp, schema.lisp, evidence.lisp, specs.lisp, tests/self-specs-test.lisp,
 README.md, AGENTS.md, docs/guides/coverage.md, docs/api.
-- [ ] Tests first for public self-contracts and discovery; implement exports and coverage scope.
-- [ ] Write runnable guide and regenerate API docs.
-- [ ] Full suite, fresh core-only load, clean rove, forced compile, changed-file lint.
+- [x] Tests first for public self-contracts and discovery; implement exports and coverage scope.
+- [x] Write runnable guide and regenerate API docs.
+- [x] Full suite, fresh core-only load, clean rove, forced compile, changed-file lint.
 
 ## Task 5: Independent review
 - [ ] Fresh read-only independent reviewer against design and full branch.
@@ -69,3 +69,8 @@ README.md, AGENTS.md, docs/guides/coverage.md, docs/api.
   Execute inline without an additional plan-approval stop.
 - Ruling: Retain current checkout/REPL root on feature/coverage-protocol, based on
   approved docs commit 8b53ab3; no extra worktree needed for this single implementation.
+
+- Checkpoint: 970 tests passed in REPL, including public self-contracts.
+- Clean `rove cl-spec.asd`, core-only load and forced compile succeeded.
+- New coverage modules/tests lint clean; changed-file lint retains three pre-existing needless-let warnings.
+- Guide example executed (7 trials, complete report); API reference regenerated.

@@ -3,7 +3,7 @@
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
   (:import-from #:cl-spec/src/coverage-report
-                #:call-with-coverage-trial #:coverage-mark-stage)
+                #:call-with-coverage-trial #:coverage-mark-stage #:coverage-implicit-pre)
   (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/call-outcome
@@ -280,6 +280,7 @@ Specializations must classify during this invocation, never by rerunning it."))
 (defmethod evaluate-trial ((property property) arguments &key context)
   "Evaluate an ordinary property once and classify false results and conditions."
   (declare (ignore context))
+  (coverage-implicit-pre)
   (handler-case
       (let ((value (apply (property-function property) arguments)))
         (coverage-mark-stage :target-observed)

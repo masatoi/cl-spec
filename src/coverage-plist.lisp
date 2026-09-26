@@ -2,7 +2,7 @@
 (defpackage #:cl-spec/src/coverage-plist
   (:use #:cl)
   (:import-from #:cl-spec/src/ir
-                #:spec-kind #:spec-children #:spec-generator-name
+                #:spec-children #:spec-generator-name
                 #:reference-spec #:reference-spec-target
                 #:range-spec #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum)
   (:import-from #:cl-spec/src/field-spec
@@ -16,7 +16,9 @@
   "Describe statically accessible plist dimensions without invoking readers or predicates."
   (let ((dimensions nil) (unexpanded nil) (count 0))
     (labels ((omit (path reason)
-               (push (list :path path :reason reason) unexpanded))
+               (push (list :path path :reason reason) unexpanded)
+               (when (or (eq reason :dimension-limit) (>= (length unexpanded) dimension-limit))
+                 (throw 'discovery-limit nil)))
              (add (name path kind buckets properties)
                (if (< count dimension-limit)
                    (progn
@@ -45,13 +47,16 @@
                       (add name path :extra-key-presence '(:present :absent)
                            (list :declared-keys keys :targetable targetable)))
                     (dolist (field fields)
-                      (let* ((child (field-value-spec field))
+                      (let ((child (field-value-spec field))
                              (child-path (append path (list (field-key field)))))
                         (unless (field-required-p field)
                           (add name child-path :field-presence '(:present :absent)
                                (list :targetable targetable)))
                         (if (typep child 'range-spec)
-                            (let ((lo (range-spec-minimum child)) (hi (range-spec-maximum child)))
+                            (let ((lo (and (realp (range-spec-minimum child))
+                                           (ceiling (range-spec-minimum child))))
+                                  (hi (and (realp (range-spec-maximum child))
+                                           (floor (range-spec-maximum child)))))
                               (if (and (eq 'integer (range-spec-base-type child))
                                        (integerp lo) (integerp hi) (<= lo hi))
                                   (add name child-path :numeric-boundary '(:lower :upper :interior)
@@ -64,7 +69,8 @@
                             (walk child name child-path (cons node ancestors) (1+ depth)
                                   targetable))))))
                  ((spec-children node) (omit (cons name path) :unsupported-composite)))))
-      (dolist (root roots) (walk (second root) (first root) nil nil 0 t)))
+      (catch 'discovery-limit
+        (dolist (root roots) (walk (second root) (first root) nil nil 0 t))))
     (list :schema-version 1 :record-kind :coverage-schema :provider-version :plist-v1
           :discovery (if unexpanded :partial :complete)
           :dimensions (nreverse dimensions) :unexpanded (nreverse unexpanded))))

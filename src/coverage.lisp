@@ -2,8 +2,8 @@
 (defpackage #:cl-spec/src/coverage
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:*registry*)
-  (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema)
-  (:export #:coverage-schema #:coverage-data #:coverage-inputs #:coverage-bindings
+  (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema #:observe-dimension)
+  (:export #:definition-coverage-schema #:observe-coverage-dimension #:coverage-schema #:coverage-data #:coverage-identity #:coverage-identity-from-metadata #:coverage-inputs #:coverage-bindings
            #:normalize-coverage-options #:copy-coverage-data
            #:invalid-coverage-options #:invalid-coverage-options-reason
            #:unsupported-coverage-operation #:unsupported-coverage-operation-reason
@@ -52,7 +52,7 @@
                             (not (member key seen)))
                  (refuse :unknown-or-duplicate-option))
                (push key seen)))
-    (let* ((mode (getf options :mode))
+    (let ((mode (getf options :mode))
            (limit (getf options :dimension-limit 1024))
            (depth (getf options :depth-limit 32))
            (keys (getf options :extra-keys '(:coverage-extra :probe-extra))))
@@ -69,6 +69,14 @@
         (refuse :invalid-extra-keys))
       (list :mode mode :dimension-limit limit :depth-limit depth
             :extra-keys (when (eq mode :exercise) (copy-list keys))))))
+
+(defgeneric coverage-identity (definition registry)
+  (:documentation "Capture declaration identity independently of target implementation identity."))
+
+(defun coverage-identity-from-metadata (metadata)
+  "Select copied declaration identity for a coverage schema."
+  (list :definition-digest (copy-coverage-data (getf metadata :definition-digest))
+        :definition-digest-complete (getf metadata :definition-digest-complete)))
 
 (defgeneric coverage-inputs (definition)
   (:documentation "Return ordered (name spec) roots for the definition's call arguments."))
@@ -91,6 +99,22 @@
           collect (list :id (getf d :id) :generation :unknown :targeting :unknown
                         :reason :unmeasured-backend))))
 
+(defgeneric definition-coverage-schema (definition registry options)
+  (:documentation "Discover bounded input dimensions; providers must not execute application code.")
+  (:method ((definition t) registry options)
+    (plist-coverage-schema (coverage-inputs definition) registry
+                           (getf options :dimension-limit 1024)
+                           (getf options :depth-limit 32))))
+
+(defgeneric observe-coverage-dimension (kind dimension bindings)
+  (:documentation "Project input to bucket names, :UNKNOWN or :NOT-APPLICABLE without user code.")
+  (:method ((kind t) dimension bindings)
+    (if (member kind '(:field-presence :extra-key-presence :numeric-boundary))
+        (observe-dimension dimension bindings)
+        :unknown)))
+
 (defun coverage-schema (definition &key (registry *registry*))
   "Describe statically observable input dimensions of a property or function spec."
-  (copy-coverage-data (plist-coverage-schema (coverage-inputs definition) registry 1024 32)))
+  (let ((schema (definition-coverage-schema definition registry nil)))
+    (setf (getf schema :subject) (coverage-identity definition registry))
+    (copy-coverage-data schema)))
