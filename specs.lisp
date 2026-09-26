@@ -251,7 +251,7 @@ allowed."
 
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
-  '(validp validate explain-data compile-validator
+  '(cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
@@ -286,7 +286,8 @@ allowed."
     function-spec-projection-retains-declared-state
     result-projection-retains-state-evidence
     one-shot-check-reuses-the-single-trial-classifier
-    one-shot-check-observes-a-named-case-and-state-once))
+    one-shot-check-observes-a-named-case-and-state-once
+    fixture-reconstruction-is-independent))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -427,6 +428,43 @@ CLEAR-REGISTRY or with a freshly bound registry. It does not instrument function
 Generators exercise finite subsets. Most API contracts accept broader domains;
 the malformed-normalization contract and the validate cases explicitly name
 their finite input corpora, and the registry write contract names its scenarios."
+  (defgenerator fresh-fixture-contract-generator ()
+    (cl-spec/self-spec-fixtures:fresh-fixture-contract))
+  (defspec fresh-fixture-contract-input (instance-of cl-spec:function-spec)
+    (:generator fresh-fixture-contract-generator))
+  (defspec-function cl-spec:check-fixture
+    "A dedicated fresh recipe runs once and releases its fixture."
+    (:args (contract fresh-fixture-contract-input) (recipe (range integer 0 30)))
+    (:returns (instance-of cl-spec:fixture-check-result))
+    (:post (let ((data (cl-spec:fixture-check-data result)))
+             (and (eq :passed (getf data :status))
+                  (eql recipe (getf data :recipe))
+                  (eq :released (getf (getf data :lifecycle) :state))))))
+  (defgenerator fresh-fixture-result-generator ()
+    (cl-spec:check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 7))
+  (defspec fresh-fixture-result (instance-of cl-spec:fixture-check-result)
+    (:generator fresh-fixture-result-generator))
+  (defspec-function cl-spec:fixture-check-data
+    "Fixture projection distinguishes recipe input from live call arguments."
+    (:args (observation fresh-fixture-result))
+    (:returns (plist (:required (:schema-version (member 2))
+                                (:input-kind (member :fixture-recipe))
+                                (:record-kind (member :fixture-check))
+                                (:status (member :passed)) (:recipe (member 7)))))
+    (:post (eq :completed (getf (getf result :lifecycle) :cleanup))))
+  (defproperty fixture-reconstruction-is-independent ((recipe (range integer 0 30)))
+    "Repeating one recipe starts from the same value and does not overwrite past evidence."
+    (:about cl-spec:check-fixture cl-spec:fixture-check-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 2 :normal 10))
+    (let* ((contract (cl-spec/self-spec-fixtures:fresh-fixture-contract))
+           (first (cl-spec:fixture-check-data (cl-spec:check-fixture contract recipe)))
+           (second (cl-spec:fixture-check-data (cl-spec:check-fixture contract recipe))))
+      (and (eq :passed (getf first :status)) (eq :passed (getf second :status))
+           (= (1+ recipe) (getf (getf (getf first :observation) :value) :value))
+           (= (1+ recipe) (getf (getf (getf second :observation) :value) :value))
+           (eq :released (getf (getf first :lifecycle) :state))
+           (eq :released (getf (getf second :lifecycle) :state)))))
   (defspec-function cl-spec:deserialize-counterexample-artifact
     "Malformed saved artifacts are refused without reader evaluation."
     (:args (wire (member "" "bad" "#.(error \"must not execute\")" "AV1 (999)")))

@@ -8,6 +8,10 @@
 
 (defpackage #:cl-spec/src/generator
   (:use #:cl)
+  (:import-from #:cl-spec/src/property #:property #:property-metadata)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-lifecycle #:observation-failure-phase #:trial-observation-reason)
+  (:export #:backend-trial-lifecycle)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:no-generator-backend
@@ -164,6 +168,40 @@ Relaxing evidence requirements is confined to this shape."
          (null (getf outcome :shrunk-failure))
          (null (getf outcome :shrunk-outcome)))))
 
+(defun validate-fixture-run-error (outcome property budget)
+  "Check lifecycle abort evidence independently of any earlier counterexamples."
+  (let ((abort (getf outcome :run-error))
+        (original (getf outcome :failure))
+        (shrunk (getf outcome :shrunk-failure))
+        (trials (getf outcome :trials))
+        (rejected (getf outcome :rejected 0)))
+    (unless (and (getf (property-metadata property) :fixture)
+                 (eq :error (getf outcome :status))
+                 (integerp trials) (<= 1 trials budget)
+                 (integerp rejected) (<= 0 rejected trials)
+                 (observation-from-current-run-p abort property)
+                 (eq :error (trial-observation-status abort))
+                 (eq :fixture (observation-failure-phase abort))
+                 (typep (trial-observation-condition abort) 'error)
+                 (eq :aborted (getf (trial-observation-lifecycle abort) :completion))
+                 (eq (getf outcome :failure-reason)
+                     (trial-observation-reason abort)))
+      (error 'invalid-backend-result :reason "invalid fixture lifecycle abort"))
+    (dolist (observation (remove nil (list original shrunk)))
+      (unless (and (observation-from-current-run-p observation property)
+                   (observation-failure-p observation)
+                   (finite-signature-p (trial-observation-signature observation))
+                   (property-call-arguments-p property (trial-observation-arguments observation))
+                   (eq :completed (getf (trial-observation-lifecycle observation) :completion)))
+        (error 'invalid-backend-result :reason "invalid retained fixture counterexample")))
+    (when (and shrunk
+               (or (null original)
+                   (not (failure-identities-match-p
+                         (trial-observation-signature original)
+                         (trial-observation-signature shrunk)))))
+      (error 'invalid-backend-result :reason "invalid retained fixture reduction"))
+    outcome))
+
 (defun validate-backend-outcome (outcome property budget)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
@@ -186,6 +224,8 @@ Relaxing evidence requirements is confined to this shape."
     (when (and (getf outcome :capabilities)
                (not (capability-report-p (getf outcome :capabilities))))
       (refuse ":capabilities must report valid generation and shrinking states"))
+    (when (getf outcome :run-error)
+      (return-from validate-backend-outcome (validate-fixture-run-error outcome property budget)))
     (let* ((status (getf outcome :status))
            (trials (getf outcome :trials :missing))
            (rejected (getf outcome :rejected 0))
@@ -240,6 +280,10 @@ Relaxing evidence requirements is confined to this shape."
            (refuse "status must describe the selected counterexample"))))
       outcome)))
 
+(defgeneric backend-trial-lifecycle (backend)
+  (:documentation "Return :FIXTURE-V1 when the backend preserves independent fixture trials.")
+  (:method ((backend t)) nil))
+
 (defgeneric backend-reports-generation (backend)
   (:documentation "Return true when BACKEND participates in the bounded-filter accounting.
 
@@ -260,6 +304,10 @@ attached to the outcome before validation.  A participating backend converts its
 own request-owned exhaustion into the narrow generation-only error branch with
 the trial and precondition counts it collected; this boundary never fabricates
 `:trials 0` for an exhaustion that generated roots."
+  (when (and (typep property 'property)
+             (getf (property-metadata property) :fixture)
+             (not (eq :fixture-v1 (backend-trial-lifecycle backend))))
+    (error 'invalid-backend-result :reason "backend does not support fixture trials"))
   (let ((budget (getf options :trials :missing))
         (*trial-observations* (list nil)))
     (unless (and (integerp budget) (not (minusp budget)))

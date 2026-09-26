@@ -6,6 +6,10 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
+  (:import-from #:cl-spec/src/schema #:definition-fixture-metadata)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-lifecycle #:trial-observation-call-evidence)
+  (:export #:property-result-run-error #:prepare-property-run)
   (:import-from #:cl-spec/src/schema #:definition-metadata
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
@@ -60,7 +64,9 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((shrink-report :initarg :shrink-report :initform :not-collected
+  ((run-error :initarg :run-error :initform nil :reader property-result-run-error
+              :documentation "Lifecycle failure retained separately from counterexamples.")
+   (shrink-report :initarg :shrink-report :initform :not-collected
                   :reader property-result-shrink-report
                   :documentation "Candidate count, budget and termination captured by the backend.")
    (generation-report :initarg :generation-report :initform :not-collected
@@ -226,6 +232,10 @@ itself signalled.  Each completed capture binding is a per-binding record
 reader never has to classify application data by its shape."
   (when observation
     (append
+     (when (trial-observation-lifecycle observation)
+       (list :input-kind :fixture-recipe
+             :lifecycle (trial-observation-lifecycle observation)
+             :call-evidence (trial-observation-call-evidence observation)))
      (list :arguments (trial-observation-arguments observation)
            :status (trial-observation-status observation)
            :reason (trial-observation-reason observation)
@@ -253,10 +263,14 @@ results without captured metadata have an explicitly incomplete digest."
                                      :instrumentation :unknown))))))
     (dolist (field '(:digest-omissions :digest-exclusions))
       (setf (getf metadata field) (getf metadata field :not-collected)))
+    (when (eq :fixture-recipe (getf metadata :input-kind))
+      (setf (getf metadata :schema-version) 2))
     (setf (getf metadata :record-kind) :result
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value
      (append metadata
+             (when (property-result-run-error result)
+               (list :run-error (observation-data (property-result-run-error result))))
              (list :name (property-result-property result)
                    :status (property-result-status result)
                    :trials (property-result-trials result)
@@ -316,6 +330,19 @@ the profile in effect falls back to the backend's own default."
                                         ((or (null revision) (eq revision :unknown)) :unknown)
                                         (t :known)))))))
 
+(defun validate-fixture-replay (property result options registry)
+  "Refuse changed or incomplete fixture definitions before replay causes side effects."
+  (let ((saved (property-result-schema-metadata result))
+        (current (definition-metadata property :registry registry
+                                      :capabilities '(:generation :unknown :shrinking :unknown))))
+    (unless (and (eq :fixture-recipe (getf saved :input-kind))
+                 (getf saved :definition-digest-complete)
+                 (getf current :definition-digest-complete)
+                 (equal (getf saved :definition-digest) (getf current :definition-digest))
+                 (equal options (property-result-options result)))
+      (error 'unsupported-stateful-operation :operation :replay
+             :function (property-name property)))))
+
 (defun refuse-stateful-replay (property seed-result)
   "Refuse re-applying a past run to a state-observing PROPERTY, or return NIL.
 
@@ -326,9 +353,14 @@ starts a new run (no seed, or an integer seed) which stays allowed.  The
 refusal happens before metadata probing, generation, capture or the target run,
 so no call counter moves.  Ordinary properties declare no state constraints, so
 their existing replay is unchanged."
-  (when (and seed-result (definition-state-constraints property))
+  (when (and seed-result (definition-state-constraints property)
+             (not (definition-fixture-metadata property)))
     (error 'unsupported-stateful-operation :operation :replay
            :function (property-name property))))
+
+(defgeneric prepare-property-run (property)
+  (:documentation "Capture run-specific executable state before metadata and replay validation.")
+  (:method ((property t)) property))
 
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
@@ -339,7 +371,7 @@ recorded so the run can be replayed later.  OPTIONS is passed through to the
 backend.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
-whose definition declares state constraints refuses that with
+whose definition declares state constraints without a fixture refuses that with
 UNSUPPORTED-STATEFUL-OPERATION before generation, capture or the target, because
 nothing restores its state.  An integer SEED starts a new run and stays allowed."
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
@@ -365,10 +397,13 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
          ;; default budget, contradicting the result it was handed.
          (options (or options
                       (and seed-result (property-result-options seed-result))))
-         (property (let ((resolved (resolve-property property-designator registry)))
+         (property (let ((resolved (prepare-property-run
+                                    (resolve-property property-designator registry))))
                      ;; Refuse a state-observing property before metadata
                      ;; probing, generation, capture or the target run.
                      (refuse-stateful-replay resolved seed-result)
+                      (when (and seed-result (definition-fixture-metadata resolved))
+                        (validate-fixture-replay resolved seed-result options registry))
                      resolved))
          (backend (current-generator-backend))
          (effective-seed (or seed (make-seed)))
@@ -377,7 +412,13 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
          ;; would not -- and so replaying from the result reproduces this run by
          ;; construction rather than by both paths happening to default the same way.
          (effective-profile (or profile :normal))
-         (trials (resolve-trials property effective-profile backend))
+         (trials (let ((count (resolve-trials property effective-profile backend)))
+                    (when (and seed-result (definition-fixture-metadata property)
+                               (or (not (eql count (property-result-budget seed-result)))
+                                   (not (eq effective-profile (property-result-profile seed-result)))))
+                      (error 'unsupported-stateful-operation :operation :replay
+                             :function (property-name property)))
+                    count))
          (metadata (definition-metadata
                     property :registry registry
                     :capabilities '(:generation :unknown :shrinking :unknown)))
@@ -412,6 +453,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
                                :skipped
                                (getf outcome :status))
+                   :run-error (getf outcome :run-error)
                    :schema-metadata metadata :budget trials
                    :options captured-options :provenance provenance
                    :property (property-name property)
@@ -433,7 +475,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                    :shrunk-counterexample
                    (when shrunk
                      (name-arguments property (trial-observation-arguments shrunk)))
-                   :condition (or (when selected (trial-observation-condition selected))
+                   :condition (or (and (getf outcome :run-error) (getf outcome :condition))
+                                  (when selected (trial-observation-condition selected))
                                   (getf outcome :condition))
                    :elapsed elapsed)))
 
@@ -460,7 +503,7 @@ different profile changes the trial count. When SEED is a PROPERTY-RESULT, that
 result carries its own PROPERTY-RESULT-PROFILE, and this function uses it when
 PROFILE is not supplied -- so the recommended spelling, passing the result with
 no :PROFILE, is faithful. An explicitly supplied PROFILE always wins over the
-result's, so a caller can deliberately replay under a different budget. An
+result's for stateless properties. Fixture results require an unchanged budget. An
 integer SEED carries no profile, so that spelling still requires the caller to
 supply a matching PROFILE.
 
@@ -468,7 +511,7 @@ SEED must be a property-result or a non-negative integer, or an error is
 signalled.
 
 Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
-definition declares state constraints refuses that, before the integer seed is
+definition declares state constraints without a fixture refuses that, before the seed is
 extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed."
   (unless (or (typep seed 'property-result)
@@ -476,15 +519,12 @@ integer SEED starts a new run and stays allowed."
     (error 'type-error
            :datum seed
            :expected-type '(or property-result (integer 0 *))))
-  ;; A past result is checked before its integer seed is extracted, so the
-  ;; refusal cannot be bypassed by this entry point.  An integer seed starts a
-  ;; new run and is not a replay.
+  ;; Preserve the result through RUN-PROPERTY so fixture identity and run
+  ;; parameters are validated before any hooks execute.
   (refuse-stateful-replay (resolve-property property-designator registry)
                           (and (typep seed 'property-result) seed))
   (run-property property-designator
-                :seed (if (typep seed 'property-result)
-                          (property-result-seed seed)
-                          seed)
+                :seed seed
                 :profile (or profile
                              (and (typep seed 'property-result)
                                   (property-result-profile seed)))

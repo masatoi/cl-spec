@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
+  (:export #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/call-schema
                 #:return-values-spec #:call-arguments-spec #:call-arguments-spec-layout
                 #:call-layout-data
@@ -50,7 +51,7 @@
         :external-state :source-location :backend))
 
 (defun schema-info ()
-  "Describe version 1 of the Lisp definition/result schema, independent of MCP JSON.
+  "Describe the Lisp record schemas, including the version-two fixture extension.
 
 A completed capture binding is an explicit tagged record
 
@@ -78,6 +79,10 @@ cannot name -- so a live class object never enters the record."
                                  :opaque-value :uninterned-symbol :resource-limit)
         :entity-kinds '(:spec :property :function-spec)
         :record-kinds '(:definition :result)
+        :fixture-protocol
+        '(:result-schema-version 2 :artifact-version 2
+          :record-kinds (:result :fixture-check) :input-kind :fixture-recipe
+          :isolations (:fresh) :lifecycle-states (:not-acquired :released :unknown))
         :capture-value-states '(:collected :unavailable)
         :capture-value-keys '(:name :availability :value :reason :type)
         :capture-value-type-forms '(:named :anonymous-class :unknown)
@@ -252,6 +257,10 @@ unknown subclass yields an incomplete digest rather than a trusted partial one."
 
 (defmethod definition-shrink-enabled-p ((definition property))
   (getf (property-metadata definition) :shrink t))
+
+(defgeneric definition-fixture-metadata (definition)
+  (:documentation "Return explicit fixture declaration metadata, or NIL.")
+  (:method ((definition t)) nil))
 
 (defgeneric definition-state-constraints (definition)
   (:documentation "Return :PRESENT when DEFINITION declares state observation, or NIL.
@@ -547,7 +556,9 @@ to avoid compiling a disposable generator before constructing the actual one."
       (setf (getf capabilities :instrumentation)
             (definition-instrumentation-capability definition))
       (append
-       (let ((state (definition-state-constraints definition)))
+        (when (definition-fixture-metadata definition)
+          (list :input-kind :fixture-recipe :fixture (definition-fixture-metadata definition)))
+        (let ((state (definition-state-constraints definition)))
          (when state (list :state-constraints state)))
        (list :schema-version 1 :record-kind :definition
              :entity-kind (definition-entity-kind definition)

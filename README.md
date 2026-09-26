@@ -35,6 +35,7 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 | `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
 | `cl-spec/examples/function-spec-cases` | executable named-case Function Spec example | `check-it` |
 | `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example | `check-it` |
+| `cl-spec/examples/reproducible-withdraw` | fresh-state shrinking and artifact recheck example | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
@@ -449,9 +450,9 @@ name, or the `:unknown` fallback when a type specifier names nothing this
 projection can use, so no live class object ever enters the record. This tagged
 representation is schema version 1;
 the earlier raw `((name . value) ...)` alist was a pre-release implementation
-shape, never a published v1 contract. `check-function` runs
-such a contract, but this version does not
-shrink it (`:shrink-report` says `:state-restoration-unavailable`), replay a past
+shape, never a published v1 contract. Without an explicit fixture,
+`check-function` runs such a contract, but does not shrink it
+(`:shrink-report` says `:state-restoration-unavailable`), replay a past
 result into it (`unsupported-stateful-operation`, through `check-function` or the
 property runner's `run-property`/`replay-property`), save it as a counterexample
 artifact (`:stateful-contract-unsupported`) or instrument it
@@ -464,6 +465,21 @@ For a runnable tour — a correct update, a forgotten update, a refusal after a
 partial update, a changed identifier, a verification error and the first-version
 limits — see the
 [state observation walkthrough](docs/guides/state-observation-walkthrough.md).
+
+### Reconstruct state for repeatable checks
+
+An explicit `:fixture` adds recipe-driven `:setup` / `:cleanup` to Function
+Specs. With `:isolation :fresh`, each trial and shrink candidate receives fresh
+in-memory state. `check-fixture` checks one recipe without a generator;
+`check-function` generates and shrinks recipes. Fixture artifact v2 persists a
+recipe and rechecks it with `recheck-counterexample :state-policy :fixture`.
+Cleanup failures stop the run and remain separate from target failure evidence.
+
+This does not change `check-call`: caller-owned raw arguments are checked once
+without executing fixture hooks. Database rollback and worker-kill supervision
+remain outside the core feature. See the
+[reproducible stateful contract guide](docs/guides/reproducible-stateful-contracts.md)
+and [executable example](examples/reproducible-withdraw.lisp).
 
 ## Example
 

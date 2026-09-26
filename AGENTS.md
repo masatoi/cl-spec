@@ -22,7 +22,7 @@ top-level `:capture` of ordered `(NAME FORM)` bindings observed before the call
 and a `:state-post` (top-level for a case-less contract, or inside each case)
 checked after a passed outcome; a capture variable is not a target argument, a
 capture or state-post failure keeps the recorded phase and evidence rather than
-inferring either from a condition's class, and such a state-observing contract
+inferring either from a condition's class, and such a state-observing contract without an explicit fixture
 is not shrunk, replayed from a past result, persisted as a counterexample
 artifact or instrumented in this version. Capture observes a value and does not
 copy it, and this feature does not restore anything. A direct one-shot check
@@ -157,3 +157,18 @@ rollback hooks. Property/function/generator construction and registry writes use
 Instrumentation status and explicit refresh remain in the separate `cl-spec/instrument`
 system. Optional status self-contract registration is exposed by
 `cl-spec/specs:register-instrumentation-specifications` after that system is loaded.
+
+## Reproducible fixture contracts
+
+Function Specs may declare inline `:fixture` with `:isolation :fresh`, positive
+`:version`, one `:recipe` binding and compiled `:setup` / `:cleanup` hooks.
+`src/fixture.lisp` owns definition validation; `src/fixture-execution.lisp` owns
+the callback lifecycle. `check-fixture` / `fixture-check-data` are core one-shot
+recipe checks. Generated trials and shrink candidates rebuild state independently.
+Fixture results and counterexample artifacts use v2; stateless v1 is preserved.
+Recheck uses `:state-policy :fixture`. A cleanup failure aborts the run and
+retains prior counterexamples separately from its run error. `check-call` never
+runs fixture hooks. Fixtures remain unsupported by instrumentation.
+The scope is fresh in-memory state; worker supervision and external rollback
+remain separate. `examples/reproducible-withdraw.lisp` and its mirrored test
+exercise construction, shrinking, artifact roundtrip and generator-free recheck.

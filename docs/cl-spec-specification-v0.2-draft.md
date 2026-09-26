@@ -5500,3 +5500,37 @@ case reinitialization must update forms and predicate together; `:post` and
 one by clause occurrence (an empty `(:post)` included); a participating backend's
 zero-trial and first-draw-exhaustion runs report known zeros while a
 non-participating backend answers `:not-collected`.
+
+
+### §73.5 implementation addendum: reproducible fresh fixtures (2026-09-26)
+
+§17.3と§73.5 Bのstate-observing contract制限に、明示的な `:fixture` を持つ
+契約だけの例外を追加する。初回実装は `:isolation :fresh` に限定し、DB rollback、
+外部サービスの復元、worker kill時の監督は含まない。
+
+- `:fixture` は `:isolation`、正の整数 `:version`、`:recipe (NAME SPEC)`、
+  `:setup (CONTEXT) FORM...`、`:cleanup (CONTEXT) FORM...` を各一つ宣言する。
+  `:args-generator` との併用は拒否する。生成・縮小の入力はrecipeであり、
+  setupが作るraw引数を既存のbinding/pre/capture/case/outcome/state-post経路で検査する。
+- recipeはbounded AV1 codecで複製できる木に限定する。各試行には独立したコピーと
+  EQ hash-table contextを渡す。recipeの破壊的変更はfixture errorであり、targetへ
+  渡す可変オブジェクトはsetupが別に構築する。fresh性はfixture作者の契約である。
+- setup開始を `unwind-protect` 内に置く。途中失敗、pre拒否、target errorを含めて
+  cleanupを一度試みる。state-postと証拠固定はcleanupより前に行う。
+  cleanup失敗は `:state :unknown`、実行全体は `:error`、phaseは `:fixture` とする。
+  先行する契約失敗と `:run-error` は別に保持し、追加の縮小候補を実行しない。
+  Lisp外部の強制終了について、このcoreから結果を返せるとは主張しない。
+- `check-fixture` と `fixture-check-data` はcoreだけで一つのrecipeを検査する。
+  `check-call` は従来どおりcaller所有のraw引数を検査し、fixture hookを実行しない。
+- fixture実行結果はschema version 2、`:input-kind :fixture-recipe` とlifecycleを持つ。
+  `schema-info` の `:fixture-protocol` が対応versionとisolationを記述する。
+  fixture case-reportは通常試行の `:fixture-errors` を追加し、縮小候補を計数しない。
+- 完了・cleanup成功・target実行済みの同一failure identityだけを縮小反例に採用する。
+  fixture artifactはversion 2でrecipeを保存し、`:state-policy :fixture` の明示、
+  完全な宣言digestとfixture versionの一致後に、生成なしで再検査する。
+  resultをseedに渡すreplayでは定義、options、profile、試行予算の一致を要求する。
+- fixtureなしのstate観測、stateless artifact v1、既存result v1の意味は維持する。
+  fixture契約のruntime instrumentationは拒否する。
+
+構文、実行例、診断と制限は
+[reproducible-stateful-contracts guide](guides/reproducible-stateful-contracts.md)を参照。
