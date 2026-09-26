@@ -7,6 +7,11 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/coverage #:backend-coverage-protocol #:backend-coverage-capabilities)
+  (:import-from #:cl-spec/src/backends/check-it-coverage
+                #:check-it-coverage-capabilities #:prepare-coverage-plan
+                #:next-coverage-target #:*coverage-target*)
+  (:import-from #:cl-spec/src/execution #:observe-coverage-trial)
   (:import-from #:cl-spec/src/generator #:backend-trial-reporting)
   (:import-from #:cl-spec/src/trial-report #:end-trial-report)
   (:import-from #:cl-spec/src/ir #:spec-metadata)
@@ -311,7 +316,8 @@ target never produced is not a reduction of it."
          (compiled (compile-generator backend schema :context context))
          (capabilities (compiled-capabilities compiled shrink-p))
          (generator (compiled-generator-generator compiled))
-         (rejected 0))
+         (rejected 0)
+         (coverage-targets (prepare-coverage-plan property (getf options :registry))))
     (check-type shrink-budget (integer 0 100000))
     ;; Report that this run is being measured before the first draw, so a run
     ;; that produces no observation -- zero trials, or a first draw that
@@ -323,7 +329,9 @@ target never produced is not a reduction of it."
          :trials trials)
       (loop for trial from 1 to trials
             do (handler-case
-                   (progn (generate generator)
+                   (progn (let ((*coverage-target* (next-coverage-target coverage-targets)))
+                               (when coverage-targets (pop coverage-targets))
+                               (generate generator))
                           (record-generated-value))
                  (generation-budget-exhausted (condition)
                    (if (owned-generation-exhaustion-p condition :generation)
@@ -335,13 +343,16 @@ target never produced is not a reduction of it."
                                      :failure-phase :generation
                                      :condition condition))
                        (error condition))))
-               (when (or custom-name
-                         (and (typep generator 'call-arguments-generator)
-                              (not (call-generator-rest-driven-p generator))))
-                 (validate-generated-arguments custom-name whole-validator
-                                               (cached-value generator)))
-               (let ((original (observe-trial property (cached-value generator)
-                                              :context context)))
+               (let ((original
+                        (observe-coverage-trial
+                         property (cached-value generator) :context context :generated t
+                         :validator
+                         (when (or custom-name
+                                   (and (typep generator 'call-arguments-generator)
+                                        (not (call-generator-rest-driven-p generator))))
+                           (lambda ()
+                             (validate-generated-arguments custom-name whole-validator
+                                                           (cached-value generator)))))))
                  (when (eq :rejected (trial-observation-status original))
                    (incf rejected))
                  ;; Ordinary trial only: a shrink candidate is deliberately not counted.
@@ -520,6 +531,12 @@ Lists can shrink in length even when their element generator cannot shrink."
 
 (defmethod backend-trial-reporting ((backend check-it-backend)) (when (eq (class-of backend) (find-class 'check-it-backend)) :trial-report-v1))
 
+(defmethod backend-coverage-protocol ((backend check-it-backend))
+  (when (eq (class-of backend) (find-class 'check-it-backend)) :coverage-v1))
+
+(defmethod backend-coverage-capabilities ((backend check-it-backend) schema options)
+  (check-it-coverage-capabilities schema options))
+
 (defun fixture-custom-shrinker (generator budget)
   "Lift a direct recipe custom shrinker to the runner's one-argument representation."
   (let ((child (when (typep generator 'tuple-generator)
@@ -629,8 +646,8 @@ Lists can shrink in length even when their element generator cannot shrink."
                                  :failure-reason :generation-budget-exhausted
                                  :failure-phase :generation :condition condition))
                          (error condition))))
-                 (let ((original (observe-trial property (cached-value generator)
-                                                :context context)))
+                 (let ((original (observe-coverage-trial property (cached-value generator)
+                                                         :context context)))
                    (note-trial-outcome property original)
                    (cond
                      ((eq :fixture (observation-failure-phase original))

@@ -6,6 +6,15 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/coverage
+                #:coverage-inputs #:coverage-bindings #:coverage-data #:copy-coverage-data
+                #:normalize-coverage-options)
+  (:import-from #:cl-spec/src/coverage-report
+                #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
+                #:coverage-report-data #:coverage-capture-input #:coverage-mark-stage
+                #:coverage-fixture-p)
+  (:import-from #:cl-spec/src/execution #:observe-coverage-trial)
+  (:import-from #:cl-spec/src/call-schema #:bound-call-presence)
   (:import-from #:cl-spec/src/trial-report #:validate-case-trial-report)
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
@@ -1461,6 +1470,17 @@ as its reduction.  The shapes come from the nested errors instead."
          (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
         append (list name value)))
 
+(defmethod coverage-bindings ((property function-check-property) arguments)
+  (let* ((layout (function-spec-call-layout (checked-contract property)))
+         (bound (bind-call-arguments layout arguments)))
+    (loop for binding in (call-layout-bindings layout)
+          for present in (bound-call-presence bound)
+          for name = (argument-binding-name binding)
+          when present append (list name (cdr (assoc name (bound-call-bindings bound)))))))
+
+(defmethod coverage-inputs ((property function-check-property))
+  (coverage-inputs (checked-contract property)))
+
 (defun classify-target-outcome (return-spec signal-spec post post-forms values-post-p
                                 bound-values captures raw-outcome registry)
   "Classify one target invocation against an effective outcome declaration.
@@ -1589,7 +1609,8 @@ keeps its existing classification and leaves state-post explicitly
                                              :state-status :not-evaluated
                                              :state-reason :precondition-rejected))
                 (multiple-value-bind (captures condition index)
-                    (run-captures contract values)
+                    (progn (coverage-mark-stage :pre-admitted)
+                           (run-captures contract values))
                   (setf captured-values captures
                         capture-condition condition
                         capture-index index
@@ -1632,6 +1653,7 @@ keeps its existing classification and leaves state-post explicitly
                                        (target-condition
                                          (when (eq :signaled (call-outcome-kind raw-outcome))
                                            (call-outcome-condition raw-outcome))))
+                                  (coverage-mark-stage :target-observed)
                                   (setf target-called-p t)
                                   (setf outcome
                                         (make-call-outcome
@@ -1899,6 +1921,10 @@ closure reaches the digest."
                          (list (list (argument-binding-supplied-name binding)
                                      (normalize-spec-form 'boolean)))))))
 
+(defmethod coverage-inputs ((contract function-spec))
+  (loop for binding in (call-layout-bindings (function-spec-call-layout contract))
+        collect (list (argument-binding-name binding) (argument-binding-spec binding))))
+
 (defun make-function-check-property (contract &key (budget 0))
   "Adapt CONTRACT to trial execution without requiring a generator backend."
   (unless (typep budget '(integer 0 *))
@@ -1919,6 +1945,8 @@ closure reaches the digest."
   ((inner :initarg :inner :reader fixture-inner-property)
    (fixture :initarg :fixture :reader checked-fixture))
   (:documentation "Adapt immutable recipe arguments to fresh function-call trials."))
+
+(defmethod coverage-fixture-p ((property fixture-check-property)) t)
 
 (defmethod property-argument-schema ((property fixture-check-property))
   (make-instance 'tuple-spec :metadata '(:fixture-recipe t)
@@ -1952,7 +1980,10 @@ closure reaches the digest."
             (checked-fixture property) (first arguments)
             (lambda (raw)
               (handler-case
-                  (validate-call-arguments contract (function-spec-name contract) raw registry)
+                  (progn
+                    (coverage-capture-input inner raw)
+                    (validate-call-arguments contract (function-spec-name contract) raw registry)
+                    (coverage-mark-stage :domain-valid))
                 (error (condition) (setf arguments-error condition)))
               (unless arguments-error
                 (setf observation (observe-trial inner raw :context context)
@@ -2044,13 +2075,18 @@ closure reaches the digest."
           :run-error (eq :fixture (observation-failure-phase observation)))))
 
 (defclass fixture-check-result ()
-  ((declared-cases :initarg :declared-cases :initform :not-collected
+  ((coverage :initarg :coverage :initform '(:availability :not-collected :reason :legacy-result)
+              :reader fixture-check-result-coverage)
+   (declared-cases :initarg :declared-cases :initform :not-collected
                    :reader fixture-check-result-declared-cases
                    :documentation "Case names captured before this direct execution.")
    (name :initarg :name :reader fixture-check-result-name)
    (observation :initarg :observation :reader fixture-check-result-observation)
    (definition :initarg :definition :reader fixture-check-result-definition))
   (:documentation "One recipe execution, with independent contract and lifecycle evidence."))
+
+(defmethod coverage-data ((result fixture-check-result))
+  (copy-coverage-data (fixture-check-result-coverage result)))
 
 (defmethod evidence-facts ((result fixture-check-result))
   (direct-evidence-facts
@@ -2065,7 +2101,7 @@ closure reaches the digest."
           (getf metadata :record-kind) :fixture-check)
     (snapshot-value
      (append metadata
-             (list :evidence (evidence-summary result)
+             (list :coverage (coverage-data result) :evidence (evidence-summary result)
                    :name (fixture-check-result-name result)
                    :execution-mode :fixture
                    :recipe (first (trial-observation-arguments observation))
@@ -2075,18 +2111,24 @@ closure reaches the digest."
                    :lifecycle (trial-observation-lifecycle observation)
                    :observation (trial-observation-call-evidence observation))))))
 
-(defun check-fixture (function-designator recipe &key (registry *registry*))
+(defun check-fixture (function-designator recipe &key coverage (registry *registry*))
   "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
-  (let* ((contract (resolve-function-spec function-designator registry))
+  (let* ((coverage-options (normalize-coverage-options coverage :direct t))
+         (*coverage-trial* nil)
+         (contract (resolve-function-spec function-designator registry))
          (property (make-fixture-check-property contract))
+         (*coverage-context* (when coverage-options
+                               (make-coverage-context-for property coverage-options registry
+                                                          :single-call nil nil)))
          (metadata (definition-metadata
                     contract :registry registry
                     :capabilities '(:generation :unknown :shrinking :unknown))))
     (make-instance 'fixture-check-result :name (function-spec-name contract)
                    :definition metadata
                    :declared-cases (snapshot-value (evidence-declared-cases property))
-                   :observation (observe-trial property (list recipe)
-                                               :context (list :registry registry)))))
+                   :observation (observe-coverage-trial property (list recipe)
+                                                        :context (list :registry registry))
+                   :coverage (coverage-report-data *coverage-context*))))
 
 (defun check-function (function-designator &key trials seed options (registry *registry*))
   "Check a function contract using evidence captured during each invocation.
@@ -2163,6 +2205,7 @@ contract failure. Fixture results and artifacts use version 2."
                                                      (property-result-options seed-result)))
                                    :registry registry)))))
     (make-instance 'function-check-result
+                   :coverage (coverage-data result)
                    :trial-report (property-result-trial-report result)
                    :declared-cases (property-result-declared-cases result)
                    :run-error (property-result-run-error result)
@@ -2222,7 +2265,9 @@ list included -- and an omitted optional is not validated."
     nil))
 
 (defclass call-check-result ()
-  ((declared-cases :initarg :declared-cases :initform :not-collected
+  ((coverage :initarg :coverage :initform '(:availability :not-collected :reason :legacy-result)
+              :reader call-check-result-coverage)
+   (declared-cases :initarg :declared-cases :initform :not-collected
                    :reader call-check-result-declared-cases
                    :documentation "Case names captured before this direct execution.")
    (name :initarg :name
@@ -2258,6 +2303,9 @@ trial budget, profile, shrinking or generation, and filling those slots would
 publish values that were never measured.  The observation inside keeps the
 shared evidence model, and CALL-CHECK-DATA projects it with the existing
 version 1 result envelope.  Created only by CHECK-CALL."))
+
+(defmethod coverage-data ((result call-check-result))
+  (copy-coverage-data (call-check-result-coverage result)))
 
 (defmethod evidence-facts ((result call-check-result))
   (direct-evidence-facts
@@ -2297,7 +2345,7 @@ without re-running the target, its guards, its captures or its post forms."
           (getf metadata :entity-kind) :function-spec)
     (snapshot-value
      (append metadata
-             (list :evidence (evidence-summary result)
+             (list :coverage (coverage-data result) :evidence (evidence-summary result)
                    :name (call-check-result-name result)
                    :status (call-check-result-status result)
                    :arguments (call-check-result-arguments result)
@@ -2305,7 +2353,7 @@ without re-running the target, its guards, its captures or its post forms."
                    :observation (observation-data
                                  (call-check-result-observation result)))))))
 
-(defun check-call (function-designator arguments &key (registry *registry*))
+(defun check-call (function-designator arguments &key coverage (registry *registry*))
   "Check one caller-supplied invocation of a registered Function Spec.
 
 FUNCTION-DESIGNATOR names a registered contract, or is the FUNCTION-SPEC object
@@ -2343,12 +2391,17 @@ signals either condition is an ordinary target observation with reason
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction."
-  (let* ((contract (resolve-function-spec function-designator registry))
+  (let* ((coverage-options (normalize-coverage-options coverage :direct t))
+         (*coverage-trial* nil)
+         (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          ;; Built first so an unbound target is reported before the arguments are
          ;; judged; it also snapshots the source form and holds the target object
          ;; the single invocation will use.
-         (property (make-function-check-property contract :budget 0)))
+         (property (make-function-check-property contract :budget 0))
+         (*coverage-context* (when coverage-options
+                               (make-coverage-context-for property coverage-options registry
+                                                          :single-call nil nil))))
     (validate-call-arguments contract name arguments registry)
     (let ((declared-cases (snapshot-value (evidence-declared-cases property)))
           (definition (definition-metadata
@@ -2356,13 +2409,14 @@ or persistable, and it does not relax any existing stateful restriction."
                        ;; Declare the capabilities without probing a backend:
                        ;; this path never compiles or draws a generator.
                        :capabilities '(:generation :unknown :shrinking :unknown)))
-          (observation (observe-trial property arguments
+          (observation (observe-coverage-trial property arguments :domain-valid t
                                       :context (list :registry registry))))
       (when (function-spec-fixture contract)
         (remf definition :input-kind)
         (setf (getf definition :execution-mode) :direct-call))
       (make-instance 'call-check-result
                      :name name :declared-cases declared-cases
+                     :coverage (coverage-report-data *coverage-context*)
                      ;; The observation snapshot was taken before the target
                      ;; could change the caller's list, so a mutating target
                      ;; cannot alter the arguments this record reports.

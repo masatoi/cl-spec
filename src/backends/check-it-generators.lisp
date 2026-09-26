@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
+  (:import-from #:cl-spec/src/backends/check-it-coverage #:planned-field #:planned-extra-key)
   (:import-from #:check-it
                 #:generator
                 #:generate
@@ -142,18 +143,27 @@ where it can validate and observe the complete correlated candidate."
   (cached-value generator))
 
 (defclass plist-value-generator (generator)
-  ((fields :initarg :fields :reader plist-generator-fields)
+  ((source :initarg :source :reader plist-generator-source)
+   (fields :initarg :fields :reader plist-generator-fields)
    (children :initarg :children :reader plist-generator-children)
    (validators :initarg :validators :reader plist-generator-validators))
   (:documentation "Generate declared plist fields and shrink their values without losing keys."))
 
 (defmethod generate ((generator plist-value-generator))
-  "Draw required fields and independently choose whether each optional field is present."
-  (setf (cached-value generator)
-        (loop for field in (plist-generator-fields generator)
-              for child in (plist-generator-children generator)
-              when (or (field-required-p field) (zerop (random 2)))
-                append (list (field-key field) (generate child)))))
+  "Generate declared fields, applying only an explicitly planned built-in field choice."
+  (let ((source (plist-generator-source generator)) (value nil))
+    (loop for field in (plist-generator-fields generator)
+          for child in (plist-generator-children generator)
+          do (multiple-value-bind (directive forced) (planned-field source (field-key field))
+               (when (or (field-required-p field)
+                         (eq directive :present) (eq directive :value)
+                         (and (not (eq directive :absent)) (zerop (random 2))))
+                 (setf value (append value
+                                     (list (field-key field)
+                                           (if (eq directive :value) forced (generate child))))))))
+    (let ((key (planned-extra-key source)))
+      (when key (setf value (append value (list key nil)))))
+    (setf (cached-value generator) value)))
 
 (defmethod shrink ((generator plist-value-generator) test)
   "Remove optional fields and retain only tested, valid reductions of field values."
@@ -186,7 +196,7 @@ where it can validate and observe the complete correlated candidate."
 (defmethod spec-generator ((spec plist-spec) context)
   (let ((fields (field-spec-fields spec)))
     (make-instance 'plist-value-generator
-                   :fields fields
+                   :source spec :fields fields
                    :children (mapcar (lambda (field)
                                        (spec-generator (field-value-spec field) context))
                                      fields)

@@ -2,6 +2,9 @@
 
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
+  (:import-from #:cl-spec/src/coverage-report
+                #:call-with-coverage-trial #:coverage-mark-stage)
+  (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
@@ -279,10 +282,12 @@ Specializations must classify during this invocation, never by rerunning it."))
   (declare (ignore context))
   (handler-case
       (let ((value (apply (property-function property) arguments)))
+        (coverage-mark-stage :target-observed)
         (if value
             (values :passed nil nil nil nil value)
             (values :failed :predicate-false '(:property-false) nil nil nil)))
     (error (condition)
+      (coverage-mark-stage :target-observed)
       (values :error :condition (list :property-condition (type-of condition))
               nil condition nil))))
 
@@ -364,6 +369,18 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
 
 (defgeneric observe-trial (property arguments &key context)
   (:documentation "Observe one execution input through its property's trial lifecycle."))
+
+(defun observe-coverage-trial (property arguments &key context generated domain-valid validator)
+  "Observe a normal trial once with coverage; shrinking calls OBSERVE-TRIAL directly."
+  (call-with-coverage-trial
+   property arguments
+   (lambda ()
+     (when validator
+       (funcall validator)
+       (coverage-mark-stage :domain-valid))
+     (let ((observation (observe-trial property arguments :context context)))
+       (values observation (trial-observation-status observation))))
+   :generated generated :domain-valid domain-valid))
 
 (defmethod observe-trial ((property property) arguments &key context)
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.

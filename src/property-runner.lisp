@@ -6,6 +6,13 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
+  (:import-from #:cl-spec/src/property #:property-arguments)
+  (:import-from #:cl-spec/src/coverage #:coverage-inputs #:coverage-bindings #:coverage-data #:copy-coverage-data
+                #:normalize-coverage-options #:backend-coverage-protocol
+                #:unsupported-coverage-operation)
+  (:import-from #:cl-spec/src/coverage-report
+                #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
+                #:coverage-report-data #:coverage-fixture-p)
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases)
   (:export #:property-result-trial-report #:property-result-declared-cases)
@@ -67,7 +74,9 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((trial-report :initarg :trial-report :initform :not-collected
+  ((coverage :initarg :coverage :initform '(:availability :not-collected :reason :legacy-result)
+              :reader property-result-coverage)
+   (trial-report :initarg :trial-report :initform :not-collected
                   :reader property-result-trial-report
                   :documentation "Saved normal-trial measurements, or :NOT-COLLECTED.")
    (declared-cases :initarg :declared-cases :initform :not-collected
@@ -169,6 +178,9 @@ body, or NIL.")
 A property run is never reported as a bare boolean: the seed, the trial count
 and the shrunk counterexample are what make a failure actionable."))
 
+(defmethod coverage-data ((result property-result))
+  (copy-coverage-data (property-result-coverage result)))
+
 (defmethod initialize-instance :after ((result property-result) &key)
   "Require an explicit, nonnegative executed-trial count."
   (unless (and (integerp (property-result-trials result))
@@ -259,6 +271,11 @@ reader never has to classify application data by its shape."
 
 (defmethod evidence-declared-cases ((property property)) nil)
 
+(defmethod coverage-bindings ((property property) arguments)
+  (property-named-arguments property arguments))
+
+(defmethod coverage-inputs ((property property)) (property-arguments property))
+
 (defmethod evidence-facts ((result property-result))
   (let ((metadata (property-result-schema-metadata result))
         (case-report (property-result-case-report result))
@@ -300,7 +317,7 @@ results without captured metadata have an explicitly incomplete digest."
      (append metadata
              (when (property-result-run-error result)
                (list :run-error (observation-data (property-result-run-error result))))
-             (list :evidence (evidence-summary result)
+             (list :coverage (coverage-data result) :evidence (evidence-summary result)
                     :name (property-result-property result)
                    :status (property-result-status result)
                    :trials (property-result-trials result)
@@ -436,6 +453,16 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                         (validate-fixture-replay resolved seed-result options registry))
                      resolved))
          (backend (current-generator-backend))
+         (coverage-options (normalize-coverage-options (getf options :coverage)))
+         (*coverage-trial* nil)
+         (*coverage-context*
+           (when coverage-options
+             (when (and (eq :exercise (getf coverage-options :mode))
+                        (not (eq :coverage-v1 (backend-coverage-protocol backend))))
+               (error 'unsupported-coverage-operation :reason :backend-not-participating))
+             (when (eq :coverage-v1 (backend-coverage-protocol backend))
+               (make-coverage-context-for property coverage-options registry :single-run backend
+                                          (not (coverage-fixture-p property))))))
          (effective-seed (or seed (make-seed)))
          ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
          ;; is self-describing -- :PROFILE :NORMAL tells an agent what ran, where NIL
@@ -484,6 +511,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
                                :skipped
                                (getf outcome :status))
+                   :coverage (coverage-report-data *coverage-context*
+                                                   (if coverage-options :unsupported-backend :disabled))
                    :trial-report (getf outcome :trial-report :not-collected)
                    :declared-cases declared-cases
                    :run-error (getf outcome :run-error)
