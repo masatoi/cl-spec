@@ -6,6 +6,9 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
+  (:import-from #:cl-spec/src/evidence
+                #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases)
+  (:export #:property-result-trial-report #:property-result-declared-cases)
   (:import-from #:cl-spec/src/schema #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:trial-observation-call-evidence)
@@ -64,7 +67,13 @@
 (in-package #:cl-spec/src/property-runner)
 
 (defclass property-result ()
-  ((run-error :initarg :run-error :initform nil :reader property-result-run-error
+  ((trial-report :initarg :trial-report :initform :not-collected
+                  :reader property-result-trial-report
+                  :documentation "Saved normal-trial measurements, or :NOT-COLLECTED.")
+   (declared-cases :initarg :declared-cases :initform :not-collected
+                   :reader property-result-declared-cases
+                   :documentation "Declared case names at execution start, NIL or :NOT-COLLECTED.")
+   (run-error :initarg :run-error :initform nil :reader property-result-run-error
               :documentation "Lifecycle failure retained separately from counterexamples.")
    (shrink-report :initarg :shrink-report :initform :not-collected
                   :reader property-result-shrink-report
@@ -248,6 +257,26 @@ reader never has to classify application data by its shape."
      (let ((state (trial-observation-state observation)))
        (when state (list :state state))))))
 
+(defmethod evidence-declared-cases ((property property)) nil)
+
+(defmethod evidence-facts ((result property-result))
+  (let ((metadata (property-result-schema-metadata result))
+        (case-report (property-result-case-report result))
+        (declared (property-result-declared-cases result)))
+    (when (and (eq declared :not-collected) (listp case-report))
+      (setf declared (getf case-report :declared-cases :not-collected)))
+    (list :execution-status (property-result-status result) :scope :single-run
+          :subject (evidence-subject (property-result-property result) metadata
+                                    (property-result-provenance result))
+          :trial-report (property-result-trial-report result)
+          :declared-cases declared :case-report case-report
+          :trials (property-result-trials result) :budget (property-result-budget result)
+          :rejected (property-result-rejected result)
+          :generation-report (property-result-generation-report result)
+          :shrink-report (property-result-shrink-report result)
+          :capabilities (getf metadata :capabilities :not-collected)
+          :run-error (not (null (property-result-run-error result))))))
+
 (defun result-data (result)
   "Return a versioned result record using metadata captured before execution.
 Never resolve the current registry to describe an old result. Manually constructed
@@ -271,7 +300,8 @@ results without captured metadata have an explicitly incomplete digest."
      (append metadata
              (when (property-result-run-error result)
                (list :run-error (observation-data (property-result-run-error result))))
-             (list :name (property-result-property result)
+             (list :evidence (evidence-summary result)
+                    :name (property-result-property result)
                    :status (property-result-status result)
                    :trials (property-result-trials result)
                    :budget (property-result-budget result)
@@ -422,6 +452,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
          (metadata (definition-metadata
                     property :registry registry
                     :capabilities '(:generation :unknown :shrinking :unknown)))
+         (declared-cases (snapshot-value (evidence-declared-cases property)))
          (captured-options (snapshot-value options))
          (provenance (capture-run-provenance backend options))
          (start (get-internal-real-time))
@@ -453,6 +484,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
                                :skipped
                                (getf outcome :status))
+                   :trial-report (getf outcome :trial-report :not-collected)
+                   :declared-cases declared-cases
                    :run-error (getf outcome :run-error)
                    :schema-metadata metadata :budget trials
                    :options captured-options :provenance provenance

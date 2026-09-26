@@ -251,7 +251,7 @@ allowed."
 
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
-  '(cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
+  '(cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
@@ -452,6 +452,31 @@ their finite input corpora, and the registry write contract names its scenarios.
                                 (:record-kind (member :fixture-check))
                                 (:status (member :passed)) (:recipe (member 7)))))
     (:post (eq :completed (getf (getf result :lifecycle) :cleanup))))
+  (defspec-function cl-spec:evidence-summary
+    "A saved direct observation is summarized without an implicit policy."
+    (:args (observation fresh-fixture-result))
+    (:returns (plist (:required (:schema-version (member 1))
+                               (:record-kind (member :evidence-summary))
+                               (:assessment (member :not-assessed))
+                               (:execution-status (member :passed)))))
+    (:post (eql 1 (getf (find :checked-trials (getf result :dimensions)
+                             :key (lambda (entry) (getf entry :kind))) :value))))
+  (defgenerator evidence-policy-generator ()
+    (if (zerop (random 2)) nil
+        (list :policy-version 1 :requirements
+              (list (list :kind :min-checked-trials :count 1)))))
+  (defspec evidence-policy-input list (:generator evidence-policy-generator))
+  (defspec-function cl-spec:assess-evidence
+    "An explicit threshold is assessed; malformed policy data is rejected."
+    (:args (observation fresh-fixture-result) (policy evidence-policy-input))
+    (:cases
+     (:valid (:when (equal policy '(:policy-version 1 :requirements
+                                   ((:kind :min-checked-trials :count 1)))))
+             (:returns (plist (:required (:schema-version (member 1))
+                                         (:record-kind (member :evidence-assessment))
+                                         (:assessment (member :satisfied))
+                                         (:execution-status (member :passed))))))
+     (:invalid (:when (null policy)) (:signals (type cl-spec:invalid-evidence-policy)))))
   (defproperty fixture-reconstruction-is-independent ((recipe (range integer 0 30)))
     "Repeating one recipe starts from the same value and does not overwrite past evidence."
     (:about cl-spec:check-fixture cl-spec:fixture-check-data)

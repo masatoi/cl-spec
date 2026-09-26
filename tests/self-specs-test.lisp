@@ -32,6 +32,21 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest evidence-apis-have-executable-contracts
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (name '(cl-spec:evidence-summary cl-spec:assess-evidence))
+      (ok (find-function-spec name))
+      (ok (eq :passed (property-result-status (check-function name :trials 20 :seed 42)))))
+    (let ((observation (cl-spec:check-fixture
+                        (cl-spec/self-spec-fixtures:fresh-fixture-contract) 7)))
+      (dolist (policy '(nil (:policy-version 1 :requirements
+                            ((:kind :min-checked-trials :count 1)))))
+        (ok (eq :passed
+                (getf (cl-spec:call-check-data
+                       (cl-spec:check-call 'cl-spec:assess-evidence (list observation policy)))
+                      :status)))))))
+
 (deftest fixture-apis-have-executable-contracts
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

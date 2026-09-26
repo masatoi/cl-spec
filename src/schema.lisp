@@ -79,6 +79,13 @@ cannot name -- so a live class object never enters the record."
                                  :opaque-value :uninterned-symbol :resource-limit)
         :entity-kinds '(:spec :property :function-spec)
         :record-kinds '(:definition :result)
+        :evidence-protocol
+        '(:schema-version 1 :policy-version 1
+          :record-kinds (:evidence-summary :evidence-assessment)
+          :assessments (:satisfied :insufficient :unknown :not-assessed)
+          :availability-states (:collected :not-collected :not-applicable)
+          :requirement-kinds (:min-checked-trials :all-declared-cases
+                              :requested-trials-completed))
         :fixture-protocol
         '(:result-schema-version 2 :artifact-version 2
           :record-kinds (:result :fixture-check) :input-kind :fixture-recipe

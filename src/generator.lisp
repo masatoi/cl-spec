@@ -8,6 +8,9 @@
 
 (defpackage #:cl-spec/src/generator
   (:use #:cl)
+  (:import-from #:cl-spec/src/trial-report
+                #:*trial-report-context* #:make-trial-report-context #:completed-trial-report)
+  (:export #:backend-trial-reporting)
   (:import-from #:cl-spec/src/property #:property #:property-metadata)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:observation-failure-phase #:trial-observation-reason)
@@ -202,20 +205,26 @@ Relaxing evidence requirements is confined to this shape."
       (error 'invalid-backend-result :reason "invalid retained fixture reduction"))
     outcome))
 
+(defun validate-outcome-plist (outcome)
+  "Refuse malformed backend data before any accessor traverses it."
+  (let ((tail outcome) (seen nil) (cells (make-hash-table :test #'eq)))
+    (loop while tail
+          do (unless (and (consp tail) (consp (cdr tail))
+                          (keywordp (car tail))
+                          (not (member (car tail) seen))
+                          (not (gethash tail cells)))
+               (error 'invalid-backend-result
+                      :reason "outcome must be a proper keyword plist without duplicate keys"))
+             (setf (gethash tail cells) t)
+             (push (car tail) seen)
+             (setf tail (cddr tail))))
+  outcome)
+
 (defun validate-backend-outcome (outcome property budget)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
            (error 'invalid-backend-result :reason reason)))
-    (let ((tail outcome) (seen nil) (cells (make-hash-table :test #'eq)))
-      (loop while tail
-            do (unless (and (consp tail) (consp (cdr tail))
-                            (keywordp (car tail))
-                            (not (member (car tail) seen))
-                            (not (gethash tail cells)))
-                 (refuse "outcome must be a proper keyword plist without duplicate keys"))
-               (setf (gethash tail cells) t)
-               (push (car tail) seen)
-               (setf tail (cddr tail))))
+    (validate-outcome-plist outcome)
     (unless (shrink-report-p (getf outcome :shrink-report))
       (refuse ":shrink-report requires bounded candidate counts and a termination keyword"))
     (when (and (getf outcome :generation-report)
@@ -280,6 +289,10 @@ Relaxing evidence requirements is confined to this shape."
            (refuse "status must describe the selected counterexample"))))
       outcome)))
 
+(defgeneric backend-trial-reporting (backend)
+  (:documentation "Return :TRIAL-REPORT-V1 when BACKEND measures every ordinary trial.")
+  (:method ((backend t)) nil))
+
 (defgeneric backend-trial-lifecycle (backend)
   (:documentation "Return :FIXTURE-V1 when the backend preserves independent fixture trials.")
   (:method ((backend t)) nil))
@@ -309,7 +322,10 @@ the trial and precondition counts it collected; this boundary never fabricates
              (not (eq :fixture-v1 (backend-trial-lifecycle backend))))
     (error 'invalid-backend-result :reason "backend does not support fixture trials"))
   (let ((budget (getf options :trials :missing))
-        (*trial-observations* (list nil)))
+        (*trial-observations* (list nil))
+         (*trial-report-context*
+           (when (eq :trial-report-v1 (backend-trial-reporting backend))
+             (make-trial-report-context property))))
     (unless (and (integerp budget) (not (minusp budget)))
       (error 'type-error :datum budget :expected-type '(integer 0 *)))
     (let* ((explicit (getf options :generation-budget :missing))
@@ -318,8 +334,13 @@ the trial and precondition counts it collected; this boundary never fabricates
                         (make-generation-request :planned budget :budget explicit)))
            (*generation-request* request)
            (outcome (call-next-method)))
+      (validate-outcome-plist outcome)
+      (when (loop for key in outcome by #'cddr thereis (eq key :trial-report))
+        (error 'invalid-backend-result :reason "trial-report is owned by the runner"))
+      (when *trial-report-context*
+        (setf outcome (list* :trial-report (completed-trial-report property outcome) outcome)))
       (validate-backend-outcome
-       (if (backend-reports-generation backend)
+        (if (backend-reports-generation backend)
            (list* :generation-report (generation-request-report request) outcome)
            outcome)
        property budget))))

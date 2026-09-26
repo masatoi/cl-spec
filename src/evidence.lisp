@@ -2,10 +2,13 @@
 (defpackage #:cl-spec/src/evidence
   (:use #:cl)
   (:import-from #:cl-spec/src/execution #:snapshot-value)
-  (:export #:evidence-facts #:evidence-summary #:assess-evidence
+  (:export #:evidence-declared-cases #:evidence-facts #:evidence-summary #:assess-evidence
            #:invalid-evidence-policy #:invalid-evidence-policy-reason
            #:evidence-subject #:single-observation-report))
 (in-package #:cl-spec/src/evidence)
+
+(defgeneric invalid-evidence-policy-reason (condition)
+  (:documentation "Return the reason an evidence policy was refused."))
 
 (define-condition invalid-evidence-policy (error)
   ((reason :initarg :reason :reader invalid-evidence-policy-reason))
@@ -16,6 +19,10 @@
 
 (defgeneric evidence-facts (result)
   (:documentation "Return saved execution facts without lookup or executing application code."))
+
+(defgeneric evidence-declared-cases (definition)
+  (:documentation "Snapshot declared cases before execution; unknown is distinct from none.")
+  (:method ((definition t)) :not-collected))
 
 (defun bounded-list-p (value maximum)
   "Recognize a proper list in at most MAXIMUM cons steps, refusing cycles."
@@ -95,7 +102,8 @@
              (when collected
                (list :value (getf report :checked) :counts (getf report :counts))))
      (append (list :kind :declared-cases :availability case-availability
-                   :unit :normal-trials :source '(:case-report :cases))
+                   :unit (if (eq :single-call (getf facts :scope)) :single-call :normal-trials)
+                    :source '(:case-report :cases))
              (unless (eq declared :not-collected) (list :declared declared))
              (when (eq case-availability :collected)
                (list :cases
@@ -117,7 +125,7 @@
 
 (defun summary-from-facts (facts)
   "Project facts without applying an implicit sufficiency threshold."
-  (let* ((dimensions (evidence-dimensions facts)) (gaps nil) (unknowns nil))
+  (let ((dimensions (evidence-dimensions facts)) (gaps nil) (unknowns nil))
     (dolist (entry dimensions)
       (when (eq :not-collected (getf entry :availability))
         (push (list :kind :measurement-not-collected :dimension (getf entry :kind)
@@ -198,7 +206,7 @@
 
 (defun assess-evidence (result policy)
   "Assess explicit version-one POLICY against saved evidence, independently of status."
-  (let* ((policy (validate-evidence-policy policy))
+  (let ((policy (validate-evidence-policy policy))
          (summary (evidence-summary result))
          (checks nil) (gaps nil) (unknowns nil))
     (dolist (requirement (getf policy :requirements))

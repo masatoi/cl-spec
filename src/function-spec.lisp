@@ -6,6 +6,12 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/trial-report #:validate-case-trial-report)
+  (:import-from #:cl-spec/src/evidence
+                #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
+                #:single-observation-report)
+  (:import-from #:cl-spec/src/property-runner
+                #:property-result-trial-report #:property-result-declared-cases)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
                 #:fixture-data #:snapshot-fixture #:fixture-error)
@@ -1436,6 +1442,9 @@ as its reduction.  The shapes come from the nested errors instead."
 (defmethod definition-state-constraints ((property function-check-property))
   (definition-state-constraints (checked-contract property)))
 
+(defmethod evidence-declared-cases ((property function-check-property))
+  (mapcar #'function-case-name (function-spec-cases (checked-contract property))))
+
 (defmethod definition-shrink-enabled-p ((property function-check-property))
   (not (state-observing-contract-p (checked-contract property))))
 
@@ -2014,11 +2023,39 @@ closure reaches the digest."
                            :metadata (snapshot-value (property-metadata property)))
     prepared))
 
+(defun direct-evidence-facts (name metadata observation declared)
+  "Describe a single saved observation and its pre-call declared case names."
+  (let ((status (trial-observation-status observation))
+        (selected (trial-observation-case observation)))
+    (list :execution-status status :scope :single-call
+          :subject (evidence-subject name metadata)
+          :trial-report (single-observation-report status)
+          :declared-cases declared
+          :case-report
+          (if (eq declared :not-collected) :not-collected
+              (list :cases
+                    (loop for case in declared
+                          for called = (and (eq case selected) (not (eq status :rejected)))
+                          collect (list :name case :called (if called 1 0)
+                                        :passed (if (and called (eq status :passed)) 1 0)
+                                        :failed (if (and called (eq status :failed)) 1 0)
+                                        :error (if (and called (eq status :error)) 1 0)))))
+          :capabilities (getf metadata :capabilities :not-collected)
+          :run-error (eq :fixture (observation-failure-phase observation)))))
+
 (defclass fixture-check-result ()
-  ((name :initarg :name :reader fixture-check-result-name)
+  ((declared-cases :initarg :declared-cases :initform :not-collected
+                   :reader fixture-check-result-declared-cases
+                   :documentation "Case names captured before this direct execution.")
+   (name :initarg :name :reader fixture-check-result-name)
    (observation :initarg :observation :reader fixture-check-result-observation)
    (definition :initarg :definition :reader fixture-check-result-definition))
   (:documentation "One recipe execution, with independent contract and lifecycle evidence."))
+
+(defmethod evidence-facts ((result fixture-check-result))
+  (direct-evidence-facts
+   (fixture-check-result-name result) (fixture-check-result-definition result)
+   (fixture-check-result-observation result) (fixture-check-result-declared-cases result)))
 
 (defun fixture-check-data (result)
   "Return a version-two record for a one-shot fixture execution."
@@ -2028,7 +2065,8 @@ closure reaches the digest."
           (getf metadata :record-kind) :fixture-check)
     (snapshot-value
      (append metadata
-             (list :name (fixture-check-result-name result)
+             (list :evidence (evidence-summary result)
+                   :name (fixture-check-result-name result)
                    :execution-mode :fixture
                    :recipe (first (trial-observation-arguments observation))
                    :status (trial-observation-status observation)
@@ -2046,6 +2084,7 @@ closure reaches the digest."
                     :capabilities '(:generation :unknown :shrinking :unknown))))
     (make-instance 'fixture-check-result :name (function-spec-name contract)
                    :definition metadata
+                   :declared-cases (snapshot-value (evidence-declared-cases property))
                    :observation (observe-trial property (list recipe)
                                                :context (list :registry registry)))))
 
@@ -2124,6 +2163,8 @@ contract failure. Fixture results and artifacts use version 2."
                                                      (property-result-options seed-result)))
                                    :registry registry)))))
     (make-instance 'function-check-result
+                   :trial-report (property-result-trial-report result)
+                   :declared-cases (property-result-declared-cases result)
                    :run-error (property-result-run-error result)
                    :schema-metadata (property-result-schema-metadata result)
                    :options (property-result-options result)
@@ -2138,7 +2179,8 @@ contract failure. Fixture results and artifacts use version 2."
                    :failure-evidence (property-result-failure-evidence result)
                    :shrunk-evidence (property-result-shrunk-evidence result)
                    :shrunk-outcome (property-result-shrunk-outcome result)
-                   :case-report (case-run-report case-run)
+                   :case-report (validate-case-trial-report
+                                  (property-result-trial-report result) (case-run-report case-run))
                     :shrink-report (property-result-shrink-report result)
                    :generation-report (property-result-generation-report result)
                    :failure-phase (property-result-failure-phase result)
@@ -2180,7 +2222,10 @@ list included -- and an omitted optional is not validated."
     nil))
 
 (defclass call-check-result ()
-  ((name :initarg :name
+  ((declared-cases :initarg :declared-cases :initform :not-collected
+                   :reader call-check-result-declared-cases
+                   :documentation "Case names captured before this direct execution.")
+   (name :initarg :name
          :reader call-check-result-name
          :documentation "Symbol naming the Function Spec that was checked.")
    (arguments :initarg :arguments
@@ -2213,6 +2258,11 @@ trial budget, profile, shrinking or generation, and filling those slots would
 publish values that were never measured.  The observation inside keeps the
 shared evidence model, and CALL-CHECK-DATA projects it with the existing
 version 1 result envelope.  Created only by CHECK-CALL."))
+
+(defmethod evidence-facts ((result call-check-result))
+  (direct-evidence-facts
+   (call-check-result-name result) (call-check-result-definition result)
+   (call-check-result-observation result) (call-check-result-declared-cases result)))
 
 (defun call-check-result-status (result)
   "Return the status of the invocation RESULT checked.
@@ -2247,7 +2297,8 @@ without re-running the target, its guards, its captures or its post forms."
           (getf metadata :entity-kind) :function-spec)
     (snapshot-value
      (append metadata
-             (list :name (call-check-result-name result)
+             (list :evidence (evidence-summary result)
+                   :name (call-check-result-name result)
                    :status (call-check-result-status result)
                    :arguments (call-check-result-arguments result)
                    :failure-phase (call-check-result-failure-phase result)
@@ -2299,7 +2350,8 @@ or persistable, and it does not relax any existing stateful restriction."
          ;; the single invocation will use.
          (property (make-function-check-property contract :budget 0)))
     (validate-call-arguments contract name arguments registry)
-    (let ((definition (definition-metadata
+    (let ((declared-cases (snapshot-value (evidence-declared-cases property)))
+          (definition (definition-metadata
                        contract :registry registry
                        ;; Declare the capabilities without probing a backend:
                        ;; this path never compiles or draws a generator.
@@ -2310,7 +2362,7 @@ or persistable, and it does not relax any existing stateful restriction."
         (remf definition :input-kind)
         (setf (getf definition :execution-mode) :direct-call))
       (make-instance 'call-check-result
-                     :name name
+                     :name name :declared-cases declared-cases
                      ;; The observation snapshot was taken before the target
                      ;; could change the caller's list, so a mutating target
                      ;; cannot alter the arguments this record reports.

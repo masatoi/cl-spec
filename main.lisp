@@ -5,6 +5,11 @@
 (defpackage #:cl-spec/main
   (:nicknames #:cl-spec)
   (:use #:cl)
+  (:import-from #:cl-spec/src/evidence
+                #:evidence-summary #:assess-evidence
+                #:invalid-evidence-policy #:invalid-evidence-policy-reason)
+  (:export #:evidence-summary #:assess-evidence
+           #:invalid-evidence-policy #:invalid-evidence-policy-reason)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec-fixture #:check-fixture #:fixture-check-result
                 #:fixture-check-data)

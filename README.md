@@ -23,6 +23,16 @@ output and postcondition scopes through the optional `cl-spec/instrument` system
 a state-observing contract refuses instrumentation.
 The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not here.
 
+## Evidence and execution results
+
+`evidence-summary` reports saved measurements without an implicit policy;
+`assess-evidence` evaluates explicit trial-count and declared-case requirements.
+A `:passed` execution may have `:insufficient` evidence, and missing measurements
+remain `:unknown` rather than zero. Both APIs work in the core system.
+
+See the [evidence sufficiency guide](docs/guides/evidence-sufficiency.md) for
+policies, direct checks and backend participation.
+
 ## Systems
 
 | System | Contents | Extra dependency |
@@ -59,8 +69,7 @@ to run every demo:
 
 ## cl-spec's own executable specifications
 
-Load the optional specification bundle to register contracts for twenty-eight
-public functions and thirty-one semantic Properties. The definitions live in
+Load the optional specification bundle to register contracts for public functions and semantic Properties. The definitions live in
 [`specs.lisp`](specs.lisp) with fixtures in
 [`self-spec-fixtures.lisp`](self-spec-fixtures.lisp), independently of Rove, and
 are discoverable through the same structured APIs used by cl-mcp:

@@ -96,7 +96,7 @@
             (invalid-evidence-policy () t))))))
 
 (deftest assessment-copies-inputs-and-keeps-execution-independent
-  (let* ((result (saved :cases nil))
+  (let ((result (saved :cases nil))
          (policy (copy-tree '(:policy-version 1 :requirements
                               ((:kind :min-checked-trials :count 2))))))
     (setf (getf (facts result) :execution-status) :failed)
