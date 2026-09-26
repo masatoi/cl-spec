@@ -8,7 +8,7 @@
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
   (:import-from #:cl-spec/src/coverage-report #:coverage-enable-stage
-                #:begin-coverage-report #:end-coverage-report)
+                #:begin-coverage-report #:end-coverage-report #:deferred-coverage-p)
   (:import-from #:cl-spec/src/coverage #:backend-coverage-protocol #:backend-coverage-capabilities)
   (:import-from #:cl-spec/src/backends/check-it-coverage
                 #:check-it-coverage-capabilities #:prepare-coverage-plan
@@ -329,7 +329,7 @@ target never produced is not a reduction of it."
     (begin-coverage-report property)
     (when (or custom-name (and (typep generator 'call-arguments-generator)
                               (not (call-generator-rest-driven-p generator))))
-      (coverage-enable-stage :domain-valid))
+      (unless (deferred-coverage-p) (coverage-enable-stage :domain-valid)))
     (with-generation-environment
         ((max *base-size* (compiled-generator-size compiled))
          :trials trials)

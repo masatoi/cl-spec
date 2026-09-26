@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
   (:import-from #:cl-spec/src/coverage-report
-                #:call-with-coverage-trial #:coverage-mark-stage #:coverage-implicit-pre)
+                #:*coverage-trial* #:deferred-coverage-p #:begin-core-coverage-report
+                #:collect-deferred-coverage-trial #:call-with-coverage-trial #:coverage-mark-stage #:coverage-implicit-pre)
   (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/call-outcome
@@ -37,6 +38,7 @@ checkpointed. CONDITION retains the actual condition; CONDITION-REPORT is its
 text at observation time."
   ;; Internal one-time reporting ownership; deliberately absent from the constructor.
   (report-token nil)
+  (coverage-frame nil)
   (run nil :read-only t)
   (property nil :read-only t)
   (arguments nil :read-only t)
@@ -358,6 +360,10 @@ state to aggregate, and a backend that never calls this has not reported.")
     (declare (ignore property))
     nil))
 
+(defmethod begin-trial-report :around ((property property))
+  (prog1 (call-next-method)
+    (begin-core-coverage-report property)))
+
 (defgeneric note-trial-outcome (property observation)
   (:documentation "Record one ordinary trial OBSERVATION of PROPERTY, if the run keeps evidence.
 
@@ -368,11 +374,33 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
     (declare (ignore property observation))
     nil))
 
+(defmethod note-trial-outcome :around ((property property) observation)
+  (prog1 (call-next-method)
+    (when (typep observation 'trial-observation)
+      (collect-deferred-coverage-trial (trial-observation-coverage-frame observation)))))
+
 (defgeneric observe-trial (property arguments &key context)
   (:documentation "Observe one execution input through its property's trial lifecycle."))
 
+(defmethod observe-trial :around ((property property) arguments &key context)
+  (declare (ignore context))
+  (if (and (deferred-coverage-p) (null *coverage-trial*))
+      (multiple-value-bind (observation frame)
+          (call-with-coverage-trial
+           property arguments
+           (lambda ()
+             (let ((observation (call-next-method)))
+               (values observation (trial-observation-status observation))))
+           :defer t)
+        (setf (trial-observation-coverage-frame observation) frame)
+        observation)
+      (call-next-method)))
+
 (defun observe-coverage-trial (property arguments &key context generated domain-valid validator)
   "Observe a normal trial once with coverage; shrinking calls OBSERVE-TRIAL directly."
+  (when (deferred-coverage-p)
+    (when validator (funcall validator))
+    (return-from observe-coverage-trial (observe-trial property arguments :context context)))
   (call-with-coverage-trial
    property arguments
    (lambda ()

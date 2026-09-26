@@ -60,8 +60,8 @@ README.md, AGENTS.md, docs/guides/coverage.md, docs/api.
 - [x] Full suite, fresh core-only load, clean rove, forced compile, changed-file lint.
 
 ## Task 5: Independent review
-- [ ] Fresh read-only independent reviewer against design and full branch.
-- [ ] Reproduce/fix significant findings with regression tests; final suite and local commit.
+- [x] Fresh read-only independent reviewer against design and full branch.
+- [x] Reproduce/fix significant findings with regression tests; final suite and local commit.
 
 ## Ledger
 - Baseline 948 tests passed on merged evidence implementation.
@@ -74,3 +74,11 @@ README.md, AGENTS.md, docs/guides/coverage.md, docs/api.
 - Clean `rove cl-spec.asd`, core-only load and forced compile succeeded.
 - New coverage modules/tests lint clean; changed-file lint retains three pre-existing needless-let warnings.
 - Guide example executed (7 trials, complete report); API reference regenerated.
+
+- Independent review found malformed-generator error regression and duplicate bucket
+  counting. Reproduced both with failing tests, fixed, and re-reviewed.
+- Restored core-known legacy backend coverage with deferred per-observation frames
+  committed only on ordinary-trial reporting; missing reporting stays partial.
+- Follow-up review corrected inherited-backend domain availability and fixture
+  recipe/setup/binding absence reasons. Reviewer confirmed no significant findings.
+- Final fresh-worker suite: 979 tests passed.

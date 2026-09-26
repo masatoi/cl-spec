@@ -58,6 +58,9 @@ report `:single-call` scope. Exercise is refused because these APIs do not gener
 Fixture reports describe reconstructed call arguments, never recipe fields;
 their generated stage is inapplicable and checked counts wait for cleanup.
 Fixture recipes and custom generator output are not rewritten for targeting.
+`:input-unavailable` counts trials without observable input; the bounded
+`:input-unavailable-reasons` counters distinguish recipe validation, setup, argument binding and
+unknown reasons.
 
 Exercise's extra-key pool defaults to `(:coverage-extra :probe-extra)`. Override
 it with `:extra-keys`, a unique list of at most 64 keywords. The first key absent
@@ -72,8 +75,12 @@ that limit. The last omission identifies the truncation point, not every omitted
 path. Invalid options signal `invalid-coverage-options`.
 
 Disabled and older result objects explicitly report missing measurement. A backend
-must opt into `:coverage-v1`; legacy backends report unsupported observation and
-refuse exercise. Participating backends must open/close one run-owned collector
+must opt into `:coverage-v1` for generation-stage observation and exercise.
+Legacy backends retain core checkpoints when they use `observe-trial` and report
+ordinary trials with `note-trial-outcome`; unreported trials produce a partial
+collection, and unmeasured stages remain unknown. Shrink observations without an
+ordinary-trial report never contribute. Legacy backends refuse exercise.
+Participating backends must open/close one run-owned collector
 and account for exactly the ordinary trial count, or signal `invalid-backend-result`.
 
 The internal extension protocol separates `definition-coverage-schema` and

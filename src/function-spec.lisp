@@ -11,7 +11,7 @@
                 #:normalize-coverage-options)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
-                #:coverage-report-data #:coverage-capture-input #:coverage-mark-stage
+                #:coverage-note-unavailable-input #:coverage-report-data #:coverage-capture-input #:coverage-mark-stage
                 #:coverage-fixture-p #:coverage-precondition-observed-p)
   (:import-from #:cl-spec/src/execution #:observe-coverage-trial)
   (:import-from #:cl-spec/src/call-schema #:bound-call-presence)
@@ -1474,7 +1474,9 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defmethod coverage-bindings ((property function-check-property) arguments)
   (let* ((layout (function-spec-call-layout (checked-contract property)))
-         (bound (bind-call-arguments layout arguments)))
+         (bound (handler-case (bind-call-arguments layout arguments)
+                  (program-error ()
+                    (return-from coverage-bindings (values nil :unavailable))))))
     (loop for binding in (call-layout-bindings layout)
           for present in (bound-call-presence bound)
           for name = (argument-binding-name binding)
@@ -2008,6 +2010,7 @@ closure reaches the digest."
                   :condition-type (type-of arguments-error)
                   :condition-report (render-condition-report arguments-error))
             (getf lifecycle :errors)))
+    (coverage-note-unavailable-input (getf (first (getf lifecycle :errors)) :phase))
     (setf (getf lifecycle :target-called)
           (and observation (consp (trial-observation-outcome observation)) t))
     (make-trial-observation

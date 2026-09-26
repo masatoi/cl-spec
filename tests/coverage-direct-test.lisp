@@ -89,6 +89,21 @@
       (ok (= 1 (count-bucket report :field-presence :target-observed :present)))
       (ok (= 0 (count-bucket report :field-presence :checked :present))))))
 
+(deftest fixture-coverage-records-unavailable-input-reason
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:optional (:memo integer)))))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context))
+                        (if (zerop recipe) (error "setup failure") nil))
+                (:cleanup (context) (declare (ignore context))))
+      (:returns t))
+    (loop for recipe in '(0 1 "invalid") for reason in '(:setup :argument-binding :recipe)
+          do (let* ((result (cl-spec:check-fixture 'identity recipe :coverage '(:mode :observe)))
+                    (report (coverage-data result)))
+               (ok (= 1 (getf report :input-unavailable)))
+               (ok (= 1 (getf (getf report :input-unavailable-reasons) reason 0)))))))
+
 (deftest evidence-summary-preserves-coverage-scope
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defspec-function identity

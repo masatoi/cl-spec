@@ -466,9 +466,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
              (when (and (eq :exercise (getf coverage-options :mode))
                         (not (eq :coverage-v1 (backend-coverage-protocol backend))))
                (error 'unsupported-coverage-operation :reason :backend-not-participating))
-             (when (eq :coverage-v1 (backend-coverage-protocol backend))
-               (make-coverage-context-for property coverage-options registry :single-run backend
-                                          (not (coverage-fixture-p property))))))
+             (make-coverage-context-for property coverage-options registry :single-run backend
+                                        (not (coverage-fixture-p property))
+                                        :deferred (not (eq :coverage-v1
+                                                           (backend-coverage-protocol backend))))))
          (effective-seed (or seed (make-seed)))
          ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
          ;; is self-describing -- :PROFILE :NORMAL tells an agent what ran, where NIL

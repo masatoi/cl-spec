@@ -3,7 +3,9 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:*registry*)
   (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema #:observe-dimension)
-  (:export #:definition-coverage-schema #:observe-coverage-dimension #:coverage-schema #:coverage-data #:coverage-identity #:coverage-identity-from-metadata #:coverage-inputs #:coverage-bindings
+  (:export #:definition-coverage-schema #:observe-coverage-dimension
+           #:coverage-schema #:coverage-data #:coverage-identity #:coverage-identity-from-metadata
+           #:coverage-inputs #:coverage-bindings
            #:normalize-coverage-options #:copy-coverage-data
            #:invalid-coverage-options #:invalid-coverage-options-reason
            #:unsupported-coverage-operation #:unsupported-coverage-operation-reason
