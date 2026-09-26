@@ -9,7 +9,7 @@
   (:import-from #:cl-spec/src/schema #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:trial-observation-call-evidence)
-  (:export #:property-result-run-error)
+  (:export #:property-result-run-error #:prepare-property-run)
   (:import-from #:cl-spec/src/schema #:definition-metadata
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
@@ -358,6 +358,10 @@ their existing replay is unchanged."
     (error 'unsupported-stateful-operation :operation :replay
            :function (property-name property))))
 
+(defgeneric prepare-property-run (property)
+  (:documentation "Capture run-specific executable state before metadata and replay validation.")
+  (:method ((property t)) property))
+
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
@@ -367,7 +371,7 @@ recorded so the run can be replayed later.  OPTIONS is passed through to the
 backend.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
-whose definition declares state constraints refuses that with
+whose definition declares state constraints without a fixture refuses that with
 UNSUPPORTED-STATEFUL-OPERATION before generation, capture or the target, because
 nothing restores its state.  An integer SEED starts a new run and stays allowed."
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
@@ -393,7 +397,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
          ;; default budget, contradicting the result it was handed.
          (options (or options
                       (and seed-result (property-result-options seed-result))))
-         (property (let ((resolved (resolve-property property-designator registry)))
+         (property (let ((resolved (prepare-property-run
+                                    (resolve-property property-designator registry))))
                      ;; Refuse a state-observing property before metadata
                      ;; probing, generation, capture or the target run.
                      (refuse-stateful-replay resolved seed-result)
@@ -470,7 +475,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                    :shrunk-counterexample
                    (when shrunk
                      (name-arguments property (trial-observation-arguments shrunk)))
-                   :condition (or (when selected (trial-observation-condition selected))
+                   :condition (or (and (getf outcome :run-error) (getf outcome :condition))
+                                  (when selected (trial-observation-condition selected))
                                   (getf outcome :condition))
                    :elapsed elapsed)))
 
@@ -497,7 +503,7 @@ different profile changes the trial count. When SEED is a PROPERTY-RESULT, that
 result carries its own PROPERTY-RESULT-PROFILE, and this function uses it when
 PROFILE is not supplied -- so the recommended spelling, passing the result with
 no :PROFILE, is faithful. An explicitly supplied PROFILE always wins over the
-result's, so a caller can deliberately replay under a different budget. An
+result's for stateless properties. Fixture results require an unchanged budget. An
 integer SEED carries no profile, so that spelling still requires the caller to
 supply a matching PROFILE.
 
@@ -505,7 +511,7 @@ SEED must be a property-result or a non-negative integer, or an error is
 signalled.
 
 Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
-definition declares state constraints refuses that, before the integer seed is
+definition declares state constraints without a fixture refuses that, before the seed is
 extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed."
   (unless (or (typep seed 'property-result)
@@ -513,15 +519,12 @@ integer SEED starts a new run and stays allowed."
     (error 'type-error
            :datum seed
            :expected-type '(or property-result (integer 0 *))))
-  ;; A past result is checked before its integer seed is extracted, so the
-  ;; refusal cannot be bypassed by this entry point.  An integer seed starts a
-  ;; new run and is not a replay.
+  ;; Preserve the result through RUN-PROPERTY so fixture identity and run
+  ;; parameters are validated before any hooks execute.
   (refuse-stateful-replay (resolve-property property-designator registry)
                           (and (typep seed 'property-result) seed))
   (run-property property-designator
-                :seed (if (typep seed 'property-result)
-                          (property-result-seed seed)
-                          seed)
+                :seed seed
                 :profile (or profile
                              (and (typep seed 'property-result)
                                   (property-result-profile seed)))

@@ -124,6 +124,8 @@
     (let ((data (cl-spec:function-spec-data 'withdraw)))
       (ok (eq :fresh (getf (getf data :fixture) :isolation)))
       (ok (= 1 (getf (getf data :fixture) :version)))
+      (ok (getf (getf data :fixture) :recipe-spec))
+      (ok (= 1 (loop for (key) on data by #'cddr count (eq key :fixture))))
       (ok (getf data :definition-digest-complete))
       (ok (zerop *setups*))
       (ok (zerop *calls*)))))

@@ -1,7 +1,7 @@
 ;;;; tests/fixture-test.lisp
 (defpackage #:cl-spec/tests/fixture-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok #:testing)
+  (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/main)
   (:import-from #:cl-spec/src/fixture)
   (:import-from #:cl-spec/src/fixture-execution))
@@ -132,3 +132,45 @@
     (ok (handler-case (progn (reinitialize-instance fixture :version 0) nil)
           (error () t)))
     (ok (= 1 (funcall (fixture-symbol "FIXTURE-VERSION") fixture)))))
+
+(deftest partial-setup-and-cleanup-errors-are-both-retained
+  (let* ((fixture (make-test-fixture
+                   (lambda (recipe context)
+                     (declare (ignore recipe context)) (error "setup failed"))
+                   (lambda (recipe context)
+                     (declare (ignore recipe context)) (error "cleanup failed"))))
+         (result (execute-fixture fixture 1 #'identity))
+         (lifecycle (getf result :lifecycle)))
+    (ok (equal '(:setup :cleanup)
+               (mapcar (lambda (entry) (getf entry :phase)) (getf lifecycle :errors))))
+    (ok (eq :unknown (getf lifecycle :state)))
+    (ok (eq :not-started (getf lifecycle :evaluation)))))
+
+(deftest recipe-mutation-is-refused-at-each-boundary
+  (dolist (phase '(:setup :evaluation :cleanup))
+    (let ((cleanups 0) (evaluations 0) (recipe (list 3)) (working nil))
+      (let ((fixture
+              (make-instance
+               (fixture-symbol "TRIAL-FIXTURE")
+               :recipe-name 'recipe :recipe-spec '(list-of integer) :version 1
+               :setup-function
+               (lambda (value context)
+                 (declare (ignore context))
+                 (setf working value)
+                 (when (eq phase :setup) (incf (car value)))
+                 (list (copy-list value)))
+               :cleanup-function
+               (lambda (value context)
+                 (declare (ignore context))
+                 (incf cleanups)
+                 (when (eq phase :cleanup) (incf (car value)))))))
+        (let ((result (execute-fixture
+                       fixture recipe
+                       (lambda (arguments)
+                         (declare (ignore arguments))
+                         (incf evaluations)
+                         (when (eq phase :evaluation) (incf (car working)))))))
+          (ok (eq :fixture-recipe-mutation (getf result :reason)))
+          (ok (equal '(3) recipe))
+          (ok (= 1 cleanups))
+          (ok (= (if (eq phase :setup) 0 1) evaluations)))))))

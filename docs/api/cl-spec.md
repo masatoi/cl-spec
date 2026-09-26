@@ -2,19 +2,19 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 268 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 272 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
 **Macros**: [`defgenerator`](#defgenerator) · [`defproperty`](#defproperty) · [`defspec`](#defspec) · [`defspec-function`](#defspec-function)
 
-**Functions**: [`call-check-data`](#call-check-data) · [`call-check-result-failure-phase`](#call-check-result-failure-phase) · [`call-check-result-status`](#call-check-result-status) · [`capture-error-data`](#capture-error-data) · [`case-selection-error-data`](#case-selection-error-data) · [`check-call`](#check-call) · [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`observe-trial`](#observe-trial) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`state-post-error-data`](#state-post-error-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-state`](#trial-observation-state) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
+**Functions**: [`call-check-data`](#call-check-data) · [`call-check-result-failure-phase`](#call-check-result-failure-phase) · [`call-check-result-status`](#call-check-result-status) · [`capture-error-data`](#capture-error-data) · [`case-selection-error-data`](#case-selection-error-data) · [`check-call`](#check-call) · [`check-fixture`](#check-fixture) · [`check-function`](#check-function) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`fixture-check-data`](#fixture-check-data) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`state-post-error-data`](#state-post-error-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-state`](#trial-observation-state) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
 
-**Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`validate-definition`](#validate-definition)
+**Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`observe-trial`](#observe-trial) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`validate-definition`](#validate-definition)
 
-**Accessors**: [`call-check-result-arguments`](#call-check-result-arguments) · [`call-check-result-definition`](#call-check-result-definition) · [`call-check-result-name`](#call-check-result-name) · [`call-check-result-observation`](#call-check-result-observation) · [`call-check-result-source-form`](#call-check-result-source-form) · [`capture-error-binding`](#capture-error-binding) · [`capture-error-captured`](#capture-error-captured) · [`capture-error-function`](#capture-error-function) · [`capture-error-index`](#capture-error-index) · [`capture-error-original-condition`](#capture-error-original-condition) · [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-call-arguments-arguments`](#invalid-call-arguments-arguments) · [`invalid-call-arguments-errors`](#invalid-call-arguments-errors) · [`invalid-call-arguments-function`](#invalid-call-arguments-function) · [`invalid-call-arguments-reason`](#invalid-call-arguments-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`state-post-error-case`](#state-post-error-case) · [`state-post-error-form`](#state-post-error-form) · [`state-post-error-function`](#state-post-error-function) · [`state-post-error-index`](#state-post-error-index) · [`state-post-error-original-condition`](#state-post-error-original-condition) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name) · [`unsupported-stateful-operation-function`](#unsupported-stateful-operation-function) · [`unsupported-stateful-operation-operation`](#unsupported-stateful-operation-operation) · [`unsupported-stateful-operation-reason`](#unsupported-stateful-operation-reason)
+**Accessors**: [`call-check-result-arguments`](#call-check-result-arguments) · [`call-check-result-definition`](#call-check-result-definition) · [`call-check-result-name`](#call-check-result-name) · [`call-check-result-observation`](#call-check-result-observation) · [`call-check-result-source-form`](#call-check-result-source-form) · [`capture-error-binding`](#capture-error-binding) · [`capture-error-captured`](#capture-error-captured) · [`capture-error-function`](#capture-error-function) · [`capture-error-index`](#capture-error-index) · [`capture-error-original-condition`](#capture-error-original-condition) · [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-fixture`](#function-spec-fixture) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-call-arguments-arguments`](#invalid-call-arguments-arguments) · [`invalid-call-arguments-errors`](#invalid-call-arguments-errors) · [`invalid-call-arguments-function`](#invalid-call-arguments-function) · [`invalid-call-arguments-reason`](#invalid-call-arguments-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`state-post-error-case`](#state-post-error-case) · [`state-post-error-form`](#state-post-error-form) · [`state-post-error-function`](#state-post-error-function) · [`state-post-error-index`](#state-post-error-index) · [`state-post-error-original-condition`](#state-post-error-original-condition) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name) · [`unsupported-stateful-operation-function`](#unsupported-stateful-operation-function) · [`unsupported-stateful-operation-operation`](#unsupported-stateful-operation-operation) · [`unsupported-stateful-operation-reason`](#unsupported-stateful-operation-reason)
 
-**Classes**: [`call-check-result`](#call-check-result) · [`custom-generator`](#custom-generator) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
+**Classes**: [`call-check-result`](#call-check-result) · [`custom-generator`](#custom-generator) · [`fixture-check-result`](#fixture-check-result) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
 
 **Conditions**: [`capture-error`](#capture-error) · [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-call-arguments`](#invalid-call-arguments) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`state-post-error`](#state-post-error) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-seed`](#unsupported-seed) · [`unsupported-stateful-operation`](#unsupported-stateful-operation)
 
@@ -342,6 +342,13 @@ fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction.
 ```
 
+<a name="check-fixture"></a>
+### check-fixture
+
+*Function* · `(function-designator recipe &key (registry *registry*))`
+
+Check RECIPE once using a fresh fixture, without generation, shrinking or replay.
+
 <a name="check-function"></a>
 ### check-function
 
@@ -373,12 +380,18 @@ A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
 common :PRE admits an input and before case selection; state-post runs only after
 the outcome contract passed.  The per-case report adds :CAPTURE-ERRORS, a capture
 failure counts no case as called, and a state-post violation or evaluation error
-counts as that case's :FAILED or :ERROR.  Such a contract is not shrunk -- its
+counts as that case's :FAILED or :ERROR. Without :FIXTURE it is not shrunk -- its
 shrink report says :STATE-RESTORATION-UNAVAILABLE -- and replaying a past result
 as :SEED is refused with UNSUPPORTED-STATEFUL-OPERATION before the target is
 called, as is MAKE-COUNTEREXAMPLE-ARTIFACT with :STATEFUL-CONTRACT-UNSUPPORTED.
 A new run with an integer seed is allowed; the seed reproduces a random stream,
 not the initial object state, which the author must build.
+
+With :FIXTURE, the runner generates recipes and reconstructs fresh state for each
+trial and shrink candidate. A result supplied as :SEED requires matching complete
+declaration identity, options, profile and budget. Cleanup failures stop the run
+with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
+contract failure. Fixture results and artifacts use version 2.
 ```
 
 <a name="clear-registry"></a>
@@ -553,6 +566,13 @@ Return the property registered under NAME in REGISTRY, and found-p.
 
 Return the spec registered under NAME in REGISTRY, and a found-p second value.
 
+<a name="fixture-check-data"></a>
+### fixture-check-data
+
+*Function* · `(result)`
+
+Return a version-two record for a one-shot fixture execution.
+
 <a name="function-check-result-function"></a>
 ### function-check-result-function
 
@@ -725,7 +745,7 @@ Return a fresh empty HASH-TABLE-REGISTRY.
 <a name="make-trial-observation"></a>
 ### make-trial-observation
 
-*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case state failure-phase)`
+*Function* · `(&key run property arguments arguments-mutated-p (status :passed) reason signature explanation condition condition-report (outcome :not-collected) value case state failure-phase lifecycle call-evidence)`
 
 Create the evidence record for one invocation.
 
@@ -776,19 +796,6 @@ The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot.
 *Function* · `(observation)`
 
 Return true when OBSERVATION records a failed or signalled trial.
-
-<a name="observe-trial"></a>
-### observe-trial
-
-*Function* · `(property arguments &key context)`
-
-Evaluate generated objects once, snapshot evidence and record invocation provenance.
-Mutations of conses and arrays, including changed sharing, stop backend shrinking.
-The optional eighth EVALUATE-TRIAL value names the selected function-spec case, or
-NIL when none was selected, and is recorded on the observation.  The optional
-ninth is the failure phase the classifier recorded, or NIL for a target
-observation; a recorded phase is checked to be consistent with the status and the
-case.  The optional tenth is the trial's state evidence, recorded as captured.
 
 <a name="properties-for"></a>
 ### properties-for
@@ -919,7 +926,7 @@ different profile changes the trial count. When SEED is a PROPERTY-RESULT, that
 result carries its own PROPERTY-RESULT-PROFILE, and this function uses it when
 PROFILE is not supplied -- so the recommended spelling, passing the result with
 no :PROFILE, is faithful. An explicitly supplied PROFILE always wins over the
-result's, so a caller can deliberately replay under a different budget. An
+result's for stateless properties. Fixture results require an unchanged budget. An
 integer SEED carries no profile, so that spelling still requires the caller to
 supply a matching PROFILE.
 
@@ -927,7 +934,7 @@ SEED must be a property-result or a non-negative integer, or an error is
 signalled.
 
 Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
-definition declares state constraints refuses that, before the integer seed is
+definition declares state constraints without a fixture refuses that, before the seed is
 extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed.
 ```
@@ -967,7 +974,7 @@ recorded so the run can be replayed later.  OPTIONS is passed through to the
 backend.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
-whose definition declares state constraints refuses that with
+whose definition declares state constraints without a fixture refuses that with
 UNSUPPORTED-STATEFUL-OPERATION before generation, capture or the target, because
 nothing restores its state.  An integer SEED starts a new run and stays allowed.
 ```
@@ -998,7 +1005,7 @@ from an agent.
 
 *Function*
 
-Describe version 1 of the Lisp definition/result schema, independent of MCP JSON.
+Describe the Lisp record schemas, including the version-two fixture extension.
 
 ```text
 A completed capture binding is an explicit tagged record
@@ -1374,6 +1381,13 @@ Produce one value from COMPILED-GENERATOR using BACKEND.
 ```text
 SEED, when supplied, makes the value reproducible (specification §15).
 ```
+
+<a name="observe-trial"></a>
+### observe-trial
+
+*Generic function* · `(property arguments &key context)`
+
+Observe one execution input through its property's trial lifecycle.
 
 <a name="property-argument-schema"></a>
 ### property-argument-schema
@@ -1901,6 +1915,13 @@ Docstring of the contract, or NIL.
 This is the contract's own prose, not the function's: it says what the contract
 claims, which is what an agent asking "what may I pass here" needs.
 ```
+
+<a name="function-spec-fixture"></a>
+### function-spec-fixture
+
+*Accessor* of `function-spec` · `(object)`
+
+Explicit fresh-state recipe fixture, or NIL.
 
 <a name="function-spec-metadata"></a>
 ### function-spec-metadata
@@ -2589,6 +2610,13 @@ A value generator that a spec names instead of describing.
 An entity of its own rather than a slot on the spec, so that one generator can
 be shared by several specs and found by name the way a spec or a contract can.
 ```
+
+<a name="fixture-check-result"></a>
+### fixture-check-result
+
+*Class*
+
+One recipe execution, with independent contract and lifecycle evidence.
 
 <a name="function-check-result"></a>
 ### function-check-result

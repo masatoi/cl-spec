@@ -51,6 +51,19 @@
               (progn (cl-spec:make-counterexample-artifact result) nil)
             (cl-spec:invalid-counterexample-artifact () t))))))
 
+(deftest malformed-fixture-artifact-metadata-is-refused
+  (with-contract
+    (let* ((*mode* :missing-update)
+           (artifact (cl-spec:make-counterexample-artifact (fixture-check '(30 10))))
+           (data (cl-spec:counterexample-artifact-data artifact)))
+      (setf (getf data :metadata-omissions) '((:field :original :reason :omitted)))
+      (ok (handler-case
+              (progn
+                (cl-spec:deserialize-counterexample-artifact
+                 (cl-spec/src/utils/artifact-values:serialize-artifact-value data))
+                nil)
+            (cl-spec:invalid-counterexample-artifact () t))))))
+
 (deftest generated-fixture-artifact-rechecks-selected-recipe
   (with-contract
     (let* ((*mode* :missing-update)

@@ -11,7 +11,7 @@
   (:export #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
            #:fixture-version #:fixture-isolation #:fixture-setup-function
            #:fixture-cleanup-function #:fixture-setup-forms #:fixture-cleanup-forms
-           #:fixture-data #:fixture-error #:fixture-error-reason))
+           #:fixture-data #:snapshot-fixture #:fixture-error #:fixture-error-reason))
 (in-package #:cl-spec/src/fixture)
 
 (define-condition fixture-error (error)
@@ -76,6 +76,19 @@
           (normalize-spec-form (fixture-recipe-spec fixture))))
   (validate-definition (fixture-recipe-spec fixture))
   fixture)
+
+(defun snapshot-fixture (fixture)
+  "Capture the hook functions and declarations used throughout one run."
+  (validate-definition fixture)
+  (make-instance 'trial-fixture
+                 :recipe-name (fixture-recipe-name fixture)
+                 :recipe-spec (fixture-recipe-spec fixture)
+                 :version (fixture-version fixture)
+                 :isolation (fixture-isolation fixture)
+                 :setup-function (fixture-setup-function fixture)
+                 :cleanup-function (fixture-cleanup-function fixture)
+                 :setup-forms (copy-tree (fixture-setup-forms fixture))
+                 :cleanup-forms (copy-tree (fixture-cleanup-forms fixture))))
 
 (defun fixture-data (fixture)
   "Return the fixture declaration without invoking its hooks."

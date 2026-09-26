@@ -365,7 +365,7 @@ return names of a contract-level or case-level :POST-VALUES."
       (push (first entry) seen))
     (unless (= (length seen) 5)
       (function-spec-error clause "fixture requires isolation, version, recipe, setup and cleanup"))
-    (let* ((isolation (assoc :isolation entries))
+    (let ((isolation (assoc :isolation entries))
            (version (assoc :version entries))
            (recipe (assoc :recipe entries))
            (setup (assoc :setup entries))

@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/ir #:spec-metadata)
   (:import-from #:cl-spec/src/function-spec #:fixture-check-property)
   (:import-from #:cl-spec/src/generator #:backend-trial-lifecycle)
   (:import-from #:cl-spec/src/execution
@@ -501,7 +502,12 @@ Lists can shrink in length even when their element generator cannot shrink."
 (defmethod backend-capabilities ((backend check-it-backend) spec &key registry)
   "Probe generator construction only; availability does not guarantee valid draws."
   (handler-case
-      (compiled-capabilities (compile-generator backend spec :context (list :registry registry)))
+      (let* ((compiled (compile-generator backend spec :context (list :registry registry)))
+             (capabilities (compiled-capabilities compiled)))
+        (when (and (getf (spec-metadata spec) :fixture-recipe)
+                   (fixture-custom-shrinker (compiled-generator-generator compiled) 0))
+          (setf (getf capabilities :shrinking) :available))
+        capabilities)
     (error () (list :generation :unavailable :shrinking :unavailable))))
 
 (defmethod backend-trial-lifecycle ((backend check-it-backend)) :fixture-v1)
@@ -536,7 +542,7 @@ Lists can shrink in length even when their element generator cannot shrink."
                       (setf termination :budget-exhausted)
                       (return-from search nil))
                     (incf count)
-                    (let* ((before (snapshot-value arguments))
+                    (let ((before (snapshot-value arguments))
                            (admitted (and (finite-list-p arguments)
                                           (funcall validator arguments))))
                       (unless (same-value-p before arguments)
@@ -589,10 +595,13 @@ Lists can shrink in length even when their element generator cannot shrink."
                 (list :status (cond (abort :error)
                                     (original (trial-observation-status (or accepted original)))
                                     (t :passed))
-                      :trials trials :rejected rejected :capabilities capabilities)
+                      :trials trials :rejected rejected :capabilities capabilities
+                      :failure-phase (if abort :fixture
+                                         (and original
+                                              (observation-failure-phase
+                                               (or accepted original)))))
                 (when original
                   (list :failure original :shrunk-failure accepted
-                        :failure-phase (observation-failure-phase (or accepted original))
                         :shrink-report report
                         :shrunk-outcome (cond (accepted :used) (different :different-failure)
                                               (t :none))))

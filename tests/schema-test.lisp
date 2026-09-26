@@ -32,6 +32,13 @@
       (ok (equal '(:named :anonymous-class :unknown)
                  (getf info :capture-value-type-forms))))))
 
+(deftest schema-info-publishes-fixture-record-versions
+  (let ((fixture (getf (schema-info) :fixture-protocol)))
+    (ok (eql 2 (getf fixture :result-schema-version)))
+    (ok (eql 2 (getf fixture :artifact-version)))
+    (ok (eq :fixture-recipe (getf fixture :input-kind)))
+    (ok (equal '(:fresh) (getf fixture :isolations)))))
+
 (deftest result-records-carry-the-version-1-envelope
   (let ((*registry* (make-hash-table-registry)))
     (defproperty always-true-law ((x (range integer 1 10))) (:trials (:normal 1))

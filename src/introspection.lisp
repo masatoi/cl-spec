@@ -283,7 +283,9 @@ Argument, return, signals and argument-schema nodes are plain IR projections.
 Fixed return declarations use :KIND :VALUES with ordered children. Explicit
 :POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key."
   (let ((contract (resolve-function-spec function-spec-designator registry)))
-    (append (definition-metadata contract :registry registry)
+    (append (let ((metadata (definition-metadata contract :registry registry)))
+              (remf metadata :fixture)
+              metadata)
             (when (function-spec-fixture contract)
               (list :fixture
                     (append (fixture-data (function-spec-fixture contract))

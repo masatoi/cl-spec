@@ -8,14 +8,14 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
-                #:fixture-version #:fixture-data #:fixture-error)
-  (:import-from #:cl-spec/src/fixture-execution #:call-with-fixture #:copy-recipe)
+                #:fixture-data #:snapshot-fixture #:fixture-error)
+  (:import-from #:cl-spec/src/fixture-execution #:call-with-fixture)
   (:import-from #:cl-spec/src/execution
                 #:make-trial-observation #:*trial-observations*
                 #:trial-observation-reason #:trial-observation-signature
-                #:trial-observation-explanation #:trial-observation-condition
+                #:trial-observation-condition
                 #:trial-observation-condition-report #:trial-observation-outcome
-                #:trial-observation-value #:trial-observation-state
+                #:trial-observation-state
                 #:trial-observation-lifecycle #:trial-observation-call-evidence
                 #:render-condition-report)
   (:export #:function-spec-fixture #:fixture-check-property #:make-fixture-check-property
@@ -51,7 +51,7 @@
                 #:definition-description #:definition-entity-kind #:definition-generation-schema
                 #:resolve-definition #:definition-instrumentation-capability
                 #:definition-shrink-enabled-p #:definition-state-constraints
-                #:definition-metadata #:definition-fixture-metadata #:definition-digest)
+                #:definition-metadata #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/ir #:tuple-spec #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/call-schema
                 #:make-call-layout #:bind-call-arguments #:bound-call-values
@@ -69,9 +69,9 @@
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
                 #:property-call-arguments-p #:property-named-arguments
-                #:property-source-form)
+                #:property-source-form #:property-trials #:property-metadata)
   (:import-from #:cl-spec/src/property-runner
-                #:property-result
+                #:prepare-property-run #:property-result
                 #:property-result-case-report
                 #:property-result-schema-metadata #:property-result-budget
                 #:property-result-options #:property-result-provenance #:property-result-run-error
@@ -958,10 +958,10 @@ because the compiled predicates bind all of those in one lambda list."
     bindings))
 
 (defun state-observing-contract-p (contract)
-  "Return true when CONTRACT declares :CAPTURE or :STATE-POST.
+  "Return true when CONTRACT declares state observations or an explicit fixture.
 
-Such a contract observes state and never restores it, so automatic shrinking,
-replay of a past result and counterexample artifacts are unsupported for it.
+Without a fixture, state observation does not restore initial state, so shrinking,
+replay of a past result and counterexample artifacts remain unsupported.
 The decision is structural: a pure-looking use is not exempted by inspecting
 the target or the predicate bodies."
   (or (function-spec-fixture contract)
@@ -974,7 +974,7 @@ the target or the predicate bodies."
   (when (state-observing-contract-p contract) :present))
 
 (defmethod definition-shrink-enabled-p ((contract function-spec))
-  "Automatic shrinking is unsupported for a state-observing contract."
+  "Allow state-observing shrinking only with explicit state reconstruction."
   (or (not (null (function-spec-fixture contract)))
       (not (state-observing-contract-p contract))))
 
@@ -1675,7 +1675,8 @@ no observation still reports known zeros."
   (counts nil :read-only t)
   (measured-p nil)
   (selection-errors 0)
-  (capture-errors 0))
+  (capture-errors 0)
+  (fixture-errors nil))
 
 (defvar *case-run* nil
   "The function-check run whose case report is being counted, or NIL.
@@ -1690,7 +1691,10 @@ shrinking cannot inflate a case's call count.")
         (counts (make-hash-table :test #'eq)))
     (dolist (case cases)
       (setf (gethash (function-case-name case) counts) (make-case-trial-counts)))
-    (%make-case-run cases counts)))
+    (let ((run (%make-case-run cases counts)))
+      (when (function-spec-fixture contract)
+        (setf (case-run-fixture-errors run) 0))
+      run)))
 
 (defmethod begin-trial-report ((property function-check-property))
   "Mark the active function-check run as measured before its first trial.
@@ -1721,9 +1725,12 @@ the trial's final classification."
   (let ((run *case-run*))
     (when run
       (setf (case-run-measured-p run) t)
+      (when (eq :fixture (observation-failure-phase observation))
+        (incf (case-run-fixture-errors run)))
       (let ((status (trial-observation-status observation))
             (selected (trial-observation-case observation))
-            (phase (observation-failure-phase observation)))
+            (phase (or (getf (trial-observation-call-evidence observation) :failure-phase)
+                       (observation-failure-phase observation))))
         (cond
           ((eq status :rejected))
           ((eq phase :capture)
@@ -1753,7 +1760,7 @@ in :CAPTURE-ERRORS and against no case, and it is not a case-selection error."
     (return-from case-run-report :not-collected))
   (let ((cases (case-run-cases run))
         (counts (case-run-counts run)))
-    (list :selection :exclusive
+    (list* :selection :exclusive
           :unit :normal-trials
           :declared-cases (mapcar #'function-case-name cases)
           :cases (loop for case in cases
@@ -1769,7 +1776,9 @@ in :CAPTURE-ERRORS and against no case, and it is not a case-selection error."
           :never-called (loop for case in cases
                               for case-counts = (gethash (function-case-name case) counts)
                               when (zerop (case-trial-counts-called case-counts))
-                                collect (function-case-name case)))))
+                                collect (function-case-name case))
+          (when (case-run-fixture-errors run)
+            (list :fixture-errors (case-run-fixture-errors run))))))
 
 (defmethod definition-description ((case function-case))
   "Describe one case for the declaration digest and child traversal.
@@ -1812,7 +1821,7 @@ closure reaches the digest."
 
 (defmethod definition-generation-schema ((contract function-spec))
   (if (function-spec-fixture contract)
-      (make-instance 'tuple-spec :element-specs
+      (make-instance 'tuple-spec :metadata '(:fixture-recipe t) :element-specs
                      (list (fixture-recipe-spec (function-spec-fixture contract))))
       (function-spec-argument-schema contract)))
 
@@ -1903,7 +1912,7 @@ closure reaches the digest."
   (:documentation "Adapt immutable recipe arguments to fresh function-call trials."))
 
 (defmethod property-argument-schema ((property fixture-check-property))
-  (make-instance 'tuple-spec
+  (make-instance 'tuple-spec :metadata '(:fixture-recipe t)
                  :element-specs (list (fixture-recipe-spec (checked-fixture property)))))
 
 (defmethod property-call-arguments-p ((property fixture-check-property) arguments)
@@ -1917,7 +1926,8 @@ closure reaches the digest."
 (defun fixture-call-data (observation)
   "Freeze diagnostic call evidence without retaining opaque application objects."
   (when observation
-    (let ((data (observation-data observation)))
+    (let ((data (list* :failure-phase (observation-failure-phase observation)
+                       (observation-data observation))))
       (dolist (key '(:arguments :value :outcome :explanation))
         (setf (getf data key) (capture-value-data (getf data key))))
       data)))
@@ -1983,7 +1993,7 @@ closure reaches the digest."
   "Build a recipe adapter while retaining the ordinary call evaluator."
   (let ((fixture (function-spec-fixture contract)))
     (unless fixture (error 'fixture-error :reason :fixture-required))
-    (validate-definition fixture)
+    (setf fixture (snapshot-fixture fixture))
     (make-instance 'fixture-check-property
                    :contract contract :target (function-spec-target contract)
                    :inner (make-function-check-property contract :budget budget)
@@ -1996,6 +2006,14 @@ closure reaches the digest."
                    :source-location (function-spec-source-location contract)
                    :metadata (list :shrink t :state-constraints :present :fixture t))))
 
+(defmethod prepare-property-run ((property fixture-check-property))
+  "Capture current fixture hooks for this run, even when an adapter is reused."
+  (let ((prepared (make-fixture-check-property (checked-contract property))))
+    (reinitialize-instance prepared
+                           :trials (snapshot-value (property-trials property))
+                           :metadata (snapshot-value (property-metadata property)))
+    prepared))
+
 (defclass fixture-check-result ()
   ((name :initarg :name :reader fixture-check-result-name)
    (observation :initarg :observation :reader fixture-check-result-observation)
@@ -2004,8 +2022,8 @@ closure reaches the digest."
 
 (defun fixture-check-data (result)
   "Return a version-two record for a one-shot fixture execution."
-  (let* ((observation (fixture-check-result-observation result))
-         (metadata (copy-list (fixture-check-result-definition result))))
+  (let ((observation (fixture-check-result-observation result))
+        (metadata (copy-list (fixture-check-result-definition result))))
     (setf (getf metadata :schema-version) 2
           (getf metadata :record-kind) :fixture-check)
     (snapshot-value
@@ -2057,12 +2075,18 @@ A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
 common :PRE admits an input and before case selection; state-post runs only after
 the outcome contract passed.  The per-case report adds :CAPTURE-ERRORS, a capture
 failure counts no case as called, and a state-post violation or evaluation error
-counts as that case's :FAILED or :ERROR.  Such a contract is not shrunk -- its
+counts as that case's :FAILED or :ERROR. Without :FIXTURE it is not shrunk -- its
 shrink report says :STATE-RESTORATION-UNAVAILABLE -- and replaying a past result
 as :SEED is refused with UNSUPPORTED-STATEFUL-OPERATION before the target is
 called, as is MAKE-COUNTEREXAMPLE-ARTIFACT with :STATEFUL-CONTRACT-UNSUPPORTED.
 A new run with an integer seed is allowed; the seed reproduces a random stream,
-not the initial object state, which the author must build."
+not the initial object state, which the author must build.
+
+With :FIXTURE, the runner generates recipes and reconstructs fresh state for each
+trial and shrink candidate. A result supplied as :SEED requires matching complete
+declaration identity, options, profile and budget. Cleanup failures stop the run
+with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
+contract failure. Fixture results and artifacts use version 2."
   (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
     (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
   (unless (or (null seed) (typep seed 'property-result)

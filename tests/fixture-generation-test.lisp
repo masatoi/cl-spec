@@ -39,6 +39,7 @@
            (result (cl-spec:check-function 'withdraw :trials 30 :seed 41)))
       (ok (eq :error (cl-spec:property-result-status result)))
       (ok (eq :fixture-cleanup-error (cl-spec:property-result-failure-reason result)))
+      (ok (eq :fixture (cl-spec:property-result-failure-phase result)))
       (ok (= 1 *setups* *cleanups*))
       (ok (getf (cl-spec:result-data result) :run-error)))))
 
@@ -78,6 +79,8 @@
         (:cleanup (context) (declare (ignore recipe context)) (incf cleanups)))
       (:returns (list-of integer))
       (:state-post (progn (incf calls) nil)))
+    (ok (eq :available (getf (getf (cl-spec:function-spec-data 'identity)
+                                    :capabilities) :shrinking)))
     (let ((result (cl-spec:check-function 'identity :trials 1 :seed 3)))
       (ok (equal '(recipe 1) (cl-spec:property-result-shrunk-counterexample result)))
       (ok (= 2 calls cleanups))
@@ -97,13 +100,15 @@
         (:setup (context) (declare (ignore context)) (incf setups) (list recipe))
         (:cleanup (context) (declare (ignore context)) (incf cleanups)
                   (when (= recipe 5) (error "cleanup failed"))))
-      (:returns integer) (:state-post nil))
+      (:returns integer) (:state-post (error "original failure")))
     (let* ((result (cl-spec:check-function 'identity :trials 1 :seed 3))
            (data (cl-spec:result-data result)))
       (ok (eq :error (cl-spec:property-result-status result)))
       (ok (eq :fixture-cleanup-error (cl-spec:property-result-failure-reason result)))
+      (ok (eq :fixture (cl-spec:property-result-failure-phase result)))
       (ok (equal '(recipe 10) (cl-spec:property-result-counterexample result)))
-      (ok (eq :failed (getf (getf data :failure) :status)))
+      (ok (eq :error (getf (getf data :failure) :status)))
+      (ok (search "cleanup failed" (princ-to-string (cl-spec:property-result-condition result))))
       (ok (getf data :run-error))
       (ok (= 2 setups cleanups))
       (ok (handler-case (progn (cl-spec:make-counterexample-artifact result) nil)
@@ -116,3 +121,91 @@
       (ok (zerop *setups*))
       (ok (zerop *calls*))
       (ok (zerop *cleanups*)))))
+
+(deftest fixture-case-report-separates-lifecycle-and-contract-errors
+  (dolist (mode '(:setup :capture :guard :cleanup))
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+      (cl-spec:defspec-function identity
+        (:args (value integer))
+        (:fixture
+          (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+          (:setup (context) (declare (ignore context))
+            (when (eq mode :setup) (error "setup")) (list recipe))
+          (:cleanup (context) (declare (ignore recipe context)) (error "cleanup")))
+        (:capture (before (if (eq mode :capture) (error "capture") value)))
+        (:cases (:only (:when (if (eq mode :guard) (error "guard") t))
+                       (:returns integer) (:state-post (= value before)))))
+      (let* ((result (cl-spec:check-function 'identity :trials 3 :seed 1))
+             (report (cl-spec:function-check-result-case-report result))
+             (case (first (getf report :cases))))
+        (ok (eq :error (cl-spec:property-result-status result)))
+        (ok (eql 1 (getf report :fixture-errors)))
+        (ok (= (if (eq mode :cleanup) 1 0) (getf case :called)))
+        (ok (= (if (eq mode :cleanup) 1 0) (getf case :error)))
+        (ok (= (if (eq mode :capture) 1 0) (getf report :capture-errors)))
+        (ok (= (if (eq mode :guard) 1 0) (getf report :case-selection-errors)))))))
+
+(deftest fixture-hooks-are-captured-for-the-whole-run
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (fixture nil) (setups 0) (cleanups 0) (replacement-calls 0))
+    (cl-spec:defspec-function identity
+      (:args (value integer))
+      (:fixture
+        (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+        (:setup (context)
+          (declare (ignore context))
+          (incf setups)
+          (reinitialize-instance
+           fixture
+           :setup-forms '((replacement-setup))
+           :setup-function (lambda (value context)
+                             (declare (ignore context))
+                             (incf replacement-calls) (list value))
+           :cleanup-forms '((replacement-cleanup))
+           :cleanup-function (lambda (value context)
+                               (declare (ignore value context))
+                               (incf replacement-calls)))
+          (list recipe))
+        (:cleanup (context) (declare (ignore recipe context)) (incf cleanups)))
+      (:returns integer))
+    (setf fixture (cl-spec:function-spec-fixture
+                   (cl-spec/src/function-spec::resolve-function-spec
+                    'identity cl-spec:*registry*)))
+    (let ((result (cl-spec:check-function 'identity :trials 2 :seed 1)))
+      (ok (eq :passed (cl-spec:property-result-status result)))
+      (ok (= 2 setups cleanups))
+      (ok (zerop replacement-calls)))))
+
+(deftest property-replay-preserves-fixture-result-validation
+  (with-contract
+    (let* ((contract (cl-spec/src/function-spec::resolve-function-spec
+                      'withdraw cl-spec:*registry*))
+           (adapter (cl-spec/src/function-spec:make-fixture-check-property
+                     contract :budget 2))
+           (first (cl-spec:run-property adapter :seed 4 :options '(:shrink-budget 2)))
+           (before *setups*))
+      (ok (handler-case
+              (progn (cl-spec:replay-property adapter first
+                                             :options '(:shrink-budget 3)) nil)
+            (cl-spec:unsupported-stateful-operation () t)))
+      (ok (= before *setups*)))))
+
+(deftest reused-fixture-adapter-captures-each-new-run
+  (with-contract
+    (let* ((contract (cl-spec:find-function-spec 'withdraw))
+           (adapter (cl-spec/src/function-spec:make-fixture-check-property
+                     contract :budget 1))
+           (fixture (cl-spec:function-spec-fixture contract)))
+      (cl-spec:run-property adapter :seed 1)
+      (reinitialize-instance
+       fixture :version 2
+       :setup-forms '((replacement-setup))
+       :setup-function (lambda (recipe context)
+                         (declare (ignore recipe context))
+                         (error "replacement setup")))
+      (let* ((result (cl-spec:run-property adapter :seed 1))
+             (data (cl-spec:result-data result)))
+        (ok (eq :fixture-setup-error (cl-spec:property-result-failure-reason result)))
+        (ok (= 2 (getf (getf data :fixture) :version)))
+        (ok (search "replacement setup"
+                    (princ-to-string (cl-spec:property-result-condition result))))))))

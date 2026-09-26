@@ -176,7 +176,11 @@ original condition and the failing position. Neither is ever accepted as the
 target's expected error: a condition raised by contract-side code at a capture
 or state-post position is classified by that position, not by its type.
 
-## 6. What the first version does not do
+## 6. Limits of observation without a fixture
+
+These examples intentionally have no `:fixture`. To reconstruct state for
+shrinking and saved-recipe rechecks, see the
+[reproducible stateful contract guide](reproducible-stateful-contracts.md).
 
 ```lisp
 (cl-spec/examples/stateful-withdraw:demo-limits *registry*)
@@ -211,8 +215,8 @@ restores it, so this version does not:
 A **new** run with an integer seed is allowed. The seed reproduces a random
 stream; it does not restore external state or a mutable object's initial
 contents, so the author supplies the fresh initial state. This is a scope limit,
-not a claim that state constraints are inherently unreproducible: a future
-explicit state-construction protocol can lift it.
+not a claim that state constraints are inherently unreproducible: the explicit
+`:fixture` protocol lifts it for freshly reconstructed in-memory state.
 
 ## Evidence
 

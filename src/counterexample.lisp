@@ -141,6 +141,17 @@ never reached the target -- and is refused before this point."
        (finite-list-p (getf data :signature))
        (member (getf data :mutated-p) '(nil t))))
 
+(defun valid-metadata-omissions-p (omissions)
+  "Recognize omission records for optional artifact metadata only."
+  (and (finite-list-p omissions)
+       (every (lambda (omission)
+                (and (record-p omission '(:field :reason))
+                     (member (getf omission :field)
+                             '(:options :provenance :capabilities :digest-omissions
+                               :digest-exclusions :shrink-report))
+                     (keywordp (getf omission :reason))))
+              omissions)))
+
 (defun validate-artifact-data (data)
   (when (and (finite-list-p data) (evenp (length data))
              (eql 2 (getf data :artifact-version)))
@@ -151,14 +162,7 @@ never reached the target -- and is refused before this point."
                            :original :shrunk :selection :seed :profile :budget
                            :options :provenance) '(:metadata-omissions
                                                   :digest-omissions :digest-exclusions :shrink-report))
-           (finite-list-p (getf data :metadata-omissions))
-           (every (lambda (omission)
-                    (and (record-p omission '(:field :reason))
-                         (member (getf omission :field) '(:options :provenance :capabilities
-                                                                        :digest-omissions
-                                                                        :digest-exclusions :shrink-report))
-                         (keywordp (getf omission :reason))))
-                  (getf data :metadata-omissions))
+           (valid-metadata-omissions-p (getf data :metadata-omissions))
            (eql (getf data :artifact-version) 1)
            (eq (getf data :record-kind) :counterexample)
            (member (getf data :entity-kind) '(:property :function-spec))
@@ -286,7 +290,8 @@ never reached the target -- and is refused before this point."
                            :original :shrunk :selection :seed :profile :budget
                            :options :provenance)
                      '(:metadata-omissions :digest-omissions :digest-exclusions :shrink-report))
-           (eql 2 (getf data :artifact-version))
+           (valid-metadata-omissions-p (getf data :metadata-omissions))
+            (eql 2 (getf data :artifact-version))
            (eq :counterexample (getf data :record-kind))
            (eq :function-spec (getf data :entity-kind))
            (eq :fixture-recipe (getf data :input-kind))
@@ -364,8 +369,8 @@ never reached the target -- and is refused before this point."
 
 (defun recheck-fixture-artifact (data registry state-policy target-revision)
   "Reconstruct one saved recipe through the core checker, without a generator."
-  (let* ((saved (getf data (getf data :selection)))
-         (definition (resolve-definition (getf data :name) :function-spec registry)))
+  (let ((saved (getf data (getf data :selection)))
+        (definition (resolve-definition (getf data :name) :function-spec registry)))
     (labels ((result (status &optional detail observation)
                (list :schema-version 2 :record-kind :recheck :status status
                      :name (getf data :name) :entity-kind :function-spec
