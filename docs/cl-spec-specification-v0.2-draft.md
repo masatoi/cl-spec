@@ -4409,7 +4409,9 @@ Projectionのshape specはv1の方針どおり未知キーを無視し、必須�
 
 通常profileの試行数は固定値ではなく各Propertyの`:trials`宣言に従う。一括実行testは
 実行結果をその宣言された予算と照合し、`:skipped`・`:pending`・生成枯渇・全事前条件棄却を
-`:passed`へ読み替えない。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
+`:passed`へ読み替えない。さらに各実行の保存済みevidenceを`cl-spec/specs:evidence-policy`で
+`assess-evidence`し、`:satisfied`を要求する。このpolicyは予算の完走、全試行の判定到達、
+宣言した各caseの判定1回以上を要件とし、`:passed`でも未到達のcaseがあれば`:insufficient`になる。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
 不整合データの拒否を検査し、`contract-names`と`property-names`が返す全関数契約・全Propertyを
 seed 1・42・2026で実行する。本節は件数を記載しない。`tests/self-api-contracts-test.lisp`は
 `contract-names`の各契約名が本節に記載されていることを検査する。

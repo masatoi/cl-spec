@@ -265,6 +265,22 @@
       (setf (getf data :digest-exclusions) :unknown)
       (ok (not (validp spec data))))))
 
+(defun evidence-satisfied-p (result budget)
+  "True when RESULT's saved evidence satisfies the bundle's policy for BUDGET trials.
+
+A :PASSED status alone does not say every declared case was reached; the
+assessment is the separate claim that it was."
+  (eq :satisfied
+      (getf (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy budget))
+            :assessment)))
+
+(defun evidence-gaps (result budget)
+  "Describe why RESULT's evidence misses the bundle's policy, for a failing assertion."
+  (let ((assessment (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy budget))))
+    (prin1-to-string (list (getf assessment :assessment)
+                           (getf assessment :gaps)
+                           (getf assessment :unknowns)))))
+
 (deftest executable-specifications-pass-generated-checks
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
@@ -275,7 +291,8 @@
             (ok (eq :passed (cl-spec:property-result-status result))
                 (prin1-to-string (cl-spec:result-data result)))
             (ok (= 50 (cl-spec:property-result-trials result)))
-            (ok (zerop (cl-spec:property-result-rejected result))))))
+            (ok (zerop (cl-spec:property-result-rejected result)))
+            (ok (evidence-satisfied-p result 50) (evidence-gaps result 50)))))
       (dolist (name (cl-spec/specs:property-names))
         (testing (format nil "property ~S, seed ~D" name seed)
           (let* ((property (cl-spec:find-property name))
@@ -287,4 +304,5 @@
                 (format nil "~S declares no positive :normal budget" name))
             (ok (eq :passed (cl-spec:property-result-status result))
                 (prin1-to-string (cl-spec:result-data result)))
-            (ok (= budget (cl-spec:property-result-trials result)))))))))
+            (ok (= budget (cl-spec:property-result-trials result)))
+            (ok (evidence-satisfied-p result budget) (evidence-gaps result budget))))))))

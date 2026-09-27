@@ -11,10 +11,12 @@
   (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/specs
                 #:contract-names
+                #:evidence-policy
                 #:property-names
                 #:register-specifications)
   (:import-from #:cl-spec/main
                 #:*registry*
+                #:assess-evidence
                 #:check-fixture
                 #:check-function
                 #:deserialize-counterexample-artifact
@@ -154,6 +156,27 @@
                    (mapcar (lambda (case) (getf case :passed)) (getf report :cases))))
         (ok (null (getf report :never-called)))
         (ok (zerop (getf report :case-selection-errors)))))))
+
+(deftest evidence-policy-flags-an-unreached-case
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (testing "the policy names every requirement the bundle's runs are held to"
+      (ok (equal '(:policy-version 1
+                   :requirements ((:kind :requested-trials-completed)
+                                  (:kind :min-checked-trials :count 4)
+                                  (:kind :all-declared-cases :min-checked 1)))
+                 (evidence-policy 4))))
+    ;; Only admitted pairs: the run passes, yet never reaches the :REFUSED case.
+    (let ((*scripted-validate-inputs*
+            '((integer 0) (string "ok") (integer 1) (null nil)
+              (integer 2) (string "yes") (integer 3) (boolean t))))
+      (let* ((result (check-function 'cl-spec:validate :trials 4 :seed 1))
+             (assessment (assess-evidence result (evidence-policy 4))))
+        (testing "a passing run that misses a declared case is insufficient evidence"
+          (ok (eq :passed (property-result-status result)))
+          (ok (eq :insufficient (getf assessment :assessment)))
+          (ok (equal '(:refused)
+                     (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
 (deftest registry-registration-cases-cover-each-write
   (let ((*registry* (make-hash-table-registry)))

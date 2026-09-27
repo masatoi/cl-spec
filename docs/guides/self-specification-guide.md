@@ -154,6 +154,25 @@ For a contract run:
   application value may legally equal any plist — including the unavailable
   shape itself. Capture observes a value and does not copy or restore it.
 
+### Passed is not the same as sufficient
+
+`:passed` says only that the observed trials found no violation. The bundle's
+suites also assess every run's saved evidence against
+`(cl-spec/specs:evidence-policy trials)`: the run completed its budget, every
+trial reached a passed or failed verdict, and each declared case reached at least
+one verdict.
+
+```lisp
+(let ((result (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42)))
+  (getf (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy 50))
+        :assessment))
+;; => :SATISFIED
+```
+
+A run fed only admitted `validate` inputs still passes, but its assessment is
+`:insufficient` with a gap naming the `:refused` case. The assessment reads saved
+facts only; it neither reruns the check nor claims the domain was covered.
+
 ## 6. What the state-observing self-contracts do not do
 
 `cl-spec:registry-register-property`'s contract is a sequential-execution

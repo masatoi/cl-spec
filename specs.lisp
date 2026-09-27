@@ -46,7 +46,7 @@
                 #:state-projection-fixtures
                 #:validate-corpus-entry)
   (:export #:register-instrumentation-specifications #:register-specifications
-           #:contract-names #:property-names))
+           #:contract-names #:property-names #:evidence-policy))
 
 (in-package #:cl-spec/specs)
 
@@ -289,6 +289,20 @@ allowed."
     one-shot-check-reuses-the-single-trial-classifier
     one-shot-check-observes-a-named-case-and-state-once
     fixture-reconstruction-is-independent))
+
+(defun evidence-policy (trials)
+  "Return the evidence policy a run of this bundle is held to for a TRIALS budget.
+
+A :PASSED status says only that the observed trials found no violation.  This
+policy is the separate claim, checked with CL-SPEC:ASSESS-EVIDENCE, that the run
+completed its budget, that every one of its TRIALS reached a passed or failed
+verdict, and that each declared case reached at least one verdict.  It inspects
+saved facts only; it neither reruns the check nor proves the domain covered."
+  (check-type trials (integer 1))
+  (list :policy-version 1
+        :requirements (list '(:kind :requested-trials-completed)
+                            (list :kind :min-checked-trials :count trials)
+                            '(:kind :all-declared-cases :min-checked 1))))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.

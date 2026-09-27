@@ -2,11 +2,11 @@
 
 Optional executable specifications of cl-spec's own APIs and semantic laws.
 
-System `cl-spec/specs`, 4 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec/specs`, 5 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
-**Functions**: [`contract-names`](#contract-names) · [`property-names`](#property-names) · [`register-instrumentation-specifications`](#register-instrumentation-specifications) · [`register-specifications`](#register-specifications)
+**Functions**: [`contract-names`](#contract-names) · [`evidence-policy`](#evidence-policy) · [`property-names`](#property-names) · [`register-instrumentation-specifications`](#register-instrumentation-specifications) · [`register-specifications`](#register-specifications)
 
 ## Functions
 
@@ -16,6 +16,21 @@ System `cl-spec/specs`, 4 exported symbols. Docstrings are reproduced from the s
 *Function*
 
 Return the public functions covered by this executable specification bundle.
+
+<a name="evidence-policy"></a>
+### evidence-policy
+
+*Function* · `(trials)`
+
+Return the evidence policy a run of this bundle is held to for a TRIALS budget.
+
+```text
+A :PASSED status says only that the observed trials found no violation.  This
+policy is the separate claim, checked with CL-SPEC:ASSESS-EVIDENCE, that the run
+completed its budget, that every one of its TRIALS reached a passed or failed
+verdict, and that each declared case reached at least one verdict.  It inspects
+saved facts only; it neither reruns the check nor proves the domain covered.
+```
 
 <a name="property-names"></a>
 ### property-names
