@@ -22,7 +22,8 @@ Run the registry-protocol contracts and laws against registries CONSTRUCTOR retu
 ```text
 CONSTRUCTOR is a function of no arguments returning a fresh, empty registry.  It
 is called once before any check to confirm REGISTRY-IMPLEMENTATION-P, and a
-TYPE-ERROR is signalled otherwise.  The bundle is registered in a private
+TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative integers and
+TRIALS a positive integer, so a true answer always rests on executed checks.  The bundle is registered in a private
 registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract runs TRIALS
 trials and every law its declared :NORMAL budget, once per seed in SEEDS.
 
