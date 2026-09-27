@@ -537,6 +537,13 @@ the definitions REGISTER-SPECIFICATIONS installs.")
   (declare (ignore a))
   raw)
 
+(defun found-definition-p (expected primary present)
+  "True when a REGISTRY-FIND-* answer matches EXPECTED exactly.
+
+A non-NIL EXPECTED requires that definition and a found-p of T; a NIL EXPECTED
+requires NIL and NIL, the documented answer for an absent name."
+  (and (eq expected primary) (eq (and expected t) present)))
+
 (defun self-sort-contract (&optional (name 'self-contract))
   "Return a fresh, valid function spec named NAME for the registry laws."
   (make-instance 'cl-spec:function-spec :name name
@@ -1476,15 +1483,31 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                    :argument-specs '((x integer)) :return-spec 'integer))
           (generator (make-instance 'cl-spec:custom-generator :name 'self-generator
                                     :function (lambda () 1))))
-      (cl-spec:registry-register-spec registry 'self-spec spec)
-      (cl-spec:registry-register-property registry 'self-property property)
-      (cl-spec:registry-register-function-spec registry 'self-contract contract)
-      (cl-spec:registry-register-generator registry 'self-generator generator)
-      (and (eq spec (nth-value 0 (cl-spec:registry-find-spec registry 'self-spec)))
-           (nth-value 1 (cl-spec:registry-find-spec registry 'self-spec))
-           (eq property (nth-value 0 (cl-spec:registry-find-property registry 'self-property)))
-           (eq contract (nth-value 0 (cl-spec:registry-find-function-spec registry 'self-contract)))
-           (eq generator (nth-value 0 (cl-spec:registry-find-generator registry 'self-generator)))
+      ;; Each protocol function's documented return value is part of the law:
+      ;; a write returns the stored definition, a lookup its definition and T,
+      ;; and a lookup of an absent name NIL and NIL.
+      (and (eq spec (cl-spec:registry-register-spec registry 'self-spec spec))
+           (eq property (cl-spec:registry-register-property registry 'self-property property))
+           (eq contract (cl-spec:registry-register-function-spec
+                         registry 'self-contract contract))
+           (eq generator (cl-spec:registry-register-generator
+                          registry 'self-generator generator))
+           (multiple-value-call #'found-definition-p
+             spec (cl-spec:registry-find-spec registry 'self-spec))
+           (multiple-value-call #'found-definition-p
+             property (cl-spec:registry-find-property registry 'self-property))
+           (multiple-value-call #'found-definition-p
+             contract (cl-spec:registry-find-function-spec registry 'self-contract))
+           (multiple-value-call #'found-definition-p
+             generator (cl-spec:registry-find-generator registry 'self-generator))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-spec registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-property registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-function-spec registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-generator registry 'self-absent))
            (member 'self-spec (cl-spec:registry-list-specs registry))
            (member 'self-property (cl-spec:registry-list-properties registry))
            (member 'self-contract (cl-spec:registry-list-function-specs registry))
@@ -1533,8 +1556,8 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                           :targets '(self-target) :tags '(self-tag))
       (cl-spec:registry-register-function-spec registry 'self-contract (self-sort-contract))
       (cl-spec:registry-register-generator registry 'self-generator (self-sort-generator))
-      (cl-spec:registry-clear registry)
-      (and (null (cl-spec:registry-list-specs registry))
+      (and (eq registry (cl-spec:registry-clear registry))
+           (null (cl-spec:registry-list-specs registry))
            (null (cl-spec:registry-list-properties registry))
            (null (cl-spec:registry-list-function-specs registry))
            (null (cl-spec:registry-list-generators registry))

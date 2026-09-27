@@ -174,6 +174,18 @@
   "Return a fresh registry whose spec listing is not sorted."
   (make-instance 'unsorted-registry))
 
+(defclass silent-write-registry (alist-registry) ()
+  (:documentation "A faulty alist registry that stores specs correctly but returns NIL."))
+
+(defmethod registry-register-spec ((registry silent-write-registry) name spec)
+  (declare (ignore name spec))
+  (call-next-method)
+  nil)
+
+(defun make-silent-write-registry ()
+  "Return a fresh registry whose spec writes answer NIL instead of the spec."
+  (make-instance 'silent-write-registry))
+
 (defclass partial-registry () ()
   (:documentation "An object implementing only part of the registry protocol."))
 
@@ -241,6 +253,14 @@
       (check-registry-implementation #'make-unsorted-registry :seeds '(1))
     (ok (not conforming))
     (ok (member 'cl-spec/specs::registry-queries-return-sorted-names (failing-names records))
+        (prin1-to-string (failing-names records)))))
+
+(deftest silent-write-registry-is-refused-by-the-round-trip-law
+  ;; Storage and listing are correct; only the documented return value is wrong.
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-silent-write-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (member 'cl-spec/specs::registry-round-trips-definitions (failing-names records))
         (prin1-to-string (failing-names records)))))
 
 (deftest non-registry-constructor-is-refused-before-any-check
