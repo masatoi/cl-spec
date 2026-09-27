@@ -44,9 +44,11 @@ there, and pass the registry under test explicitly where the API takes one:
   (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42))
 ```
 
-`cl-spec/registry-register-property`'s self-contract goes one step further: its
-generator builds a fresh target registry for every draw, pre-registers a sentinel
-property, and the `:capture`/`:state-post` forms read only the public readers.
+`cl-spec/registry-register-property`'s self-contract goes one step further: it
+declares a `:fresh` fixture whose recipe is a scenario keyword (`:new`,
+`:replace`, `:refused-targets` or `:refused-tags`). Setup builds a fresh target
+registry from that keyword for every trial, pre-registers a sentinel property,
+and the `:capture`/`:state-post` forms read only the public readers.
 The target API changes that per-trial registry, never `cl-spec:*registry*`.
 Introspection and state observation are read-only; they never prepare or restore
 state.
@@ -156,13 +158,26 @@ For a contract run:
 
 `cl-spec:registry-register-property`'s contract is a sequential-execution
 contract. It does not claim atomicity under concurrency, and it does not claim
-rollback from an arbitrary backend error. Like every `:capture`/`:state-post`
-contract in this version it is **not** shrunk (its shrink report says
-`:state-restoration-unavailable`), a past result cannot be replayed onto it
-(`unsupported-stateful-operation`), and it cannot be saved as a counterexample
-artifact (`invalid-counterexample-artifact` with a stateful reason). Case-carrying
-contracts refuse runtime instrumentation. Do not work around these limits to run
-a self-specification.
+rollback from an arbitrary backend error.
+
+Because its state comes from a fixture recipe, a past result replays onto it,
+and a failing scenario keyword is saved as a version 2 counterexample artifact
+and rechecked once with `:state-policy :fixture`:
+
+```lisp
+(let* ((result (cl-spec:check-function 'cl-spec:registry-register-property
+                                       :trials 20 :seed 42))
+       (artifact (cl-spec:make-counterexample-artifact result)))  ; failures only
+  (cl-spec:recheck-counterexample artifact :state-policy :fixture))
+```
+
+The recipe has no shrinker: each keyword selects its own case and the case name
+is part of the failure identity, so no other keyword could keep the same failure.
+`tests/self-api-contracts-test.lisp` shows the whole path by binding
+`cl-spec/self-spec-fixtures:*registration-registry-constructor*` to a faulty
+registry subclass: the saved recipe reports `:same-failure` under the fault and
+`:passed` without it. Case-carrying contracts refuse runtime instrumentation. Do
+not work around these limits to run a self-specification.
 
 ## 7. Finite corpus, public domain and unverified scope
 
@@ -171,7 +186,7 @@ The `validate` contract draws admitted/refused inputs from a small finite
 `*scripted-validate-inputs*`. That corpus is a sample that reaches both named
 cases; it is not the whole DSL and not the whole value domain the public API
 accepts. The registry write contract goes further and **declares** its input
-domain as exactly the finite scenario set `registration-scenario` produces,
+domain as exactly the finite scenario set `registration-scenario-arguments` builds,
 through `registration-scenario-targets-p` and `registration-scenario-tags-p` in
 its `:args`: its state-post names those scenarios' fixed target and tag symbols,
 so a valid index list outside the scenarios is outside the contract, not a

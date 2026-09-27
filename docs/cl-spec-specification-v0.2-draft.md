@@ -4365,15 +4365,20 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `custom-generator-shrinker` | generatorの縮小関数またはNILを返す |
 | digest詳細 | 第3戻り値とmetadataのomissionsの一致。意図したexclusionsは完全性を損なわない |
 | `semantic-data` | 対象symbolと関連Propertyの保持 |
-| 正規化 | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
+| 正規化 / `normalize-spec-form` | IR再正規化の同一性、source-formの保持。不正DSLの有限例には`invalid-spec-form`と非空reasonを要求 |
 | 検証の意味論 | compiled validator・validp・explainの一致、AND/OR/NOTの真理条件 |
 | `schema-info` / `make-hash-table-registry` | v1 schema metadataの必須keyと、新規registryが空であること |
 | `function-spec-data` / `property-data` / `definition-description` | v1 envelopeと宣言projectionの必須key。`function-spec-data`はcase名・順序・guard・outcome、capture名・順序・source form、caseごとのstate-postも保持する（追加Property） |
 | `result-data` | v1 result envelopeの必須keyとstatus。state-post違反・capture error・case選択停止のstate evidenceを保持し、captureしたNILと未取得を区別する（追加Property） |
-| `registry-register-property` | 明示的なtargets/tagsの新規登録・同名置換・不正索引引数の拒否を、専用registryと`:capture`/`:state-post`で検査する |
+| `registry-register-property` | 明示的なtargets/tagsの新規登録・同名置換・不正索引引数の拒否を、`:capture`/`:state-post`で検査する。シナリオ種別のkeywordを`:fresh` fixtureのrecipeとし、試行ごとに専用registryを再構築する。失敗はartifactとして保存でき、`recheck-counterexample`の`:state-policy :fixture`で1回再構築して再検査できる |
 | `property-call-arguments-p` / `property-named-arguments` | 生の呼出し形と束縛へのprojection |
 | `property-argument-schema` / `function-spec-argument-schema` | 引数schemaがSemantic IRのspecオブジェクトであること |
 | `make-counterexample-artifact` / `recheck-counterexample` | 失敗resultからartifactを作り、recheck recordを返す |
+| `deserialize-counterexample-artifact` | 不正な保存artifactをreader評価なしで拒否する |
+| `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
+| `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
+| `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
+| `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
 | registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
 | `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
@@ -4405,9 +4410,12 @@ Projectionのshape specはv1の方針どおり未知キーを無視し、必須�
 通常profileの試行数は固定値ではなく各Propertyの`:trials`宣言に従う。一括実行testは
 実行結果をその宣言された予算と照合し、`:skipped`・`:pending`・生成枯渇・全事前条件棄却を
 `:passed`へ読み替えない。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
-不整合データの拒否を検査し、28関数契約と29 Propertyをseed 1・42・2026で実行する。
+不整合データの拒否を検査し、`contract-names`と`property-names`が返す全関数契約・全Propertyを
+seed 1・42・2026で実行する。本節は件数を記載しない。`tests/self-api-contracts-test.lisp`は
+`contract-names`の各契約名が本節に記載されていることを検査する。
 `tests/self-api-contracts-test.lisp`は一覧と実行対象の集合一致、`validate`境界列、
-registry新規・置換・拒否の各case、projectionのnegative data、意図的に偽のPropertyが
+registry新規・置換・拒否の各case、故障registryで失敗したrecipeのartifact保存と
+`:same-failure`/`:passed`の再検査、projectionのnegative data、意図的に偽のPropertyが
 失敗と報告されることを、独立した期待値で確認する。
 このうち2 Propertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
 保持された縮小反例が引数schemaを満たし再検査で同一失敗を維持することを検査する。
@@ -4423,8 +4431,12 @@ shrink候補生成の全過程、未実装の`describe-*`である。
 `validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
 関係は引き続きPropertyで記述する。`registry-register-property`の状態契約は逐次実行を対象とし、
 入力domainを固定scenario集合として宣言する（任意の索引リストへの一般契約ではない）。
-並行実行の原子性や任意のbackend内部エラーからのrollbackまでは新たに保証しない。状態付き自己契約は
-縮小・過去結果replay・artifactを追加しない。誤実装検出とLLM修正比較の手順は`eval/README.md`と
+並行実行の原子性や任意のbackend内部エラーからのrollbackまでは新たに保証しない。
+`registry-register-property`はシナリオ種別をrecipeとする`:fresh` fixtureを宣言するので、
+失敗をartifactとして保存し再検査できる。各keywordは固有のcaseを選び、case名はfailure identityに
+含まれるため、recipeの縮小器は指定しない。bundleが登録する状態付き自己契約はこの1つである。
+`function-spec-data`/`result-data`の追加Propertyが内側runで使う検査対象の契約はfixtureを持たず、
+従来どおり縮小・過去結果replay・artifactの対象外である。誤実装検出とLLM修正比較の手順は`eval/README.md`と
 `docs/guides/self-specification-guide.md`に分離し、比較実験の実測結果はまだ無い。
 追加APIの仕様を実装する際は、このbundleへ契約またはPropertyを追加し、対象名一覧と検査を更新する。
 

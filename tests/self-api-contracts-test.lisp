@@ -15,7 +15,14 @@
                 #:register-specifications)
   (:import-from #:cl-spec/main
                 #:*registry*
+                #:check-fixture
                 #:check-function
+                #:deserialize-counterexample-artifact
+                #:fixture-check-data
+                #:hash-table-registry
+                #:make-counterexample-artifact
+                #:recheck-counterexample
+                #:serialize-counterexample-artifact
                 #:defproperty
                 #:find-function-spec
                 #:find-property
@@ -41,6 +48,7 @@
                 #:validate
                 #:validp)
   (:import-from #:cl-spec/self-spec-fixtures
+                #:*registration-registry-constructor*
                 #:*scripted-registration-scenarios*
                 #:*scripted-state-inputs*
                 #:*scripted-validate-inputs*
@@ -336,6 +344,81 @@
         (let ((result (check-function 'cl-spec:registry-register-property :trials 4 :seed 1)))
           (ok (eq :passed (property-result-status result)))
           (ok (zerop (property-result-rejected result))))))))
+
+(defclass tag-dropping-registry (hash-table-registry) ()
+  (:documentation "A deliberately faulty registry that stores the registration subject without its tags."))
+
+(defmethod registry-register-property ((registry tag-dropping-registry) name property
+                                       &key targets tags)
+  ;; Only the subject's writes lose their tags: the scenario's sentinel keeps its
+  ;; entries, so the fixture still builds the initial state the :PRE admits.
+  (call-next-method registry name property
+                    :targets targets
+                    :tags (unless (eq name (self-registration-name :subject)) tags)))
+
+(defun make-tag-dropping-registry ()
+  "Return a fresh registry whose writes lose their tag index entries."
+  (make-instance 'tag-dropping-registry))
+
+(deftest registry-contract-reconstructs-scenarios-from-recipes
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (testing "the contract declares a fresh fixture instead of an argument generator"
+      (let ((data (function-spec-data 'cl-spec:registry-register-property)))
+        (ok (getf data :fixture))
+        (ok (null (getf data :argument-generator)))))
+    (testing "each scenario keyword is a recipe one fixture check runs to a pass"
+      (dolist (scenario '(:new :replace :refused-targets :refused-tags))
+        (ok (eq :passed
+                (getf (fixture-check-data
+                       (check-fixture 'cl-spec:registry-register-property scenario))
+                      :status))
+            (prin1-to-string scenario))))
+    (testing "a past result replays onto the fixture instead of being refused"
+      (let ((first (check-function 'cl-spec:registry-register-property :trials 8 :seed 42)))
+        (ok (eq :passed (property-result-status first)))
+        (ok (eq :passed (property-result-status
+                         (check-function 'cl-spec:registry-register-property
+                                         :seed first))))))))
+
+(deftest registry-contract-failure-is-saved-and-rechecked
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let* ((result (let ((*registration-registry-constructor* #'make-tag-dropping-registry)
+                         (*scripted-registration-scenarios* '(:new)))
+                     (check-function 'cl-spec:registry-register-property
+                                     :trials 1 :seed 1)))
+           (artifact (deserialize-counterexample-artifact
+                      (serialize-counterexample-artifact
+                       (make-counterexample-artifact result)))))
+      (testing "the faulty registry fails the new-registration state-post"
+        (ok (eq :failed (property-result-status result)))
+        (ok (eq :state-post (cl-spec:property-result-failure-phase result))))
+      (testing "the saved recipe reproduces the failure against the same fault"
+        (let ((*registration-registry-constructor* #'make-tag-dropping-registry))
+          (ok (eq :same-failure
+                  (getf (recheck-counterexample artifact :state-policy :fixture) :status)))))
+      (testing "the saved recipe passes once the fault is gone"
+        (ok (eq :passed
+                (getf (recheck-counterexample artifact :state-policy :fixture) :status)))))))
+
+(deftest every-contract-is-named-in-the-coverage-section
+  (let* ((path (asdf:system-relative-pathname
+                "cl-spec" "docs/cl-spec-specification-v0.2-draft.md"))
+         (text (with-open-file (in path :external-format :utf-8)
+                 (let* ((buffer (make-string (file-length in)))
+                        (end (read-sequence buffer in)))
+                   (subseq buffer 0 end))))
+         (start (search "## 68.1 " text))
+         (section (string-downcase
+                   (subseq text start (search (format nil "~%# 69.") text :start2 start)))))
+    ;; The section states no count to drift; instead each contract the bundle
+    ;; registers must have its own row, named in backquotes.
+    (let ((missing (remove-if (lambda (name)
+                                (search (format nil "`~(~A~)`" (symbol-name name)) section))
+                              (contract-names))))
+      (ok (null missing)
+          (format nil "specification §68.1 names no row for ~S" missing)))))
 
 (deftest diagnostic-evidence-specs-refuse-malformed-records
   (let ((*registry* (make-hash-table-registry)))

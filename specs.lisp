@@ -32,8 +32,9 @@
                 #:*scripted-validate-inputs*
                 #:*state-projection-expectations*
                 #:function-projection-fixtures
+                #:next-registration-scenario-kind
                 #:registration-index-shape-p
-                #:registration-scenario
+                #:registration-scenario-arguments
                 #:registration-scenario-state-p
                 #:registration-scenario-tags-p
                 #:registration-scenario-targets-p
@@ -935,26 +936,44 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
            (null (cl-spec:list-function-specs result))
            (null (cl-spec:list-generators result))))
 
-  (defgenerator registry-registration-arguments ()
-    ;; A fresh scenario per draw: a new registry, a sentinel property sharing a
-    ;; target and a tag with the subject, and a new, replacement or refused write.
-    (registration-scenario))
+  (defgenerator registration-scenario-kinds ()
+    ;; One scenario keyword per draw: a new, replacement or refused write.  No
+    ;; shrinker: every keyword selects its own case, and the case name is part of
+    ;; the failure identity, so no other keyword could keep the same failure.
+    (next-registration-scenario-kind))
+
+  (defspec registration-scenario-kind
+      (member :new :replace :refused-targets :refused-tags)
+    (:generator registration-scenario-kinds))
 
   (defspec-function cl-spec:registry-register-property
     "A property write adds, replaces or refuses without leaking stale index entries.
 
-The declared input domain is the whole finite scenario REGISTRATION-SCENARIO
-builds: the argument values and, through the common :PRE, the registry's initial
-state.  The state-post names the scenario's fixed index symbols, so a registry
-with some other history is outside the contract rather than a counterexample.
-Within that domain every expected after-state is derived from the input and the
-observed before-state, and every observation is a fresh list from a public
-reader, never a captured registry."
+The declared input domain is the whole finite scenario
+REGISTRATION-SCENARIO-ARGUMENTS builds: the argument values and, through the
+common :PRE, the registry's initial state.  The state-post names the scenario's
+fixed index symbols, so a registry with some other history is outside the
+contract rather than a counterexample.  Within that domain every expected
+after-state is derived from the input and the observed before-state, and every
+observation is a fresh list from a public reader, never a captured registry.
+
+The fresh fixture's recipe is the scenario keyword, so each trial rebuilds its
+registry from data and a failing keyword persists as a counterexample artifact
+that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
     (:args (registry (instance-of cl-spec:hash-table-registry)) (name symbol)
            (property (instance-of cl-spec:property))
            &key ((:targets targets) (satisfies registration-scenario-targets-p))
                 ((:tags tags) (satisfies registration-scenario-tags-p)))
-    (:args-generator registry-registration-arguments)
+    (:fixture
+      (:isolation :fresh)
+      (:version 1)
+      (:recipe (scenario registration-scenario-kind))
+      (:setup (context)
+        (declare (ignore context))
+        (registration-scenario-arguments scenario))
+      (:cleanup (context)
+        (declare (ignore scenario))
+        (clrhash context)))
     (:pre (registration-scenario-state-p registry name targets tags))
     (:capture
      (names-before (cl-spec:registry-list-properties registry))

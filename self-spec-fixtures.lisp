@@ -21,6 +21,10 @@
                 #:registry-register-property)
   (:export #:fresh-fixture-contract
    #:*function-projection-expectations*
+   #:next-registration-scenario-kind
+   #:*registration-registry-constructor*
+   #:*registration-scenario-kinds*
+   #:registration-scenario-arguments
    #:*scripted-registration-scenarios*
    #:*scripted-state-inputs*
    #:*scripted-validate-inputs*
@@ -204,19 +208,35 @@ guard signal instead of selecting the refusal case."
   (make-instance 'property :name name :arguments '((x integer))
                  :function (lambda (x) (declare (ignore x)) t)))
 
-(defun registration-scenario ()
-  "Return an argument list for REGISTRY-REGISTER-PROPERTY for one fresh scenario.
+(defvar *registration-registry-constructor* #'make-hash-table-registry
+  "Function of no arguments returning the empty registry each registration scenario starts from.
 
-Every draw builds a new target registry and a sentinel property that shares a
+Test support for fault injection: a test binds it to build a deliberately faulty
+registry subclass.  The fixture reads it at setup, so a saved recipe rechecked
+under the same binding reconstructs the same faulty state, and rechecked without
+it reconstructs the correct one.")
+
+(defparameter *registration-scenario-kinds*
+  '(:new :replace :refused-targets :refused-tags)
+  "The finite scenario keywords the registry state contract takes as its fixture recipe.")
+
+(defun next-registration-scenario-kind ()
+  "Return one scenario keyword, scripted or drawn from the finite scenario set."
+  (if *scripted-registration-scenarios*
+      (pop *scripted-registration-scenarios*)
+      (nth (random (length *registration-scenario-kinds*)) *registration-scenario-kinds*)))
+
+(defun registration-scenario-arguments (kind)
+  "Return an argument list for REGISTRY-REGISTER-PROPERTY for scenario KIND.
+
+Every call builds a new target registry and a sentinel property that shares a
 target and a tag with the subject, so the state contract's state-post can check
 that a replacement retracts only the subject's own stale keys and leaves the
 sentinel's entries alone.  The subjects are fresh instances; the names, targets
-and tags are the fixed declarations above."
-  (let ((registry (make-hash-table-registry))
-        (sentinel (make-registration-subject (self-registration-name :sentinel)))
-        (kind (if *scripted-registration-scenarios*
-                  (pop *scripted-registration-scenarios*)
-                  (nth (random 4) '(:new :replace :refused-targets :refused-tags)))))
+and tags are the fixed declarations above.  KIND is the registry contract's
+fixture recipe, so this function is its whole state construction."
+  (let ((registry (funcall *registration-registry-constructor*))
+        (sentinel (make-registration-subject (self-registration-name :sentinel))))
     (registry-register-property
      registry (self-registration-name :sentinel) sentinel
      :targets (list (self-registration-name :shared-target))
@@ -240,6 +260,10 @@ and tags are the fixed declarations above."
                     "not-a-symbol"
                     (list (self-registration-name :new-tag)
                           (self-registration-name :shared-tag))))))
+
+(defun registration-scenario ()
+  "Return an argument list for one scripted or randomly drawn registration scenario."
+  (registration-scenario-arguments (next-registration-scenario-kind)))
 
 ;;; Finite validate corpus.  Each admitted form is paired with a value it refuses,
 ;;; so a run that reaches both pairs reaches both named outcomes.  This is a finite
