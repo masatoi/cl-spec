@@ -326,7 +326,9 @@
   ;; With no seed nothing would run, and a vacuous run must not report conformance.
   ;; A malformed plan is refused before the constructor builds a single registry,
   ;; so a bad later seed cannot surface only after earlier checks executed.
-  (dolist (arguments '((:seeds ()) (:seeds (1 :two)) (:seeds (1 -1)) (:trials 0)))
+  (dolist (arguments '((:seeds ()) (:seeds (1 :two)) (:seeds (1 -1)) (:trials 0)
+                       ;; Fewer trials than the registration contract's three cases.
+                       (:trials 2)))
     (let ((constructed 0))
       (ok (handler-case
               (progn (apply #'check-registry-implementation

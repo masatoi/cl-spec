@@ -22,10 +22,14 @@ Run the registry-protocol contracts and laws against registries CONSTRUCTOR retu
 ```text
 CONSTRUCTOR is a function of no arguments returning a fresh, empty registry.  It
 is called once before any check to confirm REGISTRY-IMPLEMENTATION-P, and a
-TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative integers and
-TRIALS a positive integer, so a true answer always rests on executed checks.  The bundle is registered in a private
-registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract runs TRIALS
-trials and every law its declared :NORMAL budget, once per seed in SEEDS.
+TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative
+integers, so a true answer always rests on executed checks.  TRIALS must be at
+least the largest number of cases a conformance contract declares, since
+EVIDENCE-POLICY requires a verdict in every declared case; a smaller budget is
+refused with a TYPE-ERROR before CONSTRUCTOR is called.  The bundle is registered
+in a private registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract
+runs TRIALS trials and every law its declared :NORMAL budget, once per seed in
+SEEDS.
 
 Return two values: true when every run passed with :SATISFIED evidence under
 EVIDENCE-POLICY, and a list of one plist per run with :KIND, :NAME, :SEED,

@@ -361,10 +361,14 @@ The value is a plist of :CONTRACTS and :PROPERTIES name lists."
 
 CONSTRUCTOR is a function of no arguments returning a fresh, empty registry.  It
 is called once before any check to confirm REGISTRY-IMPLEMENTATION-P, and a
-TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative integers and
-TRIALS a positive integer, so a true answer always rests on executed checks.  The bundle is registered in a private
-registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract runs TRIALS
-trials and every law its declared :NORMAL budget, once per seed in SEEDS.
+TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative
+integers, so a true answer always rests on executed checks.  TRIALS must be at
+least the largest number of cases a conformance contract declares, since
+EVIDENCE-POLICY requires a verdict in every declared case; a smaller budget is
+refused with a TYPE-ERROR before CONSTRUCTOR is called.  The bundle is registered
+in a private registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract
+runs TRIALS trials and every law its declared :NORMAL budget, once per seed in
+SEEDS.
 
 Return two values: true when every run passed with :SATISFIED evidence under
 EVIDENCE-POLICY, and a list of one plist per run with :KIND, :NAME, :SEED,
@@ -379,14 +383,22 @@ backend such as CL-SPEC/CHECK-IT to be loaded."
                (every (lambda (seed) (typep seed '(integer 0 *))) seeds))
     (error 'type-error :datum seeds :expected-type '(cons (integer 0 *) list)))
   (check-type trials (integer 1))
-  (let ((sample (funcall constructor)))
-    (unless (registry-implementation-p sample)
-      (error 'type-error :datum sample :expected-type '(satisfies registry-implementation-p))))
   (let ((*registry-constructor* constructor)
         (cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (names (registry-conformance-names))
         (records '()))
     (register-specifications)
+    ;; A budget below the widest case list can never satisfy EVIDENCE-POLICY, so
+    ;; it would report even a correct registry as nonconforming.
+    (let ((minimum (loop for name in (getf names :contracts)
+                         maximize (max 1 (length (getf (cl-spec:function-spec-data name)
+                                                       :cases))))))
+      (unless (>= trials minimum)
+        (error 'type-error :datum trials :expected-type `(integer ,minimum))))
+    (let ((sample (funcall constructor)))
+      (unless (registry-implementation-p sample)
+        (error 'type-error :datum sample
+                           :expected-type '(satisfies registry-implementation-p))))
     (flet ((record (kind name seed result budget)
              (push (list :kind kind :name name :seed seed
                          :status (cl-spec:property-result-status result)
