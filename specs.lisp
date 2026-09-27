@@ -278,7 +278,8 @@ allowed."
     rest-projection-agrees-with-target
     compiled-explanation-agrees explanation-rendering-projects-explain-data
     registry-round-trips-definitions registry-reverse-indexes-track-redefinition
-    registry-clear-empties member-admits-exactly-its-values
+    registry-clear-empties registry-queries-return-sorted-names
+    member-admits-exactly-its-values
     collection-validation-is-elementwise plist-error-paths-identify-the-field
     malformed-declarations-are-refused
     run-property-is-reproducible-from-its-seed
@@ -348,6 +349,7 @@ The value is a plist of :CONTRACTS and :PROPERTIES name lists."
         :properties '(registry-round-trips-definitions
                       registry-reverse-indexes-track-redefinition
                       registry-clear-empties
+                      registry-queries-return-sorted-names
                       registration-replacement-preserves-unrelated-indexes)))
 
 (defun check-registry-implementation (constructor &key (seeds '(1 42 2026)) (trials 50))
@@ -531,6 +533,20 @@ the definitions REGISTER-SPECIFICATIONS installs.")
   "Identity target for the retained-counterexample law's keyword contract."
   (declare (ignore a))
   raw)
+
+(defun self-sort-contract (&optional (name 'self-contract))
+  "Return a fresh, valid function spec named NAME for the registry laws."
+  (make-instance 'cl-spec:function-spec :name name
+                 :argument-specs '((x integer)) :return-spec 'integer))
+
+(defun self-sort-generator (&optional (name 'self-generator))
+  "Return a fresh custom generator named NAME for the registry laws."
+  (make-instance 'cl-spec:custom-generator :name name :function (lambda () 1)))
+
+(defun self-sort-property (name)
+  "Return a fresh, valid property named NAME for the registry laws."
+  (make-instance 'cl-spec:property :name name :arguments '((x integer))
+                 :function (lambda (x) (declare (ignore x)) t)))
 
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
@@ -1507,16 +1523,51 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
     (let ((registry (make-registry-under-test)))
+      ;; Every definition kind is stored before the clear, so a store the clear
+      ;; forgets is observed rather than trivially empty.
       (cl-spec:registry-register-spec registry 'self-spec spec)
       (cl-spec:registry-register-property registry 'self-property property
                                           :targets '(self-target) :tags '(self-tag))
+      (cl-spec:registry-register-function-spec registry 'self-contract (self-sort-contract))
+      (cl-spec:registry-register-generator registry 'self-generator (self-sort-generator))
       (cl-spec:registry-clear registry)
       (and (null (cl-spec:registry-list-specs registry))
            (null (cl-spec:registry-list-properties registry))
+           (null (cl-spec:registry-list-function-specs registry))
+           (null (cl-spec:registry-list-generators registry))
            (null (cl-spec:registry-properties-for registry 'self-target))
            (null (cl-spec:registry-properties-with-tag registry 'self-tag))
            (not (nth-value 1 (cl-spec:registry-find-spec registry 'self-spec)))
-           (not (nth-value 1 (cl-spec:registry-find-property registry 'self-property))))))
+           (not (nth-value 1 (cl-spec:registry-find-property registry 'self-property)))
+           (not (nth-value 1 (cl-spec:registry-find-function-spec registry 'self-contract)))
+           (not (nth-value 1 (cl-spec:registry-find-generator registry 'self-generator))))))
+  (defproperty registry-queries-return-sorted-names ()
+    "Every REGISTRY-* list and reverse-index query returns names sorted (§8).
+
+The names are registered out of order, so an implementation answering in
+insertion order or its reverse is observed.  They share one home package, so the
+expected order is by symbol name alone and is computed here, not by the registry."
+    (:about cl-spec:list-specs cl-spec:list-properties cl-spec:list-function-specs
+            cl-spec:list-generators cl-spec:properties-for cl-spec:properties-with-tag)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((registry (make-registry-under-test))
+           (names '(self-sort-c self-sort-a self-sort-b))
+           (expected (sort (copy-list names) #'string< :key #'symbol-name)))
+      (dolist (name names)
+        (cl-spec:registry-register-spec registry name (normalize-spec-form 'integer))
+        (cl-spec:registry-register-function-spec registry name (self-sort-contract name))
+        (cl-spec:registry-register-generator registry name (self-sort-generator name))
+        (cl-spec:registry-register-property registry name (self-sort-property name)
+                                            :targets '(self-sort-target)
+                                            :tags '(self-sort-tag)))
+      (every (lambda (observed) (equal expected observed))
+             (list (cl-spec:registry-list-specs registry)
+                   (cl-spec:registry-list-function-specs registry)
+                   (cl-spec:registry-list-generators registry)
+                   (cl-spec:registry-list-properties registry)
+                   (cl-spec:registry-properties-for registry 'self-sort-target)
+                   (cl-spec:registry-properties-with-tag registry 'self-sort-tag)))))
   (defproperty member-admits-exactly-its-values ((value arbitrary-value))
     "A MEMBER spec admits exactly the values EQL to one of its members (§9)."
     (:about validp)

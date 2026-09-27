@@ -151,6 +151,29 @@
   "Return a fresh registry that leaks stale reverse-index entries."
   (make-instance 'stale-index-registry))
 
+(defclass half-clear-registry (alist-registry) ()
+  (:documentation "A faulty alist registry whose clear forgets the generator store."))
+
+(defmethod registry-clear ((registry half-clear-registry))
+  (let ((generators (alist-generators registry)))
+    (call-next-method)
+    (setf (alist-generators registry) generators)
+    registry))
+
+(defun make-half-clear-registry ()
+  "Return a fresh registry that keeps its generators across a clear."
+  (make-instance 'half-clear-registry))
+
+(defclass unsorted-registry (alist-registry) ()
+  (:documentation "A faulty alist registry that lists specs in storage order, unsorted."))
+
+(defmethod registry-list-specs ((registry unsorted-registry))
+  (mapcar #'car (alist-specs registry)))
+
+(defun make-unsorted-registry ()
+  "Return a fresh registry whose spec listing is not sorted."
+  (make-instance 'unsorted-registry))
+
 (defclass partial-registry () ()
   (:documentation "An object implementing only part of the registry protocol."))
 
@@ -205,6 +228,20 @@
       (testing "laws that never re-register still pass"
         (ok (not (member 'cl-spec/specs::registry-round-trips-definitions failing)))
         (ok (not (member 'cl-spec/specs::registry-clear-empties failing)))))))
+
+(deftest half-clear-registry-is-refused-by-the-clear-law
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-half-clear-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (equal '(cl-spec/specs::registry-clear-empties) (failing-names records))
+        (prin1-to-string (failing-names records)))))
+
+(deftest unsorted-registry-is-refused-by-the-ordering-law
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-unsorted-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (member 'cl-spec/specs::registry-queries-return-sorted-names (failing-names records))
+        (prin1-to-string (failing-names records)))))
 
 (deftest non-registry-constructor-is-refused-before-any-check
   (ok (handler-case
