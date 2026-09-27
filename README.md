@@ -123,7 +123,8 @@ The bundle now also exercises the newer clauses on its own API: `validate`
 declares named `:conforming` and `:refused` cases in one contract, a
 `registry-register-property` contract captures the target registry's public
 readers before a new, replacement or refused write and checks the after-state
-with `:state-post`, and two laws keep the `function-spec-data` and `result-data`
+with `:state-post` (its state is rebuilt by a `:fresh` fixture from a scenario
+keyword, so a failing scenario is saved as an artifact and rechecked), and two laws keep the `function-spec-data` and `result-data`
 projections faithful to the declared cases, captures and state evidence. Two more
 laws cover `check-call`: one pins the passing, failing-return and
 precondition-rejected classifications and the `call-check-data` envelope against
