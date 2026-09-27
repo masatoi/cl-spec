@@ -22,7 +22,8 @@
   (:export #:fresh-fixture-contract
    #:*function-projection-expectations*
    #:next-registration-scenario-kind
-   #:*registration-registry-constructor*
+   #:*registry-constructor*
+   #:make-registry-under-test
    #:*registration-scenario-kinds*
    #:registration-scenario-arguments
    #:*scripted-registration-scenarios*
@@ -208,13 +209,18 @@ guard signal instead of selecting the refusal case."
   (make-instance 'property :name name :arguments '((x integer))
                  :function (lambda (x) (declare (ignore x)) t)))
 
-(defvar *registration-registry-constructor* #'make-hash-table-registry
-  "Function of no arguments returning the empty registry each registration scenario starts from.
+(defvar *registry-constructor* #'make-hash-table-registry
+  "Function of no arguments returning an empty registry for the registry-protocol checks.
 
-Test support for fault injection: a test binds it to build a deliberately faulty
-registry subclass.  The fixture reads it at setup, so a saved recipe rechecked
-under the same binding reconstructs the same faulty state, and rechecked without
-it reconstructs the correct one.")
+Every registry law and registry contract in the bundle builds the registry it
+checks through MAKE-REGISTRY-UNDER-TEST, so binding this special runs the same
+checks against another implementation of the REGISTRY-* protocol, including a
+deliberately faulty one.  The registration fixture reads it at setup, so a saved
+recipe rechecked under the same binding reconstructs the same implementation.")
+
+(defun make-registry-under-test ()
+  "Return a fresh, empty registry from *REGISTRY-CONSTRUCTOR*."
+  (funcall *registry-constructor*))
 
 (defparameter *registration-scenario-kinds*
   '(:new :replace :refused-targets :refused-tags)
@@ -235,7 +241,7 @@ that a replacement retracts only the subject's own stale keys and leaves the
 sentinel's entries alone.  The subjects are fresh instances; the names, targets
 and tags are the fixed declarations above.  KIND is the registry contract's
 fixture recipe, so this function is its whole state construction."
-  (let ((registry (funcall *registration-registry-constructor*))
+  (let ((registry (make-registry-under-test))
         (sentinel (make-registration-subject (self-registration-name :sentinel))))
     (registry-register-property
      registry (self-registration-name :sentinel) sentinel

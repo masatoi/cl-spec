@@ -4381,6 +4381,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
 | registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
+| registry protocol適合性 | `check-registry-implementation`が、`registry-conformance-names`の契約・Propertyを任意の`REGISTRY-*`実装に対して実行する。対象registryは`*registry-constructor*`から作られ、実装判定は`registry-implementation-p`が15個の総称関数の主methodの適用可能性で行う |
 | `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
 | DSL網羅 | MEMBER/VECTOR-OF/PLISTの真理条件、field errorのpath、surface macroの不正宣言拒否 |
 | コレクション制約 | LIST-OF/VECTOR-OFの長さ・一意性の真理条件と`:too-short`/`:too-long`/`:duplicate-element` |
@@ -4427,7 +4428,8 @@ install/uninstall往復・未契約拒否の2 Property)は別途登録し、専�
 
 keyword optionを指定した呼出し(`:registry`、`:state-policy`)、組み込み`hash-table-registry`、
 result/artifactの基本envelope、instrumentationの基本protocolは取り込み済みである。
-残る記述範囲は、すべてのkeyword option組合せ、独自のregistry/backend実装、`defspec`自身の不正form、
+独自registry実装は`check-registry-implementation`で同じ契約・Propertyにより検査できる。
+残る記述範囲は、すべてのkeyword option組合せ、独自のgenerator backend実装、`defspec`自身の不正form、
 shrink候補生成の全過程、未実装の`describe-*`である。
 不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
 `validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの

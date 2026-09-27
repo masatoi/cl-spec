@@ -91,6 +91,7 @@
   (:import-from #:cl-spec/tests/self-specs-test)
   (:import-from #:cl-spec/tests/self-properties-test)
   (:import-from #:cl-spec/tests/self-api-contracts-test)
+  (:import-from #:cl-spec/tests/registry-conformance-test)
   (:import-from #:cl-spec/tests/stateful-withdraw-example-test)
   (:import-from #:cl-spec/tests/state-observation-test)
   (:import-from #:cl-spec/tests/check-call-test)

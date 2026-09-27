@@ -50,7 +50,7 @@
                 #:validate
                 #:validp)
   (:import-from #:cl-spec/self-spec-fixtures
-                #:*registration-registry-constructor*
+                #:*registry-constructor*
                 #:*scripted-registration-scenarios*
                 #:*scripted-state-inputs*
                 #:*scripted-validate-inputs*
@@ -407,7 +407,7 @@
 (deftest registry-contract-failure-is-saved-and-rechecked
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
-    (let* ((result (let ((*registration-registry-constructor* #'make-tag-dropping-registry)
+    (let* ((result (let ((*registry-constructor* #'make-tag-dropping-registry)
                          (*scripted-registration-scenarios* '(:new)))
                      (check-function 'cl-spec:registry-register-property
                                      :trials 1 :seed 1)))
@@ -418,7 +418,7 @@
         (ok (eq :failed (property-result-status result)))
         (ok (eq :state-post (cl-spec:property-result-failure-phase result))))
       (testing "the saved recipe reproduces the failure against the same fault"
-        (let ((*registration-registry-constructor* #'make-tag-dropping-registry))
+        (let ((*registry-constructor* #'make-tag-dropping-registry))
           (ok (eq :same-failure
                   (getf (recheck-counterexample artifact :state-policy :fixture) :status)))))
       (testing "the saved recipe passes once the fault is gone"

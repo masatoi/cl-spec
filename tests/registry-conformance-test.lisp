@@ -1,0 +1,214 @@
+;;;; tests/registry-conformance-test.lisp
+;;;;
+;;;; The registry-protocol conformance suite in CL-SPEC/SPECS run against
+;;;; registries other than the built-in one: an independent alist implementation
+;;;; that must conform, and a faulty variant of it that must not.
+
+(defpackage #:cl-spec/tests/registry-conformance-test
+  (:use #:cl)
+  (:import-from #:rove #:deftest #:ok #:testing)
+  (:import-from #:cl-spec/specs
+                #:check-registry-implementation
+                #:registry-conformance-names
+                #:registry-implementation-p)
+  (:import-from #:cl-spec/main
+                #:*registry*
+                #:list-function-specs
+                #:list-properties
+                #:make-hash-table-registry
+                #:registry-clear
+                #:registry-find-function-spec
+                #:registry-find-generator
+                #:registry-find-property
+                #:registry-find-spec
+                #:registry-list-function-specs
+                #:registry-list-generators
+                #:registry-list-properties
+                #:registry-list-specs
+                #:registry-properties-for
+                #:registry-properties-with-tag
+                #:registry-register-function-spec
+                #:registry-register-generator
+                #:registry-register-property
+                #:registry-register-spec)
+  (:import-from #:cl-spec/src/backends/check-it))
+
+(in-package #:cl-spec/tests/registry-conformance-test)
+
+(defun sorted-names (names)
+  "Return a fresh copy of NAMES sorted by symbol name."
+  (sort (copy-list names) #'string< :key #'symbol-name))
+
+(defun alist-lookup (alist name)
+  "Return the value under NAME in ALIST and whether it was present."
+  (let ((entry (assoc name alist)))
+    (values (cdr entry) (and entry t))))
+
+(defun alist-put (alist name value)
+  "Return ALIST with NAME bound to VALUE, replacing any previous binding."
+  (acons name value (remove name alist :key #'car)))
+
+(defclass alist-registry ()
+  ((specs :initform '() :accessor alist-specs)
+   (function-specs :initform '() :accessor alist-function-specs)
+   (generators :initform '() :accessor alist-generators)
+   (properties :initform '() :accessor alist-properties
+               :documentation "Name -> (property targets tags).")
+   (by-target :initform '() :accessor alist-by-target)
+   (by-tag :initform '() :accessor alist-by-tag))
+  (:documentation "An independent REGISTRY-* implementation that shares no code with the built-in one."))
+
+(defun make-alist-registry ()
+  "Return a fresh, empty alist registry."
+  (make-instance 'alist-registry))
+
+(defmethod registry-find-spec ((registry alist-registry) name)
+  (alist-lookup (alist-specs registry) name))
+
+(defmethod registry-register-spec ((registry alist-registry) name spec)
+  (setf (alist-specs registry) (alist-put (alist-specs registry) name spec))
+  spec)
+
+(defmethod registry-list-specs ((registry alist-registry))
+  (sorted-names (mapcar #'car (alist-specs registry))))
+
+(defmethod registry-find-function-spec ((registry alist-registry) name)
+  (alist-lookup (alist-function-specs registry) name))
+
+(defmethod registry-register-function-spec ((registry alist-registry) name function-spec)
+  (setf (alist-function-specs registry)
+        (alist-put (alist-function-specs registry) name function-spec))
+  function-spec)
+
+(defmethod registry-list-function-specs ((registry alist-registry))
+  (sorted-names (mapcar #'car (alist-function-specs registry))))
+
+(defmethod registry-find-generator ((registry alist-registry) name)
+  (alist-lookup (alist-generators registry) name))
+
+(defmethod registry-register-generator ((registry alist-registry) name generator)
+  (setf (alist-generators registry) (alist-put (alist-generators registry) name generator))
+  generator)
+
+(defmethod registry-list-generators ((registry alist-registry))
+  (sorted-names (mapcar #'car (alist-generators registry))))
+
+(defmethod registry-find-property ((registry alist-registry) name)
+  (let ((entry (assoc name (alist-properties registry))))
+    (values (second entry) (and entry t))))
+
+(defun index-remove (index name)
+  "Return INDEX with NAME removed from every key, dropping keys left empty."
+  (loop for (key . names) in index
+        for remaining = (remove name names)
+        when remaining collect (cons key remaining)))
+
+(defun index-add (index name keys)
+  "Return INDEX with NAME added under each of KEYS."
+  (dolist (key keys index)
+    (setf index (alist-put index key (adjoin name (cdr (assoc key index)))))))
+
+(defgeneric retract-stale-indexes-p (registry)
+  (:documentation "True when re-registration removes the previous definition's index entries.")
+  (:method ((registry alist-registry)) t))
+
+(defmethod registry-register-property ((registry alist-registry) name property
+                                       &key targets tags)
+  (when (retract-stale-indexes-p registry)
+    (setf (alist-by-target registry) (index-remove (alist-by-target registry) name)
+          (alist-by-tag registry) (index-remove (alist-by-tag registry) name)))
+  (setf (alist-properties registry)
+        (alist-put (alist-properties registry) name (list property targets tags))
+        (alist-by-target registry) (index-add (alist-by-target registry) name targets)
+        (alist-by-tag registry) (index-add (alist-by-tag registry) name tags))
+  property)
+
+(defmethod registry-list-properties ((registry alist-registry))
+  (sorted-names (mapcar #'car (alist-properties registry))))
+
+(defmethod registry-properties-for ((registry alist-registry) target)
+  (sorted-names (cdr (assoc target (alist-by-target registry)))))
+
+(defmethod registry-properties-with-tag ((registry alist-registry) tag)
+  (sorted-names (cdr (assoc tag (alist-by-tag registry)))))
+
+(defmethod registry-clear ((registry alist-registry))
+  (setf (alist-specs registry) '()
+        (alist-function-specs registry) '()
+        (alist-generators registry) '()
+        (alist-properties registry) '()
+        (alist-by-target registry) '()
+        (alist-by-tag registry) '())
+  registry)
+
+(defclass stale-index-registry (alist-registry) ()
+  (:documentation "A faulty alist registry: re-registration keeps the old index entries."))
+
+(defmethod retract-stale-indexes-p ((registry stale-index-registry))
+  nil)
+
+(defun make-stale-index-registry ()
+  "Return a fresh registry that leaks stale reverse-index entries."
+  (make-instance 'stale-index-registry))
+
+(defclass partial-registry () ()
+  (:documentation "An object implementing only part of the registry protocol."))
+
+(defmethod registry-list-specs ((registry partial-registry))
+  '())
+
+(defun failing-names (records)
+  "Return the distinct names of RECORDS that did not pass with satisfied evidence."
+  (remove-duplicates
+   (loop for record in records
+         unless (and (eq :passed (getf record :status))
+                     (eq :satisfied (getf record :assessment)))
+           collect (getf record :name))))
+
+(deftest registry-implementation-predicate-reads-method-applicability
+  (ok (registry-implementation-p (make-hash-table-registry)))
+  (ok (registry-implementation-p (make-alist-registry)))
+  (testing "a partial implementation or a non-registry is refused"
+    (ok (not (registry-implementation-p (make-instance 'partial-registry))))
+    (ok (not (registry-implementation-p 42)))))
+
+(deftest built-in-registry-conforms
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-hash-table-registry :seeds '(42))
+    (ok conforming (prin1-to-string (failing-names records)))))
+
+(deftest independent-registry-conforms
+  (let* ((names (registry-conformance-names))
+         (outer (make-hash-table-registry))
+         (*registry* outer))
+    (multiple-value-bind (conforming records)
+        (check-registry-implementation #'make-alist-registry :seeds '(1 42))
+      (testing "every conformance check passes with satisfied evidence"
+        (ok conforming (prin1-to-string (failing-names records))))
+      (testing "one record per conformance name and seed"
+        (ok (= (* 2 (+ (length (getf names :contracts)) (length (getf names :properties))))
+               (length records))))
+      (testing "the caller's registry is left untouched"
+        (ok (null (list-function-specs outer)))
+        (ok (null (list-properties outer)))))))
+
+(deftest stale-index-registry-is-refused
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-stale-index-registry :seeds '(1))
+    (ok (not conforming))
+    (let ((failing (failing-names records)))
+      (testing "the contract and the laws about re-registration are the ones that fail"
+        (ok (member 'cl-spec:registry-register-property failing))
+        (ok (member 'cl-spec/specs::registry-reverse-indexes-track-redefinition failing))
+        (ok (member 'cl-spec/specs::registration-replacement-preserves-unrelated-indexes
+                    failing)))
+      (testing "laws that never re-register still pass"
+        (ok (not (member 'cl-spec/specs::registry-round-trips-definitions failing)))
+        (ok (not (member 'cl-spec/specs::registry-clear-empties failing)))))))
+
+(deftest non-registry-constructor-is-refused-before-any-check
+  (ok (handler-case
+          (progn (check-registry-implementation
+                  (lambda () (make-instance 'partial-registry)))
+                 nil)
+        (type-error () t))))
