@@ -36,8 +36,15 @@
 (in-package #:cl-spec/tests/registry-conformance-test)
 
 (defun sorted-names (names)
-  "Return a fresh copy of NAMES sorted by symbol name."
-  (sort (copy-list names) #'string< :key #'symbol-name))
+  "Return a fresh copy of NAMES sorted by symbol name, then by home package name."
+  (sort (copy-list names)
+        (lambda (left right)
+          (let ((left-name (symbol-name left))
+                (right-name (symbol-name right)))
+            (or (string< left-name right-name)
+                (and (string= left-name right-name)
+                     (string< (package-name (symbol-package left))
+                              (package-name (symbol-package right)))))))))
 
 (defun alist-lookup (alist name)
   "Return the value under NAME in ALIST and whether it was present."
@@ -186,6 +193,37 @@
   "Return a fresh registry whose spec writes answer NIL instead of the spec."
   (make-instance 'silent-write-registry))
 
+(defclass sticky-spec-registry (alist-registry) ()
+  (:documentation "A faulty alist registry whose spec writes keep the first definition."))
+
+(defmethod registry-register-spec ((registry sticky-spec-registry) name spec)
+  (unless (nth-value 1 (registry-find-spec registry name))
+    (call-next-method))
+  spec)
+
+(defun make-sticky-spec-registry ()
+  "Return a fresh registry that ignores a second spec written under a name."
+  (make-instance 'sticky-spec-registry))
+
+(defclass name-keyed-registry (alist-registry) ()
+  (:documentation "A faulty alist registry that keys specs by symbol name alone."))
+
+(defmethod registry-register-spec ((registry name-keyed-registry) name spec)
+  (setf (alist-specs registry)
+        (acons name spec (remove (symbol-name name) (alist-specs registry)
+                                 :key (lambda (entry) (symbol-name (car entry)))
+                                 :test #'string=)))
+  spec)
+
+(defmethod registry-find-spec ((registry name-keyed-registry) name)
+  (let ((entry (assoc (symbol-name name) (alist-specs registry)
+                      :key #'symbol-name :test #'string=)))
+    (values (cdr entry) (and entry t))))
+
+(defun make-name-keyed-registry ()
+  "Return a fresh registry that conflates same-named symbols of different packages."
+  (make-instance 'name-keyed-registry))
+
 (defclass partial-registry () ()
   (:documentation "An object implementing only part of the registry protocol."))
 
@@ -261,6 +299,20 @@
       (check-registry-implementation #'make-silent-write-registry :seeds '(1))
     (ok (not conforming))
     (ok (member 'cl-spec/specs::registry-round-trips-definitions (failing-names records))
+        (prin1-to-string (failing-names records)))))
+
+(deftest sticky-spec-registry-is-refused-by-the-replacement-law
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-sticky-spec-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (member 'cl-spec/specs::registry-writes-replace-by-name (failing-names records))
+        (prin1-to-string (failing-names records)))))
+
+(deftest name-keyed-registry-is-refused-by-the-symbol-identity-law
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-name-keyed-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (member 'cl-spec/specs::registry-keys-are-symbols-not-names (failing-names records))
         (prin1-to-string (failing-names records)))))
 
 (deftest non-registry-constructor-is-refused-before-any-check

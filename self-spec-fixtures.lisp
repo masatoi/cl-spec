@@ -24,6 +24,7 @@
    #:next-registration-scenario-kind
    #:*registry-constructor*
    #:make-registry-under-test
+   #:*foreign-duplicate-name*
    #:*registration-scenario-kinds*
    #:registration-scenario-arguments
    #:*scripted-registration-scenarios*
@@ -221,6 +222,12 @@ recipe rechecked under the same binding reconstructs the same implementation.")
 (defun make-registry-under-test ()
   "Return a fresh, empty registry from *REGISTRY-CONSTRUCTOR*."
   (funcall *registry-constructor*))
+
+(defparameter *foreign-duplicate-name* 'self-duplicate-item
+  "A symbol of this package whose name CL-SPEC/SPECS also interns in its own package.
+
+The registry laws register definitions under both symbols to require that a
+registry keys entries by symbol identity, not by symbol name.")
 
 (defparameter *registration-scenario-kinds*
   '(:new :replace :refused-targets :refused-tags)

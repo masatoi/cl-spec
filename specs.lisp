@@ -32,6 +32,7 @@
                 #:*scripted-validate-inputs*
                 #:*state-projection-expectations*
                 #:*registry-constructor*
+                #:*foreign-duplicate-name*
                 #:function-projection-fixtures
                 #:make-registry-under-test
                 #:next-registration-scenario-kind
@@ -279,6 +280,7 @@ allowed."
     compiled-explanation-agrees explanation-rendering-projects-explain-data
     registry-round-trips-definitions registry-reverse-indexes-track-redefinition
     registry-clear-empties registry-queries-return-sorted-names
+    registry-writes-replace-by-name registry-keys-are-symbols-not-names
     member-admits-exactly-its-values
     collection-validation-is-elementwise plist-error-paths-identify-the-field
     malformed-declarations-are-refused
@@ -350,6 +352,8 @@ The value is a plist of :CONTRACTS and :PROPERTIES name lists."
                       registry-reverse-indexes-track-redefinition
                       registry-clear-empties
                       registry-queries-return-sorted-names
+                      registry-writes-replace-by-name
+                      registry-keys-are-symbols-not-names
                       registration-replacement-preserves-unrelated-indexes)))
 
 (defun check-registry-implementation (constructor &key (seeds '(1 42 2026)) (trials 50))
@@ -1594,6 +1598,89 @@ expected order is by symbol name alone and is computed here, not by the registry
                    (cl-spec:registry-list-properties registry)
                    (cl-spec:registry-properties-for registry 'self-sort-target)
                    (cl-spec:registry-properties-with-tag registry 'self-sort-tag)))))
+  (defproperty registry-writes-replace-by-name ()
+    "A second write under a name replaces the first for every definition kind (§8)."
+    (:about cl-spec:register-spec cl-spec:register-function-spec cl-spec:register-generator
+            cl-spec:find-spec cl-spec:find-function-spec cl-spec:find-generator)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let ((registry (make-registry-under-test))
+          (first-spec (normalize-spec-form 'integer))
+          (second-spec (normalize-spec-form 'string))
+          (first-contract (self-sort-contract))
+          (second-contract (self-sort-contract))
+          (first-generator (self-sort-generator))
+          (second-generator (self-sort-generator)))
+      (cl-spec:registry-register-spec registry 'self-spec first-spec)
+      (cl-spec:registry-register-function-spec registry 'self-contract first-contract)
+      (cl-spec:registry-register-generator registry 'self-generator first-generator)
+      (and (eq second-spec (cl-spec:registry-register-spec registry 'self-spec second-spec))
+           (eq second-contract (cl-spec:registry-register-function-spec
+                                registry 'self-contract second-contract))
+           (eq second-generator (cl-spec:registry-register-generator
+                                 registry 'self-generator second-generator))
+           (multiple-value-call #'found-definition-p
+             second-spec (cl-spec:registry-find-spec registry 'self-spec))
+           (multiple-value-call #'found-definition-p
+             second-contract (cl-spec:registry-find-function-spec registry 'self-contract))
+           (multiple-value-call #'found-definition-p
+             second-generator (cl-spec:registry-find-generator registry 'self-generator))
+           (equal '(self-spec) (cl-spec:registry-list-specs registry))
+           (equal '(self-contract) (cl-spec:registry-list-function-specs registry))
+           (equal '(self-generator) (cl-spec:registry-list-generators registry)))))
+  (defproperty registry-keys-are-symbols-not-names ()
+    "Same-named symbols of two packages are distinct entries, listed in package order (§8).
+
+Both names are registered for every definition kind and indexed under one
+target and tag.  Each must stay independently findable, and every list and
+reverse-index query must order them by name and then by home package name."
+    (:about cl-spec:find-spec cl-spec:find-property cl-spec:find-function-spec
+            cl-spec:find-generator cl-spec:list-specs cl-spec:list-properties
+            cl-spec:list-function-specs cl-spec:list-generators
+            cl-spec:properties-for cl-spec:properties-with-tag)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((registry (make-registry-under-test))
+           (local 'self-duplicate-item)
+           (foreign *foreign-duplicate-name*)
+           (expected (sort (list local foreign) #'string<
+                           :key (lambda (name)
+                                  (package-name (symbol-package name)))))
+           (definitions
+             (loop for name in (list local foreign)
+                   collect (list name
+                                 (normalize-spec-form (if (eq name local) 'integer 'string))
+                                 (self-sort-contract name)
+                                 (self-sort-generator name)
+                                 (self-sort-property name)))))
+      (dolist (entry definitions)
+        (destructuring-bind (name spec contract generator property) entry
+          (cl-spec:registry-register-spec registry name spec)
+          (cl-spec:registry-register-function-spec registry name contract)
+          (cl-spec:registry-register-generator registry name generator)
+          (cl-spec:registry-register-property registry name property
+                                              :targets '(self-sort-target)
+                                              :tags '(self-sort-tag))))
+      (and (string= (symbol-name local) (symbol-name foreign))
+           (not (eq local foreign))
+           (every (lambda (entry)
+                    (destructuring-bind (name spec contract generator property) entry
+                      (and (multiple-value-call #'found-definition-p
+                             spec (cl-spec:registry-find-spec registry name))
+                           (multiple-value-call #'found-definition-p
+                             contract (cl-spec:registry-find-function-spec registry name))
+                           (multiple-value-call #'found-definition-p
+                             generator (cl-spec:registry-find-generator registry name))
+                           (multiple-value-call #'found-definition-p
+                             property (cl-spec:registry-find-property registry name)))))
+                  definitions)
+           (every (lambda (observed) (equal expected observed))
+                  (list (cl-spec:registry-list-specs registry)
+                        (cl-spec:registry-list-function-specs registry)
+                        (cl-spec:registry-list-generators registry)
+                        (cl-spec:registry-list-properties registry)
+                        (cl-spec:registry-properties-for registry 'self-sort-target)
+                        (cl-spec:registry-properties-with-tag registry 'self-sort-tag))))))
   (defproperty member-admits-exactly-its-values ((value arbitrary-value))
     "A MEMBER spec admits exactly the values EQL to one of its members (§9)."
     (:about validp)
