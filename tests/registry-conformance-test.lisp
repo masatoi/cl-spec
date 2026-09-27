@@ -252,9 +252,15 @@
 
 (deftest an-empty-run-plan-is-refused
   ;; With no seed nothing would run, and a vacuous run must not report conformance.
-  (dolist (arguments '((:seeds ()) (:seeds (1 :two)) (:trials 0)))
-    (ok (handler-case
-            (progn (apply #'check-registry-implementation #'make-alist-registry arguments)
-                   nil)
-          (type-error () t))
-        (prin1-to-string arguments))))
+  ;; A malformed plan is refused before the constructor builds a single registry,
+  ;; so a bad later seed cannot surface only after earlier checks executed.
+  (dolist (arguments '((:seeds ()) (:seeds (1 :two)) (:seeds (1 -1)) (:trials 0)))
+    (let ((constructed 0))
+      (ok (handler-case
+              (progn (apply #'check-registry-implementation
+                            (lambda () (incf constructed) (make-alist-registry))
+                            arguments)
+                     nil)
+            (type-error () t))
+          (prin1-to-string arguments))
+      (ok (zerop constructed) (prin1-to-string arguments)))))
