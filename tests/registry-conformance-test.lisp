@@ -212,3 +212,12 @@
                   (lambda () (make-instance 'partial-registry)))
                  nil)
         (type-error () t))))
+
+(deftest an-empty-run-plan-is-refused
+  ;; With no seed nothing would run, and a vacuous run must not report conformance.
+  (dolist (arguments '((:seeds ()) (:seeds (1 :two)) (:trials 0)))
+    (ok (handler-case
+            (progn (apply #'check-registry-implementation #'make-alist-registry arguments)
+                   nil)
+          (type-error () t))
+        (prin1-to-string arguments))))

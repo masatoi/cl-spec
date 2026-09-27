@@ -355,7 +355,8 @@ The value is a plist of :CONTRACTS and :PROPERTIES name lists."
 
 CONSTRUCTOR is a function of no arguments returning a fresh, empty registry.  It
 is called once before any check to confirm REGISTRY-IMPLEMENTATION-P, and a
-TYPE-ERROR is signalled otherwise.  The bundle is registered in a private
+TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of integers and
+TRIALS a positive integer, so a true answer always rests on executed checks.  The bundle is registered in a private
 registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract runs TRIALS
 trials and every law its declared :NORMAL budget, once per seed in SEEDS.
 
@@ -364,6 +365,11 @@ EVIDENCE-POLICY, and a list of one plist per run with :KIND, :NAME, :SEED,
 :STATUS, :ASSESSMENT and :RESULT.  Executing the checks requires a generator
 backend such as CL-SPEC/CHECK-IT to be loaded."
   (check-type constructor function)
+  ;; An empty seed list would run nothing, and EVERY over no records is true:
+  ;; conformance must always rest on at least one executed check.
+  (unless (and (consp seeds) (finite-list-p seeds) (every #'integerp seeds))
+    (error 'type-error :datum seeds :expected-type '(cons integer list)))
+  (check-type trials (integer 1))
   (let ((sample (funcall constructor)))
     (unless (registry-implementation-p sample)
       (error 'type-error :datum sample :expected-type '(satisfies registry-implementation-p))))
