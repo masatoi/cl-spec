@@ -4380,7 +4380,8 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
-| registry往復 | `register-*`→`find-*`の同一性、`list-*`の含有、逆引きindexの更新、`clear-registry`の空化 |
+| registry往復 | `register-*`→`find-*`の同一性、`register-*`の戻り値と`find-*`のfound-p（未登録名はNIL・NIL）、`registry-clear`がregistryを返すこと、`list-*`の含有、逆引きindexの更新、4種すべての定義に対する`clear-registry`の空化、名前順でない登録に対する`list-*`・逆引き問い合わせのソート順、4種すべての同名再登録による置換、異なるpackageの同名symbolを別entryとして保持し名前・package名の順に並べること |
+| registry protocol適合性 | `check-registry-implementation`が、`registry-conformance-names`の契約・Propertyを任意の`REGISTRY-*`実装に対して実行する。対象registryは`*registry-constructor*`から作られ、実装判定は`registry-implementation-p`が15個の総称関数の主methodの適用可能性で行う |
 | `explain` / `compile-explainer` | 描画とcompiled explainerが`explain-data`と一致 |
 | DSL網羅 | MEMBER/VECTOR-OF/PLISTの真理条件、field errorのpath、surface macroの不正宣言拒否 |
 | コレクション制約 | LIST-OF/VECTOR-OFの長さ・一意性の真理条件と`:too-short`/`:too-long`/`:duplicate-element` |
@@ -4409,7 +4410,9 @@ Projectionのshape specはv1の方針どおり未知キーを無視し、必須�
 
 通常profileの試行数は固定値ではなく各Propertyの`:trials`宣言に従う。一括実行testは
 実行結果をその宣言された予算と照合し、`:skipped`・`:pending`・生成枯渇・全事前条件棄却を
-`:passed`へ読み替えない。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
+`:passed`へ読み替えない。さらに各実行の保存済みevidenceを`cl-spec/specs:evidence-policy`で
+`assess-evidence`し、`:satisfied`を要求する。このpolicyは予算の完走、全試行の判定到達、
+宣言した各caseの判定1回以上を要件とし、`:passed`でも未到達のcaseがあれば`:insufficient`になる。`tests/self-specs-test.lisp`は独立registryで再登録・構造化照会・
 不整合データの拒否を検査し、`contract-names`と`property-names`が返す全関数契約・全Propertyを
 seed 1・42・2026で実行する。本節は件数を記載しない。`tests/self-api-contracts-test.lisp`は
 `contract-names`の各契約名が本節に記載されていることを検査する。
@@ -4425,7 +4428,8 @@ install/uninstall往復・未契約拒否の2 Property)は別途登録し、専�
 
 keyword optionを指定した呼出し(`:registry`、`:state-policy`)、組み込み`hash-table-registry`、
 result/artifactの基本envelope、instrumentationの基本protocolは取り込み済みである。
-残る記述範囲は、すべてのkeyword option組合せ、独自のregistry/backend実装、`defspec`自身の不正form、
+独自registry実装は`check-registry-implementation`で同じ契約・Propertyにより検査できる。
+残る記述範囲は、すべてのkeyword option組合せ、独自のgenerator backend実装、`defspec`自身の不正form、
 shrink候補生成の全過程、未実装の`describe-*`である。
 不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
 `validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの

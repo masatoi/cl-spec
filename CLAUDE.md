@@ -103,7 +103,11 @@ again after clearing a registry or binding a fresh one. Executing the generated
 checks requires `cl-spec/check-it`. The bundle's fixtures, finite corpora and
 test-support specials live in `self-spec-fixtures.lisp` (package
 `cl-spec/self-spec-fixtures`), which defines no registration and is loaded only
-through `cl-spec/specs`.
+through `cl-spec/specs`. The bundle's suites require every run to be `:satisfied`
+under `cl-spec/specs:evidence-policy`, not only `:passed`. Its registry contracts and
+laws build registries through `cl-spec/specs:*registry-constructor*`, so
+`cl-spec/specs:check-registry-implementation` runs them as a conformance suite for
+another `REGISTRY-*` implementation.
 
 ## Package Naming
 

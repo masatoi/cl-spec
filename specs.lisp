@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
-  (:import-from #:cl-spec/src/registry #:hash-table-registry #:registry-find-spec)
+  (:import-from #:cl-spec/src/registry #:registry-find-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/main
                 #:compile-explainer
@@ -31,7 +31,10 @@
                 #:*scripted-state-inputs*
                 #:*scripted-validate-inputs*
                 #:*state-projection-expectations*
+                #:*registry-constructor*
+                #:*foreign-duplicate-name*
                 #:function-projection-fixtures
+                #:make-registry-under-test
                 #:next-registration-scenario-kind
                 #:registration-index-shape-p
                 #:registration-scenario-arguments
@@ -46,7 +49,9 @@
                 #:state-projection-fixtures
                 #:validate-corpus-entry)
   (:export #:register-instrumentation-specifications #:register-specifications
-           #:contract-names #:property-names))
+           #:contract-names #:property-names #:evidence-policy
+           #:*registry-constructor* #:registry-implementation-p
+           #:registry-conformance-names #:check-registry-implementation))
 
 (in-package #:cl-spec/specs)
 
@@ -274,7 +279,9 @@ allowed."
     rest-projection-agrees-with-target
     compiled-explanation-agrees explanation-rendering-projects-explain-data
     registry-round-trips-definitions registry-reverse-indexes-track-redefinition
-    registry-clear-empties member-admits-exactly-its-values
+    registry-clear-empties registry-queries-return-sorted-names
+    registry-writes-replace-by-name registry-keys-are-symbols-not-names
+    member-admits-exactly-its-values
     collection-validation-is-elementwise plist-error-paths-identify-the-field
     malformed-declarations-are-refused
     run-property-is-reproducible-from-its-seed
@@ -289,6 +296,130 @@ allowed."
     one-shot-check-reuses-the-single-trial-classifier
     one-shot-check-observes-a-named-case-and-state-once
     fixture-reconstruction-is-independent))
+
+(defun evidence-policy (trials)
+  "Return the evidence policy a run of this bundle is held to for a TRIALS budget.
+
+A :PASSED status says only that the observed trials found no violation.  This
+policy is the separate claim, checked with CL-SPEC:ASSESS-EVIDENCE, that the run
+completed its budget, that every one of its TRIALS reached a passed or failed
+verdict, and that each declared case reached at least one verdict.  It inspects
+saved facts only; it neither reruns the check nor proves the domain covered."
+  (check-type trials (integer 1))
+  (list :policy-version 1
+        :requirements (list '(:kind :requested-trials-completed)
+                            (list :kind :min-checked-trials :count trials)
+                            '(:kind :all-declared-cases :min-checked 1))))
+
+(defparameter *registry-protocol*
+  '((cl-spec:registry-find-spec 2) (cl-spec:registry-register-spec 3)
+    (cl-spec:registry-list-specs 1)
+    (cl-spec:registry-find-function-spec 2) (cl-spec:registry-register-function-spec 3)
+    (cl-spec:registry-list-function-specs 1)
+    (cl-spec:registry-find-generator 2) (cl-spec:registry-register-generator 3)
+    (cl-spec:registry-list-generators 1)
+    (cl-spec:registry-find-property 2) (cl-spec:registry-register-property 3)
+    (cl-spec:registry-list-properties 1)
+    (cl-spec:registry-properties-for 2) (cl-spec:registry-properties-with-tag 2)
+    (cl-spec:registry-clear 1))
+  "Each REGISTRY-* generic function of the §8 protocol with its required argument count.")
+
+(defun registry-implementation-p (object)
+  "True when every REGISTRY-* protocol function has a primary method for OBJECT.
+
+The check dispatches on OBJECT as the registry argument with NIL for the others,
+so it describes implementations that specialize only the registry, as the
+built-in HASH-TABLE-REGISTRY does.  It inspects method applicability only and
+calls none of the methods.  The core's unqualified :AROUND validation methods
+apply to every object and are not counted."
+  (every (lambda (entry)
+           (destructuring-bind (name arity) entry
+             (some (lambda (method) (null (method-qualifiers method)))
+                   (compute-applicable-methods
+                    (fdefinition name)
+                    (cons object (make-list (1- arity) :initial-element nil))))))
+         *registry-protocol*))
+
+(defun registry-conformance-names ()
+  "Return the contracts and laws that describe the REGISTRY-* protocol itself.
+
+Each builds the registry it checks with MAKE-REGISTRY-UNDER-TEST, so
+CHECK-REGISTRY-IMPLEMENTATION runs exactly these against another implementation.
+The value is a plist of :CONTRACTS and :PROPERTIES name lists."
+  (list :contracts '(cl-spec:registry-register-property cl-spec:find-spec
+                     cl-spec:definition-digest)
+        :properties '(registry-round-trips-definitions
+                      registry-reverse-indexes-track-redefinition
+                      registry-clear-empties
+                      registry-queries-return-sorted-names
+                      registry-writes-replace-by-name
+                      registry-keys-are-symbols-not-names
+                      registration-replacement-preserves-unrelated-indexes)))
+
+(defun check-registry-implementation (constructor &key (seeds '(1 42 2026)) (trials 50))
+  "Run the registry-protocol contracts and laws against registries CONSTRUCTOR returns.
+
+CONSTRUCTOR is a function of no arguments returning a fresh, empty registry.  It
+is called once before any check to confirm REGISTRY-IMPLEMENTATION-P, and a
+TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative
+integers, so a true answer always rests on executed checks.  TRIALS must be at
+least the largest number of cases a conformance contract declares, since
+EVIDENCE-POLICY requires a verdict in every declared case; a smaller budget is
+refused with a TYPE-ERROR before CONSTRUCTOR is called.  The bundle is registered
+in a private registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract
+runs TRIALS trials and every law its declared :NORMAL budget, once per seed in
+SEEDS.
+
+Return two values: true when every run passed with :SATISFIED evidence under
+EVIDENCE-POLICY, and a list of one plist per run with :KIND, :NAME, :SEED,
+:STATUS, :ASSESSMENT and :RESULT.  Executing the checks requires a generator
+backend such as CL-SPEC/CHECK-IT to be loaded."
+  (check-type constructor function)
+  ;; An empty seed list would run nothing, and EVERY over no records is true:
+  ;; conformance must always rest on at least one executed check.
+  ;; Seeds are validated as the runners require (nonnegative) before any check,
+  ;; so a bad later seed cannot surface only after earlier runs have executed.
+  (unless (and (consp seeds) (finite-list-p seeds)
+               (every (lambda (seed) (typep seed '(integer 0 *))) seeds))
+    (error 'type-error :datum seeds :expected-type '(cons (integer 0 *) list)))
+  (check-type trials (integer 1))
+  (let ((*registry-constructor* constructor)
+        (cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (names (registry-conformance-names))
+        (records '()))
+    (register-specifications)
+    ;; A budget below the widest case list can never satisfy EVIDENCE-POLICY, so
+    ;; it would report even a correct registry as nonconforming.
+    (let ((minimum (loop for name in (getf names :contracts)
+                         maximize (max 1 (length (getf (cl-spec:function-spec-data name)
+                                                       :cases))))))
+      (unless (>= trials minimum)
+        (error 'type-error :datum trials :expected-type `(integer ,minimum))))
+    (let ((sample (funcall constructor)))
+      (unless (registry-implementation-p sample)
+        (error 'type-error :datum sample
+                           :expected-type '(satisfies registry-implementation-p))))
+    (flet ((record (kind name seed result budget)
+             (push (list :kind kind :name name :seed seed
+                         :status (cl-spec:property-result-status result)
+                         :assessment (getf (cl-spec:assess-evidence
+                                            result (evidence-policy budget))
+                                           :assessment)
+                         :result result)
+                   records)))
+      (dolist (seed seeds)
+        (dolist (name (getf names :contracts))
+          (record :contract name seed
+                  (cl-spec:check-function name :trials trials :seed seed) trials))
+        (dolist (name (getf names :properties))
+          (record :property name seed (cl-spec:run-property name :seed seed)
+                  (getf (cl-spec:property-trials (cl-spec:find-property name)) :normal)))))
+    (let ((records (nreverse records)))
+      (values (every (lambda (record)
+                       (and (eq :passed (getf record :status))
+                            (eq :satisfied (getf record :assessment))))
+                     records)
+              records))))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.
@@ -421,6 +552,27 @@ the definitions REGISTER-SPECIFICATIONS installs.")
   "Identity target for the retained-counterexample law's keyword contract."
   (declare (ignore a))
   raw)
+
+(defun found-definition-p (expected primary present)
+  "True when a REGISTRY-FIND-* answer matches EXPECTED exactly.
+
+A non-NIL EXPECTED requires that definition and a found-p of T; a NIL EXPECTED
+requires NIL and NIL, the documented answer for an absent name."
+  (and (eq expected primary) (eq (and expected t) present)))
+
+(defun self-sort-contract (&optional (name 'self-contract))
+  "Return a fresh, valid function spec named NAME for the registry laws."
+  (make-instance 'cl-spec:function-spec :name name
+                 :argument-specs '((x integer)) :return-spec 'integer))
+
+(defun self-sort-generator (&optional (name 'self-generator))
+  "Return a fresh custom generator named NAME for the registry laws."
+  (make-instance 'cl-spec:custom-generator :name name :function (lambda () 1)))
+
+(defun self-sort-property (name)
+  "Return a fresh, valid property named NAME for the registry laws."
+  (make-instance 'cl-spec:property :name name :arguments '((x integer))
+                 :function (lambda (x) (declare (ignore x)) t)))
 
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
@@ -608,8 +760,8 @@ their finite input corpora, and the registry write contract names its scenarios.
                      (:shrinking (member :available :unavailable :unknown :none))
                      (:instrumentation (member :available :unavailable :unknown :none)))))))
       (satisfies digest-details-consistent-p)))
-  (defgenerator registry-generator () (cl-spec:make-hash-table-registry))
-  (defspec registry-object (instance-of hash-table-registry)
+  (defgenerator registry-generator () (make-registry-under-test))
+  (defspec registry-object (satisfies registry-implementation-p)
     (:generator registry-generator))
   (defspec-function cl-spec:definition-digest
     "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
@@ -960,7 +1112,7 @@ observation is a fresh list from a public reader, never a captured registry.
 The fresh fixture's recipe is the scenario keyword, so each trial rebuilds its
 registry from data and a failing keyword persists as a counterexample artifact
 that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
-    (:args (registry (instance-of cl-spec:hash-table-registry)) (name symbol)
+    (:args (registry registry-object) (name symbol)
            (property (instance-of cl-spec:property))
            &key ((:targets targets) (satisfies registration-scenario-targets-p))
                 ((:tags tags) (satisfies registration-scenario-tags-p)))
@@ -1342,20 +1494,36 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
             cl-spec:list-function-specs cl-spec:list-generators)
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
-    (let ((registry (cl-spec:make-hash-table-registry))
+    (let ((registry (make-registry-under-test))
           (contract (make-instance 'cl-spec:function-spec :name 'self-contract
                                    :argument-specs '((x integer)) :return-spec 'integer))
           (generator (make-instance 'cl-spec:custom-generator :name 'self-generator
                                     :function (lambda () 1))))
-      (cl-spec:registry-register-spec registry 'self-spec spec)
-      (cl-spec:registry-register-property registry 'self-property property)
-      (cl-spec:registry-register-function-spec registry 'self-contract contract)
-      (cl-spec:registry-register-generator registry 'self-generator generator)
-      (and (eq spec (nth-value 0 (cl-spec:registry-find-spec registry 'self-spec)))
-           (nth-value 1 (cl-spec:registry-find-spec registry 'self-spec))
-           (eq property (nth-value 0 (cl-spec:registry-find-property registry 'self-property)))
-           (eq contract (nth-value 0 (cl-spec:registry-find-function-spec registry 'self-contract)))
-           (eq generator (nth-value 0 (cl-spec:registry-find-generator registry 'self-generator)))
+      ;; Each protocol function's documented return value is part of the law:
+      ;; a write returns the stored definition, a lookup its definition and T,
+      ;; and a lookup of an absent name NIL and NIL.
+      (and (eq spec (cl-spec:registry-register-spec registry 'self-spec spec))
+           (eq property (cl-spec:registry-register-property registry 'self-property property))
+           (eq contract (cl-spec:registry-register-function-spec
+                         registry 'self-contract contract))
+           (eq generator (cl-spec:registry-register-generator
+                          registry 'self-generator generator))
+           (multiple-value-call #'found-definition-p
+             spec (cl-spec:registry-find-spec registry 'self-spec))
+           (multiple-value-call #'found-definition-p
+             property (cl-spec:registry-find-property registry 'self-property))
+           (multiple-value-call #'found-definition-p
+             contract (cl-spec:registry-find-function-spec registry 'self-contract))
+           (multiple-value-call #'found-definition-p
+             generator (cl-spec:registry-find-generator registry 'self-generator))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-spec registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-property registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-function-spec registry 'self-absent))
+           (multiple-value-call #'found-definition-p
+             nil (cl-spec:registry-find-generator registry 'self-absent))
            (member 'self-spec (cl-spec:registry-list-specs registry))
            (member 'self-property (cl-spec:registry-list-properties registry))
            (member 'self-contract (cl-spec:registry-list-function-specs registry))
@@ -1365,7 +1533,7 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
     (:about cl-spec:properties-for cl-spec:properties-with-tag cl-spec:register-property)
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
-    (let* ((registry (cl-spec:make-hash-table-registry))
+    (let* ((registry (make-registry-under-test))
            (first (make-instance 'cl-spec:property
                                  :name 'self-property
                                  :arguments '((x integer))
@@ -1396,17 +1564,135 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
             cl-spec:properties-for cl-spec:properties-with-tag)
     (:tags :cl-spec-self)
     (:trials (:smoke 10 :normal 50))
-    (let ((registry (cl-spec:make-hash-table-registry)))
+    (let ((registry (make-registry-under-test)))
+      ;; Every definition kind is stored before the clear, so a store the clear
+      ;; forgets is observed rather than trivially empty.
       (cl-spec:registry-register-spec registry 'self-spec spec)
       (cl-spec:registry-register-property registry 'self-property property
                                           :targets '(self-target) :tags '(self-tag))
-      (cl-spec:registry-clear registry)
-      (and (null (cl-spec:registry-list-specs registry))
+      (cl-spec:registry-register-function-spec registry 'self-contract (self-sort-contract))
+      (cl-spec:registry-register-generator registry 'self-generator (self-sort-generator))
+      (and (eq registry (cl-spec:registry-clear registry))
+           (null (cl-spec:registry-list-specs registry))
            (null (cl-spec:registry-list-properties registry))
+           (null (cl-spec:registry-list-function-specs registry))
+           (null (cl-spec:registry-list-generators registry))
            (null (cl-spec:registry-properties-for registry 'self-target))
            (null (cl-spec:registry-properties-with-tag registry 'self-tag))
            (not (nth-value 1 (cl-spec:registry-find-spec registry 'self-spec)))
-           (not (nth-value 1 (cl-spec:registry-find-property registry 'self-property))))))
+           (not (nth-value 1 (cl-spec:registry-find-property registry 'self-property)))
+           (not (nth-value 1 (cl-spec:registry-find-function-spec registry 'self-contract)))
+           (not (nth-value 1 (cl-spec:registry-find-generator registry 'self-generator))))))
+  (defproperty registry-queries-return-sorted-names ()
+    "Every REGISTRY-* list and reverse-index query returns names sorted (§8).
+
+The names are registered out of order, so an implementation answering in
+insertion order or its reverse is observed.  They share one home package, so the
+expected order is by symbol name alone and is computed here, not by the registry."
+    (:about cl-spec:list-specs cl-spec:list-properties cl-spec:list-function-specs
+            cl-spec:list-generators cl-spec:properties-for cl-spec:properties-with-tag)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((registry (make-registry-under-test))
+           (names '(self-sort-c self-sort-a self-sort-b))
+           (expected (sort (copy-list names) #'string< :key #'symbol-name)))
+      (dolist (name names)
+        (cl-spec:registry-register-spec registry name (normalize-spec-form 'integer))
+        (cl-spec:registry-register-function-spec registry name (self-sort-contract name))
+        (cl-spec:registry-register-generator registry name (self-sort-generator name))
+        (cl-spec:registry-register-property registry name (self-sort-property name)
+                                            :targets '(self-sort-target)
+                                            :tags '(self-sort-tag)))
+      (every (lambda (observed) (equal expected observed))
+             (list (cl-spec:registry-list-specs registry)
+                   (cl-spec:registry-list-function-specs registry)
+                   (cl-spec:registry-list-generators registry)
+                   (cl-spec:registry-list-properties registry)
+                   (cl-spec:registry-properties-for registry 'self-sort-target)
+                   (cl-spec:registry-properties-with-tag registry 'self-sort-tag)))))
+  (defproperty registry-writes-replace-by-name ()
+    "A second write under a name replaces the first for every definition kind (§8)."
+    (:about cl-spec:register-spec cl-spec:register-function-spec cl-spec:register-generator
+            cl-spec:find-spec cl-spec:find-function-spec cl-spec:find-generator)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let ((registry (make-registry-under-test))
+          (first-spec (normalize-spec-form 'integer))
+          (second-spec (normalize-spec-form 'string))
+          (first-contract (self-sort-contract))
+          (second-contract (self-sort-contract))
+          (first-generator (self-sort-generator))
+          (second-generator (self-sort-generator)))
+      (cl-spec:registry-register-spec registry 'self-spec first-spec)
+      (cl-spec:registry-register-function-spec registry 'self-contract first-contract)
+      (cl-spec:registry-register-generator registry 'self-generator first-generator)
+      (and (eq second-spec (cl-spec:registry-register-spec registry 'self-spec second-spec))
+           (eq second-contract (cl-spec:registry-register-function-spec
+                                registry 'self-contract second-contract))
+           (eq second-generator (cl-spec:registry-register-generator
+                                 registry 'self-generator second-generator))
+           (multiple-value-call #'found-definition-p
+             second-spec (cl-spec:registry-find-spec registry 'self-spec))
+           (multiple-value-call #'found-definition-p
+             second-contract (cl-spec:registry-find-function-spec registry 'self-contract))
+           (multiple-value-call #'found-definition-p
+             second-generator (cl-spec:registry-find-generator registry 'self-generator))
+           (equal '(self-spec) (cl-spec:registry-list-specs registry))
+           (equal '(self-contract) (cl-spec:registry-list-function-specs registry))
+           (equal '(self-generator) (cl-spec:registry-list-generators registry)))))
+  (defproperty registry-keys-are-symbols-not-names ()
+    "Same-named symbols of two packages are distinct entries, listed in package order (§8).
+
+Both names are registered for every definition kind and indexed under one
+target and tag.  Each must stay independently findable, and every list and
+reverse-index query must order them by name and then by home package name."
+    (:about cl-spec:find-spec cl-spec:find-property cl-spec:find-function-spec
+            cl-spec:find-generator cl-spec:list-specs cl-spec:list-properties
+            cl-spec:list-function-specs cl-spec:list-generators
+            cl-spec:properties-for cl-spec:properties-with-tag)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 1 :normal 2))
+    (let* ((registry (make-registry-under-test))
+           (local 'self-duplicate-item)
+           (foreign *foreign-duplicate-name*)
+           (expected (sort (list local foreign) #'string<
+                           :key (lambda (name)
+                                  (package-name (symbol-package name)))))
+           (definitions
+             (loop for name in (list local foreign)
+                   collect (list name
+                                 (normalize-spec-form (if (eq name local) 'integer 'string))
+                                 (self-sort-contract name)
+                                 (self-sort-generator name)
+                                 (self-sort-property name)))))
+      (dolist (entry definitions)
+        (destructuring-bind (name spec contract generator property) entry
+          (cl-spec:registry-register-spec registry name spec)
+          (cl-spec:registry-register-function-spec registry name contract)
+          (cl-spec:registry-register-generator registry name generator)
+          (cl-spec:registry-register-property registry name property
+                                              :targets '(self-sort-target)
+                                              :tags '(self-sort-tag))))
+      (and (string= (symbol-name local) (symbol-name foreign))
+           (not (eq local foreign))
+           (every (lambda (entry)
+                    (destructuring-bind (name spec contract generator property) entry
+                      (and (multiple-value-call #'found-definition-p
+                             spec (cl-spec:registry-find-spec registry name))
+                           (multiple-value-call #'found-definition-p
+                             contract (cl-spec:registry-find-function-spec registry name))
+                           (multiple-value-call #'found-definition-p
+                             generator (cl-spec:registry-find-generator registry name))
+                           (multiple-value-call #'found-definition-p
+                             property (cl-spec:registry-find-property registry name)))))
+                  definitions)
+           (every (lambda (observed) (equal expected observed))
+                  (list (cl-spec:registry-list-specs registry)
+                        (cl-spec:registry-list-function-specs registry)
+                        (cl-spec:registry-list-generators registry)
+                        (cl-spec:registry-list-properties registry)
+                        (cl-spec:registry-properties-for registry 'self-sort-target)
+                        (cl-spec:registry-properties-with-tag registry 'self-sort-tag))))))
   (defproperty member-admits-exactly-its-values ((value arbitrary-value))
     "A MEMBER spec admits exactly the values EQL to one of its members (§9)."
     (:about validp)
@@ -1598,7 +1884,7 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
             cl-spec:properties-with-tag)
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
-    (let* ((registry (cl-spec:make-hash-table-registry))
+    (let* ((registry (make-registry-under-test))
            (subject (self-registration-name :subject))
            (sentinel (self-registration-name :sentinel))
            (shared-target (self-registration-name :shared-target))

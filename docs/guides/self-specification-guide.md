@@ -154,6 +154,25 @@ For a contract run:
   application value may legally equal any plist — including the unavailable
   shape itself. Capture observes a value and does not copy or restore it.
 
+### Passed is not the same as sufficient
+
+`:passed` says only that the observed trials found no violation. The bundle's
+suites also assess every run's saved evidence against
+`(cl-spec/specs:evidence-policy trials)`: the run completed its budget, every
+trial reached a passed or failed verdict, and each declared case reached at least
+one verdict.
+
+```lisp
+(let ((result (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42)))
+  (getf (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy 50))
+        :assessment))
+;; => :SATISFIED
+```
+
+A run fed only admitted `validate` inputs still passes, but its assessment is
+`:insufficient` with a gap naming the `:refused` case. The assessment reads saved
+facts only; it neither reruns the check nor claims the domain was covered.
+
 ## 6. What the state-observing self-contracts do not do
 
 `cl-spec:registry-register-property`'s contract is a sequential-execution
@@ -174,12 +193,43 @@ and rechecked once with `:state-policy :fixture`:
 The recipe has no shrinker: each keyword selects its own case and the case name
 is part of the failure identity, so no other keyword could keep the same failure.
 `tests/self-api-contracts-test.lisp` shows the whole path by binding
-`cl-spec/self-spec-fixtures:*registration-registry-constructor*` to a faulty
+`cl-spec/specs:*registry-constructor*` to a faulty
 registry subclass: the saved recipe reports `:same-failure` under the fault and
 `:passed` without it. Case-carrying contracts refuse runtime instrumentation. Do
 not work around these limits to run a self-specification.
 
-## 7. Finite corpus, public domain and unverified scope
+## 7. Check your own registry implementation
+
+The registry is a protocol (§8): fifteen `REGISTRY-*` generic functions. The
+bundle's registry contracts and laws build every registry they check with
+`*registry-constructor*`, so the same checks run against another implementation:
+
+```lisp
+(asdf:load-system "cl-spec/check-it")
+(asdf:load-system "cl-spec/specs")
+(multiple-value-bind (conforming records)
+    (cl-spec/specs:check-registry-implementation #'make-my-registry)
+  (values conforming
+          (remove-if (lambda (record) (eq :satisfied (getf record :assessment)))
+                     records)))
+```
+
+The constructor returns a fresh, empty registry. It is refused with a
+`type-error` before any check unless `registry-implementation-p` finds a primary
+method for every protocol function (dispatching on the registry with NIL for the
+other arguments). The checks run in a private registry, once per seed, and a run
+counts only when it passed with `:satisfied` evidence under `evidence-policy`.
+`registry-conformance-names` lists what runs. The core's validating `:around`
+methods apply to every implementation, so malformed index arguments are refused
+before your primary method is called.
+
+`tests/registry-conformance-test.lisp` runs the suite against an independent
+alist registry, which conforms, and against a variant that keeps stale index
+entries on re-registration, which fails exactly the registration contract and
+the two re-registration laws. The suite checks sequential behaviour only; it does
+not test concurrency or recovery from an error inside your methods.
+
+## 8. Finite corpus, public domain and unverified scope
 
 The `validate` contract draws admitted/refused inputs from a small finite
 `*validate-corpus*` and the boundary test passes an explicit sequence through
@@ -196,7 +246,7 @@ does not say the whole domain was verified. The small-domain oracle in
 `stringp`, `eql` and `member` so that `validp` and `validate` are not their own
 authority.
 
-## 8. Fault detection and repair comparison
+## 9. Fault detection and repair comparison
 
 `eval/run-detection.sh` applies one limited fault at a time to a throwaway
 source snapshot, runs the fixed self-specification and an evaluator-owned
@@ -220,7 +270,7 @@ condition A must also drop `api-docs.lisp` and the instrumentation-status
 integration test because they import the bundle, so the two conditions differ by
 more than self-spec availability; `eval/README.md` records this explicitly.
 
-## 9. Spec → API → property → test → eval task
+## 10. Spec → API → property → test → eval task
 
 | Self-specification | Public API | Related property | Test | Eval task |
 |---|---|---|---|---|

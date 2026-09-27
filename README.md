@@ -131,7 +131,15 @@ precondition-rejected classifications and the `call-check-data` envelope against
 anonymous contracts, and one declares a named case with capture and state-post on
 the counting fixture and checks both the passing and the violating one-shot
 result. The self-spec suites compare each run against the property's declared
-`:trials` budget instead of assuming a shared trial count.
+`:trials` budget instead of assuming a shared trial count, and require every run's
+saved evidence to be `:satisfied` under `cl-spec/specs:evidence-policy`, so a
+passing run that never reached a declared case is reported instead of accepted.
+
+The registry contracts and laws double as a conformance suite for other
+implementations of the `REGISTRY-*` protocol:
+`(cl-spec/specs:check-registry-implementation #'make-my-registry)` runs them
+against registries that constructor returns and answers whether every run passed
+with satisfied evidence.
 
 ### Persisting and directly rechecking a counterexample
 
