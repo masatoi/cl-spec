@@ -44,7 +44,7 @@ there, and pass the registry under test explicitly where the API takes one:
   (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42))
 ```
 
-`cl-spec/registry-register-property`'s self-contract goes one step further: it
+`cl-spec:registry-register-property`'s self-contract goes one step further: it
 declares a `:fresh` fixture whose recipe is a scenario keyword (`:new`,
 `:replace`, `:refused-targets` or `:refused-tags`). Setup builds a fresh target
 registry from that keyword for every trial, pre-registers a sentinel property,
@@ -56,7 +56,7 @@ state.
 ## 3. Find the contract and properties for a symbol
 
 ```lisp
-(cl-spec:find-function-spec 'cl-spec:validate)   ; the contract, or two values
+(cl-spec:find-function-spec 'cl-spec:validate)   ; (values contract present-p)
 (cl-spec:properties-for 'cl-spec:validate)       ; sorted property names
 (cl-spec:function-spec-data 'cl-spec:validate)   ; declaration projection
 (cl-spec:property-data 'cl-spec/specs::validate-cases-classify-admitted-and-refused)
@@ -72,9 +72,10 @@ state-post or target.
 
 `cl-spec/specs:contract-names` and `cl-spec/specs:property-names` are the
 bundle's declared execution set. In a fresh registry that just ran
-`register-specifications`, each list is exactly the corresponding registry
-listing (`cl-spec:list-function-specs`, `cl-spec:list-properties`), with no
-duplicates.
+`register-specifications`, each list has exactly the same elements as the
+corresponding registry listing (`cl-spec:list-function-specs`,
+`cl-spec:list-properties`), with no duplicates; the order may differ, so
+compare them as sets rather than with `equal`.
 
 ## 4. Run one check or all of them
 
@@ -190,6 +191,10 @@ and rechecked once with `:state-policy :fixture`:
   (cl-spec:recheck-counterexample artifact :state-policy :fixture))
 ```
 
+Against the shipped registry this contract passes, so `make-counterexample-artifact`
+refuses the passed result with `invalid-counterexample-artifact`; the snippet
+needs a faulty registry, as described next.
+
 The recipe has no shrinker: each keyword selects its own case and the case name
 is part of the failure identity, so no other keyword could keep the same failure.
 `tests/self-api-contracts-test.lisp` shows the whole path by binding
@@ -266,8 +271,9 @@ No model was invoked, so no efficiency or quality improvement is reported. The
 record shape in `eval/record-template.json` records unmeasured values as
 `null`, never `0`, and marks `comparison_status` `not-run` until both conditions
 have actually been executed. One comparison limitation is already known:
-condition A must also drop `api-docs.lisp` and the instrumentation-status
-integration test because they import the bundle, so the two conditions differ by
+condition A must also drop `api-docs.lisp`, `tests/api-docs-test.lisp` and the
+instrumentation-status integration test because they import the bundle (the docs
+test through `api-docs.lisp`), so the two conditions differ by
 more than self-spec availability; `eval/README.md` records this explicitly.
 
 ## 10. Spec → API → property → test → eval task
@@ -281,5 +287,8 @@ more than self-spec availability; `eval/README.md` records this explicitly.
 | One-shot concrete invocation | `check-call` | `one-shot-check-reuses-the-single-trial-classifier`, `one-shot-check-observes-a-named-case-and-state-once` | `check-call-test`, `self-specs-test`, `self-api-contracts-test` | — |
 
 What is not covered by the bundle today: every keyword-option combination, custom
-registry or backend implementations, a malformed `defspec` form itself, the whole
-shrink-candidate search, and the `describe-*` printers.
+backend implementations, registry concurrency and recovery from an error inside
+registry methods, a malformed `defspec` form itself, the whole shrink-candidate
+search, and the `describe-*` printers. A custom registry implementation's
+sequential behaviour is covered by `check-registry-implementation`
+([section 7](#7-check-your-own-registry-implementation)).
