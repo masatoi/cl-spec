@@ -113,7 +113,9 @@ alone. The outcome contract passes; the state relation does not:
 ;;     :FAILURE-REASON :STATE-POSTCONDITION
 ;;     :SIGNATURE (:CASE :SUFFICIENT-FUNDS :STATE-POSTCONDITION 0)
 ;;     :STATE (:CAPTURE (:STATUS :COMPLETED :DECLARED (BALANCE-BEFORE ID-BEFORE)
-;;                       :VALUES ((BALANCE-BEFORE . 30) (ID-BEFORE . 7)) :ERROR NIL)
+;;                       :VALUES ((:NAME BALANCE-BEFORE :AVAILABILITY :COLLECTED :VALUE 30)
+;;                                (:NAME ID-BEFORE :AVAILABILITY :COLLECTED :VALUE 7))
+;;                       :ERROR NIL)
 ;;             :STATE-POST (:STATUS :VIOLATION :REASON NIL :CASE :SUFFICIENT-FUNDS
 ;;                         :INDEX 0 :FORM (= (ACCOUNT-BALANCE ACCOUNT) ...)
 ;;                         :CONDITION-TYPE NIL))
@@ -166,8 +168,8 @@ claim otherwise.
 (cl-spec/examples/stateful-withdraw:demo-verification-error *registry*)
 ;; => (:STATUS :ERROR :FAILURE-PHASE :STATE-POST
 ;;     :FAILURE-REASON :CONTRACT-ERROR
-;;     :STATE (:STATE-POST (:STATUS :ERROR :INDEX 0
-;;                         :CONDITION-TYPE BALANCE-VERIFICATION-FAILED ...)) ...)
+;;     :STATE (... :STATE-POST (:STATUS :ERROR ... :INDEX 0
+;;                             ... :CONDITION-TYPE BALANCE-VERIFICATION-FAILED)) ...)
 ```
 
 A predicate that returns `NIL` is a `:STATE-POSTCONDITION` violation
@@ -190,8 +192,8 @@ shrinking and saved-recipe rechecks, see the
 ;;     :REPLAY :STATE-RESTORATION-UNAVAILABLE)
 ```
 
-A contract that declares `:CAPTURE` or `:STATE-POST` observes state but never
-restores it, so this version does not:
+A contract that declares `:CAPTURE` or `:STATE-POST` **without a `:fixture`**
+observes state but never restores it, so this version does not:
 
 - shrink it — no candidate is re-run against the same mutable object, and the
   shrink report says `:STATE-RESTORATION-UNAVAILABLE`. The reason is the missing
@@ -331,10 +333,10 @@ classification. Because capture and selection errors call no target,
 | Target calls | once per trial; capture and selection failures call it zero times | no `:FINALLY`-style state check after every abnormal exit |
 | Detects | declared observations changing, expected error after mutation, unrelated declared value changing | not all undeclared fields, not atomicity, concurrency, crash safety or absent I/O |
 | Evidence | capture progress, state-post status and position, raw outcome | reuses the existing snapshot; an opaque value is reported as an explicit unprojectable placeholder, not frozen |
-| Shrinking | disabled, `:STATE-RESTORATION-UNAVAILABLE` | not restored, so no candidate is re-run |
-| Replay | result-as-seed refused; integer seed starts a new run | initial state is the author's responsibility |
-| Artifact | refused with `:STATEFUL-CONTRACT-UNSUPPORTED` | no object codec or restoration adapter |
-| Instrumentation | refused with `:STATE-CONSTRAINTS-UNSUPPORTED` | featureless instrumentation unchanged |
+| Shrinking | without `:fixture`: disabled, `:STATE-RESTORATION-UNAVAILABLE` | not restored, so no candidate is re-run; a `:fixture` contract shrinks its recipe ([reproducible guide](reproducible-stateful-contracts.md)) |
+| Replay | without `:fixture`: result-as-seed refused; integer seed starts a new run | initial state is the author's responsibility; a `:fixture` contract accepts a result as `:SEED` |
+| Artifact | without `:fixture`: refused with `:STATEFUL-CONTRACT-UNSUPPORTED` | no object codec or restoration adapter; a `:fixture` contract saves a version-2 recipe artifact |
+| Instrumentation | refused with `:STATE-CONSTRAINTS-UNSUPPORTED`, with or without `:fixture` | featureless instrumentation unchanged |
 
 Guarantee boundaries:
 
@@ -352,9 +354,12 @@ Guarantee boundaries:
   syntax, meaning, failure signatures, projection and digest bytes. The existing
   `:SIGNALS` / `:POST` exclusivity and the multiple-value rules are unchanged.
 - Not in this version: automatic deep copy or snapshotting of arbitrary objects,
-  CLOS/hash-table traversal, mutation detection, rollback, fixtures or reset
-  protocols, state-machine PBT, concurrency, a generic diagnostic DSL, and new
-  MCP tools.
+  CLOS/hash-table traversal, mutation detection, rollback, isolation other than
+  `:fresh` (restoring an existing object, database rollback, process
+  supervision), state-machine PBT, concurrency, a generic diagnostic DSL, and new
+  MCP tools. Fresh reconstruction through `:fixture (:isolation :fresh)` is
+  supported; see the
+  [reproducible stateful contract guide](reproducible-stateful-contracts.md).
 
 ## Where to read more
 
