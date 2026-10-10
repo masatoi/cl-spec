@@ -150,7 +150,7 @@ trial's outcome evidence.
 
 ```lisp
 (cl-spec/examples/stateful-withdraw:demo-renumbered-account *registry*)
-;; => (:STATUS :FAILED :FAILURE-PHASE :STATE-POST
+;; => (:STATUS :FAILED :FAILURE-PHASE :STATE-POST ...
 ;;     :SIGNATURE (:CASE :SUFFICIENT-FUNDS :STATE-POSTCONDITION 1) ...)
 ```
 
@@ -166,8 +166,8 @@ claim otherwise.
 
 ```lisp
 (cl-spec/examples/stateful-withdraw:demo-verification-error *registry*)
-;; => (:STATUS :ERROR :FAILURE-PHASE :STATE-POST
-;;     :FAILURE-REASON :CONTRACT-ERROR
+;; => (:STATUS :ERROR :FAILURE-PHASE :STATE-POST ...
+;;     :FAILURE-REASON :CONTRACT-ERROR ...
 ;;     :STATE (... :STATE-POST (:STATUS :ERROR ... :INDEX 0
 ;;                             ... :CONDITION-TYPE BALANCE-VERIFICATION-FAILED)) ...)
 ```
@@ -233,7 +233,7 @@ observation (`trial-observation-state`), projected into `result-data` under
            ((:name NAME :availability :collected :value VALUE) ...
             (:name NAME :availability :unavailable
              :reason :opaque-value :type TYPE) ...)
-           :error (:binding NAME :index I :condition-type T))
+           :error (:binding NAME :index I :condition-type T) | NIL)
  :state-post (:status :not-evaluated | :passed | :violation | :error
              :reason REASON                      ; when :not-evaluated
              :case NAME | NIL
@@ -242,7 +242,9 @@ observation (`trial-observation-state`), projected into `result-data` under
 ```
 
 `:reason` for a `:NOT-EVALUATED` state-post is one of `:PRECONDITION-REJECTED`,
-`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`. `:values` is an
+`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`, or
+`:CONTRACT-ERROR` when contract-side code before the target call — typically a
+`:pre` form — signals a condition that is not a `spec-violation`. `:values` is an
 ordered list of per-binding records. `:name` associates each record with its
 binding, so a reader finds one by name rather than reconstructing the pairing
 from `:declared`; `:availability` is framework metadata and is **never** inferred
@@ -258,9 +260,9 @@ binding as obtained.
 
 `:state-post` appears when the contract declares a clause — the selected case's,
 or, before a case is selected, the top-level clause or any case's. When no case
-was selected its `:case` is `NIL` and its `:reason` is `:CAPTURE-FAILED` or
-`:CASE-SELECTION-FAILED`, so "no state-post declared" and "declared but stopped
-before selection" stay distinct. A contract that declares neither clause records
+was selected its `:case` is `NIL` and its `:reason` is `:PRECONDITION-REJECTED`,
+`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED` or `:CONTRACT-ERROR`, so "no
+state-post declared" and "declared but stopped before selection" stay distinct. A contract that declares neither clause records
 no state evidence at all, so a featureless run's projection is unchanged.
 
 Earlier development builds used an ordered `((NAME . VALUE) ...)` alist and put

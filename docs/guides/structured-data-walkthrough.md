@@ -144,7 +144,7 @@ does not promise that a draw will succeed within the budget (§38.1).
 
 ```lisp
 (cl-spec/examples/structured-data:demo-check-function *registry*)
-;; => (:STATUS :PASSED :FAILURE-REASON NIL :REPORT (... :TERMINATION :COMPLETED))
+;; => (:STATUS :PASSED :FAILURE-REASON NIL :REPORT (... :TERMINATION :COMPLETED ...))
 ```
 
 `defspec-function` declares the argument and return specs; `check-function`

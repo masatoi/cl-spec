@@ -132,15 +132,17 @@ For a contract run:
   (getf (cl-spec:result-data result) :failure))           ; structured observation
 ```
 
-- The case report lists the declared cases in order, the target calls, passed
-  and failed counts, `:case-selection-errors`, `:capture-errors` and
-  `:never-called`. A backend that did not report leaves the report
+- The case report lists the declared cases in order, the target calls, passed,
+  failed and error counts, `:case-selection-errors`, `:capture-errors` and
+  `:never-called`, plus `:fixture-errors` for a contract with a `:fixture` such
+  as `registry-register-property`. A backend that did not report leaves the report
   `:not-collected`, which is different from measured zeros.
 - `:failure-phase` says where the trial stopped: `:case-selection` before the
   target, `:capture` before the target, `:state-post` after a passed outcome.
 - `:failure :state` carries `:capture` (`:status`, `:declared`, `:values` as an
-  ordered list of per-binding records, optional `:error`) and `:state-post`
-  (`:status`, `:reason`, `:case`, `:index`, `:form`, `:condition-type`). Each
+  ordered list of per-binding records, and `:error`, which is `NIL` unless a
+  binding signalled) and `:state-post` (`:status`, `:reason`, `:case`, `:index`,
+  `:form`, `:condition-type`). Each
   record is `(:name NAME :availability :collected :value VALUE)` or
   `(:name NAME :availability :unavailable :reason :opaque-value :type TYPE)`.
   A captured NIL is a `:collected` record with a NIL `:value`; a binding whose
