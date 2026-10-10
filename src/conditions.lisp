@@ -137,11 +137,15 @@
                (format stream "No spec named ~S is registered." name)
                ;; Only COMMON-LISP type names are types when written bare, so a
                ;; user's condition, structure or class name lands here.
-               (when (and (symbolp name) (find-class name nil))
-                 (format stream "  ~S names a class; to use it as a type, write (TYPE ~S)."
-                         name name)))))
+               (when (and (symbolp name)
+                          (not (eq (symbol-package name) (find-package '#:common-lisp)))
+                          (find-class name nil))
+                 (format stream "  ~S names a class; to use it as a type in a spec form, ~
+                                 write (~S ~S)."
+                         name 'type name)))))
   (:documentation "Signalled when a spec designator resolves to nothing.
-When the name is a class, the report suggests the (TYPE NAME) form."))
+When the name is a class outside COMMON-LISP, the report suggests the (TYPE NAME)
+form.  A DEFTYPE name that is not a class gets no suggestion."))
 
 (define-condition unknown-property (cl-spec-error)
   ((name :initarg :name

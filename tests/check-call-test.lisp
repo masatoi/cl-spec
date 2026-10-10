@@ -297,7 +297,7 @@ support the same GETF calls as an ordinary argument-spec error."
            (condition (trial-observation-condition (observation result))))
       (ok (eq :error (call-check-result-status result)))
       (ok (typep condition 'cl-spec:unknown-spec))
-      (ok (search (format nil "(TYPE ~S)" 'insufficient-funds)
+      (ok (search (format nil "~S" (list 'type 'insufficient-funds))
                   (princ-to-string condition))))))
 
 (deftest fixed-multiple-values-and-post-values-use-the-shared-classifier
