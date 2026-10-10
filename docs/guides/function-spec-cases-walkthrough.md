@@ -176,8 +176,14 @@ coverage; to reach a rare case, hand the contract a controlled
  :cases ((:name NAME :documentation S
           :called N :passed N :failed N :error N) ...)
  :case-selection-errors N
+ :capture-errors N
  :never-called (NAME ...))
 ```
+
+`:CAPTURE-ERRORS` counts trials whose `:capture` failed before any case was
+selected; it is present, as `0`, even when the contract declares no capture. A
+contract with a `:fixture` also reports `:FIXTURE-ERRORS N` after
+`:NEVER-CALLED`.
 
 The counters cover ordinary generation trials only. Shrinking invocations are
 not trials, a precondition refusal belongs to no case, and a case-selection error
@@ -198,7 +204,7 @@ a result built by hand, and one whose backend never opened reporting, answers
 | Area | Behaviour | Main limit |
 |---|---|---|
 | `:cases` | one clause, one or more named cases, exclusive selection | no per-case `:args`/`:pre`, no nesting, no `:else`, no priority |
-| Case outcome | `:returns` (+ `:post`/`:post-values`) or `:signals` | a `:signals` case cannot carry postconditions in this version |
+| Case outcome | `:returns` (+ `:post`/`:post-values`) or `:signals` | a `:signals` case cannot carry `:post`/`:post-values`; it may carry `:state-post` (§17.3) |
 | Common `:pre` | still bounds the region; a refusal is a rejection | guards run only inside the admitted region |
 | Selection errors | `:error` / `:contract-error` / `:failure-phase :case-selection` | not shrunk; never a target counterexample |
 | Report | per-case calls and outcomes, selection errors, never-called | no automatic per-case trial minimum or coverage failure |
@@ -212,17 +218,25 @@ Guarantee boundaries:
 - Case guards, like validation predicates and readers, must not modify their
   input or anything reachable from it. cl-spec neither detects nor restores a
   violation. This does not forbid a target's intended state change, but this
-  feature does not solve reproduction or reset of stateful targets.
+  feature does not solve reproduction or reset of stateful targets; see the
+  [state-observation walkthrough](state-observation-walkthrough.md) for
+  `:capture`/`:state-post` and
+  [reproducible stateful contracts](reproducible-stateful-contracts.md) for
+  `:fixture`.
 - Case selection is evaluated once per admitted trial. A guard call has no
   timeout and no purity check, and reproducibility assumes guards and generators
   are deterministic in the same effective environment.
 - `:CASES` is new syntax; a contract without it keeps its syntax, meaning,
   failure signatures, projection and digest.
-- Not in this version: `:capture`/`old`, postconditions over the state after an
-  expected error, fixture/reset protocols, state-machine PBT, concurrency, CLOS
-  method contract composition, mutation detection, a general constraint solver,
-  and case selection through `tagged-by` (which selects a data spec by a value's
-  tag, a different feature).
+- Pre-call state capture (`:capture`), state postconditions after a returned or
+  an expected-error outcome (`:state-post`, also inside a `:signals` case), and
+  fresh-state reconstruction (`:fixture` with `:isolation :fresh`) are separate
+  features; see the [state-observation walkthrough](state-observation-walkthrough.md)
+  and [reproducible stateful contracts](reproducible-stateful-contracts.md).
+- Not in this version: state-machine PBT, concurrency, CLOS method contract
+  composition, mutation detection, a general constraint solver, and case
+  selection through `tagged-by` (which selects a data spec by a value's tag, a
+  different feature).
 
 ## Where to read more
 
