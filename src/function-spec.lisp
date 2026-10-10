@@ -1117,8 +1117,9 @@ would run while introspection reported no such clause"
                      (function-spec-state-postconditions contract)
                      (function-spec-state-postcondition-function contract)))
         (refuse cases
-                ":cases cannot be combined with a top-level :returns, :signals, :post, ~
-:post-values or :state-post; there is no inherited common outcome"))
+                (format nil ":cases cannot be combined with a top-level :returns, ~
+                             :signals, :post, :post-values or :state-post; there is no ~
+                             inherited common outcome")))
       (let ((*case-owner* contract))
         (dolist (case cases) (validate-definition case))))
     ;; Capture is validated after the cases, because a capture name must not

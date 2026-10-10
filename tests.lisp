@@ -54,6 +54,7 @@
   (:import-from #:cl-spec/tests/counterexample-test)
   (:import-from #:cl-spec/tests/counterexample-function-test)
   (:import-from #:cl-spec/tests/conditions-test)
+  (:import-from #:cl-spec/tests/error-message-test)
   (:import-from #:cl-spec/tests/utils/source-location-test)
   (:import-from #:cl-spec/tests/utils/random-test)
   (:import-from #:cl-spec/tests/ir-test)

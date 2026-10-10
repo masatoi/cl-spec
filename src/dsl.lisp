@@ -504,9 +504,9 @@ cannot be confused."
                    (member :state-post seen)))
       (function-spec-error
        clauses
-       ":cases cannot be combined with a top-level :returns, :signals, :post, ~
-:post-values or :state-post; each case rules its own outcome and there is no ~
-shared one"))
+       (format nil ":cases cannot be combined with a top-level :returns, :signals, :post, ~
+                    :post-values or :state-post; each case rules its own outcome and ~
+                    there is no shared one")))
     (unless (eq post-values :primary)
       (unless (and (proper-list-p returns) (symbolp (first returns))
                     (string= "VALUES" (symbol-name (first returns))))
