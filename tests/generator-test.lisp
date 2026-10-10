@@ -98,6 +98,9 @@
         (ok (every (lambda (value) (validp spec value)) values))))
     (testing "an interval with no integer in it cannot be generated"
       (ok (signals (sample (normalize-spec-form '(range integer 1/2 2/3)) :count 1)
+                   'generator-unavailable)))
+    (testing "an inverted real interval is refused the same way"
+      (ok (signals (sample (normalize-spec-form '(range real 5 1)) :count 1)
                    'generator-unavailable)))))
 
 (deftest the-backend-supplies-a-default-trial-count

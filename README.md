@@ -591,7 +591,9 @@ declared range, and a shrink never removes past `:min-length`. `:unique`
 generation draws distinct elements from a finite element domain. A finite
 integer `range` is sampled directly, so any width works and does not widen the
 generated collection length; fractional endpoints admit the integers between
-them, as validation reads them; `member`,
+them, as validation reads them (ordinary generation rounds them the same way, and
+a range that admits nothing — no integer between its endpoints, or a minimum
+above its maximum — signals `generator-unavailable`); `member`,
 `boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
 1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
 element spec with no finite enumeration, or one whose custom generator owns its
