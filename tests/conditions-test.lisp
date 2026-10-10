@@ -96,10 +96,10 @@
     (testing "a bare name that names a class is offered as (TYPE NAME)"
       (let ((report (report 'hint-condition)))
         (ok (search "HINT-CONDITION" report))
-        (ok (search (format nil "~S" (list 'type 'hint-condition)) report))))
+        (ok (search (format nil "(~S ~S)" 'type 'hint-condition) report))))
     (testing "the suggestion follows the printer settings"
       (let ((*print-case* :downcase))
-        (ok (search (format nil "~S" (list 'type 'hint-condition))
+        (ok (search (format nil "(~S ~S)" 'type 'hint-condition)
                     (report 'hint-condition)))))
     (testing "a name with no class gets no suggestion"
       (ok (null (search "names a class" (report 'missing-spec)))))
