@@ -37,12 +37,10 @@
     (testing "a price inside the range is valid and zero is not"
       (ok (eq t (getf summary :valid-price)))
       (ok (null (getf summary :zero-price))))
-    (testing "the explanation names the violated range"
-      (let ((err (first-error (getf summary :zero-price-errors))))
-        (ok (eq :out-of-range (getf err :kind)))
-        (ok (null (getf err :path)))
-        (ok (eql 0 (getf err :actual)))
-        (ok (equal '(:range :min 1 :max 10000) (getf err :expected)))))
+    (testing "the explanation is exactly the error plist the tutorial shows"
+      (ok (equal '(:kind :out-of-range :path nil :actual 0
+                   :expected (:range :min 1 :max 10000) :violated-bound :minimum)
+                 (first-error (getf summary :zero-price-errors)))))
     (testing "sampling draws five valid prices"
       (ok (= 5 (length (getf summary :prices))))
       (ok (getf summary :prices-valid)))))
@@ -54,14 +52,20 @@
     (testing "a field error carries the field's path"
       (let ((err (first-error (getf summary :zero-qty-errors))))
         (ok (eq :out-of-range (getf err :kind)))
-        (ok (equal '(:qty) (getf err :path)))))
+        (ok (equal '(:qty) (getf err :path)))
+        (ok (equal '(:qty) (getf err :field-path)))
+        (ok (eq :minimum (getf err :violated-bound)))))
     (testing "a missing required key and an unknown key are structural errors"
       (let ((missing (first-error (getf summary :missing-qty-errors)))
             (unknown (first-error (getf summary :unknown-key-errors))))
         (ok (eq :missing-key (getf missing :kind)))
         (ok (equal '(:qty) (getf missing :path)))
+        (ok (equal '(:qty) (getf missing :field-path)))
         (ok (eq :unknown-key (getf unknown :kind)))
         (ok (equal '(:memo) (getf unknown :path)))))
+    (testing "only a declared field's error carries :field-path"
+      (let ((unknown (first-error (getf summary :unknown-key-errors))))
+        (ok (null (nth-value 2 (get-properties unknown '(:field-path)))))))
     (testing "sampled carts are valid carts"
       (ok (= 2 (length (getf summary :carts))))
       (ok (getf summary :carts-valid)))))
@@ -89,6 +93,9 @@
       (let ((a (getf summary :shrunk-a))
             (b (getf summary :shrunk-b)))
         (ok (eq :used (getf summary :shrunk-outcome)))
+        ;; The tutorial promises no minimal counterexample; this bound deliberately
+        ;; pins the current shrinker's result because chapter 4 displays it.  A
+        ;; shrinker change that breaks it needs the tutorial text updated too.
         (ok (<= (+ (length a) (length b)) 2))
         (ok (not (additive-p #'broken-cart-subtotal a b)))
         (ok (additive-p #'cart-subtotal a b))))
@@ -104,11 +111,9 @@
     (testing "the broken subtotal breaks the postcondition on a one-item cart"
       (ok (eq :failed (getf summary :broken-status)))
       (ok (eq :postcondition (getf summary :broken-failure-reason)))
+      ;; Deliberately pins the current shrinker's one-item cart, which chapter 5
+      ;; displays; a shrinker change that breaks it needs the tutorial text updated.
       (ok (= 1 (length (getf summary :broken-shrunk-cart)))))))
-
-(defun case-entry (cases name)
-  "Return the case report entry in CASES whose :NAME is NAME."
-  (find name cases :key (lambda (entry) (getf entry :name))))
 
 (deftest tutorial-chapter-6-error-contract
   (let ((summary (demo-error-contract)))
@@ -117,6 +122,10 @@
     (testing "returning normally instead is a missing condition"
       (ok (eq :failed (getf summary :broken-status)))
       (ok (eq :missing-condition (getf summary :broken-failure-reason))))))
+
+(defun case-entry (cases name)
+  "Return the case report entry in CASES whose :NAME is NAME."
+  (find name cases :key (lambda (entry) (getf entry :name))))
 
 (deftest tutorial-chapter-7-cases
   (let ((summary (demo-cases)))
@@ -136,6 +145,8 @@
 (deftest tutorial-chapter-8-check-call
   (let ((summary (demo-check-call)))
     (testing "random checking misses the boundary bug"
+      ;; Depends on seed 42's 100 draws from 0..20000 missing exactly 5000.  Pinned
+      ;; deliberately because chapter 8 shows this :PASSED.
       (ok (eq :passed (getf summary :random-status))))
     (testing "checking the boundary directly catches it"
       (ok (equal '(:passed :failed :passed) (getf summary :boundary-statuses)))
