@@ -87,6 +87,7 @@ This project is developed with cl-mcp's tools:
 | `cl-spec/examples/structured-data` | executable structured-data integration example (inferred subsystem) | `check-it` |
 | `cl-spec/examples/function-spec-cases` | executable named per-condition Function Spec example (inferred subsystem) | `check-it` |
 | `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example (inferred subsystem) | `check-it` |
+| `cl-spec/examples/tutorial-cart` | executable shopping-cart example behind the introductory tutorial (inferred subsystem) | `check-it` |
 
 The core system must never load `check-it`. The generator backend is injected
 at load time into `cl-spec:*generator-backend*` by `cl-spec/check-it`.

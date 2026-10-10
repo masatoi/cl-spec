@@ -1044,6 +1044,10 @@ explain:
 
 ## Documentation
 
+- [`docs/tutorial.md`](docs/tutorial.md) — introductory tutorial: value specs,
+  properties, shrinking and replay, function contracts, `:signals`, `:cases` and
+  `check-call` on a shopping cart; a Japanese edition is in
+  [`docs/tutorial.ja.md`](docs/tutorial.ja.md)
 - [`docs/api/`](docs/api/README.md) — API reference for the public packages,
   generated from their docstrings
 - [`docs/guides/structured-data-walkthrough.md`](docs/guides/structured-data-walkthrough.md)
@@ -1065,6 +1069,8 @@ explain:
   executable examples the guides run
 - [`examples/stateful-withdraw.lisp`](examples/stateful-withdraw.lisp) — the
   executable capture/state-post example the state observation guide runs
+- [`examples/tutorial-cart.lisp`](examples/tutorial-cart.lisp) — the executable
+  example the tutorial runs
 
 The API reference is regenerated and committed by CI after every push to
 `main`. Regenerate it locally with:

@@ -88,6 +88,7 @@
   (:import-from #:cl-spec/tests/examples-test)
   (:import-from #:cl-spec/tests/function-cases-test)
   (:import-from #:cl-spec/tests/function-spec-cases-example-test)
+  (:import-from #:cl-spec/tests/tutorial-cart-example-test)
   (:import-from #:cl-spec/tests/self-specs-test)
   (:import-from #:cl-spec/tests/self-properties-test)
   (:import-from #:cl-spec/tests/self-api-contracts-test)
