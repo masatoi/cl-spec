@@ -21,7 +21,10 @@
                 #:property-result-status #:property-result-failure-reason
                 #:property-result-trials #:property-result-counterexample
                 #:property-result-shrunk-counterexample
-                #:property-result-shrunk-outcome #:property-result-seed)
+                #:property-result-shrunk-outcome #:property-result-seed
+                #:check-call #:call-check-result-status
+                #:call-check-result-observation #:trial-observation-case
+                #:trial-observation-reason #:function-check-result-case-report)
   ;; This example is an ASDF package-inferred subsystem, so this bare
   ;; :IMPORT-FROM declares its check-it generator backend dependency without
   ;; importing a symbol.  See examples/structured-data.lisp for the same note.
@@ -29,7 +32,10 @@
   (:export #:make-example-registry #:register-example!
            #:demo-value-specs #:demo-structured-data
            #:cart-subtotal #:broken-cart-subtotal #:demo-property #:demo-find-bug
-           #:demo-function-contract))
+           #:demo-function-contract
+           #:invalid-quantity #:invalid-quantity-qty #:make-line-item
+           #:broken-make-line-item #:discounted-total #:broken-discounted-total
+           #:demo-error-contract #:demo-cases #:demo-check-call))
 
 (in-package #:cl-spec/examples/tutorial-cart)
 
@@ -42,6 +48,35 @@
   "A deliberately wrong subtotal: it skips the first line item."
   (loop for item in (rest cart)
         sum (* (getf item :price) (getf item :qty))))
+
+(define-condition invalid-quantity (error)
+  ((qty :initarg :qty :reader invalid-quantity-qty))
+  (:report (lambda (condition stream)
+             (format stream "Quantity ~D is less than 1."
+                     (invalid-quantity-qty condition))))
+  (:documentation "Signalled by MAKE-LINE-ITEM for a quantity below 1."))
+
+(defun make-line-item (sku price qty)
+  "Return a line item plist, or signal INVALID-QUANTITY when QTY is below 1."
+  (when (< qty 1)
+    (error 'invalid-quantity :qty qty))
+  (list :sku sku :price price :qty qty))
+
+(defun broken-make-line-item (sku price qty)
+  "A deliberately wrong constructor: it silently raises a bad quantity to 1."
+  (list :sku sku :price price :qty (max qty 1)))
+
+(defun discounted-total (subtotal)
+  "Return SUBTOTAL, less 10% rounded down when SUBTOTAL is 5000 or more."
+  (if (< subtotal 5000)
+      subtotal
+      (- subtotal (floor subtotal 10))))
+
+(defun broken-discounted-total (subtotal)
+  "A deliberately wrong total: it starts the discount above 5000, not at it."
+  (if (<= subtotal 5000)
+      subtotal
+      (- subtotal (floor subtotal 10))))
 
 (defun make-example-registry ()
   "Return a fresh registry for this example.  Nothing is registered yet."
@@ -80,6 +115,38 @@ Each form is the one the tutorial has the reader type at the REPL.  The caller's
       (:args (cart cart))
       (:returns (range integer 0 *))
       (:post (>= result (length cart))))
+    ;; Chapter 6: an error contract.
+    (defspec-function make-line-item
+      (:args (sku string) (price price) (qty (range integer -10 0)))
+      (:signals (type invalid-quantity)))
+    (defspec-function broken-make-line-item
+      (:args (sku string) (price price) (qty (range integer -10 0)))
+      (:signals (type invalid-quantity)))
+    ;; Chapter 7: per-condition cases.
+    (defspec-function discounted-total
+      (:args (subtotal (range integer 0 20000)))
+      (:cases
+        (:no-discount
+          (:when (< subtotal 5000))
+          (:returns (range integer 0 *))
+          (:post (= result subtotal)))
+        (:ten-percent-off
+          (:when (>= subtotal 5000))
+          (:returns (range integer 0 *))
+          (:post (and (< result subtotal)
+                      (<= (* 9 subtotal) (* 10 result)))))))
+    (defspec-function broken-discounted-total
+      (:args (subtotal (range integer 0 20000)))
+      (:cases
+        (:no-discount
+          (:when (< subtotal 5000))
+          (:returns (range integer 0 *))
+          (:post (= result subtotal)))
+        (:ten-percent-off
+          (:when (>= subtotal 5000))
+          (:returns (range integer 0 *))
+          (:post (and (< result subtotal)
+                      (<= (* 9 subtotal) (* 10 result)))))))
     registry))
 
 (defun demo-value-specs (&optional (registry (register-example!)))
@@ -157,3 +224,55 @@ Returns the correct contract's :STATUS, and the broken one's :BROKEN-STATUS,
           :broken-status (property-result-status bad)
           :broken-failure-reason (property-result-failure-reason bad)
           :broken-shrunk-cart (getf (property-result-shrunk-counterexample bad) 'cart))))
+
+(defun demo-error-contract (&optional (registry (register-example!)))
+  "Chapter 6: check the error contracts with seed 42.
+
+Returns the correct constructor's :STATUS, and the broken one's :BROKEN-STATUS,
+:BROKEN-FAILURE-REASON and :BROKEN-COUNTEREXAMPLE."
+  (let ((good (check-function 'make-line-item :seed 42 :registry registry))
+        (bad (check-function 'broken-make-line-item :seed 42 :registry registry)))
+    (list :status (property-result-status good)
+          :broken-status (property-result-status bad)
+          :broken-failure-reason (property-result-failure-reason bad)
+          :broken-counterexample (property-result-shrunk-counterexample bad))))
+
+(defun demo-cases (&optional (registry (register-example!)))
+  "Chapter 7: check the per-case discount contract, then with a single trial.
+
+Returns the 100-trial :STATUS, the per-case :CASES report and :NEVER-CALLED, and
+the one-trial :ONE-TRIAL-STATUS and :ONE-TRIAL-NEVER-CALLED, which shows that a
+passing run need not have reached every case."
+  (let* ((full (check-function 'discounted-total :seed 42 :registry registry))
+         (one (check-function 'discounted-total :trials 1 :seed 42 :registry registry))
+         (report (function-check-result-case-report full)))
+    (list :status (property-result-status full)
+          :cases (getf report :cases)
+          :never-called (getf report :never-called)
+          :one-trial-status (property-result-status one)
+          :one-trial-never-called
+          (getf (function-check-result-case-report one) :never-called))))
+
+(defun demo-check-call (&optional (registry (register-example!)))
+  "Chapter 8: random checking misses a boundary bug that CHECK-CALL catches.
+
+Returns the broken total's :RANDOM-STATUS over 100 trials with seed 42, the
+CHECK-CALL statuses for 4999, 5000 and 5001 as :BOUNDARY-STATUSES, the selected
+:BOUNDARY-CASE and :BOUNDARY-REASON at 5000, and :CORRECT-BOUNDARY-STATUS for the
+correct total at 5000."
+  (let ((random-run (check-function 'broken-discounted-total :seed 42 :registry registry))
+        (boundary (check-call 'broken-discounted-total '(5000) :registry registry)))
+    (list :random-status (property-result-status random-run)
+          :boundary-statuses
+          (mapcar (lambda (subtotal)
+                    (call-check-result-status
+                     (check-call 'broken-discounted-total (list subtotal)
+                                 :registry registry)))
+                  '(4999 5000 5001))
+          :boundary-case (trial-observation-case
+                          (call-check-result-observation boundary))
+          :boundary-reason (trial-observation-reason
+                            (call-check-result-observation boundary))
+          :correct-boundary-status
+          (call-check-result-status
+           (check-call 'discounted-total '(5000) :registry registry)))))

@@ -14,7 +14,8 @@
                 #:make-example-registry #:register-example!
                 #:demo-value-specs #:demo-structured-data
                 #:cart-subtotal #:broken-cart-subtotal #:demo-property
-                #:demo-find-bug #:demo-function-contract))
+                #:demo-find-bug #:demo-function-contract
+                #:demo-error-contract #:demo-cases #:demo-check-call))
 
 (in-package #:cl-spec/tests/tutorial-cart-example-test)
 
@@ -104,3 +105,41 @@
       (ok (eq :failed (getf summary :broken-status)))
       (ok (eq :postcondition (getf summary :broken-failure-reason)))
       (ok (= 1 (length (getf summary :broken-shrunk-cart)))))))
+
+(defun case-entry (cases name)
+  "Return the case report entry in CASES whose :NAME is NAME."
+  (find name cases :key (lambda (entry) (getf entry :name))))
+
+(deftest tutorial-chapter-6-error-contract
+  (let ((summary (demo-error-contract)))
+    (testing "signalling INVALID-QUANTITY satisfies the error contract"
+      (ok (eq :passed (getf summary :status))))
+    (testing "returning normally instead is a missing condition"
+      (ok (eq :failed (getf summary :broken-status)))
+      (ok (eq :missing-condition (getf summary :broken-failure-reason))))))
+
+(deftest tutorial-chapter-7-cases
+  (let ((summary (demo-cases)))
+    (testing "both cases are exercised and pass"
+      (let ((cases (getf summary :cases)))
+        (ok (eq :passed (getf summary :status)))
+        (ok (null (getf summary :never-called)))
+        (dolist (name '(:no-discount :ten-percent-off))
+          (let ((entry (case-entry cases name)))
+            (ok (plusp (getf entry :called)))
+            (ok (= (getf entry :called) (getf entry :passed)))))
+        (ok (= 100 (reduce #'+ cases :key (lambda (entry) (getf entry :called)))))))
+    (testing "a passing run can leave a case unexercised"
+      (ok (eq :passed (getf summary :one-trial-status)))
+      (ok (= 1 (length (getf summary :one-trial-never-called)))))))
+
+(deftest tutorial-chapter-8-check-call
+  (let ((summary (demo-check-call)))
+    (testing "random checking misses the boundary bug"
+      (ok (eq :passed (getf summary :random-status))))
+    (testing "checking the boundary directly catches it"
+      (ok (equal '(:passed :failed :passed) (getf summary :boundary-statuses)))
+      (ok (eq :ten-percent-off (getf summary :boundary-case)))
+      (ok (eq :postcondition (getf summary :boundary-reason))))
+    (testing "the correct implementation passes the same boundary"
+      (ok (eq :passed (getf summary :correct-boundary-status))))))
