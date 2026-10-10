@@ -591,9 +591,7 @@ declared range, and a shrink never removes past `:min-length`. `:unique`
 generation draws distinct elements from a finite element domain. A finite
 integer `range` is sampled directly, so any width works and does not widen the
 generated collection length; fractional endpoints admit the integers between
-them, as validation reads them (ordinary generation rounds them the same way, and
-a range that admits nothing — no integer between its endpoints, or a minimum
-above its maximum — signals `generator-unavailable`); `member`,
+them, as validation reads them; `member`,
 `boolean`/`null`, `nullable` and `or` domains are materialized and are limited to
 1000 values, and a larger domain signals `generator-unavailable`. A `:unique`
 element spec with no finite enumeration, or one whose custom generator owns its
@@ -1038,6 +1036,10 @@ explain:
   inside the input). cl-spec neither detects nor restores a violation, so an
   admissibility, shrinking or replay guarantee that depends on such validation is
   void after one.
+- A `(range integer ...)` with fractional endpoints generates the integers
+  between them, as validation reads them: `(range integer 1/2 7/2)` draws 1, 2
+  and 3. A range that admits nothing — no integer between its endpoints, or a
+  minimum above its maximum — signals `generator-unavailable`.
 - A counterexample over `(range real ...)`, or any other real valued
   argument, does not shrink: check-it's shrinker treats reals as a
   non-discrete search space and returns them unchanged.
