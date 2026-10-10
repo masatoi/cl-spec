@@ -2,7 +2,7 @@
 
 日本語版: [tutorial.ja.md](tutorial.ja.md)
 
-This tutorial is a single-path introduction for people who can write Common Lisp
+This tutorial is a linear introduction for people who can write Common Lisp
 but are new to both cl-spec and property-based testing (PBT). If you read it from
 top to bottom, typing the expressions into a REPL as you go, one pass takes about
 an hour.
@@ -15,13 +15,8 @@ the way we also write deliberately broken implementations and watch how cl-spec
 finds and reports their bugs.
 
 The code shown here has the same definitions as the executable example
-[`examples/tutorial-cart.lisp`](../examples/tutorial-cart.lisp). The deterministic
-results its `demo-*` functions return (statuses, failure reasons, the contents of
-errors and so on) are checked by the normal test suite
-(`tests/tutorial-cart-example-test.lisp`), so a change to them fails
-`rove cl-spec.asd`. Generated values and the concrete contents of counterexamples
-are checked only by their shape. Note that nothing mechanically checks that the
-code in this text matches the definitions in the example.
+[`examples/tutorial-cart.lisp`](../examples/tutorial-cart.lisp) (the end of
+chapter 9 says how much of it the tests check).
 
 ## 0. Introduction
 
@@ -61,13 +56,16 @@ generation and property execution need is installed when you load
 
 The code that follows assumes you type it in the `cl-user` package. cl-spec's
 operators get a `cl-spec:` prefix, but operators written inside a spec, such as
-`range` and `plist`, do not. The specs and properties you define are registered in
+`range` and `plist`, do not (operators inside a spec are matched by name, so they
+need no package prefix). The specs and properties you define are registered in
 the default registry (`cl-spec:*registry*`).
 
 ### Running the file version
 
-The same definitions are also provided as a file. Load it and call a demo to
-check the results of each chapter in one go.
+The same definitions are also provided as a file. Each chapter has one `demo-*`
+function, from `demo-value-specs` for chapter 1 to `demo-check-call` for
+chapter 8, and calling it returns that chapter's results in one go. For chapter 4,
+for example:
 
 ```lisp
 (asdf:load-system "cl-spec/examples/tutorial-cart")
@@ -96,6 +94,11 @@ First, write specs for the price and the quantity. A price is an integer from 1 
 `defspec` registers a pair of a name and a spec in the registry.
 `(range integer 1 10000)` is the spec "an integer from 1 to 10000 inclusive".
 
+The REPL prints something like `#<CL-SPEC/SRC/IR:RANGE-SPEC {...}>`. This is the
+internal object that represents the registered spec, and you can ignore it.
+`defproperty` and `defspec-function`, which come later, return internal objects
+in the same way.
+
 Use `validp` to find out whether a value satisfies a spec.
 
 ```lisp
@@ -115,7 +118,10 @@ satisfy a spec, use `explain-data`.
 ;;       :VIOLATED-BOUND :MINIMUM)))
 ```
 
-The result is a plist, not a message string. `:errors` lists the violations, one
+The result is a plist, not a message string. The outer `:valid` is the same answer
+`validp` gives, and `:spec` and `:value` are the spec and the value you asked
+about. The outer `:path` always points at the value itself (`NIL`), so you can
+skip it for now. The part to read is `:errors`, which lists the violations, one
 plist each, whose keys mean the following.
 
 | Key | Meaning |
@@ -136,10 +142,11 @@ A spec is not only for checking values; it can also generate them.
 ;; => (7271 861 5391 5192 5735)   ; for example
 ```
 
-`sample` makes `:count` values that satisfy the spec. With `:seed`, the same seed
-gives the same values. The values themselves, however, may differ with the
-generator backend's implementation and the environment, so read the values above
-as one example. Whatever they are, every one of them satisfies `price`.
+`sample` makes `:count` values that satisfy the spec. In the same environment, the
+same `:seed` gives the same values. In a different environment (another
+implementation or version of the generator backend, for instance) the values may
+change, so read the values above as one example. Whatever they are, every one of
+them satisfies `price`.
 
 `sample` also returns a generation report (a plist of attempt counts, rejection
 counts and so on) as its second value, so the REPL prints that plist too. It is
@@ -163,9 +170,14 @@ plist such as `(:sku "A-1" :price 100 :qty 2)`.
 
 - `plist` assigns a spec to each key of a plist. The keys listed under `:required`
   must be present.
-- The `string` in `(:sku string)` is a CL type. The `price` in `(:price price)` is
-  the spec name registered in the previous chapter. Inside a spec, a symbol you
-  defined yourself is treated as a registered spec name.
+- A bare symbol inside a spec is read by this rule. A type name from the
+  COMMON-LISP package (`string`, `integer` and so on), like the `string` in
+  `(:sku string)`, is read as that type. Every other bare symbol is read as the
+  name of a registered spec: the `price` in `(:price price)` is the spec
+  registered in the previous chapter. Classes and conditions you define yourself
+  are not COMMON-LISP type names either, so written bare they are looked up as
+  specs of the same name. To refer to a type outside the COMMON-LISP package, wrap
+  it in `(type ...)`, as chapter 6 shows.
 - `(:closed t)` means "allow no keys other than the ones listed here".
 - `list-of` is a list whose elements all satisfy `line-item`. `:max-length 5` caps
   its length at 5. With a cap, generated carts do not grow too large, and checking
@@ -221,11 +233,10 @@ Because the spec has `(:closed t)`, `:memo` is reported as `:kind :unknown-key`.
 `:path (:memo)` points at the extra key, and `:expected` holds the list of allowed
 fields.
 
-In all three, `:path` tells you at a glance which field is at fault. Even in deeply
-nested data, `:path` shows the way from the top of the value. The `:field-path`
-on the first two is the sequence of keys through the fields the spec declares. The
-violation for the undeclared `:memo` does not carry one; it has only `:path`. Also,
-the `:actual NIL` of a missing key means "there was no value", not "the value was
+In all three, `:path` tells you at a glance which field is at fault. The first two
+also carry a `:field-path`, which here says the same as `:path`. The two only
+differ in nested data, so for now reading `:path` is enough. Also, the
+`:actual NIL` of a missing key means "there was no value", not "the value was
 NIL"; `:kind` tells the two apart.
 
 Carts can be generated too.
@@ -234,12 +245,14 @@ Carts can be generated too.
 (cl-spec:sample 'cart :count 2 :seed 42)
 ;; => (((:SKU "4skdcB5UzLJP2t" :PRICE 1529 :QTY 3) (:SKU "u11z" :PRICE 2613 :QTY 2)
 ;;      (:SKU "6hNrb5VRBdpN84rXmoy" :PRICE 8007 :QTY 9))
-;;     NIL)   ; for example (the generation report, the second return value, is omitted)
+;;     NIL)   ; for example (the second cart is empty)
+;; the second return value (the generation report) is omitted
 ```
 
-Every generated cart has at most 5 line items, and each line item satisfies
-`line-item`. Because `list-of` has no lower bound, an empty list also satisfies
-`cart`, and as in the example above, an empty cart (`NIL`) can come out. As in
+With `:count 2`, the result is a list of two carts. In the example above, the
+first cart has three line items and the second is an empty cart (`NIL`). Because
+`list-of` has no lower bound, an empty list also satisfies `cart`. Every generated
+cart has at most 5 line items, and each line item satisfies `line-item`. As in
 the previous chapter, the concrete values may differ by environment.
 
 > **Chapter summary**: `plist` and `list-of` describe structured data. A violation
@@ -285,7 +298,8 @@ Run it.
 ;; => 100
 ```
 
-In 100 trials, no input that breaks the property was found. Because `:seed` is
+The default number of trials is 100. In those 100 trials, no input that breaks
+the property was found. Because `:seed` is
 fixed, evaluating the same forms in the same environment reruns the same sequence
 of inputs.
 
@@ -377,7 +391,7 @@ purpose of shrinking is the same. Note also that shrinking is a procedure that
 looks for smaller inputs that still break the property; it does not promise that
 the counterexample it returns is minimal.
 
-To reproduce a failure, pass the result object itself as `:seed`.
+To reproduce (replay) a failure, pass the result object itself as `:seed`.
 
 ```lisp
 (defparameter *replay* (cl-spec:run-property 'broken-subtotal-is-additive :seed *broken*))
@@ -390,9 +404,9 @@ To reproduce a failure, pass the result object itself as `:seed`.
 ;; => T
 ```
 
-Passing a result object reruns with its recorded seed, profile and options, so
-the same counterexample comes out. This is handy for confirming, after a fix, that
-the same input now passes.
+Passing a result object reruns with its recorded seed, profile (the setting that
+selects the number of trials) and options, so the same counterexample comes out.
+This is handy for confirming, after a fix, that the same input now passes.
 
 > **Chapter summary**: When a property breaks, the counterexample and the shrunk
 > counterexample are reported. Read the cause from the shrunk counterexample, and
@@ -400,7 +414,7 @@ the same input now passes.
 
 ## 5. Writing a function contract
 
-A property can state its property as any expression, but a promise of the form
+A property can be any expression, but a promise of the form
 "this function takes these arguments and returns this kind of value" is more
 naturally written as a function contract. Write the contract for `cart-subtotal`.
 
@@ -411,8 +425,11 @@ naturally written as a function contract. Write the contract for `cart-subtotal`
   (:post (>= result (length cart))))
 ```
 
-- `:args` pairs each argument name with a spec. Here the argument `cart` satisfies
-  the `cart` spec. During checking, arguments are generated from this spec.
+- `:args` pairs each argument name with a spec (the name on the left, the spec on
+  the right). Here the argument `cart` satisfies the `cart` spec. During
+  checking, arguments are generated from this spec. The argument name is the name
+  the contract uses (in `:post`, for instance); it need not match the parameter
+  name in the `defun`.
 - `:returns` is the spec of the return value. `(range integer 0 *)` is an integer
   of 0 or more (no upper bound).
 - `:post` is the postcondition. `result` refers to the return value, and argument
@@ -428,6 +445,11 @@ Check it.
 (cl-spec:property-result-status *subtotal-check*)
 ;; => :PASSED
 ```
+
+The result of `check-function` is read with the same accessors as a property's
+result (`property-result-status` and so on). Information only a function
+contract's result has, such as the per-case tally, is read with the
+`function-check-result-*` accessors that chapter 7 shows.
 
 Write the same contract for the broken implementation and check it.
 
@@ -500,11 +522,13 @@ Write this error promise as a contract.
   about invalid quantities. Every generated quantity is below 1, so every trial
   expects the error. The next chapter's `:cases` shows how to put the normal and
   the error behaviour in one contract.
-- The `type` in `(type invalid-quantity)` matters. Inside a spec, a bare symbol
-  you defined yourself (one that is not a CL type name) is read as a registered
-  spec name. So writing `(:signals invalid-quantity)` looks for a spec named
-  `invalid-quantity`, does not find one, and fails as a contract-side error. Wrap
-  your own condition classes in `type`, as in `(type invalid-quantity)`.
+- The `type` in `(type invalid-quantity)` matters. `invalid-quantity` is a
+  condition class, and so a type, but not a type from the COMMON-LISP package. By
+  the rule from chapter 2, writing `(:signals invalid-quantity)` bare therefore
+  looks for a spec named `invalid-quantity`. The definition itself goes through,
+  but `check-function` then gives `:error` (failure reason `:contract-error`)
+  rather than `:failed`: the mistake is reported as the contract's, not the
+  function's. Wrap your own types in `type`, as in `(type invalid-quantity)`.
 
 Check it.
 
@@ -534,10 +558,14 @@ quantity to 1.
 ```
 
 `:missing-condition` says that an error was expected but the function returned a
-value normally. The counterexample can be read with
-`property-result-shrunk-counterexample` as before (for example
-`(SKU "O4skdc" PRICE 1 QTY 0)`: passing a quantity of 0 returned a line item
-instead of an error).
+value normally. The shrunk counterexample reads as before.
+
+```lisp
+(cl-spec:property-result-shrunk-counterexample *broken-item-check*)
+;; => (SKU "O4skdc" PRICE 1 QTY 0)   ; for example
+```
+
+Passing a quantity of 0 returned a line item instead of an error.
 
 > **Chapter summary**: `:signals` states the promise "end by signalling this
 > error". Refer to a condition you defined yourself with `(type ...)`; returning
@@ -577,6 +605,9 @@ write a named promise for each condition.
 - Each case has a name (`:no-discount`, `:ten-percent-off`), one condition
   `:when`, and one outcome promise, `:returns` or `:signals`. A `:returns` case can
   also have a `:post`.
+- Both cases repeat the same `:returns`. In a contract with `:cases`, every outcome
+  promise goes inside the cases: a top-level `:returns` cannot be combined with
+  `:cases`, and there is no common outcome for the cases to inherit.
 - Case selection is exclusive. For each input every `:when` is evaluated, and
   exactly one must be true. When none is true or several are, it is reported as a
   contract-side error, not a fault in the function, and the function is not
@@ -605,12 +636,15 @@ The result of a contract with `:cases` carries a per-case tally.
 ;; => NIL
 ```
 
-`:called` is the number of times the case was selected and the function called.
+`:documentation` holds the string written right after the case name, if there is
+one; none is written here, so it is `NIL`. `:called` is the number of times the
+case was selected and the function called.
 Each case's count depends on the generated values, so it comes out as, for
 example, 27 and 73 as above (the total is the 100 trials). `:never-called` lists
 the cases that were never called; here it is empty.
 
-What happens with a single trial?
+`check-function` takes the number of trials as `:trials` (without it, the default
+of 100 applies). What happens with a single trial?
 
 ```lisp
 (defparameter *one-trial-check*
@@ -621,7 +655,7 @@ What happens with a single trial?
 ;; => (:NO-DISCOUNT)   ; for example
 ```
 
-With only one try, only one of the cases was called (which one is left over
+With only one try, only one of the cases was called (which one goes unreached
 depends on the drawn value). The result is still `:passed`. `:passed` means "no
 violation in the cases that were called"; it does not mean every case was tried.
 When you use `:cases`, make a habit of reading `:never-called` along with the
@@ -671,7 +705,9 @@ exactly 5000. As chapter 3 cautioned, `:passed` is not a proof.
 
 When you know the input you want to try, such as a boundary value, use
 `check-call`. `check-call` takes one argument list and checks the contract once on
-that input.
+that input. Its result is of a different type from `check-function`'s and is read
+with the `call-check-result-*` accessors. Its status, such as `:passed` or
+`:failed`, reads the same way.
 
 ```lisp
 (cl-spec:call-check-result-status
@@ -685,7 +721,12 @@ that input.
 ;; => :PASSED
 ```
 
-Only 5000 failed. Look at the observation from that one call.
+Only 5000 failed. The result of `check-call` holds a record of what happened in
+that one call, called an observation. `call-check-result-observation` takes the
+observation out, `trial-observation-case` reads the selected case and
+`trial-observation-reason` the reason for the failure. An observation has the
+same form as the record of one trial in a random check, which is why the
+accessors' names say `trial`. Look at the observation at 5000.
 
 ```lisp
 (defparameter *at-5000* (cl-spec:check-call 'broken-discounted-total '(5000)))
@@ -739,3 +780,13 @@ detail.
   normative definitions.
 - The [Runtime instrumentation](../README.md#runtime-instrumentation) section of the
   README: how to check function contracts against calls at run time.
+
+### How the text and the file version are checked
+
+Of the results the file version's `demo-*` functions return, those that do not
+change from run to run (statuses, failure reasons, the contents of errors and so
+on) are checked by the test suite (`tests/tutorial-cart-example-test.lisp`), so a
+change to them fails `rove cl-spec.asd`. Generated values and the concrete
+contents of counterexamples are checked only by their shape, because they may
+differ by environment. Note that nothing mechanically checks that the code in
+this text matches the definitions in the file version.
