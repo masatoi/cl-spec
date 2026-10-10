@@ -15,15 +15,33 @@
                 #:*registry*
                 #:make-hash-table-registry
                 #:defspec
-                #:validp #:explain-data #:sample)
+                #:validp #:explain-data #:sample
+                #:defproperty #:defspec-function
+                #:run-property #:check-function #:properties-for
+                #:property-result-status #:property-result-failure-reason
+                #:property-result-trials #:property-result-counterexample
+                #:property-result-shrunk-counterexample
+                #:property-result-shrunk-outcome #:property-result-seed)
   ;; This example is an ASDF package-inferred subsystem, so this bare
   ;; :IMPORT-FROM declares its check-it generator backend dependency without
   ;; importing a symbol.  See examples/structured-data.lisp for the same note.
   (:import-from #:cl-spec/src/backends/check-it)
   (:export #:make-example-registry #:register-example!
-           #:demo-value-specs #:demo-structured-data))
+           #:demo-value-specs #:demo-structured-data
+           #:cart-subtotal #:broken-cart-subtotal #:demo-property #:demo-find-bug
+           #:demo-function-contract))
 
 (in-package #:cl-spec/examples/tutorial-cart)
+
+(defun cart-subtotal (cart)
+  "Return the sum of price times quantity over CART's line items.  Pure."
+  (loop for item in cart
+        sum (* (getf item :price) (getf item :qty))))
+
+(defun broken-cart-subtotal (cart)
+  "A deliberately wrong subtotal: it skips the first line item."
+  (loop for item in (rest cart)
+        sum (* (getf item :price) (getf item :qty))))
 
 (defun make-example-registry ()
   "Return a fresh registry for this example.  Nothing is registered yet."
@@ -43,6 +61,25 @@ Each form is the one the tutorial has the reader type at the REPL.  The caller's
       (plist (:required (:sku string) (:price price) (:qty quantity))
              (:closed t)))
     (defspec cart (list-of line-item :max-length 5))
+    ;; Chapter 3: a property.
+    (defproperty subtotal-is-additive ((a cart) (b cart))
+      (:about cart-subtotal)
+      (= (cart-subtotal (append a b))
+         (+ (cart-subtotal a) (cart-subtotal b))))
+    ;; Chapter 4: the same property about a deliberately wrong implementation.
+    (defproperty broken-subtotal-is-additive ((a cart) (b cart))
+      (:about broken-cart-subtotal)
+      (= (broken-cart-subtotal (append a b))
+         (+ (broken-cart-subtotal a) (broken-cart-subtotal b))))
+    ;; Chapter 5: function contracts.
+    (defspec-function cart-subtotal
+      (:args (cart cart))
+      (:returns (range integer 0 *))
+      (:post (>= result (length cart))))
+    (defspec-function broken-cart-subtotal
+      (:args (cart cart))
+      (:returns (range integer 0 *))
+      (:post (>= result (length cart))))
     registry))
 
 (defun demo-value-specs (&optional (registry (register-example!)))
@@ -75,3 +112,48 @@ with seed 42, with :CARTS-VALID."
             :carts carts
             :carts-valid (every (lambda (cart) (validp 'cart cart :registry registry))
                                 carts)))))
+
+(defun demo-property (&optional (registry (register-example!)))
+  "Chapter 3: run the additivity property with seed 42.
+
+Returns its :STATUS, the number of :TRIALS run, and the properties :RELATED to
+CART-SUBTOTAL through :ABOUT."
+  (let ((result (run-property 'subtotal-is-additive :seed 42 :registry registry)))
+    (list :status (property-result-status result)
+          :trials (property-result-trials result)
+          :related (properties-for 'cart-subtotal registry))))
+
+(defun demo-find-bug (&optional (registry (register-example!)))
+  "Chapter 4: let the property find the bug, shrink it, and replay it.
+
+The replay passes the first result as :SEED, so it reuses the recorded seed,
+profile and options.  The shrunk arguments are returned as :SHRUNK-A and
+:SHRUNK-B; no particular minimum is promised."
+  (let* ((original (run-property 'broken-subtotal-is-additive :seed 42
+                                 :registry registry))
+         (replay (run-property 'broken-subtotal-is-additive :seed original
+                               :registry registry))
+         (shrunk (property-result-shrunk-counterexample original)))
+    (list :status (property-result-status original)
+          :failure-reason (property-result-failure-reason original)
+          :trials (property-result-trials original)
+          :counterexample (property-result-counterexample original)
+          :shrunk-a (getf shrunk 'a)
+          :shrunk-b (getf shrunk 'b)
+          :shrunk-outcome (property-result-shrunk-outcome original)
+          :replay-status (property-result-status replay)
+          :replay-seed (property-result-seed replay)
+          :same-counterexample (equal (property-result-counterexample original)
+                                      (property-result-counterexample replay)))))
+
+(defun demo-function-contract (&optional (registry (register-example!)))
+  "Chapter 5: check the subtotal contracts with seed 42.
+
+Returns the correct contract's :STATUS, and the broken one's :BROKEN-STATUS,
+:BROKEN-FAILURE-REASON and shrunk :BROKEN-SHRUNK-CART."
+  (let ((good (check-function 'cart-subtotal :seed 42 :registry registry))
+        (bad (check-function 'broken-cart-subtotal :seed 42 :registry registry)))
+    (list :status (property-result-status good)
+          :broken-status (property-result-status bad)
+          :broken-failure-reason (property-result-failure-reason bad)
+          :broken-shrunk-cart (getf (property-result-shrunk-counterexample bad) 'cart))))

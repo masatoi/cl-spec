@@ -12,7 +12,9 @@
                 #:*registry* #:make-hash-table-registry #:list-specs)
   (:import-from #:cl-spec/examples/tutorial-cart
                 #:make-example-registry #:register-example!
-                #:demo-value-specs #:demo-structured-data))
+                #:demo-value-specs #:demo-structured-data
+                #:cart-subtotal #:broken-cart-subtotal #:demo-property
+                #:demo-find-bug #:demo-function-contract))
 
 (in-package #:cl-spec/tests/tutorial-cart-example-test)
 
@@ -62,3 +64,43 @@
     (testing "sampled carts are valid carts"
       (ok (= 2 (length (getf summary :carts))))
       (ok (getf summary :carts-valid)))))
+
+(defun additive-p (subtotal a b)
+  "Return true when SUBTOTAL of A followed by B is the sum of their subtotals."
+  (= (funcall subtotal (append a b))
+     (+ (funcall subtotal a) (funcall subtotal b))))
+
+(deftest tutorial-chapter-3-property
+  (let ((summary (demo-property)))
+    (testing "the additivity property passes over the default trial budget"
+      (ok (eq :passed (getf summary :status)))
+      (ok (= 100 (getf summary :trials))))
+    (testing "the property is found from the function it is about"
+      (ok (member 'cl-spec/examples/tutorial-cart::subtotal-is-additive
+                  (getf summary :related))))))
+
+(deftest tutorial-chapter-4-find-bug
+  (let ((summary (demo-find-bug)))
+    (testing "the broken subtotal violates additivity"
+      (ok (eq :failed (getf summary :status)))
+      (ok (eq :predicate-false (getf summary :failure-reason))))
+    (testing "the shrunk counterexample is small and still a counterexample"
+      (let ((a (getf summary :shrunk-a))
+            (b (getf summary :shrunk-b)))
+        (ok (eq :used (getf summary :shrunk-outcome)))
+        (ok (<= (+ (length a) (length b)) 2))
+        (ok (not (additive-p #'broken-cart-subtotal a b)))
+        (ok (additive-p #'cart-subtotal a b))))
+    (testing "replaying from the result reproduces the same failure"
+      (ok (eq :failed (getf summary :replay-status)))
+      (ok (eql 42 (getf summary :replay-seed)))
+      (ok (getf summary :same-counterexample)))))
+
+(deftest tutorial-chapter-5-function-contract
+  (let ((summary (demo-function-contract)))
+    (testing "the correct subtotal satisfies its contract"
+      (ok (eq :passed (getf summary :status))))
+    (testing "the broken subtotal breaks the postcondition on a one-item cart"
+      (ok (eq :failed (getf summary :broken-status)))
+      (ok (eq :postcondition (getf summary :broken-failure-reason)))
+      (ok (= 1 (length (getf summary :broken-shrunk-cart)))))))
