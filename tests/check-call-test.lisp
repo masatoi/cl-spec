@@ -284,6 +284,22 @@ support the same GETF calls as an ordinary argument-spec error."
         (ok (eq :error (call-check-result-status result)))
         (ok (eq :condition-spec (trial-observation-reason (observation result))))))))
 
+(deftest a-bare-condition-class-in-signals-points-at-the-type-form
+  (with-fresh-registry
+    ;; A bare non-CL symbol is a spec reference, so this contract names an
+    ;; unregistered spec although INSUFFICIENT-FUNDS is a condition class.
+    (cl-spec:defspec-function unary-target
+      (:args (n integer))
+      (:signals insufficient-funds))
+    (reset-counters)
+    (setf *scenario* :funds-error)
+    (let* ((result (check-call 'unary-target (list 1)))
+           (condition (trial-observation-condition (observation result))))
+      (ok (eq :error (call-check-result-status result)))
+      (ok (typep condition 'cl-spec:unknown-spec))
+      (ok (search (format nil "(~S ~S)" 'type 'insufficient-funds)
+                  (princ-to-string condition))))))
+
 (deftest fixed-multiple-values-and-post-values-use-the-shared-classifier
   (with-fresh-registry
     (cl-spec:defspec-function dyad-target

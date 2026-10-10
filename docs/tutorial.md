@@ -528,7 +528,9 @@ Write this error promise as a contract.
   looks for a spec named `invalid-quantity`. The definition itself goes through,
   but `check-function` then gives `:error` (failure reason `:contract-error`)
   rather than `:failed`: the mistake is reported as the contract's, not the
-  function's. Wrap your own types in `type`, as in `(type invalid-quantity)`.
+  function's. Its error message says that no spec of that name is registered
+  and, because the name is a class, suggests `(TYPE INVALID-QUANTITY)`. Wrap
+  your own types in `type`, as in `(type invalid-quantity)`.
 
 Check it.
 
