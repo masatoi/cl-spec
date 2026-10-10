@@ -204,7 +204,7 @@ observes state but never restores it, so this version does not:
   with `unsupported-stateful-operation` before the target is called. The
   function-check adapter cannot be replayed through the property runner either:
   `run-property` with a `property-result` as `:SEED`, and `replay-property` with
-  one, are refused the same way before the result is turned into an integer seed,
+  one, are refused the same way before metadata probing or generation starts,
   so generation, capture and the target all run zero extra times.
   `recheck-counterexample` refuses a state-observing resolved definition with
   `:STATEFUL-CONTRACT-UNSUPPORTED`.
