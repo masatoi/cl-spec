@@ -476,8 +476,9 @@ property と関数契約は、次のように使い分けます。
   より、`(:signals invalid-quantity)` と裸で書くと「`invalid-quantity` という名前の spec」を
   探しに行きます。この場合、定義そのものは通りますが、`check-function` の結果は `:failed`
   ではなく `:error`（失敗理由 `:contract-error`）になります。関数の誤りではなく、契約側の
-  誤りとして報告されるということです。自作の型は `(type invalid-quantity)` のように
-  `type` で包みます。
+  誤りとして報告されるということです。エラーメッセージは、その名前の spec が登録されて
+  いないことを伝え、名前がクラスなので `(TYPE INVALID-QUANTITY)` と書くよう提案します。
+  自作の型は `(type invalid-quantity)` のように `type` で包みます。
 
 検査します。
 

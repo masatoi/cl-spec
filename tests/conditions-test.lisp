@@ -86,6 +86,19 @@
       (ok (search "MISSING-SPEC" (princ-to-string spec-condition)))
       (ok (search "MISSING-PROPERTY" (princ-to-string property-condition))))))
 
+(define-condition hint-condition (error)
+  ()
+  (:documentation "A condition class outside COMMON-LISP, which a bare name cannot denote."))
+
+(deftest unknown-spec-suggests-the-type-form-for-a-class-name
+  (testing "a bare name that names a class is offered as (TYPE NAME)"
+    (let ((report (princ-to-string (make-condition 'unknown-spec :name 'hint-condition))))
+      (ok (search "HINT-CONDITION" report))
+      (ok (search (format nil "(TYPE ~S)" 'hint-condition) report))))
+  (testing "a name with no class gets no suggestion"
+    (ok (null (search "(TYPE" (princ-to-string
+                               (make-condition 'unknown-spec :name 'missing-spec)))))))
+
 (deftest no-generator-backend-points-at-check-it
   (testing "the report tells the user which system installs a backend"
     (ok (search "CL-SPEC/CHECK-IT"
