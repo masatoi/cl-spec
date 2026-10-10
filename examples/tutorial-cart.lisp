@@ -1,7 +1,8 @@
 ;;;; examples/tutorial-cart.lisp
 ;;;;
-;;;; Executable example for the Japanese introductory tutorial in
-;;;; docs/tutorial.ja.md: a shopping cart grown one chapter at a time.
+;;;; Executable example for the introductory tutorial in docs/tutorial.md and its
+;;;; Japanese edition docs/tutorial.ja.md: a shopping cart grown one chapter at a
+;;;; time.
 ;;;;
 ;;;; Loading this file defines a condition and some pure functions only.  It does
 ;;;; not register a spec, draw a value or run a demo, so it never changes the

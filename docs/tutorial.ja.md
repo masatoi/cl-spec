@@ -1,5 +1,7 @@
 # cl-spec 入門チュートリアル
 
+English: [tutorial.md](tutorial.md)
+
 このチュートリアルは、Common Lisp は書けるけれど cl-spec も property-based testing
 （PBT）も初めて、という人のための一本道の入門です。REPL に式を打ちながら上から順に
 読み進めると、1 時間ほどで一周できます。

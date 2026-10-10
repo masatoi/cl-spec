@@ -1044,9 +1044,10 @@ explain:
 
 ## Documentation
 
-- [`docs/tutorial.ja.md`](docs/tutorial.ja.md) — introductory tutorial in Japanese:
-  value specs, properties, shrinking and replay, function contracts, `:signals`,
-  `:cases` and `check-call` on a shopping cart
+- [`docs/tutorial.md`](docs/tutorial.md) — introductory tutorial: value specs,
+  properties, shrinking and replay, function contracts, `:signals`, `:cases` and
+  `check-call` on a shopping cart; a Japanese edition is in
+  [`docs/tutorial.ja.md`](docs/tutorial.ja.md)
 - [`docs/api/`](docs/api/README.md) — API reference for the public packages,
   generated from their docstrings
 - [`docs/guides/structured-data-walkthrough.md`](docs/guides/structured-data-walkthrough.md)
