@@ -61,21 +61,23 @@ of a record's identity, which this version does not declare.
 ;; => (:GOOD-VALID T :UNORDERED-VALID NIL ... :MISSING-VALID NIL ...)
 ```
 
-`validp` returns a boolean. `explain-data` returns the structured reason. For a
-window whose start is after its end, the `and` reports a failed conjunct:
+`validp` returns a boolean. `explain-data` returns the structured reason, a
+plist whose `:errors` lists the failures. For a window whose start is after its
+end, the element of `:errors` is the `and` reporting a failed conjunct:
 
 ```lisp
-(:kind :conjunct-failed
+(:kind :conjunct-failed :path nil :actual (:start 9 :end 3)
  :conjuncts ((:expected <plist descriptor> :status :satisfied)
              (:expected (:satisfies ordered-window-p) :status :failed))
- :errors ((:kind :predicate-failed :predicate ordered-window-p ...)))
+ :errors ((:kind :predicate-failed :path nil :actual (:start 9 :end 3)
+           :predicate ordered-window-p ...)))
 ```
 
 For a value that omits the required `:end` field, the failing conjunct reports
-the field position (`:errors` elided):
+the field position (`:conjuncts` elided):
 
 ```lisp
-(:kind :conjunct-failed ...
+(:kind :conjunct-failed :path nil :actual (:start 9) :conjuncts ...
  :errors ((:field-path (:end) :kind :missing-key :path (:end) ...)))
 ```
 
@@ -165,8 +167,8 @@ generated windows. Both are relations with a real body, not `(constantly t)`.
 
 ```lisp
 (cl-spec/examples/structured-data:demo-discovery *registry*)
-;; => (:SPEC-NAME WINDOW :SPEC-KIND :AND
-;;     :CONTRACT-KIND :FUNCTION-SPEC
+;; => (:SPEC-NAME WINDOW :SPEC-KIND :AND ...
+;;     :CONTRACT-KIND :FUNCTION-SPEC ...
 ;;     :PROPERTIES (SPAN-IS-NON-NEGATIVE)
 ;;     :SEMANTIC (... :PROPERTIES-ABOUT (SPAN-IS-NON-NEGATIVE))
 ;;     :CAPABILITY (:GENERATION :AVAILABLE :SHRINKING :AVAILABLE))
@@ -241,7 +243,8 @@ dispatch on a data tag; it is not a function's normal-versus-error contract
 ```lisp
 (cl-spec/examples/structured-data:demo-budget-exhaustion 6)
 ;; => (:OUTCOME :EXHAUSTED :ATTEMPTS 6 :BUDGET 6 :REJECTIONS 6
-;;     :PHASE :GENERATION :PATH (0) ... :TERMINATION :BUDGET-EXHAUSTED)
+;;     :PHASE :GENERATION :PATH (0)
+;;     :REPORT (... :TERMINATION :BUDGET-EXHAUSTED ...))
 ```
 
 `(and (member 1) (satisfies evenp))` cannot be satisfied, and a human can see
@@ -271,11 +274,11 @@ find nothing.
 |---|---|---|---|---|
 | `plist` fields | required/optional/closed, key identity, presence vs `NIL` | yes | yes | every field spec needs a generator |
 | `alist` / `hash-table` fields | `:test`, presence vs `NIL`, duplicate-key/alist and wrong-table-test errors | yes | yes | key comparison is the declared `:test` |
-| `object-of` | explicit readers only | no automatic construction | via the named generator | needs `(:generator NAME)`; no MOP inference |
+| `object-of` | explicit readers only | no automatic construction | no (`window-object-spec` reports `:shrinking :none`); a `defgenerator` `:shrink` clause is used only for a whole-argument `:args-generator` | needs `(:generator NAME)`; no MOP inference |
 | `list-of` / `vector-of` | `:min-length`, `:max-length`, `:unique` (EQL) | yes | yes | `:unique` needs a finite element domain |
 | `tagged-by` | one branch per tag, branch named in errors | all branches | yes | `sample :branch` targets one branch |
-| `and` | full validation always | one selected source plus a bounded filter | yes | see the AND rules above |
-| `defspec-function` | argument/return/post/signals contracts | yes | yes | `:signals` excludes a normal-return contract (§17) |
+| `and` | full validation always | one selected source plus a bounded filter | follows the selected source; a custom-generator source is not shrunk (`:none`) | see the AND rules above |
+| `defspec-function` | argument/return/post/signals contracts | yes | yes | a top-level `:signals` excludes `:returns`/`:post`; named `:cases` mix both outcomes (§17, §17.2) |
 | Properties | `defproperty`, `run-property`, replay | yes | yes | custom generators have no automatic shrink |
 | `describe-*` | — | — | — | stubs; not usable API |
 
@@ -289,8 +292,11 @@ Guarantee boundaries:
 - Validating or generating a value is separate from persisting it. Counterexample
   artifacts support version-1 values and do not serialize arbitrary objects;
   opaqueness, cycles and shared state have documented limits (§57, README).
-- `:signals` and normal-return contracts are exclusive in this version, and
-  expected-error contracts are not supported by runtime instrumentation.
+- A top-level `:signals` cannot be combined with `:returns` or `:post`; to give
+  different inputs a return or a signal outcome, declare named `:cases` (§17.2,
+  [Function Spec cases walkthrough](function-spec-cases-walkthrough.md)).
+  Expected-error contracts and case-carrying contracts are not supported by
+  runtime instrumentation.
 - `describe-spec` and `describe-property` are stubs and signal
   `not-implemented`; they are not usable API.
 
