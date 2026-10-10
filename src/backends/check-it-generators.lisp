@@ -447,7 +447,20 @@ generates outside the range.  When both bounds are finite, the interval's width
 raises it too: REAL-RANGE-GENERATOR asks check-it for the shifted interval
 [0, MAXIMUM - MINIMUM], which is wider than either bound's own magnitude
 whenever MINIMUM and MAXIMUM straddle zero, and *SIZE* has to cover that
-shifted width or half the declared range goes unreachable."
+shifted width or half the declared range goes unreachable.
+
+An INTEGER range admits the integers between its endpoints, as validation reads
+it, so a fractional finite bound is rounded inward first: check-it's integer
+generator would otherwise draw the bound's own fraction.  An interval with no
+integer in it is refused rather than generated from."
+  (when (eq base-type 'integer)
+    (unless (eq minimum :unbounded) (setf minimum (ceiling minimum)))
+    (unless (eq maximum :unbounded) (setf maximum (floor maximum)))
+    (when (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded))
+               (> minimum maximum))
+      (error 'generator-unavailable
+             :spec spec
+             :reason "no integer lies between the range's endpoints")))
   (dolist (bound (list minimum maximum))
     (unless (eq bound :unbounded)
       (setf *required-size* (max *required-size* (ceiling (abs bound))))))
