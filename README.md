@@ -1036,6 +1036,10 @@ explain:
   inside the input). cl-spec neither detects nor restores a violation, so an
   admissibility, shrinking or replay guarantee that depends on such validation is
   void after one.
+- A `(range integer ...)` with fractional endpoints generates the integers
+  between them, as validation reads them: `(range integer 1/2 7/2)` draws 1, 2
+  and 3. A range that admits nothing — no integer between its endpoints, or a
+  minimum above its maximum — signals `generator-unavailable`.
 - A counterexample over `(range real ...)`, or any other real valued
   argument, does not shrink: check-it's shrinker treats reals as a
   non-discrete search space and returns them unchanged.

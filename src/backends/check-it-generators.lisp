@@ -438,6 +438,15 @@ do not have this bug."
   (declare (ignore context))
   (type-specifier-generator (type-spec-type-specifier spec) spec))
 
+(defun integer-interval (minimum maximum)
+  "Return (VALUES LOW HIGH): MINIMUM rounded up and MAXIMUM rounded down.
+
+An INTEGER range admits the integers between its endpoints, so a fractional
+finite endpoint is rounded inward.  :UNBOUNDED is returned unchanged.  LOW above
+HIGH means no integer lies in the interval."
+  (values (if (eq minimum :unbounded) minimum (ceiling minimum))
+          (if (eq maximum :unbounded) maximum (floor maximum))))
+
 (defun bounded-generator (base-type minimum maximum spec)
   "Return a numeric generator for BASE-TYPE limited by MINIMUM and MAXIMUM.
 
@@ -447,20 +456,36 @@ generates outside the range.  When both bounds are finite, the interval's width
 raises it too: REAL-RANGE-GENERATOR asks check-it for the shifted interval
 [0, MAXIMUM - MINIMUM], which is wider than either bound's own magnitude
 whenever MINIMUM and MAXIMUM straddle zero, and *SIZE* has to cover that
-shifted width or half the declared range goes unreachable."
-  (dolist (bound (list minimum maximum))
-    (unless (eq bound :unbounded)
-      (setf *required-size* (max *required-size* (ceiling (abs bound))))))
-  (when (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))
-    (setf *required-size* (max *required-size* (ceiling (abs (- maximum minimum))))))
-  (let ((lower (if (eq minimum :unbounded) '* minimum))
-        (upper (if (eq maximum :unbounded) '* maximum)))
-    (case base-type
-      ((integer) (make-instance 'int-generator :lower-limit lower :upper-limit upper))
-      ((real) (real-range-generator lower upper))
-      (t (error 'generator-unavailable
-                :spec spec
-                :reason (format nil "~S cannot carry a numeric range" base-type))))))
+shifted width or half the declared range goes unreachable.
+
+An INTEGER range's bounds are first rounded inward by INTEGER-INTERVAL, as
+validation reads them; check-it's integer generator would otherwise draw the
+bound's own fraction.  An interval that admits nothing -- no integer in it, or a
+minimum above the maximum -- is refused rather than handed to check-it."
+  (multiple-value-bind (minimum maximum)
+      (if (eq base-type 'integer)
+          (integer-interval minimum maximum)
+          (values minimum maximum))
+    (let ((finite-p (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))))
+      (when (and finite-p (> minimum maximum))
+        (error 'generator-unavailable
+               :spec spec
+               :reason (if (eq base-type 'integer)
+                           "no integer lies between the range's endpoints"
+                           "the range's minimum is above its maximum")))
+      (dolist (bound (list minimum maximum))
+        (unless (eq bound :unbounded)
+          (setf *required-size* (max *required-size* (ceiling (abs bound))))))
+      (when finite-p
+        (setf *required-size* (max *required-size* (ceiling (abs (- maximum minimum)))))))
+    (let ((lower (if (eq minimum :unbounded) '* minimum))
+          (upper (if (eq maximum :unbounded) '* maximum)))
+      (case base-type
+        ((integer) (make-instance 'int-generator :lower-limit lower :upper-limit upper))
+        ((real) (real-range-generator lower upper))
+        (t (error 'generator-unavailable
+                  :spec spec
+                  :reason (format nil "~S cannot carry a numeric range" base-type)))))))
 
 (defmethod spec-generator ((spec range-spec) context)
   (declare (ignore context))
@@ -520,15 +545,14 @@ shifted width or half the declared range goes unreachable."
 
 Fractional finite endpoints are read the way validation reads them: the admitted
 values are the integers between the endpoints, so the minimum rounds up and the
-maximum rounds down.  A missing result means either that no integer lies in the
-interval (MINIMUM above MAXIMUM) or that a bound is not a finite number, which is
-why INTEGER-RANGE-P tells the two apart."
+maximum rounds down (INTEGER-INTERVAL).  A missing result means either that no
+integer lies in the interval (MINIMUM above MAXIMUM) or that a bound is not a
+finite number, which is why INTEGER-RANGE-P tells the two apart."
   (let ((minimum (range-spec-minimum spec))
         (maximum (range-spec-maximum spec)))
     (when (and (eq (range-spec-base-type spec) 'integer)
                (realp minimum) (realp maximum))
-      (let ((low (ceiling minimum))
-            (high (floor maximum)))
+      (multiple-value-bind (low high) (integer-interval minimum maximum)
         (when (<= low high)
           (values low high))))))
 

@@ -73,6 +73,36 @@
       (ok (every (lambda (value) (<= 20 value 100))
                  (sample 'wide :count 50 :registry registry))))))
 
+(deftest integer-ranges-with-fractional-bounds-draw-the-integers-between-them
+  (flet ((draws (form)
+           (let ((spec (normalize-spec-form form)))
+             (values (sample spec :count 100 :seed 44) spec))))
+    (testing "rational and float endpoints admit only the integers between them"
+      (dolist (case '(((range integer 1/2 7/2) 1 3)
+                      ((range integer 0.5 2.5) 1 2)
+                      ((range integer -7/2 -1/2) -3 -1)))
+        (destructuring-bind (form low high) case
+          (multiple-value-bind (values spec) (draws form)
+            (ok (every #'integerp values))
+            (ok (every (lambda (value) (<= low value high)) values))
+            (ok (every (lambda (value) (validp spec value)) values))
+            (ok (and (member low values) (member high values)))))))
+    (testing "one fractional endpoint is rounded the same way"
+      (ok (every (lambda (value) (and (integerp value) (>= value 1)))
+                 (draws '(range integer 1/2 *))))
+      (ok (every (lambda (value) (and (integerp value) (<= value 3)))
+                 (draws '(range integer * 7/2)))))
+    (testing "an AND that folds to a fractional integer range is rounded too"
+      (multiple-value-bind (values spec) (draws '(and integer (range 1/2 7/2)))
+        (ok (every #'integerp values))
+        (ok (every (lambda (value) (validp spec value)) values))))
+    (testing "an interval with no integer in it cannot be generated"
+      (ok (signals (sample (normalize-spec-form '(range integer 1/2 2/3)) :count 1)
+                   'generator-unavailable)))
+    (testing "an inverted real interval is refused the same way"
+      (ok (signals (sample (normalize-spec-form '(range real 5 1)) :count 1)
+                   'generator-unavailable)))))
+
 (deftest the-backend-supplies-a-default-trial-count
   (testing "BACKEND-DEFAULT-TRIALS is a positive integer read from check-it"
     (let ((trials (backend-default-trials (current-generator-backend))))
