@@ -2976,6 +2976,8 @@ Signalled when a property designator resolves to nothing.
 *Condition* · extends cl-spec-error
 
 Signalled when a spec designator resolves to nothing.
+When the name is a class outside COMMON-LISP, the report suggests the (TYPE NAME)
+form.  A DEFTYPE name that is not a class gets no suggestion.
 
 <a name="unsupported-coverage-operation"></a>
 ### unsupported-coverage-operation
