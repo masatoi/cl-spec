@@ -228,9 +228,13 @@ source and filters its draws with the whole-AND validator (§9.4, §73.4).
 
 ```lisp
 (cl-spec/examples/structured-data:demo-tagged-union)
-;; error branch draws: ((:KIND :ERROR :MESSAGE ...) ...)
-;; (:KIND :OTHER) -> :NO-BRANCH, :OBSERVED-TAG :OTHER, :KNOWN-TAGS (:OK :ERROR)
-;; (:KIND :OK :VALUE "bad") -> :TYPE-FAILED with :BRANCH :OK
+;; => (:ERROR-BRANCH ((:KIND :ERROR :MESSAGE "...") (:KIND :ERROR :MESSAGE "..."))
+;;     :WRONG-VALUE ((:BRANCH-PATH (:OK) :BRANCH :OK :FIELD-PATH (:VALUE)
+;;                    :KIND :TYPE-FAILED :PATH (:VALUE) :ACTUAL "bad"
+;;                    :EXPECTED (:TYPE INTEGER)))
+;;     :UNKNOWN-TAG ((:KIND :NO-BRANCH :PATH NIL :ACTUAL (:KIND :OTHER)
+;;                    :EXPECTED (:KIND :TAGGED-UNION ...)
+;;                    :OBSERVED-TAG :OTHER :KNOWN-TAGS (:OK :ERROR))))
 ```
 
 A tag reader selects one branch, and only that branch is validated, so a failure
@@ -274,7 +278,7 @@ find nothing.
 |---|---|---|---|---|
 | `plist` fields | required/optional/closed, key identity, presence vs `NIL` | yes | yes | every field spec needs a generator |
 | `alist` / `hash-table` fields | `:test`, presence vs `NIL`, duplicate-key/alist and wrong-table-test errors | yes | yes | key comparison is the declared `:test` |
-| `object-of` | explicit readers only | no automatic construction | no (`window-object-spec` reports `:shrinking :none`); a `defgenerator` `:shrink` clause is used only for a whole-argument `:args-generator` | needs `(:generator NAME)`; no MOP inference |
+| `object-of` | explicit readers only | no automatic construction | no here: `window-object-spec` reports `:shrinking :none` because `window-object-generator` has no `:shrink` clause. A `defgenerator` `:shrink` clause is used only at the root of a run's input, a whole-argument `:args-generator` or a `:fixture` recipe ([reproducible guide](reproducible-stateful-contracts.md)); a `(:generator NAME)` spec used as a property argument, a field or an AND conjunct is not shrunk | needs `(:generator NAME)`; no MOP inference |
 | `list-of` / `vector-of` | `:min-length`, `:max-length`, `:unique` (EQL) | yes | yes | `:unique` needs a finite element domain |
 | `tagged-by` | one branch per tag, branch named in errors | all branches | yes | `sample :branch` targets one branch |
 | `and` | full validation always | one selected source plus a bounded filter | follows the selected source; a custom-generator source is not shrunk (`:none`) | see the AND rules above |

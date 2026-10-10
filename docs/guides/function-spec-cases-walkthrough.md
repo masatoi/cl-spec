@@ -211,7 +211,7 @@ a result built by hand, and one whose backend never opened reporting, answers
 | Failure identity | `(:case NAME . existing-signature)` | a case-less signature is unchanged |
 | Introspection | `function-spec-data` `:cases` + `:case-selection :exclusive` | producing it runs neither guard nor target |
 | Digest | covers names, order, guards, outcomes, post bindings, dependencies | does not identify arbitrary argument- or state-dependent code |
-| Instrumentation | `:unavailable`; install/refresh refuse with `:named-cases-unsupported` | no case-aware wrapper in this version |
+| Instrumentation | `:unavailable`; install/refresh refuse with `:named-cases-unsupported` (`:state-constraints-unsupported` instead when the contract also declares `:capture`, a top-level or per-case `:state-post`, or a `:fixture`) | no case-aware wrapper in this version |
 
 Guarantee boundaries:
 
