@@ -113,7 +113,9 @@ alone. The outcome contract passes; the state relation does not:
 ;;     :FAILURE-REASON :STATE-POSTCONDITION
 ;;     :SIGNATURE (:CASE :SUFFICIENT-FUNDS :STATE-POSTCONDITION 0)
 ;;     :STATE (:CAPTURE (:STATUS :COMPLETED :DECLARED (BALANCE-BEFORE ID-BEFORE)
-;;                       :VALUES ((BALANCE-BEFORE . 30) (ID-BEFORE . 7)) :ERROR NIL)
+;;                       :VALUES ((:NAME BALANCE-BEFORE :AVAILABILITY :COLLECTED :VALUE 30)
+;;                                (:NAME ID-BEFORE :AVAILABILITY :COLLECTED :VALUE 7))
+;;                       :ERROR NIL)
 ;;             :STATE-POST (:STATUS :VIOLATION :REASON NIL :CASE :SUFFICIENT-FUNDS
 ;;                         :INDEX 0 :FORM (= (ACCOUNT-BALANCE ACCOUNT) ...)
 ;;                         :CONDITION-TYPE NIL))
@@ -148,7 +150,7 @@ trial's outcome evidence.
 
 ```lisp
 (cl-spec/examples/stateful-withdraw:demo-renumbered-account *registry*)
-;; => (:STATUS :FAILED :FAILURE-PHASE :STATE-POST
+;; => (:STATUS :FAILED :FAILURE-PHASE :STATE-POST ...
 ;;     :SIGNATURE (:CASE :SUFFICIENT-FUNDS :STATE-POSTCONDITION 1) ...)
 ```
 
@@ -164,10 +166,10 @@ claim otherwise.
 
 ```lisp
 (cl-spec/examples/stateful-withdraw:demo-verification-error *registry*)
-;; => (:STATUS :ERROR :FAILURE-PHASE :STATE-POST
-;;     :FAILURE-REASON :CONTRACT-ERROR
-;;     :STATE (:STATE-POST (:STATUS :ERROR :INDEX 0
-;;                         :CONDITION-TYPE BALANCE-VERIFICATION-FAILED ...)) ...)
+;; => (:STATUS :ERROR :FAILURE-PHASE :STATE-POST ...
+;;     :FAILURE-REASON :CONTRACT-ERROR ...
+;;     :STATE (... :STATE-POST (:STATUS :ERROR ... :INDEX 0
+;;                             ... :CONDITION-TYPE BALANCE-VERIFICATION-FAILED)) ...)
 ```
 
 A predicate that returns `NIL` is a `:STATE-POSTCONDITION` violation
@@ -190,8 +192,8 @@ shrinking and saved-recipe rechecks, see the
 ;;     :REPLAY :STATE-RESTORATION-UNAVAILABLE)
 ```
 
-A contract that declares `:CAPTURE` or `:STATE-POST` observes state but never
-restores it, so this version does not:
+A contract that declares `:CAPTURE` or `:STATE-POST` **without a `:fixture`**
+observes state but never restores it, so this version does not:
 
 - shrink it — no candidate is re-run against the same mutable object, and the
   shrink report says `:STATE-RESTORATION-UNAVAILABLE`. The reason is the missing
@@ -202,7 +204,7 @@ restores it, so this version does not:
   with `unsupported-stateful-operation` before the target is called. The
   function-check adapter cannot be replayed through the property runner either:
   `run-property` with a `property-result` as `:SEED`, and `replay-property` with
-  one, are refused the same way before the result is turned into an integer seed,
+  one, are refused the same way before generation starts,
   so generation, capture and the target all run zero extra times.
   `recheck-counterexample` refuses a state-observing resolved definition with
   `:STATEFUL-CONTRACT-UNSUPPORTED`.
@@ -231,7 +233,7 @@ observation (`trial-observation-state`), projected into `result-data` under
            ((:name NAME :availability :collected :value VALUE) ...
             (:name NAME :availability :unavailable
              :reason :opaque-value :type TYPE) ...)
-           :error (:binding NAME :index I :condition-type T))
+           :error (:binding NAME :index I :condition-type T) | NIL)
  :state-post (:status :not-evaluated | :passed | :violation | :error
              :reason REASON                      ; when :not-evaluated
              :case NAME | NIL
@@ -240,7 +242,9 @@ observation (`trial-observation-state`), projected into `result-data` under
 ```
 
 `:reason` for a `:NOT-EVALUATED` state-post is one of `:PRECONDITION-REJECTED`,
-`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`. `:values` is an
+`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED`, `:OUTCOME-FAILED`, or
+`:CONTRACT-ERROR` when contract-side code before the target call — typically a
+`:pre` form — signals a condition that is not a `spec-violation`. `:values` is an
 ordered list of per-binding records. `:name` associates each record with its
 binding, so a reader finds one by name rather than reconstructing the pairing
 from `:declared`; `:availability` is framework metadata and is **never** inferred
@@ -256,9 +260,9 @@ binding as obtained.
 
 `:state-post` appears when the contract declares a clause — the selected case's,
 or, before a case is selected, the top-level clause or any case's. When no case
-was selected its `:case` is `NIL` and its `:reason` is `:CAPTURE-FAILED` or
-`:CASE-SELECTION-FAILED`, so "no state-post declared" and "declared but stopped
-before selection" stay distinct. A contract that declares neither clause records
+was selected its `:case` is `NIL` and its `:reason` is `:PRECONDITION-REJECTED`,
+`:CAPTURE-FAILED`, `:CASE-SELECTION-FAILED` or `:CONTRACT-ERROR`, so "no
+state-post declared" and "declared but stopped before selection" stay distinct. A contract that declares neither clause records
 no state evidence at all, so a featureless run's projection is unchanged.
 
 Earlier development builds used an ordered `((NAME . VALUE) ...)` alist and put
@@ -331,10 +335,10 @@ classification. Because capture and selection errors call no target,
 | Target calls | once per trial; capture and selection failures call it zero times | no `:FINALLY`-style state check after every abnormal exit |
 | Detects | declared observations changing, expected error after mutation, unrelated declared value changing | not all undeclared fields, not atomicity, concurrency, crash safety or absent I/O |
 | Evidence | capture progress, state-post status and position, raw outcome | reuses the existing snapshot; an opaque value is reported as an explicit unprojectable placeholder, not frozen |
-| Shrinking | disabled, `:STATE-RESTORATION-UNAVAILABLE` | not restored, so no candidate is re-run |
-| Replay | result-as-seed refused; integer seed starts a new run | initial state is the author's responsibility |
-| Artifact | refused with `:STATEFUL-CONTRACT-UNSUPPORTED` | no object codec or restoration adapter |
-| Instrumentation | refused with `:STATE-CONSTRAINTS-UNSUPPORTED` | featureless instrumentation unchanged |
+| Shrinking | without `:fixture`: disabled, `:STATE-RESTORATION-UNAVAILABLE` | not restored, so no candidate is re-run; a `:fixture` contract shrinks its recipe ([reproducible guide](reproducible-stateful-contracts.md)) |
+| Replay | without `:fixture`: result-as-seed refused; integer seed starts a new run | initial state is the author's responsibility; a `:fixture` contract accepts a result as `:SEED` |
+| Artifact | without `:fixture`: refused with `:STATEFUL-CONTRACT-UNSUPPORTED` | no object codec or restoration adapter; a `:fixture` contract saves a version-2 recipe artifact |
+| Instrumentation | refused with `:STATE-CONSTRAINTS-UNSUPPORTED`, with or without `:fixture` | featureless instrumentation unchanged |
 
 Guarantee boundaries:
 
@@ -352,9 +356,12 @@ Guarantee boundaries:
   syntax, meaning, failure signatures, projection and digest bytes. The existing
   `:SIGNALS` / `:POST` exclusivity and the multiple-value rules are unchanged.
 - Not in this version: automatic deep copy or snapshotting of arbitrary objects,
-  CLOS/hash-table traversal, mutation detection, rollback, fixtures or reset
-  protocols, state-machine PBT, concurrency, a generic diagnostic DSL, and new
-  MCP tools.
+  CLOS/hash-table traversal, mutation detection, rollback, isolation other than
+  `:fresh` (restoring an existing object, database rollback, process
+  supervision), state-machine PBT, concurrency, a generic diagnostic DSL, and new
+  MCP tools. Fresh reconstruction through `:fixture (:isolation :fresh)` is
+  supported; see the
+  [reproducible stateful contract guide](reproducible-stateful-contracts.md).
 
 ## Where to read more
 

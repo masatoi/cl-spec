@@ -58,8 +58,9 @@ Version 1 accepts a nonempty list of these requirements, at most one of each:
 
 N must be a positive integer. Unknown keys, unknown or repeated kinds, duplicate
 keys, invalid versions, malformed lists and cycles signal
-`invalid-evidence-policy`. Its `invalid-evidence-policy-reason` reader explains
-the refusal. Unsupported requirements are not silently ignored.
+`invalid-evidence-policy`. Its `invalid-evidence-policy-reason` reader returns
+`:invalid-policy` for every refusal; it does not say which rule was violated.
+Unsupported requirements are not silently ignored.
 
 For example:
 
@@ -131,19 +132,28 @@ proof or permission to change code.
 unchanged. `schema-info` describes the separate version-one evidence protocol.
 
 Summary `:gaps` lists observed omissions; assessment `:gaps` only lists violations
-of the supplied policy. `:limitations` records the scope of the evidence;
+of the supplied policy. The summary's `:coverage` carries the run's
+[input coverage](coverage.md) record, or `(:availability :not-collected ...)`
+when coverage was not enabled. `:limitations` records the scope of the evidence;
 `:diagnostics` retains generation, shrink and capability reports without treating
 capabilities as executed checks.
 
-Optional-field, numeric-boundary and combination coverage are not measured by
-version 1. There is no aggregation across runs or automatic unreachable-case
-exclusion. A declaration digest does not identify the target implementation;
-unknown target revision stays explicit. The cl-mcp adapter is a separate change.
+Optional-field presence and numeric-boundary buckets are measured only by the
+opt-in [input coverage](coverage.md). When a stage of such a dimension was
+collected, `:limitations` reports `:partial-optional-field-coverage` /
+`:partial-boundary-coverage` instead of `:no-optional-field-coverage` /
+`:no-boundary-coverage`. Policy version 1 has no requirement kind for them, so
+they never affect `:assessment`. Combination coverage is not measured
+(`:no-combination-coverage`). There is no aggregation across runs or automatic
+unreachable-case exclusion. A declaration digest does not identify the target
+implementation; unknown target revision stays explicit. The cl-mcp adapter is a
+separate change.
 
 Backend implementers opt in through
 `cl-spec/src/generator:backend-trial-reporting`, returning `:trial-report-v1`.
-They open reporting with `begin-trial-report`, submit each ordinary observation
-exactly once with `note-trial-outcome`, and close with
+They open reporting with `cl-spec/src/execution:begin-trial-report`, submit each
+ordinary observation exactly once with `cl-spec/src/execution:note-trial-outcome`,
+and close with
 `cl-spec/src/trial-report:end-trial-report`. The runner owns the resulting report
 and rejects backend-supplied `:trial-report` keys, wrong-run/duplicate observations,
 incomplete reporting, inconsistent trial/case counts, or execution status that

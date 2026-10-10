@@ -24,13 +24,19 @@ The trial budget remains authoritative; unattempted entries stay `:pending`.
 An `:attempted` entry does not claim that its bucket reached the target.
 
 The initial provider discovers plist optional-key presence, open-plist extra-key
-presence, and directly declared finite integer range lower/upper/interior buckets.
+presence, and lower/upper/interior buckets for finite integer ranges declared
+as plist field values. A range declared directly as an argument, outside
+any plist, is not a dimension in this provider and is not reported under
+`:unexpanded` either.
 Integer endpoints are rounded inward. Singleton ranges hit both lower and upper;
 ranges with no interior integers declare the interior bucket inapplicable.
 Nested plists and finite references are followed. Absent parents and omitted
 arguments are inapplicable, distinct from a present key whose value is NIL.
-Unsupported composites, recursive references and discovery limits are reported
-under `:unexpanded`; discovery is then `:partial`.
+Unsupported composites (`:unsupported-composite`), field ranges that are
+unbounded, not over `integer` or contain no integer (`:unsupported-boundary`),
+recursive references (`:recursive-reference`) and discovery limits
+(`:depth-limit`, `:dimension-limit`) are reported under `:unexpanded`; discovery
+is then `:partial`.
 
 Each dimension has a structural `:id`, argument/field path, kind and buckets.
 Reports save the starting definition digest, schema, capabilities, options and

@@ -150,7 +150,12 @@ retain version 1 and the same AV1 wire codec.
 Recheck validates the saved record, requires a complete matching declaration
 digest and fixture version, then reconstructs one recipe without generator
 draws or shrinking. Results distinguish `:same-failure`, `:different-failure`,
-`:passed`, `:precondition-rejected`, definition mismatches and fixture errors.
+`:passed`, `:precondition-rejected`, `:contract-error`, `:fixture-error`, and the
+definition checks `:definition-missing`, `:definition-mismatch` and
+`:incomparable-definition`. `:state-policy :fixture` is required: `:state-policy`
+defaults to `:unconfirmed`, and without `:fixture` a recheck that passes the
+definition checks returns `:status :unsupported` with `:detail :state-unconfirmed`
+and runs nothing.
 
 The target implementation may change so a repair can be checked. Changing the
 contract or fixture is not silently accepted as the same experiment.
