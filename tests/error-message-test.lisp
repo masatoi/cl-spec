@@ -9,6 +9,8 @@
 (defpackage #:cl-spec/tests/error-message-test
   (:use #:cl)
   (:import-from #:rove #:deftest #:testing #:ok)
+  (:import-from #:cl-spec/main
+                #:defspec-function)
   (:import-from #:cl-spec/src/function-spec
                 #:function-case #:function-spec)
   (:import-from #:cl-spec/src/normalize
@@ -29,7 +31,11 @@
     (error (condition) (princ-to-string condition))))
 
 (defun plain-sentence-p (report phrase)
-  "True when REPORT contains PHRASE and no unprocessed FORMAT continuation."
+  "True when REPORT contains PHRASE and no unprocessed FORMAT continuation.
+
+The newline check starts at the \"is not a valid\" that REPORT-INVALID-FORM prints
+after the rejected form, because that form is printed with ~S and may wrap.  A
+report without that marker, such as GENERATOR-UNAVAILABLE's, is checked whole."
   (and report
        (null (find #\~ report))
        (null (find #\Newline report :start (or (search "is not a valid" report) 0)))
@@ -39,7 +45,7 @@
   (testing "DEFSPEC-FUNCTION refusing :cases beside a top-level outcome"
     (ok (plain-sentence-p
          (report-of (lambda ()
-                      (macroexpand-1 '(cl-spec:defspec-function f
+                      (macroexpand-1 '(defspec-function f
                                        (:args (x integer))
                                        (:returns integer)
                                        (:cases (:a (:when t) (:returns integer)))))))
