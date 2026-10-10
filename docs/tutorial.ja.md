@@ -9,10 +9,13 @@
 同じカートを章ごとに少しずつ育てていきます。途中でわざと壊した実装も用意し、cl-spec が
 バグをどう見つけ、どう報告するかを実際に確かめます。
 
-本文に載せたコードと結果は、実行可能な example
-[`examples/tutorial-cart.lisp`](../examples/tutorial-cart.lisp) の `demo-*` 関数と、
-通常のテストスイート（`tests/tutorial-cart-example-test.lisp`）で検証しています。
-API が変わって本文の結果が古くなると `rove cl-spec.asd` が失敗します。
+本文に載せたコードは、実行可能な example
+[`examples/tutorial-cart.lisp`](../examples/tutorial-cart.lisp) と同じ定義です。その
+`demo-*` 関数が返す決定的な結果（status、失敗理由、エラーの内容など）は、通常のテスト
+スイート（`tests/tutorial-cart-example-test.lisp`）で検証しており、変わると
+`rove cl-spec.asd` が失敗します。生成された値や反例の具体的な値は、形だけを検証して
+います。なお、本文のコード片と example の定義が一致していることは、機械的には検証して
+いません。
 
 ## 0. はじめに
 
@@ -123,6 +126,9 @@ spec は値の検査だけでなく、値の生成にも使えます。
 同じ値が出ます。ただし、出てくる値そのものは生成 backend の実装や環境によって異なることが
 あります。上の値は一例として読んでください。どの値も `price` を満たすことは変わりません。
 
+なお、`sample` は 2 つ目の値として生成のレポート（試行回数や棄却数などを並べた plist）も
+返すので、REPL ではその plist も表示されます。上では省略しました。今は無視して構いません。
+
 > **この章のまとめ**: `defspec` で値の約束を名前付きで登録し、`validp` で検査、
 > `explain-data` で違反を構造化データとして読み、`sample` でその約束を満たす値を作れます。
 
@@ -205,16 +211,17 @@ spec は値の検査だけでなく、値の生成にも使えます。
 (cl-spec:sample 'cart :count 2 :seed 42)
 ;; => (((:SKU "4skdcB5UzLJP2t" :PRICE 1529 :QTY 3) (:SKU "u11z" :PRICE 2613 :QTY 2)
 ;;      (:SKU "6hNrb5VRBdpN84rXmoy" :PRICE 8007 :QTY 9))
-;;     NIL)   ; 例えば
+;;     NIL)   ; 例えば（2 つ目の戻り値の生成レポートは省略）
 ```
 
 生成されたカートは、どれも明細 5 件以下で、各明細が `line-item` を満たします。
-2 つ目の `NIL` は空のカートです。`list-of` に下限を付けていないので、空のリストも
-`cart` を満たします。具体的な値は、前章と同じく環境によって異なることがあります。
+`list-of` に下限を付けていないので、空のリストも `cart` を満たし、上の例のように空の
+カート（`NIL`）が出ることもあります。具体的な値は、前章と同じく環境によって異なることが
+あります。
 
 > **この章のまとめ**: `plist` と `list-of` で構造化データの仕様を書けます。違反は
-> `:kind` と `:path` で「何が」「どこで」起きたかとして報告され、生成した値は必ず
-> spec を満たします。
+> `:kind` と `:path` で「何が」「どこで」起きたかとして報告され、生成した値は spec を
+> 満たします。
 
 ## 3. 性質を書く
 
@@ -447,10 +454,11 @@ property と関数契約は、次のように使い分けます。
 - `qty` の spec を `(range integer -10 0)` にしているのは、この契約が「不正な数量に
   ついての約束」だからです。生成される数量はすべて 1 未満なので、どの試行でもエラーが
   期待されます。正常系と異常系を 1 つの契約にまとめる方法は、次章の `:cases` で扱います。
-- `(type invalid-quantity)` の `type` は省略できません。spec の中の裸のシンボルは登録済みの
-  spec 名として解釈されるので、`(:signals invalid-quantity)` と書くと「`invalid-quantity`
-  という名前の spec」を探しに行き、見つからずに契約側のエラーになります。自分で定義した
-  condition クラスを指すときは `(type ...)` で包みます。
+- `(type invalid-quantity)` の `type` には意味があります。spec の中で、自分で定義した
+  （CL の型名ではない）裸のシンボルは登録済みの spec 名として解釈されます。そのため
+  `(:signals invalid-quantity)` と書くと「`invalid-quantity` という名前の spec」を探しに
+  行き、見つからずに契約側のエラーになります。自作の condition クラスは
+  `(type invalid-quantity)` のように `type` で包みます。
 
 検査します。
 
