@@ -890,8 +890,15 @@ Return the selected observation's failure identity, or NIL on success.
 *Function* · `(artifact &key (registry *registry*) (state-policy :unconfirmed) (target-revision :unknown))`
 
 Recheck saved input once without generation or shrinking.
-Execution requires :STATE-POLICY :STATELESS, a caller assertion that external
-state needs no restoration. Definition identity must be complete and unchanged.
+Definition identity must be complete and unchanged (for a fixture artifact, the
+fixture version too). Execution then requires a caller assertion about external
+state: :STATE-POLICY :STATELESS for an ordinary (version 1) artifact, asserting
+that no restoration is needed, or :STATE-POLICY :FIXTURE for a fixture (version
+2) artifact, whose saved recipe is rebuilt through the contract's fixture. Any
+other policy, including the one for the other artifact version, returns :STATUS
+:UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
+recheck also refuses a definition that now observes state
+(:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 Returns a :RECHECK record; never mutates the saved artifact or original result.
 
 <a name="register-function-spec"></a>
