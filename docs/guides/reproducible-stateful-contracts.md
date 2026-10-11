@@ -139,9 +139,11 @@ Database isolation, asynchronous tasks and external I/O are outside `:fresh`.
   (cl-spec:serialize-counterexample-artifact artifact))
 ```
 
-Artifact creation requires a failure. Direct `fixture-check-result` objects
-are accepted too. Fixture artifacts use version 2, while ordinary artifacts
-retain version 1 and the same AV1 wire codec.
+Artifact creation requires a failure: a result in which no trial failed is
+refused with `invalid-counterexample-artifact` and the reason
+`:not-failure-evidence`.
+Direct `fixture-check-result` objects are accepted too. Fixture artifacts use
+version 2, while ordinary artifacts retain version 1 and the same AV1 wire codec.
 
 ```lisp
 (cl-spec:recheck-counterexample artifact :state-policy :fixture)
@@ -164,8 +166,12 @@ Reading an artifact never runs its hooks.
 
 Passing a prior result as `check-function :seed` still means **regenerating a
 run**, not directly replaying the selected counterexample. Fixture replay checks
-declaration identity, options, profile and trial budget before setup. Use an
-integer seed for a deliberately different new run.
+declaration identity, options, profile and trial budget before setup. A mismatch
+signals `unsupported-stateful-operation` with a reason that names the cause:
+`:definition-mismatch` for a changed declaration or fixture (or a saved run that
+was not a fixture run), `:incomparable-definition` for an incomplete declaration
+digest, and `:run-options-mismatch` for different options, profile or trial
+budget. Use an integer seed for a deliberately different new run.
 
 ## Compatibility
 

@@ -605,15 +605,35 @@ describe the original condition.  Expected values are not extracted."
            :reader unsupported-stateful-operation-reason
            :documentation "Machine-readable reason the operation is unsupported."))
   (:report (lambda (condition stream)
-             (format stream "Cannot ~S ~S: ~A.  The contract observes state but ~
-                             no contract for rebuilding the same initial state ~
-                             exists, so a past run cannot be replayed."
+             (format stream "Cannot ~S ~S: ~A.  ~A"
                      (unsupported-stateful-operation-operation condition)
                      (unsupported-stateful-operation-function condition)
-                     (unsupported-stateful-operation-reason condition))))
+                     (unsupported-stateful-operation-reason condition)
+                     (case (unsupported-stateful-operation-reason condition)
+                       (:definition-mismatch
+                        (format nil "The contract's declaration or fixture differs from ~
+                                     the one that produced the saved run, so replaying ~
+                                     it would not repeat the same experiment."))
+                       (:incomparable-definition
+                        (format nil "The saved run's or the current contract's ~
+                                     declaration digest is incomplete, so the two cannot ~
+                                     be compared."))
+                       (:run-options-mismatch
+                        (format nil "The requested options, profile or trial budget ~
+                                     differ from the saved run's, so replaying it would ~
+                                     not repeat the same experiment."))
+                       (t
+                        (format nil "The contract observes state but no contract for ~
+                                     rebuilding the same initial state exists, so a past ~
+                                     run cannot be replayed."))))))
   (:documentation "Signalled when a state-observing contract is asked to replay a past run.
 
 A :capture / :state-post contract observes state and never restores it, so
 reapplying a saved run against an unrestored state is refused explicitly rather
-than performed silently.  A new run with an integer seed is not this operation
-and is allowed."))
+than performed silently; the reason is :STATE-RESTORATION-UNAVAILABLE.  A
+contract with a :FIXTURE rebuilds its initial state, so its past run replays
+unless the run cannot be the same experiment: :DEFINITION-MISMATCH when the
+declaration or fixture changed or the saved run is not a fixture run,
+:INCOMPARABLE-DEFINITION when either declaration digest is incomplete, and
+:RUN-OPTIONS-MISMATCH when the options, profile or trial budget differ.  A new
+run with an integer seed is not this operation and is allowed."))

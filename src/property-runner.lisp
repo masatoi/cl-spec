@@ -384,17 +384,26 @@ the profile in effect falls back to the backend's own default."
                                         (t :known)))))))
 
 (defun validate-fixture-replay (property result options registry)
-  "Refuse changed or incomplete fixture definitions before replay causes side effects."
-  (let ((saved (property-result-schema-metadata result))
-        (current (definition-metadata property :registry registry
-                                      :capabilities '(:generation :unknown :shrinking :unknown))))
-    (unless (and (eq :fixture-recipe (getf saved :input-kind))
-                 (getf saved :definition-digest-complete)
-                 (getf current :definition-digest-complete)
-                 (equal (getf saved :definition-digest) (getf current :definition-digest))
-                 (equal options (property-result-options result)))
+  "Refuse changed or incomplete fixture definitions before replay causes side effects.
+The refusal's reason names the cause: :INCOMPARABLE-DEFINITION, :DEFINITION-MISMATCH
+or :RUN-OPTIONS-MISMATCH."
+  (let* ((saved (property-result-schema-metadata result))
+         (current (definition-metadata property :registry registry
+                                       :capabilities '(:generation :unknown
+                                                       :shrinking :unknown)))
+         (reason (cond ((not (eq :fixture-recipe (getf saved :input-kind)))
+                        :definition-mismatch)
+                       ((not (and (getf saved :definition-digest-complete)
+                                  (getf current :definition-digest-complete)))
+                        :incomparable-definition)
+                       ((not (equal (getf saved :definition-digest)
+                                    (getf current :definition-digest)))
+                        :definition-mismatch)
+                       ((not (equal options (property-result-options result)))
+                        :run-options-mismatch))))
+    (when reason
       (error 'unsupported-stateful-operation :operation :replay
-             :function (property-name property)))))
+             :function (property-name property) :reason reason))))
 
 (defun refuse-stateful-replay (property seed-result)
   "Refuse re-applying a past run to a state-observing PROPERTY, or return NIL.
@@ -481,7 +490,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                                (or (not (eql count (property-result-budget seed-result)))
                                    (not (eq effective-profile (property-result-profile seed-result)))))
                       (error 'unsupported-stateful-operation :operation :replay
-                             :function (property-name property)))
+                             :function (property-name property)
+                             :reason :run-options-mismatch))
                     count))
          (metadata (definition-metadata
                     property :registry registry

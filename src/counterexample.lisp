@@ -20,7 +20,7 @@
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
                 #:property-result-seed #:property-result-profile #:property-result-budget
                 #:property-result-options #:property-result-provenance
-                #:property-result-shrink-report)
+                #:property-result-shrink-report #:property-result-status)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status #:trial-observation-reason
@@ -244,8 +244,10 @@ never reached the target -- and is refused before this point."
 
 (defun fixture-evidence-data (observation)
   "Project a clean fixture counterexample as a saved recipe and failure identity."
-  (unless (and observation (observation-failure-p observation)
-               (completed-fixture-lifecycle-p (trial-observation-lifecycle observation))
+  ;; A passed observation completed its lifecycle; what is missing is a failure.
+  (unless (and observation (observation-failure-p observation))
+    (reject-artifact :not-failure-evidence))
+  (unless (and (completed-fixture-lifecycle-p (trial-observation-lifecycle observation))
                (not (eq :fixture (observation-failure-phase observation))))
     (reject-artifact :fixture-lifecycle-incomplete))
   (append (evidence-data observation)
@@ -329,6 +331,9 @@ never reached the target -- and is refused before this point."
       (reject-artifact :incomplete-fixture-definition))
     (when (and (not direct) (property-result-run-error result))
       (reject-artifact :fixture-lifecycle-incomplete))
+    ;; Before the selection check: a passed run has no failure to have shrunk.
+    (unless (and original (observation-failure-p original))
+      (reject-artifact :not-failure-evidence))
     (when (and (eq choice :shrunk) (null shrunk))
       (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-data (value field)
@@ -410,7 +415,11 @@ never reached the target -- and is refused before this point."
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
-A case-selection error never reached the target, so it is refused here rather
+A result without trial failure evidence is refused with the reason
+:NOT-FAILURE-EVIDENCE when no trial failed and :RUN-ERROR when the run ended in
+:ERROR before any trial failed, such as on an exhausted generation budget (a
+fixture run reports :FIXTURE-LIFECYCLE-INCOMPLETE for a run error).  A
+case-selection error never reached the target, so it is refused here rather
 than persisted as a call that never happened."
   (let ((metadata (typecase result
                     (fixture-check-result (fixture-check-result-definition result))
@@ -440,6 +449,13 @@ than persisted as a call that never happened."
     (when (or (and original (eq :case-selection (observation-failure-phase original)))
               (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
       (reject-artifact :case-selection-failure))
+    ;; Without trial failure evidence the record is well formed but has nothing
+    ;; to save.  A failing trial always leaves evidence, so an :ERROR status here
+    ;; is a run-level error such as an exhausted generation budget.
+    (unless original
+      (reject-artifact (if (eq :error (property-result-status result))
+                           :run-error
+                           :not-failure-evidence)))
     (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-metadata (value field)
                (multiple-value-bind (copy omission) (persistable-metadata value field)

@@ -946,7 +946,15 @@ readerは観測だけを行い、instanceの構築方法は持たない。した
 `object-of`の生成を`generator-unavailable`として拒否し、capabilityは
 `:generation :unavailable`となる。instanceを生成したい場合は定義に
 `(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
-constructorとinitargを知るのは著者だけだからである。縮小も同じgenerator/shrinkerに従う。
+constructorとinitargを知るのは著者だけだからである。
+
+`defgenerator`の`:shrink`節が使われるのは、そのgeneratorがrunの入力全体を供給する場合
+（`defspec-function`の`:args-generator`と`:fixture`のrecipe）に限る。property引数・
+`:args`引数・field・ANDの連言の位置にある`(:generator NAME)`は値を生成するが、その値は
+縮小中も変化せず、同じ入力の他の値だけが縮小される。縮小できる値が他に無いときは元の反例を
+保持し、結果のcapabilityは`:shrinking :none`となる。`backend-capabilities`はspecを
+単独で（`sample`のrootとして）使った場合の能力を答えるため、この位置の差を反映しない
+（issue #45）。
 
 ---
 
@@ -1045,6 +1053,11 @@ tuple
 simple structures
 
 ```
+
+`(range integer lo hi)`の端点が小数のときは、validationと同じく区間に含まれる整数を
+生成する（下端は切り上げ、上端は切り捨てる）。例えば`(range integer 1/2 7/2)`は1・2・3を
+生成する。片側が無制限の区間と、ANDの数値foldにも同じ規則を適用する。含まれる整数が無い
+区間や、下端が上端を上回る区間は、何も受け付けないので`generator-unavailable`を通知する。
 
 ## ANDの生成元選択
 
@@ -1819,12 +1832,15 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 ```
 
 `:not-evaluated`の理由は`:precondition-rejected`・`:capture-failed`・
-`:case-selection-failed`・`:outcome-failed`のいずれかである。`:state-post`は契約が
-節を宣言していれば現れる。ケースが選択される前はトップレベル節またはいずれかの
-ケースの節を指し、そのとき`:case`は`NIL`で理由は`:capture-failed`または
-`:case-selection-failed`となり、「宣言していない」と「宣言はあるが選択・実行の前に
-止まった」を区別する。どちらの節も宣言しない契約は状態証拠を持たず、`:state`を
-省略するので既存の投影は変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
+`:case-selection-failed`・`:outcome-failed`・`:contract-error`のいずれかである。
+`:contract-error`は、対象を呼ぶ前の契約側のコード（典型的には`:pre`）が
+`spec-violation`以外のerrorをsignalした場合である（`undefined-function`と
+`program-error`は伝播する）。`:state-post`は契約が節を宣言していれば現れる。
+ケースが選択される前はトップレベル節またはいずれかのケースの節を指し、そのとき`:case`は
+`NIL`で理由は`:capture-failed`・`:case-selection-failed`・`:contract-error`のいずれかと
+なり、「宣言していない」と「宣言はあるが選択・実行の前に止まった」を区別する。
+どちらの節も宣言しない契約は状態証拠を持たず、`:state`を省略するので既存の投影は
+変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
 して表示せず、`:values`は完了した束縛だけの順序付きper-binding recordのリストで
 あり、`:name`で名前から引ける。各recordは
 `(:name NAME :availability :collected :value VALUE)`または
@@ -5545,6 +5561,14 @@ non-participating backend answers `:not-collected`.
   fixture artifactはversion 2でrecipeを保存し、`:state-policy :fixture` の明示、
   完全な宣言digestとfixture versionの一致後に、生成なしで再検査する。
   resultをseedに渡すreplayでは定義、options、profile、試行予算の一致を要求する。
+  不一致は`unsupported-stateful-operation`の理由で区別する。定義の変更、または保存runが
+  fixture runでない場合は`:definition-mismatch`、どちらかの宣言digestが不完全なら
+  `:incomparable-definition`、options・profile・試行予算の違いは`:run-options-mismatch`
+  である。fixtureなしのstate観測契約の拒否だけが`:state-restoration-unavailable`を使う。
+  試行の失敗証拠を持たない結果からのartifact作成は、失敗した試行が無ければ
+  `:not-failure-evidence`、失敗した試行が無いままrunが`:error`で終わっていれば
+  （生成予算の枯渇など）`:run-error`で拒否する（fixtureのrunのrun errorは従来どおり
+  `:fixture-lifecycle-incomplete`）。
 - fixtureなしのstate観測、stateless artifact v1、既存result v1の意味は維持する。
   fixture契約のruntime instrumentationは拒否する。
 

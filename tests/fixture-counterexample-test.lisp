@@ -43,6 +43,20 @@
               (getf (cl-spec:recheck-counterexample artifact :state-policy :fixture) :status)))
       (ok (= 1 *setups*)))))
 
+(deftest passed-fixture-results-are-refused-as-not-failure-evidence
+  ;; A passed run completed its lifecycle; the refusal is that nothing failed.
+  (with-contract
+    (flet ((artifact-refusal (result &optional (selection :selected))
+             (handler-case
+                 (progn (cl-spec:make-counterexample-artifact result :selection selection) nil)
+               (cl-spec:invalid-counterexample-artifact (condition)
+                 (cl-spec:invalid-counterexample-artifact-reason condition)))))
+      (let ((generated (cl-spec:check-function 'withdraw :trials 3 :seed 41)))
+        (ok (eq :not-failure-evidence (artifact-refusal (fixture-check '(30 10)))))
+        (ok (eq :not-failure-evidence (artifact-refusal generated)))
+        ;; Not :MISSING-SHRUNK-EVIDENCE: there is no failure to have shrunk.
+        (ok (eq :not-failure-evidence (artifact-refusal generated :shrunk)))))))
+
 (deftest cleanup-error-is-not-persistable
   (with-contract
     (let* ((*mode* :cleanup-error)
