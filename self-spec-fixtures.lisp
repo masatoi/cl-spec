@@ -280,11 +280,13 @@ fixture recipe, so this function is its whole state construction."
 
 ;;; Finite validate corpus.  Each admitted form is paired with a value it refuses,
 ;;; so a run that reaches both pairs reaches both named outcomes.  This is a finite
-;;; corpus, not the whole DSL or the whole value domain.  VALIDATE-CORPUS-GENERATOR
-;;; in SPECS.LISP draws from it.  Runs that must reach both cases do not rely on
-;;; the draw: they bind *SCRIPTED-VALIDATE-INPUTS* to an explicit sequence, as the
+;;; corpus, not the whole DSL or the whole value domain.  VALIDATE-CORPUS-ENTRY below
+;;; draws from it on behalf of VALIDATE-CORPUS-GENERATOR in SPECS.LISP.  Runs that
+;;; must control which cases are reached do not rely on the draw: they bind
+;;; *SCRIPTED-VALIDATE-INPUTS* to an explicit sequence, as the
 ;;; VALIDATE-CASES-CLASSIFY-ADMITTED-AND-REFUSED property in SPECS.LISP and the
-;;; tests in TESTS/SELF-API-CONTRACTS-TEST.LISP do.
+;;; VALIDATE tests in TESTS/SELF-API-CONTRACTS-TEST.LISP do (one to reach both
+;;; cases, one to miss :REFUSED on purpose).
 
 (defparameter *validate-corpus*
   '((integer 0) (integer "refused")

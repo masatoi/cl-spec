@@ -476,12 +476,15 @@ than persisted as a call that never happened."
                                            (state-policy :unconfirmed)
                                            (target-revision :unknown))
   "Recheck saved input once without generation or shrinking.
-Definition identity must be complete and unchanged. Execution then requires a
-caller assertion about external state: :STATE-POLICY :STATELESS for an ordinary
-(version 1) artifact, asserting that no restoration is needed, or :STATE-POLICY
-:FIXTURE for a fixture (version 2) artifact, whose saved recipe is rebuilt
-through the contract's fixture at an unchanged fixture version. Any other policy
-returns :STATUS :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing.
+Definition identity must be complete and unchanged (for a fixture artifact, the
+fixture version too). Execution then requires a caller assertion about external
+state: :STATE-POLICY :STATELESS for an ordinary (version 1) artifact, asserting
+that no restoration is needed, or :STATE-POLICY :FIXTURE for a fixture (version
+2) artifact, whose saved recipe is rebuilt through the contract's fixture. Any
+other policy, including the one for the other artifact version, returns :STATUS
+:UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
+recheck also refuses a definition that now observes state
+(:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 Returns a :RECHECK record; never mutates the saved artifact or original result."
   (let* ((data (counterexample-artifact-data artifact))
          (kind (getf data :entity-kind))
