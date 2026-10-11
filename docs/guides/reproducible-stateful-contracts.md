@@ -139,8 +139,9 @@ Database isolation, asynchronous tasks and external I/O are outside `:fresh`.
   (cl-spec:serialize-counterexample-artifact artifact))
 ```
 
-Artifact creation requires a failure: a passed result is refused with
-`invalid-counterexample-artifact` and the reason `:not-failure-evidence`.
+Artifact creation requires a failure: a result in which no trial failed is
+refused with `invalid-counterexample-artifact` and the reason
+`:not-failure-evidence`.
 Direct `fixture-check-result` objects are accepted too. Fixture artifacts use
 version 2, while ordinary artifacts retain version 1 and the same AV1 wire codec.
 

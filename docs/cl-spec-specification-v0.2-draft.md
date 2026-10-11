@@ -950,9 +950,11 @@ constructorとinitargを知るのは著者だけだからである。
 
 `defgenerator`の`:shrink`節が使われるのは、そのgeneratorがrunの入力全体を供給する場合
 （`defspec-function`の`:args-generator`と`:fixture`のrecipe）に限る。property引数・
-`:args`引数・field・ANDの連言の位置にある`(:generator NAME)`は値を生成するが縮小されず、
-失敗は元の反例を保持する。`backend-capabilities`はspecを単独で（`sample`のrootとして）
-使った場合の能力を答えるため、この位置の差を反映しない（issue #45）。
+`:args`引数・field・ANDの連言の位置にある`(:generator NAME)`は値を生成するが、その値は
+縮小中も変化せず、同じ入力の他の値だけが縮小される。縮小できる値が他に無いときは元の反例を
+保持し、結果のcapabilityは`:shrinking :none`となる。`backend-capabilities`はspecを
+単独で（`sample`のrootとして）使った場合の能力を答えるため、この位置の差を反映しない
+（issue #45）。
 
 ---
 
@@ -1832,12 +1834,13 @@ errorを出した場合も、対象outcomeと検証側のerrorの情報を両方
 `:not-evaluated`の理由は`:precondition-rejected`・`:capture-failed`・
 `:case-selection-failed`・`:outcome-failed`・`:contract-error`のいずれかである。
 `:contract-error`は、対象を呼ぶ前の契約側のコード（典型的には`:pre`）が
-`spec-violation`以外のconditionをsignalした場合である。`:state-post`は契約が
-節を宣言していれば現れる。ケースが選択される前はトップレベル節またはいずれかの
-ケースの節を指し、そのとき`:case`は`NIL`で理由は`:capture-failed`・
-`:case-selection-failed`・`:contract-error`のいずれかとなり、「宣言していない」と
-「宣言はあるが選択・実行の前に止まった」を区別する。どちらの節も宣言しない契約は状態証拠を持たず、`:state`を
-省略するので既存の投影は変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
+`spec-violation`以外のerrorをsignalした場合である（`undefined-function`と
+`program-error`は伝播する）。`:state-post`は契約が節を宣言していれば現れる。
+ケースが選択される前はトップレベル節またはいずれかのケースの節を指し、そのとき`:case`は
+`NIL`で理由は`:capture-failed`・`:case-selection-failed`・`:contract-error`のいずれかと
+なり、「宣言していない」と「宣言はあるが選択・実行の前に止まった」を区別する。
+どちらの節も宣言しない契約は状態証拠を持たず、`:state`を省略するので既存の投影は
+変わらない。途中で失敗したcaptureは後続の束縛を取得済みと
 して表示せず、`:values`は完了した束縛だけの順序付きper-binding recordのリストで
 あり、`:name`で名前から引ける。各recordは
 `(:name NAME :availability :collected :value VALUE)`または
@@ -5562,7 +5565,9 @@ non-participating backend answers `:not-collected`.
   fixture runでない場合は`:definition-mismatch`、どちらかの宣言digestが不完全なら
   `:incomparable-definition`、options・profile・試行予算の違いは`:run-options-mismatch`
   である。fixtureなしのstate観測契約の拒否だけが`:state-restoration-unavailable`を使う。
-  失敗のない結果（passedのrunなど）からのartifact作成は`:not-failure-evidence`で拒否する。
+  試行の失敗証拠を持たない結果からのartifact作成は、失敗した試行が無ければ
+  `:not-failure-evidence`、run全体がerrorで止まっていれば`:run-error`で拒否する
+  （fixtureのrunでは従来どおり`:fixture-lifecycle-incomplete`）。
 - fixtureなしのstate観測、stateless artifact v1、既存result v1の意味は維持する。
   fixture契約のruntime instrumentationは拒否する。
 

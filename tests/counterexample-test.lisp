@@ -9,7 +9,8 @@
                 #:recheck-counterexample #:invalid-counterexample-artifact
                 #:invalid-counterexample-artifact-reason)
   (:import-from #:cl-spec/src/property #:property #:register-property #:property-argument-schema)
-  (:import-from #:cl-spec/src/property-runner #:property-result)
+  (:import-from #:cl-spec/src/property-runner
+                #:property-result #:property-result-failure-evidence)
   (:import-from #:cl-spec/src/execution #:observe-trial)
   (:import-from #:cl-spec/src/schema #:definition-metadata #:definition-description)
   (:import-from #:cl-spec/src/registry #:make-hash-table-registry)
@@ -71,6 +72,19 @@
     (declare (ignore property))
     (reinitialize-instance result :status :passed :failure-evidence nil)
     (ok (eq :not-failure-evidence
+            (handler-case (progn (make-counterexample-artifact result) nil)
+              (invalid-counterexample-artifact (condition)
+                (invalid-counterexample-artifact-reason condition)))))))
+
+(deftest a-run-error-without-a-trial-failure-is-refused-as-a-run-error
+  ;; A run that stopped on a run-level error (generation, backend) has no trial
+  ;; failure to save, and that is not the same as having passed.
+  (multiple-value-bind (result property) (fixture (make-registry))
+    (declare (ignore property))
+    (reinitialize-instance result :status :error
+                                  :run-error (property-result-failure-evidence result)
+                                  :failure-evidence nil)
+    (ok (eq :run-error
             (handler-case (progn (make-counterexample-artifact result) nil)
               (invalid-counterexample-artifact (condition)
                 (invalid-counterexample-artifact-reason condition)))))))

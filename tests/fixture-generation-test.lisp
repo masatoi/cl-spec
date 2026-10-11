@@ -224,7 +224,7 @@
 (deftest fixture-replay-refusals-name-their-cause
   (with-contract
     (let* ((first (cl-spec:check-function 'withdraw :trials 4 :seed 41))
-           (saved (cl-spec/src/property-runner:property-result-schema-metadata first)))
+           (saved (cl-spec:property-result-schema-metadata first)))
       (flet ((replay-with-metadata (key value)
                ;; Replays FIRST with one field of its saved metadata replaced.
                (let ((metadata (copy-list saved)))

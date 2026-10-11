@@ -331,6 +331,9 @@ never reached the target -- and is refused before this point."
       (reject-artifact :incomplete-fixture-definition))
     (when (and (not direct) (property-result-run-error result))
       (reject-artifact :fixture-lifecycle-incomplete))
+    ;; Before the selection check: a passed run has no failure to have shrunk.
+    (unless (and original (observation-failure-p original))
+      (reject-artifact :not-failure-evidence))
     (when (and (eq choice :shrunk) (null shrunk))
       (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-data (value field)
@@ -412,8 +415,10 @@ never reached the target -- and is refused before this point."
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
-A result that carries no failure, such as a passed run, is refused with the
-reason :NOT-FAILURE-EVIDENCE.  A case-selection error never reached the target,
+A result without trial failure evidence is refused with the reason
+:NOT-FAILURE-EVIDENCE when no trial failed and :RUN-ERROR when the run stopped on a
+run-level error (a fixture run keeps :FIXTURE-LIFECYCLE-INCOMPLETE for that).
+A case-selection error never reached the target,
 so it is refused here rather than persisted as a call that never happened."
   (let ((metadata (typecase result
                     (fixture-check-result (fixture-check-result-definition result))
@@ -443,8 +448,10 @@ so it is refused here rather than persisted as a call that never happened."
     (when (or (and original (eq :case-selection (observation-failure-phase original)))
               (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
       (reject-artifact :case-selection-failure))
-    ;; A passed result is a well-formed record with nothing to save.
-    (unless original (reject-artifact :not-failure-evidence))
+    ;; Without trial failure evidence the record is well formed but has nothing
+    ;; to save: the run either passed or stopped on a run-level error.
+    (unless original
+      (reject-artifact (if (property-result-run-error result) :run-error :not-failure-evidence)))
     (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-metadata (value field)
                (multiple-value-bind (copy omission) (persistable-metadata value field)
