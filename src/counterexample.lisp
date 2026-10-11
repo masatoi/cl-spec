@@ -476,8 +476,12 @@ than persisted as a call that never happened."
                                            (state-policy :unconfirmed)
                                            (target-revision :unknown))
   "Recheck saved input once without generation or shrinking.
-Execution requires :STATE-POLICY :STATELESS, a caller assertion that external
-state needs no restoration. Definition identity must be complete and unchanged.
+Definition identity must be complete and unchanged. Execution then requires a
+caller assertion about external state: :STATE-POLICY :STATELESS for an ordinary
+(version 1) artifact, asserting that no restoration is needed, or :STATE-POLICY
+:FIXTURE for a fixture (version 2) artifact, whose saved recipe is rebuilt
+through the contract's fixture at an unchanged fixture version. Any other policy
+returns :STATUS :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing.
 Returns a :RECHECK record; never mutates the saved artifact or original result."
   (let* ((data (counterexample-artifact-data artifact))
          (kind (getf data :entity-kind))
