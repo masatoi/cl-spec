@@ -5,7 +5,8 @@
   (:import-from #:cl-spec/src/counterexample
                 #:make-counterexample-artifact
                 #:serialize-counterexample-artifact #:deserialize-counterexample-artifact
-                #:recheck-counterexample)
+                #:recheck-counterexample #:invalid-counterexample-artifact
+                #:invalid-counterexample-artifact-reason)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec #:register-function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
@@ -133,3 +134,19 @@
     (setf *behavior* :fixed)
     (ok (eq :passed (recheck-status artifact registry)))
     (ok (= *calls* (+ calls 2)))))
+
+(deftest an-errored-run-without-a-trial-failure-is-refused-as-a-run-error
+  ;; Generation exhausts its budget before any trial: the run ends in :ERROR
+  ;; with nothing to save, which is not the same as a run in which nothing failed.
+  (let* ((registry (make-hash-table-registry)) (*behavior* :fixed) (*calls* 0) (*inputs* nil)
+         (definition (contract registry
+                               :argument-specs '((x (and (range integer 0 10)
+                                                         (satisfies minusp))))
+                               :return-spec 'integer))
+         (result (check-function definition :trials 3 :seed 42 :registry registry)))
+    (ok (eq :error (property-result-status result)))
+    (ok (null (property-result-failure-evidence result)))
+    (ok (eq :run-error
+            (handler-case (progn (make-counterexample-artifact result) nil)
+              (invalid-counterexample-artifact (condition)
+                (invalid-counterexample-artifact-reason condition)))))))

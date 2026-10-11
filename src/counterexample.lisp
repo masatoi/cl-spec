@@ -20,7 +20,7 @@
                 #:property-result-failure-evidence #:property-result-shrunk-evidence
                 #:property-result-seed #:property-result-profile #:property-result-budget
                 #:property-result-options #:property-result-provenance
-                #:property-result-shrink-report)
+                #:property-result-shrink-report #:property-result-status)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-arguments #:trial-observation-arguments-mutated-p
                 #:trial-observation-status #:trial-observation-reason
@@ -416,10 +416,11 @@ SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
 A result without trial failure evidence is refused with the reason
-:NOT-FAILURE-EVIDENCE when no trial failed and :RUN-ERROR when the run stopped on a
-run-level error (a fixture run keeps :FIXTURE-LIFECYCLE-INCOMPLETE for that).
-A case-selection error never reached the target,
-so it is refused here rather than persisted as a call that never happened."
+:NOT-FAILURE-EVIDENCE when no trial failed and :RUN-ERROR when the run ended in
+:ERROR before any trial failed, such as on an exhausted generation budget (a
+fixture run reports :FIXTURE-LIFECYCLE-INCOMPLETE for a run error).  A
+case-selection error never reached the target, so it is refused here rather
+than persisted as a call that never happened."
   (let ((metadata (typecase result
                     (fixture-check-result (fixture-check-result-definition result))
                     (property-result (property-result-schema-metadata result)))))
@@ -449,9 +450,12 @@ so it is refused here rather than persisted as a call that never happened."
               (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
       (reject-artifact :case-selection-failure))
     ;; Without trial failure evidence the record is well formed but has nothing
-    ;; to save: the run either passed or stopped on a run-level error.
+    ;; to save.  A failing trial always leaves evidence, so an :ERROR status here
+    ;; is a run-level error such as an exhausted generation budget.
     (unless original
-      (reject-artifact (if (property-result-run-error result) :run-error :not-failure-evidence)))
+      (reject-artifact (if (eq :error (property-result-status result))
+                           :run-error
+                           :not-failure-evidence)))
     (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-metadata (value field)
                (multiple-value-bind (copy omission) (persistable-metadata value field)

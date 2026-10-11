@@ -5566,8 +5566,9 @@ non-participating backend answers `:not-collected`.
   `:incomparable-definition`、options・profile・試行予算の違いは`:run-options-mismatch`
   である。fixtureなしのstate観測契約の拒否だけが`:state-restoration-unavailable`を使う。
   試行の失敗証拠を持たない結果からのartifact作成は、失敗した試行が無ければ
-  `:not-failure-evidence`、run全体がerrorで止まっていれば`:run-error`で拒否する
-  （fixtureのrunでは従来どおり`:fixture-lifecycle-incomplete`）。
+  `:not-failure-evidence`、失敗した試行が無いままrunが`:error`で終わっていれば
+  （生成予算の枯渇など）`:run-error`で拒否する（fixtureのrunのrun errorは従来どおり
+  `:fixture-lifecycle-incomplete`）。
 - fixtureなしのstate観測、stateless artifact v1、既存result v1の意味は維持する。
   fixture契約のruntime instrumentationは拒否する。
 
