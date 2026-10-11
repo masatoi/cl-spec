@@ -358,9 +358,10 @@ other compound heads do."
                                    :reason "CONS-OF is post-MVP; use TUPLE or LIST-OF"))
         (t
          (error 'invalid-spec-form :form form
-                                   :reason "unknown spec head; write (type ...) or ~
-                                            (instance-of ...) for a user-defined type, or ~
-                                            reference a registered spec by name"))))))
+                                   :reason (format nil "unknown spec head; write (type ...) ~
+                                                        or (instance-of ...) for a ~
+                                                        user-defined type, or reference a ~
+                                                        registered spec by name")))))))
 
 (defun normalize-spec-form (form &key name generator source-location)
   "Normalize spec DSL FORM into a Semantic IR object.

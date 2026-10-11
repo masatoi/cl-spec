@@ -337,8 +337,8 @@ because only its author knows the constructor and its initargs."
   (declare (ignore context))
   (error 'generator-unavailable
          :spec spec
-         :reason "an OBJECT-OF spec is observed through readers and cannot be constructed; ~
-                  declare a (:GENERATOR NAME) to draw instances"))
+         :reason (format nil "an OBJECT-OF spec is observed through readers and cannot be ~
+                              constructed; declare a (:GENERATOR NAME) to draw instances")))
 
 (defmethod spec-generator ((spec tagged-union-spec) context)
   "Draw from every branch through an OR, so each branch a tag selects is reachable.
