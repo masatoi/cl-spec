@@ -753,7 +753,11 @@ Freeze original and accepted shrunk evidence from RESULT.
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
-A case-selection error never reached the target, so it is refused here rather
+A result without trial failure evidence is refused with the reason
+:NOT-FAILURE-EVIDENCE when no trial failed and :RUN-ERROR when the run ended in
+:ERROR before any trial failed, such as on an exhausted generation budget (a
+fixture run reports :FIXTURE-LIFECYCLE-INCOMPLETE for a run error).  A
+case-selection error never reached the target, so it is refused here rather
 than persisted as a call that never happened.
 
 <a name="make-hash-table-registry"></a>
@@ -3010,8 +3014,13 @@ Signalled when a state-observing contract is asked to replay a past run.
 ```text
 A :capture / :state-post contract observes state and never restores it, so
 reapplying a saved run against an unrestored state is refused explicitly rather
-than performed silently.  A new run with an integer seed is not this operation
-and is allowed.
+than performed silently; the reason is :STATE-RESTORATION-UNAVAILABLE.  A
+contract with a :FIXTURE rebuilds its initial state, so its past run replays
+unless the run cannot be the same experiment: :DEFINITION-MISMATCH when the
+declaration or fixture changed or the saved run is not a fixture run,
+:INCOMPARABLE-DEFINITION when either declaration digest is incomplete, and
+:RUN-OPTIONS-MISMATCH when the options, profile or trial budget differ.  A new
+run with an integer seed is not this operation and is allowed.
 ```
 
 
