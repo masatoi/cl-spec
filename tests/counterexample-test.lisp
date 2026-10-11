@@ -65,6 +65,16 @@
               (invalid-counterexample-artifact (condition)
                 (invalid-counterexample-artifact-reason condition)))))))
 
+(deftest a-passed-result-is-refused-as-not-failure-evidence
+  ;; The record is not malformed; the result carries no failure to save.
+  (multiple-value-bind (result property) (fixture (make-registry))
+    (declare (ignore property))
+    (reinitialize-instance result :status :passed :failure-evidence nil)
+    (ok (eq :not-failure-evidence
+            (handler-case (progn (make-counterexample-artifact result) nil)
+              (invalid-counterexample-artifact (condition)
+                (invalid-counterexample-artifact-reason condition)))))))
+
 (deftest opaque-metadata-does-not-discard-evidence
   (let ((registry (make-registry)))
     (multiple-value-bind (result property) (fixture registry)

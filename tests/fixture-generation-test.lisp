@@ -1,7 +1,7 @@
 ;;;; tests/fixture-generation-test.lisp
 (defpackage #:cl-spec/tests/fixture-generation-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:rove #:deftest #:testing #:ok)
   (:import-from #:cl-spec/main)
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/tests/fixture-function-test
@@ -209,3 +209,59 @@
         (ok (= 2 (getf (getf data :fixture) :version)))
         (ok (search "replacement setup"
                     (princ-to-string (cl-spec:property-result-condition result))))))))
+
+(defun replay-refusal (thunk)
+  "Call THUNK; return the refusal's reason and report, or NIL when nothing is refused."
+  (handler-case (progn (funcall thunk) nil)
+    (cl-spec:unsupported-stateful-operation (condition)
+      (list (cl-spec:unsupported-stateful-operation-reason condition)
+            (princ-to-string condition)))))
+
+(defun reported-as-unrestorable-p (refusal)
+  "True when REFUSAL's report claims no contract rebuilds the initial state."
+  (search "no contract for rebuilding" (second refusal)))
+
+(deftest fixture-replay-refusals-name-their-cause
+  (with-contract
+    (let* ((first (cl-spec:check-function 'withdraw :trials 4 :seed 41))
+           (saved (cl-spec/src/property-runner:property-result-schema-metadata first)))
+      (flet ((replay-with-metadata (key value)
+               ;; Replays FIRST with one field of its saved metadata replaced.
+               (let ((metadata (copy-list saved)))
+                 (setf (getf metadata key) value)
+                 (reinitialize-instance first :schema-metadata metadata)
+                 (unwind-protect
+                      (replay-refusal
+                       (lambda () (cl-spec:check-function 'withdraw :seed first)))
+                   (reinitialize-instance first :schema-metadata saved)))))
+        (testing "a changed trial budget is a run-options mismatch"
+          (let ((refusal (replay-refusal
+                          (lambda () (cl-spec:check-function 'withdraw :trials 5 :seed first)))))
+            (ok (eq :run-options-mismatch (first refusal)))
+            (ok (not (reported-as-unrestorable-p refusal)))))
+        (testing "a changed definition digest is a definition mismatch"
+          (let ((refusal (replay-with-metadata :definition-digest "changed")))
+            (ok (eq :definition-mismatch (first refusal)))
+            (ok (not (reported-as-unrestorable-p refusal)))))
+        (testing "a saved run from a non-fixture definition is a definition mismatch"
+          (ok (eq :definition-mismatch
+                  (first (replay-with-metadata :input-kind :arguments)))))
+        (testing "an incomplete saved digest is incomparable"
+          (let ((refusal (replay-with-metadata :definition-digest-complete nil)))
+            (ok (eq :incomparable-definition (first refusal)))
+            (ok (not (reported-as-unrestorable-p refusal)))))
+        (testing "the unchanged result still replays"
+          (ok (null (replay-refusal
+                     (lambda () (cl-spec:check-function 'withdraw :seed first))))))))))
+
+(deftest fixture-property-replay-with-other-options-is-a-run-options-mismatch
+  (with-contract
+    (let* ((contract (cl-spec:find-function-spec 'withdraw))
+           (adapter (cl-spec/src/function-spec:make-fixture-check-property
+                     contract :budget 2))
+           (first (cl-spec:run-property adapter :seed 4 :options '(:shrink-budget 2)))
+           (refusal (replay-refusal
+                     (lambda () (cl-spec:replay-property adapter first
+                                                        :options '(:shrink-budget 3))))))
+      (ok (eq :run-options-mismatch (first refusal)))
+      (ok (not (reported-as-unrestorable-p refusal))))))

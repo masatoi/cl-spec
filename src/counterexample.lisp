@@ -244,8 +244,10 @@ never reached the target -- and is refused before this point."
 
 (defun fixture-evidence-data (observation)
   "Project a clean fixture counterexample as a saved recipe and failure identity."
-  (unless (and observation (observation-failure-p observation)
-               (completed-fixture-lifecycle-p (trial-observation-lifecycle observation))
+  ;; A passed observation completed its lifecycle; what is missing is a failure.
+  (unless (and observation (observation-failure-p observation))
+    (reject-artifact :not-failure-evidence))
+  (unless (and (completed-fixture-lifecycle-p (trial-observation-lifecycle observation))
                (not (eq :fixture (observation-failure-phase observation))))
     (reject-artifact :fixture-lifecycle-incomplete))
   (append (evidence-data observation)
@@ -410,8 +412,9 @@ never reached the target -- and is refused before this point."
 SELECTION is :SELECTED (prefer shrunk), :ORIGINAL or :SHRUNK. Unsupported
 evidence signals INVALID-COUNTEREXAMPLE-ARTIFACT; unsupported optional metadata
 is represented by an unavailable placeholder and :METADATA-OMISSIONS.
-A case-selection error never reached the target, so it is refused here rather
-than persisted as a call that never happened."
+A result that carries no failure, such as a passed run, is refused with the
+reason :NOT-FAILURE-EVIDENCE.  A case-selection error never reached the target,
+so it is refused here rather than persisted as a call that never happened."
   (let ((metadata (typecase result
                     (fixture-check-result (fixture-check-result-definition result))
                     (property-result (property-result-schema-metadata result)))))
@@ -440,6 +443,8 @@ than persisted as a call that never happened."
     (when (or (and original (eq :case-selection (observation-failure-phase original)))
               (and shrunk (eq :case-selection (observation-failure-phase shrunk))))
       (reject-artifact :case-selection-failure))
+    ;; A passed result is a well-formed record with nothing to save.
+    (unless original (reject-artifact :not-failure-evidence))
     (when (and (eq choice :shrunk) (not shrunk)) (reject-artifact :missing-shrunk-evidence))
     (labels ((optional-metadata (value field)
                (multiple-value-bind (copy omission) (persistable-metadata value field)
