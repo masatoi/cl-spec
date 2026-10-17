@@ -35,7 +35,8 @@
   (:import-from #:cl-spec/src/generation-request
                 #:generation-report-p #:make-generation-request #:generation-request-report
                 #:*generation-request* #:*generation-budget-coefficient*
-                #:record-generation-interruption #:reserve-generation-candidate)
+                #:record-generation-interruption #:reserve-generation-candidate
+                #:generation-candidate-available-p)
   (:import-from #:cl-spec/src/dsl #:defproperty #:defspec-function)
   (:import-from #:cl-spec/src/function-spec #:check-function)
   (:import-from #:cl-spec/src/property-runner
@@ -649,3 +650,16 @@
         (generation-budget-exhausted () nil))
       (record-generation-interruption))
     (ok (eq :budget-exhausted (getf (generation-request-report request) :termination)))))
+
+(deftest candidate-availability-is-asked-without-reserving
+  (testing "outside a request nothing can be reserved"
+    (let ((*generation-request* nil))
+      (ok (not (generation-candidate-available-p)))))
+  (let ((*generation-request* (make-generation-request :planned 1 :budget 1)))
+    (ok (generation-candidate-available-p))
+    (ok (generation-candidate-available-p) "asking twice reserves nothing")
+    (reserve-generation-candidate nil nil)
+    (ok (not (generation-candidate-available-p)))
+    (let ((report (generation-request-report *generation-request*)))
+      (ok (= 1 (getf report :attempts)))
+      (ok (eq :completed (getf report :termination))))))

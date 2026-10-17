@@ -25,12 +25,17 @@
                 #:mapped-generator)
   (:import-from #:cl-spec/src/field-spec
                 #:plist-spec #:alist-spec #:hash-table-spec #:object-spec
-                #:field-spec-fields #:field-key-test #:key-test-name
+                #:field-spec-fields #:field-key-test #:key-test-name #:key-test-function
                 #:field-key #:field-value-spec #:field-required-p)
   (:import-from #:cl-spec/src/tagged-union
                 #:tagged-union-spec #:tagged-union-branches #:branch-spec)
+  (:import-from #:cl-spec/src/map-spec
+                #:hash-table-of-spec #:alist-of-spec
+                #:map-spec-key-spec #:map-spec-value-spec #:map-spec-key-test
+                #:map-spec-min-count #:map-spec-max-count)
   (:import-from #:cl-spec/src/conditions
-                #:generator-unavailable)
+                #:generator-unavailable #:generator-unavailable-reason
+                #:generation-budget-exhausted)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-kind
@@ -73,6 +78,7 @@
                 #:make-generation-request
                 #:reserve-generation-candidate
                 #:record-generation-rejection
+                #:generation-candidate-available-p
                 #:with-generation-phase)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:bounded-filter-generator #:bounded-filter-sub-generator
@@ -83,6 +89,8 @@
            #:bounded-generator-max-length #:bounded-generator-enumerated
            #:bounded-generator-distinct-range #:bounded-generator-domain-size
            #:bounded-generator-element-probe
+           #:map-value-generator #:map-generator-min-count #:map-generator-max-count
+           #:map-generator-domain-size #:map-generator-key-probe #:map-generator-value-probe
            #:compile-spec-generator))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -696,6 +704,17 @@ each draw removes the chosen value from the remaining pool."
           do (setf (gethash item seen) t)
           finally (return nil))))
 
+(defun draw-collection-count (minimum maximum)
+  "Draw an element or entry count from [MINIMUM, MAXIMUM], capped by CHECK-IT:*SIZE*.
+
+MAXIMUM may be :UNBOUNDED.  *SIZE* is raised to MINIMUM first, so a declared
+minimum is always reachable."
+  (let* ((size (max *size* minimum))
+         (upper (if (eq maximum :unbounded) size (min maximum size))))
+    (if (>= upper minimum)
+        (+ minimum (random (1+ (- upper minimum))))
+        minimum)))
+
 (defclass bounded-collection-generator (generator)
   ((element-generator :initarg :element-generator
                       :reader bounded-generator-element-generator
@@ -744,13 +763,8 @@ reports 0 rather than falling through to the element generators."
           (and range (1+ (- (cdr range) (car range))))))))
 
 (defmethod generate ((generator bounded-collection-generator))
-  (let* ((minimum (bounded-generator-min-length generator))
-         (maximum (bounded-generator-max-length generator))
-         (size (max check-it:*size* minimum))
-         (upper (if (eq maximum :unbounded) size (min maximum size)))
-         (count (if (>= upper minimum)
-                    (+ minimum (random (1+ (- upper minimum))))
-                    minimum))
+  (let* ((count (draw-collection-count (bounded-generator-min-length generator)
+                                       (bounded-generator-max-length generator)))
          (enumerated (bounded-generator-enumerated generator))
          (distinct-range (bounded-generator-distinct-range generator)))
     (cond
@@ -956,6 +970,236 @@ domain would silently replace it."
                        (list (make-instance 'list-generator
                                             :generator-function
                                             (lambda () (spec-generator element context))))))))
+
+(defparameter *map-key-collision-limit* 8
+  "Consecutive key collisions after which a map holding MIN-COUNT keys stops.
+
+The first draw for a slot counts, so a slot makes at most this many draws once
+MIN-COUNT is met.  Below MIN-COUNT the slot keeps redrawing until the request's
+candidate budget runs out instead.")
+
+(defstruct (map-entry
+             (:constructor make-map-entry (key value key-child value-child)))
+  "One generated map entry and the generators that produced it.
+KEY-CHILD is NIL for a key sampled from a finite domain, which has no generator
+to shrink with."
+  key value key-child value-child)
+
+(defclass map-value-generator (generator)
+  ((key-spec :initarg :key-spec :reader map-generator-key-spec
+             :documentation "Key spec, named when a key redraw's reservation is denied.")
+   (key-test :initarg :key-test :reader map-generator-key-test
+             :documentation "Canonical keyword naming the key comparison.")
+   (min-count :initarg :min-count :reader map-generator-min-count)
+   (max-count :initarg :max-count :reader map-generator-max-count)
+   (key-generator :initarg :key-generator :initform nil :reader map-generator-key-generator
+                  :documentation "Function of no arguments returning a fresh key generator,
+or NIL when keys are sampled from ENUMERATED or DISTINCT-RANGE.")
+   (value-generator :initarg :value-generator :initform nil
+                    :reader map-generator-value-generator
+                    :documentation "Function of no arguments returning a fresh value generator.")
+   (key-validator :initarg :key-validator :initform nil :reader map-generator-key-validator)
+   (value-validator :initarg :value-validator :initform nil
+                    :reader map-generator-value-validator)
+   (key-probe :initarg :key-probe :initform nil :reader map-generator-key-probe
+              :documentation "Eagerly compiled key generator, kept only to report whether
+key-wise shrinking is possible.")
+   (value-probe :initarg :value-probe :initform nil :reader map-generator-value-probe
+                :documentation "Eagerly compiled value generator, kept for the same report.")
+   (enumerated :initarg :enumerated :initform nil :reader map-generator-enumerated
+               :documentation "Finite key domain as a vector already distinct under the key
+test, or NIL.  A present but empty vector is an empty domain.")
+   (distinct-range :initarg :distinct-range :initform nil
+                   :reader map-generator-distinct-range
+                   :documentation "Inclusive integer key bounds sampled without
+materializing them, or NIL.")
+   (entries :initform nil :accessor map-generator-entries
+            :documentation "MAP-ENTRY list of the current draw, in insertion order."))
+  (:documentation "Generate a homogeneous map and shrink it within its count bounds.
+
+Subclasses only encode entries into their representation; key selection, the
+budget accounting of key redraws and shrinking are shared."))
+
+(defclass alist-map-generator (map-value-generator)
+  ()
+  (:documentation "Generate fresh alists whose keys are distinct under the declared test."))
+
+(defclass hash-table-map-generator (map-value-generator)
+  ()
+  (:documentation "Generate fresh hash tables that use the declared key test."))
+
+(defgeneric encode-map-entries (generator entries)
+  (:documentation "Return ENTRIES, a MAP-ENTRY list, as a fresh value of GENERATOR's
+representation.  Only the container is fresh: keys and values are the objects the
+child generators returned."))
+
+(defmethod encode-map-entries ((generator alist-map-generator) entries)
+  (loop for entry in entries
+        collect (cons (map-entry-key entry) (map-entry-value entry))))
+
+(defmethod encode-map-entries ((generator hash-table-map-generator) entries)
+  (let ((table (make-hash-table :test (key-test-name (map-generator-key-test generator)))))
+    (dolist (entry entries table)
+      (setf (gethash (map-entry-key entry) table) (map-entry-value entry)))))
+
+(defun map-generator-domain-size (generator)
+  "Return the finite key domain size of GENERATOR, or NIL when it draws keys."
+  (let ((enumerated (map-generator-enumerated generator)))
+    (if enumerated
+        (length enumerated)
+        (let ((range (map-generator-distinct-range generator)))
+          (and range (1+ (- (cdr range) (car range))))))))
+
+(defun draw-distinct-keys (generator count)
+  "Draw up to COUNT keys distinct under the key test, as (KEY . KEY-CHILD) pairs.
+
+The first draw for each slot is free.  Every redraw first reserves one candidate
+from the active generation request and records a rejection when it collides
+again, so REJECTIONS never exceeds ATTEMPTS.  Once MIN-COUNT keys are placed, a
+slot gives up after *MAP-KEY-COLLISION-LIMIT* consecutive collisions, or when no
+candidate remains -- asked without reserving, so stopping early never marks the
+request exhausted -- and the map keeps the keys it has.  Below MIN-COUNT the slot
+keeps redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED."
+  (let ((seen (make-hash-table :test (key-test-name (map-generator-key-test generator))))
+        (minimum (map-generator-min-count generator))
+        (placed nil)
+        (placed-count 0))
+    (loop while (< placed-count count)
+          do (let ((collisions 0))
+               (loop
+                 (let ((redraw-p (plusp collisions)))
+                   (when redraw-p
+                     (when (and (>= placed-count minimum)
+                                (or (>= collisions *map-key-collision-limit*)
+                                    (not (generation-candidate-available-p))))
+                       (return-from draw-distinct-keys (nreverse placed)))
+                     (reserve-generation-candidate '(:map-key)
+                                                   (map-generator-key-spec generator)))
+                   (let* ((child (funcall (map-generator-key-generator generator)))
+                          (key (generate child)))
+                     (if (nth-value 1 (gethash key seen))
+                         (progn (when redraw-p (record-generation-rejection))
+                                (incf collisions))
+                         (progn (setf (gethash key seen) t)
+                                (push (cons key child) placed)
+                                (incf placed-count)
+                                (return))))))))
+    (nreverse placed)))
+
+(defun draw-map-keys (generator count)
+  "Return up to COUNT distinct keys for GENERATOR as (KEY . KEY-CHILD) pairs.
+A key sampled from a finite domain has no KEY-CHILD."
+  (let ((range (map-generator-distinct-range generator))
+        (enumerated (map-generator-enumerated generator)))
+    (cond
+      (range
+       (mapcar (lambda (key) (cons key nil))
+               (sample-distinct-integers (car range) (cdr range) count)))
+      (enumerated
+       (let ((pool (shuffle-list enumerated)))
+         (mapcar (lambda (key) (cons key nil))
+                 (subseq pool 0 (min count (length pool))))))
+      (t (draw-distinct-keys generator count)))))
+
+(defmethod generate ((generator map-value-generator))
+  "Draw a fresh map: an entry count, distinct keys, then one fresh value generator per key.
+
+A draw outside every public boundary gets its own finite request, as a bounded
+filter's does, so a key redraw always has a budget to reserve from."
+  (flet ((draw ()
+           (let* ((count (draw-collection-count (map-generator-min-count generator)
+                                                (map-generator-max-count generator)))
+                  (entries
+                    (loop for (key . key-child) in (draw-map-keys generator count)
+                          collect (let ((value-child
+                                          (funcall (map-generator-value-generator generator))))
+                                    (make-map-entry key (generate value-child)
+                                                    key-child value-child)))))
+             (setf (map-generator-entries generator) entries
+                   (cached-value generator) (encode-map-entries generator entries)))))
+    (if *generation-request*
+        (draw)
+        (let ((*generation-request* (make-generation-request :planned 1)))
+          (draw)))))
+
+(defun map-child-generator (spec child side context)
+  "Compile CHILD's generator, naming SIDE (\"key\" or \"value\") of SPEC when it has none."
+  (handler-case (spec-generator child context)
+    (generation-budget-exhausted (condition) (error condition))
+    (generator-unavailable (condition)
+      (error 'generator-unavailable
+             :spec spec
+             :reason (format nil "the map ~A spec cannot be generated~@[: ~A~]"
+                             side (generator-unavailable-reason condition))))))
+
+(defun finite-key-domain (spec context)
+  "Return (VALUES ENUMERATED DISTINCT-RANGE) for SPEC's keys, both NIL when keys are drawn.
+
+A custom generator owns its distribution, so a key spec that names one -- even
+under a reference, NULLABLE or OR -- is drawn from it rather than enumerated:
+ENUMERABLE-VALUES answers for a MEMBER node that carries a generator.  An
+enumerated domain is deduplicated again under the map's key test, and a domain
+smaller than MIN-COUNT is refused here, where its size is known exactly."
+  (let ((key-spec (map-spec-key-spec spec))
+        (minimum (map-spec-min-count spec)))
+    (flet ((refuse (size)
+             (error 'generator-unavailable
+                    :spec spec
+                    :reason (format nil "the key domain admits ~D distinct key~:P, fewer ~
+                                         than MIN-COUNT ~D"
+                                    size minimum))))
+      (if (effective-generator-name key-spec context)
+          (values nil nil)
+          (multiple-value-bind (low high) (finite-integer-range key-spec context)
+            (if low
+                (let ((width (1+ (- high low))))
+                  (when (< width minimum) (refuse width))
+                  (values nil (cons low high)))
+                (multiple-value-bind (keys enumerable-p) (enumerable-values key-spec context)
+                  (if (not enumerable-p)
+                      (values nil nil)
+                      (let ((distinct (remove-duplicates
+                                       keys :test (key-test-function (map-spec-key-test spec)))))
+                        (when (< (length distinct) minimum) (refuse (length distinct)))
+                        (values (coerce distinct 'vector) nil))))))))))
+
+(defun compile-map-generator (spec context class)
+  "Compile a generator for the homogeneous map SPEC as an instance of CLASS."
+  (let ((key-spec (map-spec-key-spec spec))
+        (value-spec (map-spec-value-spec spec))
+        (minimum (map-spec-min-count spec))
+        (maximum (map-spec-max-count spec)))
+    (flet ((build (&rest initargs)
+             (apply #'make-instance class
+                    :key-spec key-spec :key-test (map-spec-key-test spec)
+                    :min-count minimum :max-count maximum initargs)))
+      (if (eql maximum 0)
+          ;; No entry can be drawn, so neither child need compile: the empty map
+          ;; is the only admissible value.
+          (build :enumerated (vector))
+          (multiple-value-bind (enumerated distinct-range) (finite-key-domain spec context)
+            (let* ((sampled-p (or enumerated distinct-range))
+                   ;; Compiling each drawn child once, eagerly, raises
+                   ;; *REQUIRED-SIZE* to its bounds and refuses an ungeneratable
+                   ;; child now.  A sampled key domain is not compiled: its range
+                   ;; width would otherwise inflate *REQUIRED-SIZE*.
+                   (key-probe (unless sampled-p
+                                (map-child-generator spec key-spec "key" context)))
+                   (value-probe (map-child-generator spec value-spec "value" context)))
+              (setf *required-size* (max *required-size* minimum))
+              (build :key-generator (unless sampled-p
+                                      (lambda () (spec-generator key-spec context)))
+                     :value-generator (lambda () (spec-generator value-spec context))
+                     :key-validator (compile-validator key-spec :context context)
+                     :value-validator (compile-validator value-spec :context context)
+                     :key-probe key-probe :value-probe value-probe
+                     :enumerated enumerated :distinct-range distinct-range)))))))
+
+(defmethod spec-generator ((spec alist-of-spec) context)
+  (compile-map-generator spec context 'alist-map-generator))
+
+(defmethod spec-generator ((spec hash-table-of-spec) context)
+  (compile-map-generator spec context 'hash-table-map-generator))
 
 (defmethod spec-generator ((spec reference-spec) context)
   (let ((target (reference-spec-target spec))

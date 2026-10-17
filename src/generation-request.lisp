@@ -25,6 +25,7 @@
            #:generation-request-report
            #:generation-report-p
            #:reserve-generation-candidate
+           #:generation-candidate-available-p
            #:record-generation-rejection
            #:record-generated-value
            #:record-generation-interruption
@@ -180,6 +181,18 @@ permitted candidate sufficed."
            (and (= (getf report :attempts) (getf report :budget))
                 (member (getf report :exhaustion-phase) '(:generation :shrinking)))
            (null (getf report :exhaustion-phase)))))
+
+(defun generation-candidate-available-p ()
+  "Return true when the active request could reserve one more candidate.
+
+Asking reserves nothing and records nothing, so a caller that may stop early --
+a map that already holds MIN-COUNT keys -- can decline to redraw without a denied
+reservation marking the request :BUDGET-EXHAUSTED.  Outside a request there is
+nothing to reserve from, and the answer is NIL."
+  (let ((request *generation-request*))
+    (and request
+         (< (generation-request-attempts request)
+            (generation-request-budget request)))))
 
 (defun reserve-generation-candidate (path spec)
   "Reserve one candidate unit from the active request.

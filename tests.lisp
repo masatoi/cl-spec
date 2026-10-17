@@ -84,6 +84,7 @@
   (:import-from #:cl-spec/tests/backends/check-it-test)
   (:import-from #:cl-spec/tests/backends/plist-generator-test)
   (:import-from #:cl-spec/tests/backends/keyed-generator-test)
+  (:import-from #:cl-spec/tests/backends/map-generator-test)
   (:import-from #:cl-spec/tests/backends/object-generator-test)
   (:import-from #:cl-spec/tests/backends/tagged-union-generator-test)
   (:import-from #:cl-spec/tests/backends/and-generation-test)
