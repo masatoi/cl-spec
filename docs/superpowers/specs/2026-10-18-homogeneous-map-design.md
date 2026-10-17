@@ -255,8 +255,10 @@ cons）である。
 - 反例 artifact：`alist-of` の値は、キーと値が codec で扱える型なら保存できる。
   `hash-table-of` の値は codec が hash table を扱わないため、既存の `hash-table`
   spec と同じ理由で保存を拒否する。
-- coverage：マップ用の次元は追加しない。coverage schema はこれらのノードを次元を
-  持たないノードとして通過させ、テストでそれを固定する。
+- coverage：マップ用の次元は追加しない。plist coverage schema は子を持つ未対応
+  ノードを `:unexpanded`（`:reason :unsupported-composite`）として記録し、
+  discovery を `:partial` にする。`alist`・`list-of` と同じこの既存の扱いを
+  マップにも適用し、テストで固定する。
 - instrumentation と Function Spec：引数・返り値の spec として使えること以外に
   変更は無い。
 
@@ -286,7 +288,8 @@ cons）である。
 - 独立性テスト：同じ生成器の連続する draw が EQ でない外側の容器を返し、一方への
   追加・削除が他方に現れないこと。
 - 性質テスト：生成値がすべて `validp` を満たすこと（両表現、各 `:test`）。
-- coverage schema が新ノードを次元なしで通過させること。
+- coverage schema が新ノードを `:unsupported-composite` として `:unexpanded` に
+  記録すること。
 
 ## 9. ドキュメント
 
