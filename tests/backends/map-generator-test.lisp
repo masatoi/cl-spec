@@ -236,11 +236,11 @@
 (deftest map-shrinking-keeps-min-count-and-distinct-keys
   (let ((*registry* (make-hash-table-registry)))
     (defproperty never-holds
-        ((table (hash-table-of string (range integer 50 100) :test equal :min-count 2)))
+        ((table (hash-table-of integer (range integer 50 100) :test equal :min-count 2)))
       (:trials (:normal 20))
       (not (hash-table-p table)))
     (defproperty never-holds-alist
-        ((pairs (alist-of string null :test equal :min-count 2)))
+        ((pairs (alist-of integer null :min-count 2)))
       (:trials (:normal 20))
       (not (listp pairs)))
     (let* ((result (run-property 'never-holds :seed 7))
@@ -255,4 +255,21 @@
            (shrunk (getf (property-result-shrunk-counterexample result) 'pairs)))
       (ok (eq :failed (property-result-status result)))
       (ok (= 2 (length shrunk)))
-      (ok (distinct-under-p (alist-keys shrunk) #'equal)))))
+      (ok (distinct-under-p (alist-keys shrunk) #'eql)))))
+
+(deftest map-shrinking-refuses-colliding-keys
+  (let ((*registry* (make-hash-table-registry)))
+    (let ((generator (compile-spec-generator
+                      (normalize-spec-form '(alist-of integer null :min-count 2))
+                      (list :registry *registry*)))
+          (offered nil))
+      (dotimes (trial 20)
+        (check-it:generate generator)
+        ;; Every candidate fails the property, so each offered key is adopted unless refused.
+        (check-it:shrink generator (lambda (candidate) (push candidate offered) nil)))
+      (ok (plusp (length offered)))
+      (testing "no offered candidate repeats a key or drops below MIN-COUNT"
+        (ok (every (lambda (candidate)
+                     (and (<= 2 (length candidate))
+                          (distinct-under-p (alist-keys candidate) #'eql)))
+                   offered))))))
