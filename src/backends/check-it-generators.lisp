@@ -1147,9 +1147,16 @@ A custom generator owns its distribution, so a key spec that names one -- even
 under a reference, NULLABLE or OR -- is drawn from it rather than enumerated:
 ENUMERABLE-VALUES answers for a MEMBER node that carries a generator.  An
 enumerated domain is deduplicated again under the map's key test, and a domain
-smaller than MIN-COUNT is refused here, where its size is known exactly."
+smaller than MIN-COUNT is refused here, where its size is known exactly.
+
+Under :EQ a finite integer range, or an enumerated domain holding a number or a
+character, is not the complete key set: EQ distinguishes EQL copies of those
+values, so their EQL-enumerated size is no bound.  Such keys are drawn instead,
+and a map needing more distinct objects than the key generator returns ends in
+GENERATION-BUDGET-EXHAUSTED, never in a claim that the spec is unsatisfiable."
   (let ((key-spec (map-spec-key-spec spec))
-        (minimum (map-spec-min-count spec)))
+        (minimum (map-spec-min-count spec))
+        (eq-p (eq (map-spec-key-test spec) :eq)))
     (flet ((refuse (size)
              (error 'generator-unavailable
                     :spec spec
@@ -1158,13 +1165,17 @@ smaller than MIN-COUNT is refused here, where its size is known exactly."
                                     size minimum))))
       (if (effective-generator-name key-spec context)
           (values nil nil)
-          (multiple-value-bind (low high) (finite-integer-range key-spec context)
+          (multiple-value-bind (low high) (if eq-p
+                                              (values nil nil)
+                                              (finite-integer-range key-spec context))
             (if low
                 (let ((width (1+ (- high low))))
                   (when (< width minimum) (refuse width))
                   (values nil (cons low high)))
                 (multiple-value-bind (keys enumerable-p) (enumerable-values key-spec context)
-                  (if (not enumerable-p)
+                  (if (or (not enumerable-p)
+                          (and eq-p (some (lambda (key) (or (numberp key) (characterp key)))
+                                          keys)))
                       (values nil nil)
                       (let ((distinct (remove-duplicates
                                        keys :test (key-test-function (map-spec-key-test spec)))))

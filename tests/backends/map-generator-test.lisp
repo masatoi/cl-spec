@@ -217,10 +217,40 @@
     (dolist (entry '(((hash-table-of string integer) :available)
                      ((alist-of (member :a) null :min-count 1 :max-count 1) :none)
                      ((alist-of (member :a :b) null :min-count 1 :max-count 2) :available)
-                     ((alist-of (satisfies consp) (satisfies consp) :max-count 0) :none)))
+                     ((alist-of (satisfies consp) (satisfies consp) :max-count 0) :none)
+                     ((alist-of (member) integer) :none)
+                     ((hash-table-of (member) integer :test equal) :none)))
       (ok (equal (list :generation :available :shrinking (second entry))
                  (backend-capabilities backend (normalize-spec-form (first entry))))
           (format nil "Capabilities for ~S" (first entry))))))
+
+(deftest eq-maps-do-not-bound-numeric-keys-by-their-value-count
+  (let ((n (expt 2 100)))
+    (testing "a numeric range can supply EQ-distinct copies"
+      (let ((spec (normalize-spec-form `(alist-of (range integer ,n ,n) null
+                                                  :test eq :min-count 2 :max-count 2))))
+        (ok (every (lambda (alist) (and (= 2 (length alist)) (validp spec alist)))
+                   (sample spec :count 5 :seed 1)))))
+    (testing "a member domain is not refused as unsatisfiable under EQ"
+      (let ((form `(alist-of (member ,n) null :test eq :min-count 2 :max-count 2)))
+        (ok (handler-case (progn (sample-form form :count 1 :generation-budget 50) nil)
+              (generation-budget-exhausted () t)
+              (generator-unavailable () nil))
+            (format nil "~S is not refused as unsatisfiable" form))))
+    (testing "an EQ map of numeric keys still generates what it can"
+      (ok (every (lambda (alist) (= 1 (length alist)))
+                 (sample-form `(alist-of (range integer ,n ,n) null
+                                         :test eq :min-count 1 :max-count 1)
+                              :count 5 :seed 1)))
+      (let ((spec (normalize-spec-form '(alist-of (range integer 0 9) null
+                                         :test eq :min-count 3))))
+        (ok (every (lambda (value) (validp spec value)) (sample spec :count 20 :seed 2))))))
+  (testing "a symbol domain keeps its exact bound under EQ"
+    (ok (handler-case
+            (progn (sample-form '(alist-of (member :a :b) null :test eq :min-count 3) :count 1)
+                   nil)
+          (generation-budget-exhausted () nil)
+          (generator-unavailable () t)))))
 
 (deftest map-shrinking-removes-entries-and-reduces-values
   (let ((*registry* (make-hash-table-registry)))
