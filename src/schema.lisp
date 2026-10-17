@@ -14,6 +14,9 @@
   (:import-from #:cl-spec/src/tagged-union
                 #:tagged-union-spec #:tagged-union-tag-reader #:tagged-union-branches
                 #:branch-name)
+  (:import-from #:cl-spec/src/map-spec
+                #:map-of-spec #:hash-table-of-spec #:alist-of-spec
+                #:map-spec-key-test #:map-count-constraint-plist)
   (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
   (:import-from #:cl-spec/src/ir
                 #:spec #:spec-name #:spec-description #:spec-kind #:spec-source-form #:spec-metadata
@@ -164,6 +167,10 @@ now complete; until it does, its digest stays incomplete rather than trusted."))
   (list :tag-reader (tagged-union-tag-reader definition)
         :branches (mapcar #'branch-name (tagged-union-branches definition))))
 
+(defmethod definition-constraints ((definition map-of-spec))
+  (append (list :test (map-spec-key-test definition))
+          (map-count-constraint-plist definition)))
+
 (defmethod definition-constraints ((definition type-spec))
   (list :type (type-spec-type-specifier definition)))
 
@@ -215,6 +222,7 @@ unknown subclass yields an incomplete digest rather than a trusted partial one."
                        list-of-spec vector-of-spec tuple-spec
                        field-spec plist-spec keyed-field-spec alist-spec hash-table-spec
                        object-spec tagged-union-spec
+                       map-of-spec hash-table-of-spec alist-of-spec
                        call-arguments-spec return-values-spec)))))
 
 (defmethod definition-description-complete-p ((definition property))

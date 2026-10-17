@@ -42,6 +42,11 @@ CLOS field specs (`object-of`) observe instances through explicit readers; they
 validate and introspect but need a custom generator to construct values. Tagged
 unions (`tagged-by`) dispatch on an explicit tag reader, validate only the
 matching branch, name it in errors, and let `sample :branch` target one branch.
+Homogeneous maps (`hash-table-of`, `alist-of`) constrain every key with one spec
+and every value with another under a declared `:test`, with optional
+`:min-count`/`:max-count`; they validate, report key and value violations through
+`:entry-path`, introspect, and generate and shrink with keys distinct under the
+test, where a key redraw consumes the request's generation budget.
 AND generation selects one source by a fixed policy — a unique custom conjunct,
 numeric folding, or the first ordinarily constructible conjunct — and enforces
 the remaining conjuncts through a request-shared bounded filter whose attempts,

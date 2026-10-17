@@ -256,18 +256,19 @@ and KEYS retains their input order. Callers can reuse the checked index."
 
 KIND and KEY describe malformed structure and are NIL on success.  An entry is a
 cons whose CAR is the key and whose CDR is the value, so the value of (:id . NIL)
-is present but NIL, exactly as ASSOC reads it.  Keys are unique under KEY-TEST."
+is present but NIL, exactly as ASSOC reads it.  Keys are unique under KEY-TEST.
+Every accepted test is also a hash-table test, so the duplicate check is one
+pass over a table rather than a pairwise MEMBER walk."
   (unless (finite-list-p value)
     (return-from alist-structure-error (values :not-an-alist nil)))
-  (let ((test (key-test-function (key-test-designator key-test)))
-        (seen nil))
+  (let ((seen (make-hash-table :test (key-test-name (key-test-designator key-test)))))
     (dolist (entry value)
       (unless (consp entry)
         (return-from alist-structure-error (values :bad-association entry)))
       (let ((key (car entry)))
-        (when (member key seen :test test)
+        (when (nth-value 1 (gethash key seen))
           (return-from alist-structure-error (values :duplicate-key key)))
-        (push key seen)))
+        (setf (gethash key seen) t)))
     (values nil nil)))
 
 (defun hash-table-structure-error (value key-test)

@@ -30,7 +30,8 @@
   (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
     (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
                  "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "ALIST"
-                 "HASH-TABLE" "OBJECT-OF" "TAGGED-BY" "INSTANCE-OF")
+                 "HASH-TABLE" "HASH-TABLE-OF" "ALIST-OF" "OBJECT-OF" "TAGGED-BY"
+                 "INSTANCE-OF")
                *spec-primitives*)))
   (testing "CONS-OF is gone, matching the MVP spec list in section 52"
     (ok (not (member "CONS-OF" *spec-primitives* :test #'string=)))))

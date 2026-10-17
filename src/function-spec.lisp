@@ -1361,7 +1361,8 @@ a finding exactly as it was."
 
 (defparameter *failure-shape-keys*
   '(:kind :expected :violated-bound :predicate :condition-type :expected-length
-    :minimum-length :maximum-length :status :tuple-path :field-path
+    :minimum-length :maximum-length :minimum-count :maximum-count :status
+    :tuple-path :field-path :entry-path
     :branch :branch-path :known-tags)
   "The EXPLAIN-DATA error keys FAILURE-SHAPE keeps, because they come from the SPEC.
 
@@ -1373,7 +1374,9 @@ compared unequal and a legitimate reduction was thrown away.  A key derived from
 the spec is safe to compare; a new EXPLAIN-DATA key is treated as value-derived
 until someone classifies it here, and EVERY-EXPLAINED-ERROR-KEY-IS-CLASSIFIED
 fails until they do. :FIELD-PATH contains only declared parent/field keys;
-Unknown input key names in :KEY and :PATH are value-derived and remain discarded.")
+Unknown input key names in :KEY and :PATH are value-derived and remain discarded.
+:ENTRY-PATH names only the key or value side of each map level, never a map key,
+and :ACTUAL-COUNT is value-derived.")
 
 (defparameter *failure-shape-containers* '(:errors :branches :conjuncts)
   "EXPLAIN-DATA error keys whose value is a list of error-shaped plists to walk.
@@ -1391,8 +1394,9 @@ shrink of it by construction, so every key derived from one -- :ACTUAL,
 :ACTUAL-LENGTH, a :PATH into the value, a condition's :CONDITION-REPORT -- stays
 out of the shape, and every key derived from the spec -- :KIND, the :EXPECTED
 descriptor, :EXPECTED-LENGTH, :VIOLATED-BOUND, :PREDICATE, :CONDITION-TYPE, a
-conjunct's :STATUS, fixed :TUPLE-PATH and declared :FIELD-PATH -- stays in. See *FAILURE-SHAPE-KEYS*
-for why that is a whitelist rather than a list of keys to strip."
+conjunct's :STATUS, fixed :TUPLE-PATH, declared :FIELD-PATH and a map's :ENTRY-PATH --
+stays in.  See *FAILURE-SHAPE-KEYS* for why that is a whitelist rather than a list of keys
+to strip."
   (loop for (key value) on error-datum by #'cddr
         when (member key *failure-shape-containers*)
           append (list key (mapcar #'failure-shape value))
