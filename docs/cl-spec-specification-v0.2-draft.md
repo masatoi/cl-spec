@@ -1060,7 +1060,9 @@ check-it backendは、エントリ数を`[min-count, min(max-count, max(*list-si
 から引く。`*list-size*`はcheck-itのコレクション長の設定である。Kがcustom generatorに分布を委ねていればその生成器から引く。そうでなく
 有限domainを持てば（整数rangeまたは列挙可能）、宣言した`:test`で重複を除いた
 domainから重複なしで抽選し、domainが`:min-count`未満なら`generator-unavailable`
-とする。それ以外はKの生成器から引き、`:test`で衝突したら引き直す。
+とする。ただし`:test eq`では整数rangeと、数または文字を含む列挙domainを完全な
+キー集合とみなさない（EQはEQLなコピーを区別する）ので、これらのキーは引き直す
+経路で抽選する。それ以外はKの生成器から引き、`:test`で衝突したら引き直す。
 キーの抽選中はcheck-itの`*size*`に求めるキー数の4倍を加えて広げ、値の生成には
 周囲の`*size*`を使う。各枠の最初の抽選は
 予算を消費せず、引き直しは1回ごとにgeneration requestの候補を1単位予約し、
