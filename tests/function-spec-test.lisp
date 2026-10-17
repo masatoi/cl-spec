@@ -1430,7 +1430,7 @@ macro expansions would need the lint exemption that file carries."
           (kept (append cl-spec/src/function-spec::*failure-shape-keys*
                         cl-spec/src/function-spec::*failure-shape-containers*))
           (value-derived '(:actual :actual-length :path :condition-report :key
-                           :actual-test :observed-tag)))
+                           :actual-test :observed-tag :actual-count)))
       (dolist (form '((type integer) (range 0 10) (member 1 2) (satisfies oddp)
                       (satisfies demo-noisy-predicate) (list-of integer)
                       (vector-of integer) (tuple integer string) (not integer)
@@ -1448,7 +1448,9 @@ macro expansions would need the lint exemption that file carries."
                         (:left (plist (:required (:kind (member :left)) (:value integer))
                                       (:closed t)))
                         (:right (plist (:required (:kind (member :right)) (:value string))
-                                       (:closed t))))))
+                                       (:closed t))))
+                      (hash-table-of keyword integer :min-count 1 :max-count 1)
+                      (alist-of keyword (alist-of keyword integer) :max-count 1)))
         (let ((spec (normalize-spec-form form)))
           (dolist (value (list 1 -1 3.5 "s" nil #\a '(1 "a") '(1) #(1) '(:a 1)
                               '(:a "bad") '(:a 1 :a 2) '(:a 1 :extra nil)
@@ -1463,7 +1465,10 @@ macro expansions would need the lint exemption that file carries."
                               (hash-table-with 'eql '((:a . "bad")))
                               (hash-table-with 'eql '((:a . 1) (:extra . nil)))
                               (hash-table-with 'equal '((:a . 1)))
-                              (hash-table-with 'eql '((:a . ((:b . "bad")))))))
+                              (hash-table-with 'eql '((:a . ((:b . "bad")))))
+                              '((:a . 1) (:b . 2)) '(("s" . 1)) '((:a . ((:b . "bad"))))
+                              (hash-table-with 'eql '((:a . 1) (:b . 2)))
+                              (hash-table-with 'eql '(("s" . "bad")))))
             (dolist (datum (getf (explain-data spec value) :errors))
               (setf seen (explained-error-keys datum seen))))))
       (let ((spec (function-spec-argument-schema

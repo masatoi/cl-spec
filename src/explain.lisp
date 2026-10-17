@@ -53,6 +53,10 @@
                 #:key-test-name
                 #:plist-structure-error
                 #:alist-structure-error #:hash-table-structure-error)
+  (:import-from #:cl-spec/src/map-spec
+                #:map-of-spec #:hash-table-of-spec #:alist-of-spec
+                #:map-spec-key-spec #:map-spec-value-spec #:map-spec-key-test
+                #:map-spec-min-count #:map-spec-max-count #:map-count-constraint-plist)
   (:import-from #:cl-spec/src/tagged-union
                 #:tagged-union-spec #:tagged-union-tag-reader #:tagged-union-branches
                 #:branch-name #:branch-spec #:read-tag-value)
@@ -168,6 +172,12 @@ this generic; the default only identifies the node kind."))
         :branches (loop for branch in (tagged-union-branches spec)
                         collect (list :name (branch-name branch)
                                       :expected (expected-descriptor (branch-spec branch))))))
+
+(defmethod expected-descriptor ((spec map-of-spec))
+  (list* :kind (spec-kind spec) :test (map-spec-key-test spec)
+         :key (expected-descriptor (map-spec-key-spec spec))
+         :value (expected-descriptor (map-spec-value-spec spec))
+         (map-count-constraint-plist spec)))
 
 (defgeneric compile-node (spec context)
   (:documentation "Compile SPEC into a function of (VALUE PATH).
@@ -523,6 +533,77 @@ separate a violation in one field from the same violation in another."
                                     unknown)))
                           value)
                  (nreverse unknown)))))))))
+
+(defun entry-path-errors (errors part)
+  "Return ERRORS with PART (:KEY or :VALUE) prepended to each datum's :ENTRY-PATH.
+
+:ENTRY-PATH says which side of an entry failed at each map level.  It comes from
+the spec, so failure identity keeps it even when the key and value specs are the
+same; the map key itself is data and stays in :PATH only."
+  (loop for datum in errors
+        collect (let ((copy (copy-list datum)))
+                  (setf (getf copy :entry-path) (cons part (getf datum :entry-path)))
+                  copy)))
+
+(defun map-count-errors (spec count path value expected)
+  "Return a :too-few-entries or :too-many-entries datum for a map of COUNT entries, or NIL."
+  (let ((minimum (map-spec-min-count spec))
+        (maximum (map-spec-max-count spec)))
+    (cond ((< count minimum)
+           (list (error-datum :too-few-entries path value :expected expected
+                              :minimum-count minimum :actual-count count)))
+          ((and (integerp maximum) (> count maximum))
+           (list (error-datum :too-many-entries path value :expected expected
+                              :maximum-count maximum :actual-count count))))))
+
+(defun map-entry-errors (key-check value-check key item path)
+  "Return (values KEY-ERRORS VALUE-ERRORS) for one entry located at (KEY . PATH)."
+  (values (entry-path-errors (funcall key-check key (cons key path)) :key)
+          (entry-path-errors (funcall value-check item (cons key path)) :value)))
+
+(defmethod compile-node ((spec alist-of-spec) context)
+  (let ((key-check (compile-node (map-spec-key-spec spec) context))
+        (value-check (compile-node (map-spec-value-spec spec) context))
+        (key-test (map-spec-key-test spec))
+        (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (multiple-value-bind (kind key) (alist-structure-error value key-test)
+        (if kind
+            (list (error-datum kind (if (eq kind :duplicate-key) (cons key path) path)
+                               value :expected expected))
+            (append (map-count-errors spec (length value) path value expected)
+                    (loop for (key . item) in value
+                          append (multiple-value-bind (key-errors value-errors)
+                                     (map-entry-errors key-check value-check key item path)
+                                   (append key-errors value-errors)))))))))
+
+(defmethod compile-node ((spec hash-table-of-spec) context)
+  (let ((key-check (compile-node (map-spec-key-spec spec) context))
+        (value-check (compile-node (map-spec-value-spec spec) context))
+        (key-test (map-spec-key-test spec))
+        (expected (expected-descriptor spec)))
+    (lambda (value path)
+      (multiple-value-bind (kind actual) (hash-table-structure-error value key-test)
+        (cond
+          ((eq kind :wrong-key-test)
+           (list (error-datum kind path value :expected expected :actual-test actual)))
+          (kind (list (error-datum kind path value :expected expected)))
+          (t
+           ;; MAPHASH order is unspecified and arbitrary keys may have a
+           ;; signalling or nonterminating printer, so entries are reported in
+           ;; that order rather than sorted by a printed key: every key error
+           ;; first, then every value error.
+           (let ((key-errors nil)
+                 (value-errors nil))
+             (maphash (lambda (key item)
+                        (multiple-value-bind (key-part value-part)
+                            (map-entry-errors key-check value-check key item path)
+                          (push key-part key-errors)
+                          (push value-part value-errors)))
+                      value)
+             (append (map-count-errors spec (hash-table-count value) path value expected)
+                     (loop for errors in (nreverse key-errors) append errors)
+                     (loop for errors in (nreverse value-errors) append errors)))))))))
 
 (defun read-object-field (object reader)
   "Return (values PRESENT-P VALUE CONDITION) reading OBJECT through READER.
