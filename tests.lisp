@@ -66,6 +66,7 @@
   (:import-from #:cl-spec/tests/object-fields-test)
   (:import-from #:cl-spec/tests/tagged-union-test)
   (:import-from #:cl-spec/tests/collection-constraints-test)
+  (:import-from #:cl-spec/tests/map-spec-test)
   (:import-from #:cl-spec/tests/validator-test)
   (:import-from #:cl-spec/tests/explain-test)
   (:import-from #:cl-spec/tests/generator-test)

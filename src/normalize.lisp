@@ -18,6 +18,8 @@
                 #:key-test-designator #:key-test-designator-p #:key-test-function)
   (:import-from #:cl-spec/src/tagged-union
                 #:tagged-union-spec #:make-branch-definition)
+  (:import-from #:cl-spec/src/map-spec
+                #:hash-table-of-spec #:alist-of-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
@@ -27,7 +29,7 @@
 (defparameter *spec-primitives*
   '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
     "LIST-OF" "VECTOR-OF" "TUPLE" "NULLABLE" "PLIST" "ALIST" "HASH-TABLE"
-    "OBJECT-OF" "TAGGED-BY"
+    "HASH-TABLE-OF" "ALIST-OF" "OBJECT-OF" "TAGGED-BY"
     "INSTANCE-OF")
   "Spec DSL head names the MVP normalizer accepts (specification §9, §52).
 
@@ -268,6 +270,63 @@ other compound heads do."
            :min-length min-length :max-length max-length :unique unique
            (spec-initargs form name source-location generator))))
 
+(defun normalize-map-options (options form)
+  "Return (values KEY-TEST MIN-COUNT MAX-COUNT) for a map's OPTIONS.
+
+OPTIONS is the tail after the key and value specs.  Values are checked here so a
+malformed declaration is refused before an IR object exists."
+  (unless (evenp (length options))
+    (error 'invalid-spec-form :form form :reason "map options are keyword/value pairs"))
+  (let ((key-test :eql)
+        (min-count 0)
+        (max-count :unbounded)
+        (seen nil))
+    (loop for (key value) on options by #'cddr
+          do (when (member key seen)
+               (error 'invalid-spec-form :form form
+                                         :reason (format nil "~S appears more than once" key)))
+             (push key seen)
+             (case key
+               (:test
+                (setf key-test
+                      (or (key-test-designator value)
+                          (error 'invalid-spec-form
+                                 :form form
+                                 :reason ":test must name EQ, EQL, EQUAL or EQUALP"))))
+               (:min-count
+                (unless (and (integerp value) (not (minusp value)))
+                  (error 'invalid-spec-form :form form
+                                            :reason ":min-count must be a nonnegative integer"))
+                (setf min-count value))
+               (:max-count
+                (cond ((unbounded-marker-p value) (setf max-count :unbounded))
+                      ((and (integerp value) (not (minusp value))) (setf max-count value))
+                      (t (error 'invalid-spec-form
+                                :form form
+                                :reason ":max-count must be a nonnegative integer or *"))))
+               (otherwise
+                (error 'invalid-spec-form :form form
+                                          :reason (format nil "~S is not a map option; the ~
+                                                               options are :test, :min-count ~
+                                                               and :max-count"
+                                                          key)))))
+    (when (and (integerp max-count) (> min-count max-count))
+      (error 'invalid-spec-form :form form
+                                :reason ":min-count must not exceed :max-count"))
+    (values key-test min-count max-count)))
+
+(defun normalize-map (args form name source-location generator class)
+  "Normalize the arguments of a HASH-TABLE-OF or ALIST-OF form into CLASS."
+  (unless (>= (length args) 2)
+    (error 'invalid-spec-form :form form :reason "expected a key spec and a value spec"))
+  (multiple-value-bind (key-test min-count max-count)
+      (normalize-map-options (cddr args) form)
+    (apply #'make-instance class
+           :key-spec (normalize-spec-form (first args))
+           :value-spec (normalize-spec-form (second args))
+           :key-test key-test :min-count min-count :max-count max-count
+           (spec-initargs form name source-location generator))))
+
 (defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
   (unless (finite-list-p form)
@@ -345,6 +404,10 @@ other compound heads do."
          (normalize-collection args form name source-location generator 'list-of-spec))
         ((string= head-name "VECTOR-OF")
          (normalize-collection args form name source-location generator 'vector-of-spec))
+        ((string= head-name "HASH-TABLE-OF")
+         (normalize-map args form name source-location generator 'hash-table-of-spec))
+        ((string= head-name "ALIST-OF")
+         (normalize-map args form name source-location generator 'alist-of-spec))
         ((string= head-name "TUPLE")
          (apply #'make-instance 'tuple-spec
                 :element-specs (mapcar #'normalize-spec-form args)
