@@ -145,8 +145,12 @@ K と V の両方の生成器が必要である。どちらかが作れなけれ
 
 ### 5.2 エントリ数
 
-`bounded-collection-generator` と同じ式を使う。上限を
-`min(max-count, max(*size*, min-count))` とし、`[min-count, 上限]` から一様に引く。
+`bounded-collection-generator` と同じ式を使うが、ソフト上限には `*size*` ではなく
+check-it のコレクション長の設定 `*list-size*` を使う（`*size*` は無関係な数値境界で
+引き上げられ、エントリ数を膨らませるため）。上限を
+`min(max-count, max(*list-size*, min-count))` とし、`[min-count, 上限]` から一様に引く。
+キーの抽選中は `*size*` に求めるキー数の 4 倍を加えて広げる（下限が `*size*` 以上の
+範囲でも余地を残すため）。
 `*required-size*` を `min-count` まで引き上げる。
 
 ### 5.3 キー

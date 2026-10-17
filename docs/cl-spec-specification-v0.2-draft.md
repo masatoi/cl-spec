@@ -1056,12 +1056,12 @@ optionsは`:test`（`eq`・`eql`・`equal`・`equalp`、省略時`eql`）、`:mi
 `spec-data`は`:test`、既定値でないときの`:min-count`・`:max-count`、
 `:key-child-index 0`・`:value-child-index 1`を返す。digestは`:test`とcount制約を含む。
 
-check-it backendは、エントリ数を`[min-count, min(max-count, max(*size*, min-count))]`
-から引く。Kがcustom generatorに分布を委ねていればその生成器から引く。そうでなく
+check-it backendは、エントリ数を`[min-count, min(max-count, max(*list-size*, min-count))]`
+から引く。`*list-size*`はcheck-itのコレクション長の設定である。Kがcustom generatorに分布を委ねていればその生成器から引く。そうでなく
 有限domainを持てば（整数rangeまたは列挙可能）、宣言した`:test`で重複を除いた
 domainから重複なしで抽選し、domainが`:min-count`未満なら`generator-unavailable`
 とする。それ以外はKの生成器から引き、`:test`で衝突したら引き直す。
-キーの抽選中はcheck-itの`*size*`を少なくとも求めるキー数の4倍に広げ、値の生成には
+キーの抽選中はcheck-itの`*size*`に求めるキー数の4倍を加えて広げ、値の生成には
 周囲の`*size*`を使う。各枠の最初の抽選は
 予算を消費せず、引き直しは1回ごとにgeneration requestの候補を1単位予約し、
 衝突した引き直しだけを棄却として数える。`:min-count`を満たした後は、8回続けて
