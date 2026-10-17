@@ -153,7 +153,15 @@ K と V の両方の生成器が必要である。どちらかが作れなけれ
 
 キーは宣言した `:test` で互いに区別できなければならない。
 
-1. K が有限 domain を持つ場合（`enumerable-values` または `finite-integer-range`
+経路は次の順で選ぶ。
+
+1. K がカスタム生成器に分布を委ねている場合（`effective-generator-name` が名前を
+   返す場合。参照・`nullable`・`or` の子にある生成器も含む）は、有限 domain を
+   持っていても列挙せず、2 の抽選経路でその生成器から引く。`enumerable-values` は
+   生成器付きの `member-spec` でも列挙を返すため、この確認を先に行わないと
+   カスタム生成器が黙って無視される。`:unique` はこの場合を拒否するが、マップには
+   抽選経路があるので拒否しない。
+2. K が有限 domain を持つ場合（`enumerable-values` または `finite-integer-range`
    が答える場合）は、`:unique` と同じく domain から重複なしで抽選する。
    `enumerable-values` は EQL で重複を除いているため、宣言した `:test` で再度
    重複を除く（`equalp` なら `"a"` と `"A"` は 1 つになる）。
@@ -161,24 +169,55 @@ K と V の両方の生成器が必要である。どちらかが作れなけれ
      `generator-unavailable` とする。domain は正確に列挙されているので、これは
      作れないと断定できる場合に限られる。
    - エントリ数は domain の大きさで切り詰める。
-2. それ以外の場合は K の生成器から引き、既出のキーと `:test` で衝突したら引き直す。
-   引き直しは generation request の共有予算を使う。衝突を
-   `record-generation-rejection` で記録し、次の候補を `reserve-generation-candidate`
-   で確保する。
-   - 1 つの枠で 8 回続けて衝突し、その時点で `min-count` を満たしていれば、
-     少ないエントリ数のまま確定する。エラーにはしない。
-   - `min-count` に届く前に予算が尽きれば、既存の `generation-budget-exhausted`
-     になる。これは満たす値が存在しないという主張ではない。
-   - キー衝突は生成レポートの attempts / rejections に現れる。仕様書 §12・§14 の
-     予算の記述を「マップのキー重複除去も予算を消費する」と更新する。
+   - 予算は消費しない。
+3. それ以外の場合は K の生成器から引き、既出のキーと `:test` で衝突したら引き直す。
+
+#### 抽選経路の予算計上
+
+キーの枠ごとに、最初の抽選と引き直しを区別する。
+
+- **最初の抽選は予算を消費しない。** 予約もせず、棄却としても数えない。AND の
+  フィルタのように全候補を予約すると、衝突が 1 度も無くても入れ子のマップ
+  （例：50 × 50 キー）だけで既定予算（1000 × planned）を使い切るためである。
+- **引き直しは 1 回ごとに `reserve-generation-candidate` で 1 単位を予約してから**
+  K の生成器を呼ぶ。引き直した候補が衝突すれば `record-generation-rejection` で
+  棄却を 1 つ記録する。棄却を記録するのは予約済みの候補だけなので、既存レポートの
+  `rejections ≤ attempts` は保たれる。最初の抽選の衝突は棄却として数えず、
+  それに続く引き直しの attempt として現れる。
+- 枠の終了条件（最初の抽選を含めて 8 回続けて衝突した場合、または予算が残って
+  いない場合）：
+  - その時点で `min-count` を満たしていれば、少ないエントリ数で確定する。
+    このとき予約を試みてはならない。予約の拒否は request に `:budget-exhausted` を
+    記録するため、生成が完了したのにレポートが枯渇を示す食い違いが起きる。
+    そこで `cl-spec/src/generation-request` に、予約せずに残り予算の有無を返す
+    `generation-candidate-available-p` を追加し、`min-count` を満たした後の
+    引き直しの前に問い合わせる。
+  - `min-count` を満たしていなければ予約を続け、予算が尽きれば既存の
+    `generation-budget-exhausted` が伝播する。これは満たす値が存在しないという
+    主張ではない。
+- K 自身が AND を含むなど bounded filter を持つ場合、その filter は同じ request から
+  自分の候補を予約する。1 回の引き直しは、重複除去の 1 単位に filter の消費分を
+  加えた量を使う。レポートの attempts / rejections は消費元を区別しない。
+- 有効な request が無いまま直接 `generate` を呼んだ場合は、bounded filter と同じく
+  `:planned 1` の request をその場で束縛する。
+- 縮小（エントリ削除・値とキーの縮小）は引き直しを行わないので予算を消費しない。
+- 仕様書 §12・§14 の予算の記述を「マップのキー重複除去の引き直しも予算を消費する」
+  と更新する。
 
 ### 5.4 値と表現
 
 エントリごとに新しい V 生成器を作り、値ごとの縮小に使う。
 
 `hash-table-of` は宣言した test の新しい table を毎回作り、キーを抽選順に入れる。
-`alist-of` は `(KEY . VALUE)` を抽選順に並べた新しい list である。対象関数が値を
-書き換えても次の試行に影響しない。
+`alist-of` は `(KEY . VALUE)` を抽選順に並べた新しい list（spine と各 entry の
+cons）である。
+
+保証は外側の容器に限る。対象関数が table への追加・削除や alist の spine を
+書き換えても、次の試行の容器には影響しない。一方、キーと値そのものは K・V の
+生成器が返したオブジェクトであり、独立性は生成器と fixture の責務である。
+`member` の可変オブジェクトや、共有オブジェクトを返すカスタム生成器のキー・値は
+試行をまたいで同一でありうる。マップ側でキー・値をコピーすることはしない。
+コピーは `member` が約束する EQL 同一性を壊すため、一律の解決にならない。
 
 ### 5.5 縮小
 
@@ -235,6 +274,17 @@ K と V の両方の生成器が必要である。どちらかが作れなけれ
   `generator-unavailable`（有限 domain、コンパイル時）と
   `generation-budget-exhausted`（引き直し）、縮小 3 段階、キー衝突・spec 違反の
   候補を採用しないこと、縮小 capability の報告。
+- カスタム生成器テスト：生成器付きの `member-spec` を K に直接構築した IR で、
+  列挙ではなく生成器から引くこと（参照・`nullable`・`or` 経由も含む）。
+- 予算計上テスト：衝突が無いマップ（入れ子を含む）は attempts を消費しないこと、
+  引き直し 1 回につき attempts が 1 増え、衝突した引き直しだけが rejections を
+  増やすこと（`rejections ≤ attempts`）、K の bounded filter と同じ request を
+  共有すること、`min-count` 達成後に予算が残っていなければ予約せず確定し
+  termination が `:completed` のままであること、`min-count` 未達で予算が尽きると
+  `generation-budget-exhausted` が伝播すること、request 外の直接 `generate` が
+  有限に終わること。
+- 独立性テスト：同じ生成器の連続する draw が EQ でない外側の容器を返し、一方への
+  追加・削除が他方に現れないこと。
 - 性質テスト：生成値がすべて `validp` を満たすこと（両表現、各 `:test`）。
 - coverage schema が新ノードを次元なしで通過させること。
 
@@ -246,7 +296,10 @@ K と V の両方の生成器が必要である。どちらかが作れなけれ
 
 ## 10. Non-goals
 
-- 宣言フィールドとの混在（index signature）。必要なら `and` で書ける。
+- 宣言フィールドとの混在（index signature）。`(and (hash-table ...) (hash-table-of ...))`
+  で書けるのは、固定フィールドの値も共通の K・V 制約に従う場合に限る。
+  「`"name"` は文字列、それ以外の値は整数」のような additionalProperties 相当の
+  意味は、同種マップの V 制約が `"name"` にもかかるため AND では表現できない。
 - `plist-of`。
 - `:unique` の比較を EQL 以外にすること。
 - マップ用の coverage 次元。
