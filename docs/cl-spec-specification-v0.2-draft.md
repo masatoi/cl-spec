@@ -70,6 +70,7 @@
 | symbolに関連する登録名の取得 | 実装済み | `semantic-data`。本文・signature・methodsの一括取得ではない |
 | check-it generator backend | 実装済み | `generator-for`、`sample`。生成可能範囲はvalidationの対応範囲より狭い |
 | フィールド付き構造化spec | 実装済み | `plist`・`alist`・`hash-table`・`object-of`・`tagged-by`。`object-of`の生成は`(:generator NAME)`、タグ付きunionは`sample :branch`に対応（§9.2〜9.5） |
+| 同種マップspec | 実装済み | `hash-table-of`・`alist-of`。全キーをK、全値をVで検査し、`:test`・`:min-count`・`:max-count`を取る。キー違反と値違反は`:entry-path`で区別し、生成はキーを`:test`で区別して引く。キーの引き直しは生成予算を消費する（§9.6） |
 | AND合成の生成 | 実装済み | 生成元を一つ選び、残余の連言を共有予算のbounded filterで課す。既定`1000 × N`、枯渇は`generation-budget-exhausted`で報告する（§10、§73.4、§73.5 addendum） |
 | Property定義・実行 | 実装済み | `defproperty`、`run-property`、`run-properties`。宣言の構造・重複・予算は登録前に検査する（§4） |
 | seed・replay・shrinking | 実装済み | 同一実行条件が前提。整数seedの実装対応は現在SBCLのみ |
@@ -682,6 +683,8 @@ nullable
 plist
 alist
 hash-table
+hash-table-of
+alist-of
 object-of
 tagged-by
 instance-of
@@ -1010,6 +1013,68 @@ failure identityは`:branch`・`:branch-path`・`:known-tags`をspec由来のkey
 `:observed-tag`は入力由来なので保持しない。同じbranchの同じ違反は一致し、
 別branchの違反やno-branchとは区別される。入れ子のunionでも内側のbranch選択が
 `:branch`・`:branch-path`に残るため、内側の分岐違いは一致しない。
+
+---
+
+# 9.6 同種マップ spec
+
+実装済みの記法：
+
+```lisp
+(defspec word-counts
+  (hash-table-of string (range integer 0 *) :test equal :min-count 1))
+
+(defspec headers
+  (alist-of string (list-of string) :test equal :max-count 64))
+```
+
+`(hash-table-of K V &rest options)`と`(alist-of K V &rest options)`は、すべてのキーが
+K、すべての値がVを満たすマップを表す。キーを宣言する§9.2・§9.3のフィールド付きspec
+とは異なり、マップのキーはデータであって宣言されたフィールドではない。
+
+optionsは`:test`（`eq`・`eql`・`equal`・`equalp`、省略時`eql`）、`:min-count`
+（非負整数、省略時0）、`:max-count`（非負整数または`*`、省略時は無制限）である。
+未知のoption、重複、奇数個のoptions、K・Vの欠落、`:min-count`が`:max-count`を超える
+宣言は登録前に`invalid-spec-form`とする。直接構築したIRも同じ検査を受け、
+`:test`は正規のkeywordとして保持する。
+
+構造検査は子specより先に行い、§9.3と同じkindを使う（`:not-a-hash-table`、
+`:wrong-key-test`、`:not-an-alist`、`:bad-association`、`:duplicate-key`）。
+構造不正なら1件だけ報告する。エントリ数の違反は`:too-few-entries`
+（`:minimum-count`）・`:too-many-entries`（`:maximum-count`）で、どちらも
+`:actual-count`を持つ。各エントリはまずキーをK、次に値をVで検査し、両方の違反を
+報告する。`:path`はどちらも`(KEY . 親path)`である。キー違反か値違反かは
+`:entry-path`が示し、マップの階層ごとに外側から`:key`または`:value`を並べる。
+`:entry-path`はspec由来でfailure identityに含まれ、マップのキー自身は
+`:field-path`にもidentityにも入らない。`alist-of`はlistの順、`hash-table-of`は
+キー違反をすべて報告してから値違反を報告し、各群は`maphash`の順である。キーを印字して
+並べ替えることはしない。異なるshapeで違反するエントリが複数あると、元のtableと縮小候補で
+順序が入れ替わりうるが、その候補は別の失敗として捨てられ、別の失敗を縮小結果とする
+ことはない。
+
+`spec-data`は`:test`、既定値でないときの`:min-count`・`:max-count`、
+`:key-child-index 0`・`:value-child-index 1`を返す。digestは`:test`とcount制約を含む。
+
+check-it backendは、エントリ数を`[min-count, min(max-count, max(*size*, min-count))]`
+から引く。Kがcustom generatorに分布を委ねていればその生成器から引く。そうでなく
+有限domainを持てば（整数rangeまたは列挙可能）、宣言した`:test`で重複を除いた
+domainから重複なしで抽選し、domainが`:min-count`未満なら`generator-unavailable`
+とする。それ以外はKの生成器から引き、`:test`で衝突したら引き直す。各枠の最初の抽選は
+予算を消費せず、引き直しは1回ごとにgeneration requestの候補を1単位予約し、
+衝突した引き直しだけを棄却として数える。`:min-count`を満たした後は、8回続けて
+衝突するか予算が残っていなければ、予約せずに少ないエントリ数で確定する。
+`:min-count`に届く前に予算が尽きれば`generation-budget-exhausted`となる。
+`hash-table-of`は宣言したtestの新しいtable、`alist-of`は新しいlistを毎回返すが、
+キーと値は子の生成器が返したオブジェクトであり、その独立性は生成器とfixtureの責務
+である。縮小はエントリ削除（`:min-count`まで）、値の縮小、引いたキーの縮小の順に行い、
+子specに違反する候補と`:test`で衝突するキーは採用しない。
+check-itの文字列縮小器はcallbackへ文字のlistを渡すため、文字列のキーと値は縮小されない（フィールド付きspecやlength制約付きコレクションの要素と同じ既存の制約）。
+
+反例artifactは、`alist-of`の値をキーと値がcodecで扱える型なら保存できる。
+`hash-table-of`の値は`hash-table`と同じくcodecが扱わない。coverage schemaは
+マップを`:unsupported-composite`として`:unexpanded`に記録する。宣言フィールドと
+任意キーの混在は扱わない。`(and (hash-table ...) (hash-table-of ...))`で書けるのは、
+固定フィールドの値も共通のK・V制約に従う場合に限る。
 
 ---
 
@@ -5305,6 +5370,14 @@ default coefficient, and source-policy identifier `:and-single-source-v1` are
 recorded before execution. A public single-value draw without an active request
 gets an implicit request with N = 1; internal retry and recursive descent never
 create a fresh budget. Finite candidate counts are not a wall-clock timeout.
+A homogeneous map's key redraw (§9.6) is also a bounded-filter source call: the
+key generator is the source and "not equal under the declared test to a placed
+key" is the filter. The first draw for each key slot is not reserved; each
+redraw reserves one unit before it calls the key generator and records a
+rejection when it collides again, so `rejections ≤ attempts` holds. A map that
+already holds `:min-count` keys asks whether a unit remains without reserving
+one and stops instead of exhausting the request; a denied reservation records
+`:exhausted-at (:map-key)`.
 
 ### 検証述語の非破壊性（作者の契約）
 
