@@ -197,3 +197,48 @@
                    (list (cons "a" 1) (cons "A" 2)))))
   (ok (validp (normalize-spec-form '(alist-of integer integer))
               (loop for key from 0 below 20000 collect (cons key key)))))
+
+(deftest map-introspection-projects-both-children
+  (let* ((form '(alist-of keyword integer :test eq :max-count 8))
+         (data (spec-data (normalize-spec-form form))))
+    (ok (eq :alist-of (getf data :kind)))
+    (ok (eq :eq (getf data :test)))
+    (ok (null (getf data :min-count)))
+    (ok (= 8 (getf data :max-count)))
+    (ok (= 0 (getf data :key-child-index)))
+    (ok (= 1 (getf data :value-child-index)))
+    (ok (equal '(keyword integer)
+               (mapcar (lambda (child) (getf child :type)) (getf data :children))))
+    (ok (equal form (getf data :source-form)))
+    (ok (getf data :definition-digest-complete))))
+
+(deftest map-digests-cover-every-declared-part
+  (let ((digest (definition-digest (normalize-spec-form '(hash-table-of string integer)))))
+    (dolist (other '((alist-of string integer)
+                     (hash-table-of integer string)
+                     (hash-table-of string integer :test equal)
+                     (hash-table-of string integer :min-count 1)
+                     (hash-table-of string integer :max-count 5)))
+      (ok (not (equal digest (definition-digest (normalize-spec-form other))))
+          (format nil "~S has its own digest" other))))
+  (ok (equal '(:test :eql) (definition-constraints (normalize-spec-form '(alist-of t t)))))
+  (ok (equal '(:test :equal :min-count 1 :max-count 2)
+             (definition-constraints
+              (normalize-spec-form '(alist-of t t :test equal :min-count 1 :max-count 2))))))
+
+(deftest map-nodes-are-reported-as-unexpanded-coverage
+  (let ((data (plist-coverage-schema
+               (list (list 'payload (normalize-spec-form
+                                     '(hash-table-of keyword (plist (:optional (:a t)))))))
+               *registry* 1024 32)))
+    (ok (null (getf data :dimensions)))
+    (ok (eq :partial (getf data :discovery)))
+    (ok (equal '((:path (payload) :reason :unsupported-composite))
+               (getf data :unexpanded)))))
+
+(deftest map-values-meet-the-artifact-codec-as-before
+  (testing "an alist of encodable keys and values can be saved"
+    (ok (encode-artifact-value (list (cons "a" 1) (cons "b" 2)))))
+  (testing "a hash table is refused, exactly as for the keyed HASH-TABLE spec"
+    (ok (handler-case (progn (encode-artifact-value (make-table 'equal (cons "a" 1))) nil)
+          (artifact-value-error () t)))))
