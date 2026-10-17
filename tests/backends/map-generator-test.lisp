@@ -186,7 +186,10 @@
     (ok (every (lambda (alist) (every #'zerop (alist-keys alist))) values))
     (ok (generation-report-p report))
     (ok (plusp (getf report :attempts)))
-    (ok (<= (getf report :rejections) (getf report :attempts)))))
+    (ok (<= (getf report :rejections) (getf report :attempts)))
+    ;; The AND filter reserves once per source call in the same request, so every key
+    ;; that ended up in a map cost at least one reservation.
+    (ok (>= (getf report :attempts) (loop for alist in values sum (length alist))))))
 
 (deftest a-bare-generate-outside-a-request-terminates
   (let ((*registry* (make-hash-table-registry)))
@@ -280,3 +283,33 @@
     (ok (= 300 (hash-table-count (first values))))
     (ok (eq :completed (getf report :termination)))
     (ok (< (getf report :attempts) 300))))
+
+(deftest drawn-keys-find-room-above-a-high-lower-bound
+  (dolist (seed '(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19))
+    (ok (handler-case
+            (= 2 (hash-table-count
+                  (first (sample-form '(hash-table-of (range integer 100 *) null
+                                        :min-count 2 :max-count 2)
+                                      :count 1 :seed seed))))
+          (generation-budget-exhausted () nil))
+        (format nil "seed ~D draws two distinct keys above 100" seed))))
+
+(deftest map-sizes-ignore-unrelated-numeric-bounds
+  (testing "a wide value range does not inflate the entry count"
+    (multiple-value-bind (values report)
+        (sample-form '(hash-table-of string (range integer 0 100000) :test equal)
+                     :count 10 :seed 1)
+      (ok (every (lambda (table) (<= (hash-table-count table) 20)) values))
+      (ok (< (getf report :attempts) (getf report :budget)))))
+  (testing "a declared minimum above the soft cap is still honoured"
+    (ok (every (lambda (alist) (= 25 (length alist)))
+               (sample-form '(alist-of (range integer 0 *) null :min-count 25 :max-count 25)
+                            :count 3 :seed 2)))))
+
+(deftest maps-can-source-an-and
+  (dolist (form '((and (alist-of string integer :test equal) (satisfies listp))
+                  (and (hash-table-of string integer :test equal :min-count 1)
+                       (satisfies hash-table-p))))
+    (let ((spec (normalize-spec-form form)))
+      (ok (every (lambda (value) (validp spec value)) (sample spec :count 20 :seed 3))
+          (format nil "samples of ~S satisfy it" form)))))

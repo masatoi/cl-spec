@@ -14,6 +14,7 @@
                 #:shrink
                 #:regenerate
                 #:*size*
+                #:*list-size*
                 #:cached-value
                 #:int-generator
                 #:real-generator
@@ -704,12 +705,13 @@ each draw removes the chosen value from the remaining pool."
           do (setf (gethash item seen) t)
           finally (return nil))))
 
-(defun draw-collection-count (minimum maximum)
-  "Draw an element or entry count from [MINIMUM, MAXIMUM], capped by CHECK-IT:*SIZE*.
+(defun draw-collection-count (minimum maximum &optional (size *size*))
+  "Draw an element or entry count from [MINIMUM, MAXIMUM], capped by SIZE.
 
-MAXIMUM may be :UNBOUNDED.  *SIZE* is raised to MINIMUM first, so a declared
-minimum is always reachable."
-  (let* ((size (max *size* minimum))
+MAXIMUM may be :UNBOUNDED.  SIZE is the soft cap for an unbounded or large maximum:
+collections pass the ambient CHECK-IT:*SIZE*, maps pass CHECK-IT:*LIST-SIZE*.  It is
+raised to MINIMUM first, so a declared minimum is always reachable."
+  (let* ((size (max size minimum))
          (upper (if (eq maximum :unbounded) size (min maximum size))))
     (if (>= upper minimum)
         (+ minimum (random (1+ (- upper minimum))))
@@ -1061,13 +1063,14 @@ candidate remains -- asked without reserving, so stopping early never marks the
 request exhausted -- and the map keeps the keys it has.  Below MIN-COUNT the slot
 keeps redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED.
 
-Keys must be distinct, so the key generator's range is widened to at least four times
-COUNT; values keep the ambient size."
+Keys must be distinct, so the ambient size is widened by four times the number of keys
+wanted, added to it, so a range whose lower bound already sits at the ambient size still
+has room; values keep the ambient size."
   (let ((seen (make-hash-table :test (key-test-name (map-generator-key-test generator))))
         (minimum (map-generator-min-count generator))
         (placed nil)
         (placed-count 0)
-        (*size* (max *size* (* 4 count))))
+        (*size* (+ *size* (* 4 count))))
     (loop while (< placed-count count)
           do (let ((collisions 0))
                (loop
@@ -1112,7 +1115,8 @@ A draw outside every public boundary gets its own finite request, as a bounded
 filter's does, so a key redraw always has a budget to reserve from."
   (flet ((draw ()
            (let* ((count (draw-collection-count (map-generator-min-count generator)
-                                                (map-generator-max-count generator)))
+                                                (map-generator-max-count generator)
+                                                *list-size*))
                   (entries
                     (loop for (key . key-child) in (draw-map-keys generator count)
                           collect (let ((value-child
