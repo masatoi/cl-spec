@@ -1195,6 +1195,68 @@ smaller than MIN-COUNT is refused here, where its size is known exactly."
                      :key-probe key-probe :value-probe value-probe
                      :enumerated enumerated :distinct-range distinct-range)))))))
 
+(defun replace-nth (list index item)
+  "Return a fresh copy of LIST with the element at INDEX replaced by ITEM."
+  (loop for element in list
+        for position from 0
+        collect (if (= position index) item element)))
+
+(defmethod shrink ((generator map-value-generator) test)
+  "Remove entries while MIN-COUNT holds, then shrink each value, then each drawn key.
+
+TEST returns NIL while a candidate still fails the property, so a candidate
+replaces the current draw exactly when it is valid and still failing.  Some
+check-it shrinkers return an untested transformed value, so only a value or key
+the callback observed is kept; one its child spec rejects, and a key that
+collides with another under the key test, is refused before the callback runs."
+  (let ((minimum (map-generator-min-count generator))
+        (same-key-p (key-test-function (map-generator-key-test generator))))
+    (labels ((entries () (map-generator-entries generator))
+             (try (entries)
+               ;; Offer ENTRIES and adopt them when the property still fails.
+               (let ((candidate (encode-map-entries generator entries)))
+                 (if (funcall test candidate)
+                     t
+                     (progn (setf (map-generator-entries generator) entries
+                                  (cached-value generator) candidate)
+                            nil))))
+             (remove-one ()
+               (loop for index from 0 below (length (entries))
+                     thereis (not (try (append (subseq (entries) 0 index)
+                                               (subseq (entries) (1+ index)))))))
+             (shrink-part (index child validator rebuild)
+               ;; REBUILD returns the entry list with the new part, or NIL to refuse it.
+               (shrink child
+                       (lambda (part)
+                         (if (and validator (not (funcall validator part)))
+                             t
+                             (let ((entries (funcall rebuild index part)))
+                               (if entries (try entries) t)))))))
+      (loop while (and (> (length (entries)) minimum) (remove-one)))
+      (loop for index from 0 below (length (entries))
+            for child = (map-entry-value-child (nth index (entries)))
+            when (typep child 'generator)
+              do (shrink-part index child (map-generator-value-validator generator)
+                              (lambda (index value)
+                                (let ((entry (copy-map-entry (nth index (entries)))))
+                                  (setf (map-entry-value entry) value)
+                                  (replace-nth (entries) index entry)))))
+      (loop for index from 0 below (length (entries))
+            for child = (map-entry-key-child (nth index (entries)))
+            when (typep child 'generator)
+              do (shrink-part index child (map-generator-key-validator generator)
+                              (lambda (index key)
+                                (let ((current (entries)))
+                                  (unless (loop for other in current
+                                                for position from 0
+                                                thereis (and (/= position index)
+                                                             (funcall same-key-p key
+                                                                      (map-entry-key other))))
+                                    (let ((entry (copy-map-entry (nth index current))))
+                                      (setf (map-entry-key entry) key)
+                                      (replace-nth current index entry)))))))
+      (cached-value generator))))
+
 (defmethod spec-generator ((spec alist-of-spec) context)
   (compile-map-generator spec context 'alist-map-generator))
 

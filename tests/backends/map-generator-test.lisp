@@ -208,3 +208,51 @@
       (sample-form '(alist-of (member :a) integer :min-count 1) :count 2 :seed 1)
     (ok (not (eq first second)))
     (ok (not (eq (first first) (first second))))))
+
+(deftest map-generation-capabilities
+  (let ((backend (make-instance 'check-it-backend)))
+    (dolist (entry '(((hash-table-of string integer) :available)
+                     ((alist-of (member :a) null :min-count 1 :max-count 1) :none)
+                     ((alist-of (member :a :b) null :min-count 1 :max-count 2) :available)
+                     ((alist-of (satisfies consp) (satisfies consp) :max-count 0) :none)))
+      (ok (equal (list :generation :available :shrinking (second entry))
+                 (backend-capabilities backend (normalize-spec-form (first entry))))
+          (format nil "Capabilities for ~S" (first entry))))))
+
+(deftest map-shrinking-removes-entries-and-reduces-values
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty small-values
+        ((counts (alist-of integer (range integer 0 100))))
+      (:trials (:normal 200))
+      (every (lambda (entry) (< (cdr entry) 50)) counts))
+    (let* ((result (run-property 'small-values :seed 42))
+           (shrunk (getf (property-result-shrunk-counterexample result) 'counts)))
+      (ok (eq :failed (property-result-status result)))
+      (ok (= 1 (length shrunk)))
+      (ok (= 50 (cdr (first shrunk))))
+      (testing "a drawn key shrinks too"
+        (ok (eql 0 (car (first shrunk))))))))
+
+(deftest map-shrinking-keeps-min-count-and-distinct-keys
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty never-holds
+        ((table (hash-table-of string (range integer 50 100) :test equal :min-count 2)))
+      (:trials (:normal 20))
+      (not (hash-table-p table)))
+    (defproperty never-holds-alist
+        ((pairs (alist-of string null :test equal :min-count 2)))
+      (:trials (:normal 20))
+      (not (listp pairs)))
+    (let* ((result (run-property 'never-holds :seed 7))
+           (shrunk (getf (property-result-shrunk-counterexample result) 'table)))
+      (ok (eq :failed (property-result-status result)))
+      (testing "two keys never shrink into one"
+        (ok (= 2 (hash-table-count shrunk))))
+      (ok (eq 'equal (hash-table-test shrunk)))
+      (testing "value shrinks never leave the value spec"
+        (ok (loop for value being the hash-values of shrunk always (<= 50 value 100)))))
+    (let* ((result (run-property 'never-holds-alist :seed 7))
+           (shrunk (getf (property-result-shrunk-counterexample result) 'pairs)))
+      (ok (eq :failed (property-result-status result)))
+      (ok (= 2 (length shrunk)))
+      (ok (distinct-under-p (alist-keys shrunk) #'equal)))))

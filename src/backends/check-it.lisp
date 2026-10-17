@@ -44,7 +44,10 @@
                 #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
                 #:bounded-collection-generator #:bounded-generator-min-length
                 #:bounded-generator-max-length #:bounded-generator-domain-size
-                #:bounded-generator-element-probe)
+                #:bounded-generator-element-probe
+                #:map-value-generator #:map-generator-min-count #:map-generator-max-count
+                #:map-generator-domain-size #:map-generator-key-probe
+                #:map-generator-value-probe)
   (:import-from #:cl-spec/src/field-spec #:field-required-p)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
@@ -501,6 +504,21 @@ Lists can shrink in length even when their element generator cannot shrink."
                (let ((probe (bounded-generator-element-probe generator)))
                  (and (typep probe 'check-it:generator)
                       (generator-shrink-strategy-p probe)))))))
+    (map-value-generator
+     (let* ((minimum (map-generator-min-count generator))
+            (maximum (map-generator-max-count generator))
+            (domain (map-generator-domain-size generator))
+            ;; Generation truncates the drawn count to a finite key domain.
+            (upper (cond ((null domain) maximum)
+                         ((eq maximum :unbounded) domain)
+                         (t (min maximum domain)))))
+       (or (eq upper :unbounded)
+           (> upper minimum)
+           (some (lambda (probe)
+                   (and (typep probe 'check-it:generator)
+                        (generator-shrink-strategy-p probe)))
+                 (list (map-generator-key-probe generator)
+                       (map-generator-value-probe generator))))))
     ((or tuple-generator mapped-generator)
      (some #'generator-shrink-strategy-p (sub-generators generator)))
     (bounded-filter-generator
