@@ -763,10 +763,10 @@ reports 0 rather than falling through to the element generators."
           (and range (1+ (- (cdr range) (car range))))))))
 
 (defmethod generate ((generator bounded-collection-generator))
-  (let* ((count (draw-collection-count (bounded-generator-min-length generator)
-                                       (bounded-generator-max-length generator)))
-         (enumerated (bounded-generator-enumerated generator))
-         (distinct-range (bounded-generator-distinct-range generator)))
+  (let ((count (draw-collection-count (bounded-generator-min-length generator)
+                                      (bounded-generator-max-length generator)))
+        (enumerated (bounded-generator-enumerated generator))
+        (distinct-range (bounded-generator-distinct-range generator)))
     (cond
       (distinct-range
        (setf (bounded-generator-children generator) nil
@@ -1059,11 +1059,15 @@ again, so REJECTIONS never exceeds ATTEMPTS.  Once MIN-COUNT keys are placed, a
 slot gives up after *MAP-KEY-COLLISION-LIMIT* consecutive collisions, or when no
 candidate remains -- asked without reserving, so stopping early never marks the
 request exhausted -- and the map keeps the keys it has.  Below MIN-COUNT the slot
-keeps redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED."
+keeps redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED.
+
+Keys must be distinct, so the key generator's range is widened to at least four times
+COUNT; values keep the ambient size."
   (let ((seen (make-hash-table :test (key-test-name (map-generator-key-test generator))))
         (minimum (map-generator-min-count generator))
         (placed nil)
-        (placed-count 0))
+        (placed-count 0)
+        (*size* (max *size* (* 4 count))))
     (loop while (< placed-count count)
           do (let ((collisions 0))
                (loop

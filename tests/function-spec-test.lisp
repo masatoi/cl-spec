@@ -1502,7 +1502,13 @@ macro expansions would need the lint exemption that file carries."
         (ok (member :field-path seen))
         (ok (member :minimum-length seen))
         (ok (member :maximum-length seen))
-        (ok (member :key seen)))
+        (ok (member :key seen))
+        (ok (member :entry-path seen))
+        (ok (member :minimum-count seen))
+        (ok (member :maximum-count seen))
+        (ok (member :actual-count seen)))
+      (testing "a key is never both kept and value-derived"
+        (ok (null (intersection kept value-derived))))
       (testing "and every key it saw is either kept or known to be value-derived"
         (ok (null (set-difference seen (append kept value-derived))))))))
 

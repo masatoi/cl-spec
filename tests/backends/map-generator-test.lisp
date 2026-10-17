@@ -273,3 +273,10 @@
                      (and (<= 2 (length candidate))
                           (distinct-under-p (alist-keys candidate) #'eql)))
                    offered))))))
+
+(deftest drawn-keys-widen-their-range-to-stay-distinct
+  (multiple-value-bind (values report)
+      (sample-form '(hash-table-of (range integer 0 *) null :min-count 300) :count 1 :seed 1)
+    (ok (= 300 (hash-table-count (first values))))
+    (ok (eq :completed (getf report :termination)))
+    (ok (< (getf report :attempts) 300))))

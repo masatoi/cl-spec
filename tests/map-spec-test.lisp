@@ -169,7 +169,7 @@
         (ok (not (equal (signature form '((1 . "v"))) (signature form '(("k" . 1)))))))
       (testing "the same violation under a different key is one failure"
         (ok (equal (signature form '(("a" . 1))) (signature form '(("b" . 1)))))))
-    (testing "count bounds are part of the shape"
+    (testing "different count bounds are different failures"
       (ok (not (equal (signature '(alist-of t t :min-count 2) nil)
                       (signature '(alist-of t t :min-count 3) nil)))))))
 
