@@ -26,6 +26,10 @@
                 #:spec-violation-value
                 #:validate
                 #:validp)
+  (:import-from #:cl-spec/self-generation-fixtures
+                #:structured-generation-forms #:tagged-generation-form
+                #:structured-counterexample-contracts #:retained-counterexample-valid-p
+                #:generation-exhaustion-observations)
   (:import-from #:cl-spec/self-spec-fixtures
                 #:*function-projection-expectations*
                 #:*scripted-state-inputs*
@@ -289,6 +293,9 @@ allowed."
     collection-constraints-are-enforced
     generated-values-satisfy-their-specs retained-counterexamples-stay-valid
     sample-reports-its-generation-request
+    structured-retained-counterexamples-stay-valid
+    tagged-generation-reaches-each-declared-branch
+    generation-exhaustion-preserves-budget-evidence
     validate-cases-classify-admitted-and-refused
     registration-replacement-preserves-unrelated-indexes
     function-spec-projection-retains-declared-state
@@ -532,17 +539,17 @@ system itself, so every instrumentation symbol is resolved here by name."
 
 (defparameter *generation-corpus*
   (mapcar #'cl-spec:normalize-spec-form
-          '(integer string (range integer -5 5) (member 1 2 3) (member nil)
-            (nullable integer) (or integer string)
-            (list-of integer :min-length 1 :max-length 3)
-            (vector-of (member 1 2 3) :min-length 1 :max-length 2 :unique t)
-            (tuple integer string)
-            (plist (:required (:id integer)))))
-  "Small built-in spec corpus for the generation-soundness law.
-
-Built once at load time.  The entries are anonymous spec objects, so the law
-needs no registry beyond the one the runner binds, and it stays independent of
-the definitions REGISTER-SPECIFICATIONS installs.")
+          (append '(integer string (range integer -5 5) (member 1 2 3) (member nil)
+                    (nullable integer) (or integer string)
+                    (list-of integer :min-length 1 :max-length 3)
+                    (vector-of (member 1 2 3) :min-length 1 :max-length 2 :unique t)
+                    (tuple integer string)
+                    (plist (:required (:id integer))))
+                  (structured-generation-forms)))
+  "Finite scalar and structured domains for the generation-soundness law.
+Every iteration samples every domain, including all four map key comparisons,
+empty and nested maps, keyed fields, both tagged branches and AND composition.
+Anonymous spec objects need no registration and loading draws no values.")
 
 (defun self-collection-counterexample-target (items)
   "Identity target for the retained-counterexample law's collection contract."
@@ -1803,9 +1810,47 @@ reverse-index query must order them by name and then by home package name."
     (:tags :cl-spec-self)
     (:trials (:smoke 5 :normal 50))
     (every (lambda (spec)
-             (every (lambda (value) (validp spec value))
-                    (cl-spec:sample spec :count 10)))
+             (let ((values (cl-spec:sample spec :count 10)))
+               (and (= 10 (length values))
+                    (every (lambda (value) (validp spec value)) values))))
            *generation-corpus*))
+  (defproperty structured-retained-counterexamples-stay-valid ((seed (range integer 0 1000)))
+    "Structured original and retained inputs remain valid and fail identically (§68.1)."
+    (:about cl-spec:check-function cl-spec:check-call)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 2 :normal 10))
+    (every (lambda (contract)
+             (retained-counterexample-valid-p
+              contract (cl-spec:check-function contract :trials 1 :seed seed)))
+           (structured-counterexample-contracts)))
+  (defproperty tagged-generation-reaches-each-declared-branch ()
+    "Explicit branch requests produce admitted values carrying that branch's tag (§9.5)."
+    (:about cl-spec:sample cl-spec:tagged-union-branch)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 2 :normal 10))
+    (let ((spec (normalize-spec-form (tagged-generation-form))))
+      (every (lambda (branch)
+               (let ((values (cl-spec:sample spec :count 5 :branch branch)))
+                 (and (= 5 (length values))
+                      (every (lambda (value)
+                               (and (eq branch (getf value :kind))
+                                    (validp spec value)))
+                             values))))
+             '(:left :right))))
+  (defproperty generation-exhaustion-preserves-budget-evidence
+      ((budget (range integer 0 5)))
+    "Refusing filters and colliding keys report exact bounded exhaustion (§10, §12)."
+    (:about cl-spec:sample)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 5 :normal 20))
+    (every (lambda (report)
+             (and report
+                  (eq :budget-exhausted (getf report :termination))
+                  (= budget (getf report :budget))
+                  (= budget (getf report :attempts))
+                  (= budget (getf report :rejections))
+                  (= 0 (getf report :generated-values))))
+           (generation-exhaustion-observations budget)))
   (defproperty sample-reports-its-generation-request ()
     "SAMPLE returns values plus one coherent report for a shared request (§12, §14)."
     (:about cl-spec:sample)

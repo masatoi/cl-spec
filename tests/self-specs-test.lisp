@@ -32,6 +32,23 @@
 
 (in-package #:cl-spec/tests/self-specs-test)
 
+(deftest generation-law-covers-structured-spec-kinds
+  (let ((kinds (mapcar #'cl-spec:spec-kind cl-spec/specs::*generation-corpus*)))
+    (dolist (kind '(:alist :hash-table :alist-of :hash-table-of :tagged-union :and))
+      (ok (member kind kinds) (format nil "Generation law exercises ~S" kind)))))
+
+(deftest structured-generation-laws-are-registered-and-executable
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (dolist (name '(cl-spec/specs::structured-retained-counterexamples-stay-valid
+                    cl-spec/specs::generation-exhaustion-preserves-budget-evidence
+                    cl-spec/specs::tagged-generation-reaches-each-declared-branch))
+      (ok (member name (list-properties)))
+      (when (member name (list-properties))
+        (let ((result (run-property name :profile :smoke :seed 42)))
+          (ok (eq :passed (property-result-status result))
+              (prin1-to-string (result-data result))))))))
+
 (deftest coverage-apis-have-executable-contracts
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
