@@ -118,6 +118,39 @@ The Rove suites `cl-spec/tests/self-specs-test`,
 path; `tests/self-api-contracts-test.lisp` adds the concrete boundary and
 negative-data expectations.
 
+### Generation and shrinking coverage
+
+The generation law now visits every entry in a finite structured corpus on each
+iteration: keyed alists and hash tables; homogeneous maps under EQ, EQL, EQUAL and
+EQUALP; empty, exact-count and nested maps; both tagged-union alternatives; and
+numeric and bounded-filter AND composition. A separate branch-targeting law uses
+`sample :branch` for each tag, so reaching both branches does not depend on a seed.
+
+`structured-retained-counterexamples-stay-valid` checks original and accepted
+shrunk observations against the argument schema, compares failure identities, and
+calls `check-call` on each saved input. Its targets are pure identity functions
+with deliberately impossible return specs. The acceptance tests require actual
+retained shrinks for the nonempty seed-1 fixtures, including a structural change under EQUALP (hash-table contents included), and
+no claimed shrink for empty-map fixtures. General generated runs may already
+start at a minimal input; unchanged accepted candidates remain valid evidence
+but do not satisfy this additional fixed-seed reduction check. These are finite examples, not a guarantee of global
+minimality or a check of every intermediate shrink candidate.
+
+Hash tables are checked directly in memory; this does not add hash-table artifact
+support or state restoration. String-valued MEMBER keys are used in generation
+checks but replaced by STRING in the recheck corpus: MEMBER compares with EQL,
+and copying strings into saved cons/array evidence loses that identity. A negative
+test records this limitation rather than accepting the copied input. EQ map
+fixtures use symbols. The existing `retained-counterexamples-stay-valid` law
+continues to check artifact rechecks for its serializable list/keyword domains.
+
+`generation-exhaustion-preserves-budget-evidence` deliberately exhausts a
+refusing AND filter and constant map-key generators in an isolated registry. It
+checks the budget, reservation/rejection counts and absence of generated values;
+boundary tests exercise budgets 0, 1 and 5 and verify the exhaustion location.
+Exhaustion is never interpreted as evidence that the domain is unsatisfiable.
+Fixtures live in `self-generation-fixtures.lisp`, which depends only on the core.
+
 ## 5. Read a run
 
 For a contract run:

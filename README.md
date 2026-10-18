@@ -110,8 +110,12 @@ every retained shrunk counterexample must be a schema-valid input that still
 fails identically when rechecked. Loading `cl-spec/instrument` and calling
 `cl-spec/specs:register-instrumentation-specifications` adds the optional
 instrumentation contracts and two install/uninstall laws. Generators exercise a
-finite scalar/composite DSL subset, including `MEMBER`, `VECTOR-OF` and `PLIST`;
-this is not exhaustive API coverage. Custom generators preserve
+finite scalar/composite DSL subset, including keyed fields, homogeneous maps with
+all four key tests, tagged unions and numeric/bounded-filter AND composition.
+Structured shrinking laws directly recheck saved inputs (including hash tables);
+separate laws exercise explicit branch targeting and generation exhaustion.
+This is not exhaustive API coverage; identity-sensitive string MEMBER domains
+are covered for generation, not successful snapshot rechecks. Custom generators preserve
 original counterexamples; whole-argument generators can supply a shrinker. See
 [the self-specification guide](docs/guides/self-specification-guide.md) for how
 to isolate the bundle's registry, find a symbol's contract and laws, read

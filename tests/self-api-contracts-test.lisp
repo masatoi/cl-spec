@@ -49,6 +49,9 @@
                 #:spec-violation
                 #:validate
                 #:validp)
+  (:import-from #:cl-spec/self-generation-fixtures
+                #:structured-generation-forms #:structured-counterexample-contracts
+                #:retained-counterexample-valid-p #:generation-exhaustion-observations)
   (:import-from #:cl-spec/self-spec-fixtures
                 #:*registry-constructor*
                 #:*scripted-registration-scenarios*
@@ -65,6 +68,136 @@
   (:import-from #:cl-spec/src/backends/check-it))
 
 (in-package #:cl-spec/tests/self-api-contracts-test)
+
+(deftest structured-generation-has-independent-map-oracles
+  ;; The first eight fixtures deliberately saturate a two-key domain under
+  ;; each comparison. Check with CL operations, independently of VALIDP.
+  (loop for form in (subseq (structured-generation-forms) 0 8)
+        for index from 0
+        for test = (nth (mod index 4) '(eq eql equal equalp))
+        for samples = (cl-spec:sample (normalize-spec-form form) :count 10 :seed 42)
+        do (ok (= 10 (length samples)))
+           (dolist (value samples)
+             (let ((keys (if (hash-table-p value)
+                             (loop for key being the hash-keys of value collect key)
+                             (mapcar #'car value)))
+                   (values (if (hash-table-p value)
+                               (loop for item being the hash-values of value collect item)
+                               (mapcar #'cdr value))))
+               (ok (= 2 (length keys)))
+               (ok (= 2 (length (remove-duplicates keys :test test))))
+               (when (eq test 'eql)
+                 (ok (= 1 (length (remove-duplicates keys :test #'equalp)))))
+               (ok (every (lambda (item) (and (integerp item) (<= 10 item 30))) values)))
+             (when (hash-table-p value)
+               (ok (eq test (hash-table-test value)))))))
+
+(deftest structured-retention-exercises-real-shrinks-and-empty-domains
+  (loop for contract in (structured-counterexample-contracts)
+        for form in (structured-generation-forms :recheck-p t)
+        for index from 0
+        for result = (check-function contract :trials 1 :seed 1)
+        do (testing (format nil "~S" form)
+             (ok (retained-counterexample-valid-p
+                  contract result :require-reduction (not (<= 10 index 13))))
+             (if (<= 10 index 13)
+                 (progn
+                   (ok (eq :none (cl-spec:property-result-shrunk-outcome result)))
+                   (ok (null (cl-spec:property-result-shrunk-evidence result))))
+                 (progn
+                   ;; Merely falling back to the original must not make this
+                   ;; acceptance check pass: these seed-1 fixtures do shrink.
+                   (ok (eq :used (cl-spec:property-result-shrunk-outcome result)))
+                   (ok (cl-spec:property-result-shrunk-evidence result)))))))
+
+(deftest retained-evidence-law-refuses-invalid-or-different-failures
+  (let* ((contract (first (structured-counterexample-contracts)))
+         (result (check-function contract :trials 1 :seed 42))
+         (original (cl-spec:property-result-failure-evidence result))
+         (signature (cl-spec:trial-observation-signature original)))
+    (flet ((saved (shrunk &key (failure original) (outcome :used))
+             (make-instance 'cl-spec:property-result :status :failed :trials 1
+                            :failure-evidence failure :shrunk-evidence shrunk
+                            :shrunk-outcome outcome))
+           (observation (arguments identity &optional (status :failed))
+             (cl-spec:make-trial-observation :arguments arguments :signature identity
+                                             :status status :reason :return-spec)))
+      (ok (not (retained-counterexample-valid-p contract (saved nil))))
+      (ok (not (retained-counterexample-valid-p
+                contract (saved original) :require-reduction t)))
+      (ok (not (retained-counterexample-valid-p
+                contract
+                (saved (observation
+                        (copy-tree (cl-spec:trial-observation-arguments original)) signature))
+                :require-reduction t)))
+      (ok (not (retained-counterexample-valid-p
+                contract (saved nil :failure nil :outcome :none))))
+      (dolist (arguments '((nil) (((:a . 10))) (((:a . 10) (:a . 11)))
+                           (((:a . 9) (:b . 10)))))
+        (ok (not (retained-counterexample-valid-p
+                  contract (saved (observation arguments signature))))))
+      (ok (not (retained-counterexample-valid-p
+                contract (saved (observation '(((:a . 10) (:b . 11))) '(:property-false))))))
+      (ok (not (retained-counterexample-valid-p
+                contract (saved (observation '(((:a . 10) (:b . 11))) signature :passed))))))
+      ;; Even matching saved signatures are insufficient if CHECK-CALL now
+      ;; passes: recheck the target, not just the evidence record.
+      (let ((passing (make-instance 'cl-spec:function-spec
+                                    :name (cl-spec:function-spec-name contract)
+                                    :argument-specs (cl-spec:function-spec-argument-specs contract)
+                                    :return-spec t)))
+        (ok (not (retained-counterexample-valid-p passing result))))))
+
+(deftest a-copied-table-is-not-evidence-of-reduction
+  (let* ((contract (fifth (structured-counterexample-contracts)))
+         (result (check-function contract :trials 1 :seed 1))
+         (original (cl-spec:property-result-failure-evidence result))
+         (table (first (cl-spec:trial-observation-arguments original)))
+         (copy (make-hash-table :test (hash-table-test table))))
+    (maphash (lambda (key value) (setf (gethash key copy) value)) table)
+    (let* ((candidate
+             (cl-spec:make-trial-observation
+              :arguments (list copy) :status :failed :reason :return-spec
+              :signature (cl-spec:trial-observation-signature original)))
+           (saved (make-instance 'cl-spec:property-result
+                                 :status :failed :trials 1 :failure-evidence original
+                                 :shrunk-evidence candidate :shrunk-outcome :used)))
+      (ok (not (eq table copy)))
+      (ok (retained-counterexample-valid-p contract saved))
+      (ok (not (retained-counterexample-valid-p contract saved :require-reduction t))))))
+
+(deftest identity-sensitive-string-members-are-not-recheck-domains
+  (let* ((form (third (structured-generation-forms)))
+         (contract (make-instance 'cl-spec:function-spec
+                                 :name 'identity :argument-specs (list (list 'value form))
+                                 :return-spec '(member :impossible-return)))
+         (result (check-function contract :trials 1 :seed 42)))
+    ;; MEMBER uses EQL even when the map uses EQUAL. Copying a string while
+    ;; saving cons/array evidence loses membership identity. Do not call this
+    ;; a successful recheck or change MEMBER semantics to make it pass.
+    (ok (not (retained-counterexample-valid-p contract result)))
+    (ok (not (validp (function-spec-argument-schema contract)
+                     (cl-spec:trial-observation-arguments
+                      (cl-spec:property-result-failure-evidence result)))))))
+
+(deftest generation-budget-boundaries-keep-paths-and-registry-isolation
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((before (list-properties))
+          (generators (cl-spec:list-generators)))
+      (dolist (budget '(0 1 5))
+        (let ((reports (generation-exhaustion-observations budget)))
+          (ok (= 3 (length reports)))
+          (loop for report in reports
+                for path in '((0) (:map-key) (:map-key))
+                do (ok (eq :budget-exhausted (getf report :termination)))
+                   (ok (eq :generation (getf report :exhaustion-phase)))
+                   (ok (equal path (getf report :exhausted-at)))
+                   (ok (= budget (getf report :attempts)))
+                   (ok (= budget (getf report :rejections)))
+                   (ok (zerop (getf report :generated-values))))))
+      (ok (equal before (list-properties)))
+      (ok (equal generators (cl-spec:list-generators))))))
 
 (deftest self-specification-lists-are-internally-consistent
   (let ((*registry* (make-hash-table-registry)))

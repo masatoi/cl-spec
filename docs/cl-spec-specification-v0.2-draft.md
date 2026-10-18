@@ -4510,8 +4510,19 @@ seed 1・42・2026で実行する。本節は件数を記載しない。`tests/s
 registry新規・置換・拒否の各case、故障registryで失敗したrecipeのartifact保存と
 `:same-failure`/`:passed`の再検査、projectionのnegative data、意図的に偽のPropertyが
 失敗と報告されることを、独立した期待値で確認する。
-このうち2 Propertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
+生成・縮小のPropertyは組み込みspec標本に対して生成器自体を走らせ、生成値が元のspecを満たすこと、
 保持された縮小反例が引数schemaを満たし再検査で同一失敗を維持することを検査する。
+構造化生成の標本は`self-generation-fixtures.lisp`に分離し、各試行で全標本を走査する。
+対象はalist/hash-tableのfield仕様、EQ/EQL/EQUAL/EQUALPの同種map、
+空・固定件数・入れ子のmap、tagged unionの両分岐、数値畳み込みとbounded-filterのANDである。
+別Propertyは`sample :branch`で各タグを明示選択する。
+構造化反例は元と採用された縮小後の両方を`check-call`で直接再検査し、failure identityも照合する。
+hash-tableのartifact対応は追加しない。従来のlist/keyword標本のartifact再検査は継続する。
+文字列MEMBERキーはEQLによる同一性がcons/array snapshotの文字列コピーで失われるため、
+生成標本には含めるが、再検査標本ではSTRINGへ置き換える。この制限はnegative testで記録する。
+独立した境界testは非空標本で実際の縮小採用を要求し、空mapで縮小なしを確認する。
+拒否し続けるANDと同一キーを返すmap generatorの予算枯渇も自己仕様で検査する。
+予算0・1・5の境界testは回数と枯渇位置を確認し、枯渇を充足不能の主張へ読み替えない。
 任意のinstrumentation自己契約(status、`instrumented-function-p`、`uninstrument-function`と
 install/uninstall往復・未契約拒否の2 Property)は別途登録し、専用テストで実行する。
 既存の`tests/self-properties-test.lisp`の生成・registry・replay検査も継続する。
