@@ -115,8 +115,9 @@ all four key tests, tagged unions and numeric/bounded-filter AND composition.
 Structured shrinking laws directly recheck saved inputs (including hash tables);
 separate laws exercise explicit branch targeting and generation exhaustion.
 This is not exhaustive API coverage; identity-sensitive string MEMBER domains
-are covered for generation, not successful snapshot rechecks. Custom generators preserve
-original counterexamples; whole-argument generators can supply a shrinker. See
+are covered for generation, not successful snapshot rechecks. Custom generators
+preserve original counterexamples; whole-argument generators can supply a
+shrinker. See
 [the self-specification guide](docs/guides/self-specification-guide.md) for how
 to isolate the bundle's registry, find a symbol's contract and laws, read
 `:case-report`/`:capture`/`:state-post` evidence, and run the fault-injection

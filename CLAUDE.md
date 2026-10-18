@@ -109,7 +109,10 @@ again after clearing a registry or binding a fresh one. Executing the generated
 checks requires `cl-spec/check-it`. The bundle's fixtures, finite corpora and
 test-support specials live in `self-spec-fixtures.lisp` (package
 `cl-spec/self-spec-fixtures`), which defines no registration and is loaded only
-through `cl-spec/specs`. The bundle's suites require every run to be `:satisfied`
+through `cl-spec/specs`. The structured generation and retained-counterexample
+corpus and helpers live in `self-generation-fixtures.lisp` (package
+`cl-spec/self-generation-fixtures`), which also registers nothing at load time
+(it registers only into a registry it binds per call). The bundle's suites require every run to be `:satisfied`
 under `cl-spec/specs:evidence-policy`, not only `:passed`. Its registry contracts and
 laws build registries through `cl-spec/specs:*registry-constructor*`, so
 `cl-spec/specs:check-registry-implementation` runs them as a conformance suite for
@@ -126,6 +129,7 @@ ASDF `package-inferred-system`: the package name equals the file path.
 | `tests/ir-test.lisp` | `cl-spec/tests/ir-test` |
 | `specs.lisp` | `cl-spec/specs` |
 | `self-spec-fixtures.lisp` | `cl-spec/self-spec-fixtures` |
+| `self-generation-fixtures.lisp` | `cl-spec/self-generation-fixtures` |
 | `main.lisp` | `cl-spec/main`, nickname `cl-spec` |
 
 Adding a file requires no `.asd` change; dependencies are inferred from
@@ -185,6 +189,7 @@ implemented. Extended argument contracts remain deferred.
 main.lisp           Public API re-export (no logic)
 specs.lisp          Optional executable self-specification bundle
 self-spec-fixtures.lisp  Fixtures, finite corpora and test-support specials for the bundle
+self-generation-fixtures.lisp  Structured generation/shrinking corpus and helpers for the bundle
 tests.lisp          Aggregate test system and rove runner
 src/                Implementation, one responsibility per file
 tests/              Rove suites, mirrored naming (*-test.lisp)

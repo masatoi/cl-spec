@@ -130,10 +130,11 @@ numeric and bounded-filter AND composition. A separate branch-targeting law uses
 shrunk observations against the argument schema, compares failure identities, and
 calls `check-call` on each saved input. Its targets are pure identity functions
 with deliberately impossible return specs. The acceptance tests require actual
-retained shrinks for the nonempty seed-1 fixtures, including a structural change under EQUALP (hash-table contents included), and
-no claimed shrink for empty-map fixtures. General generated runs may already
-start at a minimal input; unchanged accepted candidates remain valid evidence
-but do not satisfy this additional fixed-seed reduction check. These are finite examples, not a guarantee of global
+retained shrinks for the nonempty seed-1 fixtures, including a structural change
+under EQUALP (hash-table contents included), and no claimed shrink for empty-map
+fixtures. General generated runs may already start at a minimal input; unchanged
+accepted candidates remain valid evidence but do not satisfy this additional
+fixed-seed reduction check. These are finite examples, not a guarantee of global
 minimality or a check of every intermediate shrink candidate.
 
 Hash tables are checked directly in memory; this does not add hash-table artifact
