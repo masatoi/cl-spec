@@ -112,8 +112,9 @@ test-support specials live in `self-spec-fixtures.lisp` (package
 through `cl-spec/specs`. The structured generation and retained-counterexample
 corpus and helpers live in `self-generation-fixtures.lisp` (package
 `cl-spec/self-generation-fixtures`), which also registers nothing at load time
-(it registers only into a registry it binds per call). The bundle's suites require every run to be `:satisfied`
-under `cl-spec/specs:evidence-policy`, not only `:passed`. Its registry contracts and
+(it registers only into a registry it binds per call). The bundle's suites
+require every run to be `:satisfied` under `cl-spec/specs:evidence-policy`, not
+only `:passed`. Its registry contracts and
 laws build registries through `cl-spec/specs:*registry-constructor*`, so
 `cl-spec/specs:check-registry-implementation` runs them as a conformance suite for
 another `REGISTRY-*` implementation.
