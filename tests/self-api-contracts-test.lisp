@@ -69,46 +69,91 @@
 
 (in-package #:cl-spec/tests/self-api-contracts-test)
 
+(defun map-form-kind (form)
+  "Return :ALIST or :HASH-TABLE for a map specification FORM, otherwise NIL.
+The head symbols are compared by name: the corpus lives in another package."
+  (and (consp form)
+       (symbolp (first form))
+       (cdr (assoc (symbol-name (first form))
+                   '(("ALIST-OF" . :alist) ("HASH-TABLE-OF" . :hash-table))
+                   :test #'string=))))
+
+(defun map-form-p (form)
+  "True when FORM is an ALIST-OF or HASH-TABLE-OF map specification form."
+  (and (map-form-kind form) t))
+
+(defun map-form-test (form)
+  "Return the :TEST option of the map FORM, EQL when it is absent."
+  (getf (cdddr form) :test 'eql))
+
+(defun saturated-map-form-p (form)
+  "True for a map FORM that fixes a count of two over a MEMBER key domain."
+  (and (map-form-p form)
+       (eql 2 (getf (cdddr form) :min-count))
+       (eql 2 (getf (cdddr form) :max-count))
+       (consp (second form))
+       (eq 'member (first (second form)))))
+
+(defun empty-map-form-p (form)
+  "True for a map FORM that can only be empty: :MAX-COUNT 0 or no possible key."
+  (and (map-form-p form)
+       (or (eql 0 (getf (cdddr form) :max-count))
+           (equal '(member) (second form)))))
+
 (deftest structured-generation-has-independent-map-oracles
-  ;; The first eight fixtures deliberately saturate a two-key domain under
+  ;; The saturated fixtures deliberately saturate a two-key domain under
   ;; each comparison. Check with CL operations, independently of VALIDP.
-  (loop for form in (subseq (structured-generation-forms) 0 8)
-        for index from 0
-        for test = (nth (mod index 4) '(eq eql equal equalp))
-        for samples = (cl-spec:sample (normalize-spec-form form) :count 10 :seed 42)
-        do (ok (= 10 (length samples)))
-           (dolist (value samples)
-             (let ((keys (if (hash-table-p value)
-                             (loop for key being the hash-keys of value collect key)
-                             (mapcar #'car value)))
-                   (values (if (hash-table-p value)
-                               (loop for item being the hash-values of value collect item)
-                               (mapcar #'cdr value))))
-               (ok (= 2 (length keys)))
-               (ok (= 2 (length (remove-duplicates keys :test test))))
-               (when (eq test 'eql)
-                 (ok (= 1 (length (remove-duplicates keys :test #'equalp)))))
-               (ok (every (lambda (item) (and (integerp item) (<= 10 item 30))) values)))
-             (when (hash-table-p value)
-               (ok (eq test (hash-table-test value)))))))
+  (let ((forms (remove-if-not #'saturated-map-form-p (structured-generation-forms))))
+    (ok (= 8 (length forms)))
+    (ok (equal (sort (mapcar (lambda (form) (list (map-form-kind form) (map-form-test form)))
+                             forms)
+                     #'string< :key #'prin1-to-string)
+               (sort (loop for kind in '(:alist :hash-table)
+                           append (loop for test in '(eq eql equal equalp)
+                                        collect (list kind test)))
+                     #'string< :key #'prin1-to-string)))
+    (loop for form in forms
+          for test = (map-form-test form)
+          for samples = (cl-spec:sample (normalize-spec-form form) :count 10 :seed 42)
+          do (ok (= 10 (length samples)))
+             (dolist (value samples)
+               (let ((keys (if (hash-table-p value)
+                               (loop for key being the hash-keys of value collect key)
+                               (mapcar #'car value)))
+                     (values (if (hash-table-p value)
+                                 (loop for item being the hash-values of value collect item)
+                                 (mapcar #'cdr value))))
+                 (ok (= 2 (length keys)))
+                 (ok (= 2 (length (remove-duplicates keys :test test))))
+                 (when (eq test 'eql)
+                   (ok (= 1 (length (remove-duplicates keys :test #'equalp)))))
+                 (ok (every (lambda (item) (and (integerp item) (<= 10 item 30))) values)))
+               (when (hash-table-p value)
+                 (ok (eq test (hash-table-test value))))))))
 
 (deftest structured-retention-exercises-real-shrinks-and-empty-domains
-  (loop for contract in (structured-counterexample-contracts)
-        for form in (structured-generation-forms :recheck-p t)
-        for index from 0
-        for result = (check-function contract :trials 1 :seed 1)
-        do (testing (format nil "~S" form)
-             (ok (retained-counterexample-valid-p
-                  contract result :require-reduction (not (<= 10 index 13))))
-             (if (<= 10 index 13)
-                 (progn
-                   (ok (eq :none (cl-spec:property-result-shrunk-outcome result)))
-                   (ok (null (cl-spec:property-result-shrunk-evidence result))))
-                 (progn
-                   ;; Merely falling back to the original must not make this
-                   ;; acceptance check pass: these seed-1 fixtures do shrink.
-                   (ok (eq :used (cl-spec:property-result-shrunk-outcome result)))
-                   (ok (cl-spec:property-result-shrunk-evidence result)))))))
+  (let ((empty-seen 0)
+        (nonempty-seen 0))
+    (loop for contract in (structured-counterexample-contracts)
+          for form in (structured-generation-forms :recheck-p t)
+          for emptyp = (empty-map-form-p form)
+          for result = (check-function contract :trials 1 :seed 1)
+          do (testing (format nil "~S" form)
+               (ok (retained-counterexample-valid-p
+                    contract result :require-reduction (not emptyp)))
+               (if emptyp
+                   (progn
+                     (incf empty-seen)
+                     (ok (eq :none (cl-spec:property-result-shrunk-outcome result)))
+                     (ok (null (cl-spec:property-result-shrunk-evidence result))))
+                   (progn
+                     (incf nonempty-seen)
+                     ;; Merely falling back to the original must not make this
+                     ;; acceptance check pass: these seed-1 fixtures do shrink.
+                     (ok (eq :used (cl-spec:property-result-shrunk-outcome result)))
+                     (ok (cl-spec:property-result-shrunk-evidence result))))))
+    (ok (plusp empty-seen))
+    (ok (plusp nonempty-seen))))
 
 (deftest retained-evidence-law-refuses-invalid-or-different-failures
   (let* ((contract (first (structured-counterexample-contracts)))
@@ -149,8 +194,15 @@
         (ok (not (retained-counterexample-valid-p passing result))))))
 
 (deftest a-copied-table-is-not-evidence-of-reduction
-  (let* ((contract (fifth (structured-counterexample-contracts)))
-         (result (check-function contract :trials 1 :seed 1))
+  (let* ((contract
+           (loop for contract in (structured-counterexample-contracts)
+                 for form in (structured-generation-forms :recheck-p t)
+                 when (and (saturated-map-form-p form)
+                           (eq :hash-table (map-form-kind form))
+                           (eq 'eq (map-form-test form)))
+                   return contract))
+         (result (progn (ok contract)
+                        (check-function contract :trials 1 :seed 1)))
          (original (cl-spec:property-result-failure-evidence result))
          (table (first (cl-spec:trial-observation-arguments original)))
          (copy (make-hash-table :test (hash-table-test table))))
@@ -167,11 +219,18 @@
       (ok (not (retained-counterexample-valid-p contract saved :require-reduction t))))))
 
 (deftest identity-sensitive-string-members-are-not-recheck-domains
-  (let* ((form (third (structured-generation-forms)))
+  (let* ((form (find-if (lambda (form)
+                          (and (eq :alist (map-form-kind form))
+                               (eq 'equal (map-form-test form))
+                               (consp (second form))
+                               (eq 'member (first (second form)))
+                               (every #'stringp (rest (second form)))))
+                        (structured-generation-forms)))
          (contract (make-instance 'cl-spec:function-spec
                                  :name 'identity :argument-specs (list (list 'value form))
                                  :return-spec '(member :impossible-return)))
-         (result (check-function contract :trials 1 :seed 42)))
+         (result (progn (ok form)
+                        (check-function contract :trials 1 :seed 42))))
     ;; MEMBER uses EQL even when the map uses EQUAL. Copying a string while
     ;; saving cons/array evidence loses membership identity. Do not call this
     ;; a successful recheck or change MEMBER semantics to make it pass.
