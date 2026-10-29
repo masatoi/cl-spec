@@ -19,8 +19,6 @@
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
                 #:single-observation-report)
-  (:import-from #:cl-spec/src/property-runner
-                #:property-result-trial-report #:property-result-declared-cases)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
                 #:fixture-data #:snapshot-fixture #:fixture-error)
@@ -86,27 +84,10 @@
                 #:property-call-arguments-p #:property-named-arguments
                 #:property-source-form #:property-trials #:property-metadata)
   (:import-from #:cl-spec/src/property-runner
-                #:prepare-property-run #:property-result
-                #:property-result-case-report
-                #:property-result-schema-metadata #:property-result-budget
-                #:property-result-options #:property-result-provenance #:property-result-run-error
-                #:property-result-status
-                #:property-result-property
-                #:property-result-trials
-                #:property-result-seed
-                #:property-result-profile
-                #:property-result-counterexample
-                #:property-result-shrunk-counterexample
-                #:property-result-condition
-                #:property-result-elapsed
-                #:run-property
-                #:property-result-failure-evidence #:property-result-shrunk-evidence
-                #:property-result-shrunk-outcome #:property-result-shrink-report
-                #:property-result-generation-report #:property-result-failure-phase
-                #:property-result-rejected
-                #:property-result-failure-reason #:property-result-explanation
-                #:property-result-entity-kind
-                #:observation-data)
+                #:prepare-property-run #:run-property-with-result-constructor
+                #:property-result #:property-result-case-report #:property-result-entity-kind
+                #:property-result-budget #:property-result-options #:property-result-property
+                #:property-result-seed #:observation-data)
   (:import-from #:cl-spec/src/generator
                 #:current-generator-backend
                 #:backend-default-trials)
@@ -651,6 +632,23 @@ hold or that signalled."
       (append (when capture (list :capture capture))
               (when state (list :state-post state))))))
 
+(defstruct (trial-classification (:copier nil))
+  "Named evidence returned by the function-spec trial classifier."
+  status reason signature explanation condition value outcome selected-case failure-phase state)
+
+(defun trial-classification-values (classification)
+  "Return CLASSIFICATION through the established EVALUATE-TRIAL value protocol."
+  (values (trial-classification-status classification)
+          (trial-classification-reason classification)
+          (trial-classification-signature classification)
+          (trial-classification-explanation classification)
+          (trial-classification-condition classification)
+          (trial-classification-value classification)
+          (trial-classification-outcome classification)
+          (trial-classification-selected-case classification)
+          (trial-classification-failure-phase classification)
+          (trial-classification-state classification)))
+
 (defun classify-state-post (contract case argument-values captures value outcome
                             state-post-function state-post-forms)
   "Run the selected state-post and return the trial's final classification.
@@ -663,8 +661,9 @@ outcome and the selected case, and neither is re-run for the report."
   (let ((case-name (and case (function-case-name case)))
         (function-name (function-spec-name contract)))
     (if (null state-post-function)
-        (values :passed nil nil nil nil value outcome case-name nil
-                (make-state-evidence contract :capture-status :completed
+        (make-trial-classification
+         :status :passed :value value :outcome outcome :selected-case case-name
+         :state (make-state-evidence contract :capture-status :completed
                                      :captured captures
                                      :state-status :not-evaluated
                                      :state-reason :not-declared
@@ -682,34 +681,39 @@ outcome and the selected case, and neither is re-run for the report."
                                        :function function-name :case case-name
                                        :index index :form form
                                        :original-condition condition)))
-                 (values :error :contract-error
-                         (if case
-                             (list :case case-name :state-post index
-                                   :contract-error (type-of condition))
-                             (list :state-post index :contract-error (type-of condition)))
-                         (state-post-error-data state-condition)
-                         state-condition nil outcome case-name :state-post
-                         (make-state-evidence contract :capture-status :completed
+                 (make-trial-classification
+                  :status :error :reason :contract-error
+                  :signature (if case
+                                 (list :case case-name :state-post index
+                                       :contract-error (type-of condition))
+                                 (list :state-post index :contract-error (type-of condition)))
+                  :explanation (state-post-error-data state-condition)
+                  :condition state-condition :outcome outcome :selected-case case-name
+                  :failure-phase :state-post
+                  :state (make-state-evidence contract :capture-status :completed
                                               :captured captures
                                               :state-status :error
                                               :state-index index :state-form form
                                               :state-condition condition
                                               :state-case case))))
               (holds
-               (values :passed nil nil nil nil value outcome case-name nil
-                       (make-state-evidence contract :capture-status :completed
+               (make-trial-classification
+                :status :passed :value value :outcome outcome :selected-case case-name
+                :state (make-state-evidence contract :capture-status :completed
                                             :captured captures
                                             :state-status :passed
                                             :state-case case)))
               (t
-               (values :failed :state-postcondition
-                       (if case
-                           (list :case case-name :state-postcondition index)
-                           (list :state-postcondition index))
-                       (list :kind :state-postcondition :function function-name
-                             :case case-name :index index :form form)
-                       nil value outcome case-name :state-post
-                       (make-state-evidence contract :capture-status :completed
+               (make-trial-classification
+                :status :failed :reason :state-postcondition
+                :signature (if case
+                               (list :case case-name :state-postcondition index)
+                               (list :state-postcondition index))
+                :explanation (list :kind :state-postcondition :function function-name
+                                   :case case-name :index index :form form)
+                :value value :outcome outcome :selected-case case-name
+                :failure-phase :state-post
+                :state (make-state-evidence contract :capture-status :completed
                                             :captured captures
                                             :state-status :violation
                                             :state-index index :state-form form
@@ -1495,29 +1499,25 @@ as its reduction.  The shapes come from the nested errors instead."
 
 (defun classify-target-outcome (return-spec signal-spec post post-forms values-post-p
                                 bound-values captures raw-outcome registry)
-  "Classify one target invocation against an effective outcome declaration.
+  "Classify one captured target invocation against its outcome declaration.
 
-Returns (values STATUS REASON SIGNATURE EXPLANATION CONDITION VALUE), the
-classification CHECK-FUNCTION has always reported.  The case-less and
-case-carrying paths both call this, so the rules exist once and a case cannot be
-made to pass by relaxing them.  RAW-OUTCOME is the invocation already captured by
-INVOKE-TARGET-ONCE; nothing here calls the target again.  CAPTURES are the values
-observed before the call, appended after BOUND-VALUES for the post predicate; a
-contract without :CAPTURE passes NIL and the call is byte-for-byte what it was."
+Return a named trial classification; this function never calls the target again.
+CAPTURES follow BOUND-VALUES as arguments to the postcondition."
   (let* ((return-schema (make-return-schema :primary-spec return-spec))
          (condition (when (eq :signaled (call-outcome-kind raw-outcome))
                       (call-outcome-condition raw-outcome)))
          (returned (call-outcome-values raw-outcome))
          (value (first returned)))
     (flet ((failure (reason detail condition &optional value)
-             (values (if condition :error :failed) reason
-                     (let ((signature (failure-signature reason detail condition)))
-                       (if (or (and (eq reason :return-spec)
-                                    (eq :values (return-schema-mode return-schema)))
-                               (and (eq reason :postcondition) values-post-p))
-                           (cons :return-values (cdr signature))
-                           signature))
-                     detail condition value)))
+             (make-trial-classification
+              :status (if condition :error :failed) :reason reason
+              :signature (let ((signature (failure-signature reason detail condition)))
+                           (if (or (and (eq reason :return-spec)
+                                        (eq :values (return-schema-mode return-schema)))
+                                   (and (eq reason :postcondition) values-post-p))
+                               (cons :return-values (cdr signature))
+                               signature))
+              :explanation detail :condition condition :value value)))
       (cond
         ;; Broad expected-error contracts must not certify a broken call.
         ((typep condition '(or program-error undefined-function))
@@ -1526,7 +1526,7 @@ contract without :CAPTURE passes NIL and the call is byte-for-byte what it was."
          (if condition
              (let ((explanation (explain-data signal-spec condition :registry registry)))
                (if (getf explanation :valid)
-                   (values :passed nil nil nil nil value)
+                   (make-trial-classification :status :passed :value value)
                    (failure :condition-spec explanation condition)))
              (failure :missing-condition
                       (list :expected (expected-descriptor signal-spec)) nil value)))
@@ -1542,9 +1542,9 @@ contract without :CAPTURE passes NIL and the call is byte-for-byte what it was."
              (post
               (multiple-value-bind (holds index tag)
                   (apply post (if values-post-p returned value)
-                        (append bound-values captures))
+                         (append bound-values captures))
                 (if holds
-                    (values :passed nil nil nil nil value)
+                    (make-trial-classification :status :passed :value value)
                     (failure :postcondition
                              (when (and (eq tag :cl-spec-post-form-failure)
                                         (integerp index)
@@ -1552,7 +1552,7 @@ contract without :CAPTURE passes NIL and the call is byte-for-byte what it was."
                                         (< index (length post-forms)))
                                (list :post-form index))
                              nil value))))
-             (t (values :passed nil nil nil nil value)))))))))
+             (t (make-trial-classification :status :passed :value value)))))))))
 
 (defmethod evaluate-trial ((property function-check-property) arguments &key context)
   "Capture state, select a case, call the target once, classify, then check state.
@@ -1576,34 +1576,28 @@ keeps its existing classification and leaves state-post explicitly
          (capture-index nil)
          (target-called-p nil))
     (labels ((selection-failure (condition)
-               ;; Selection failed, so no case owns this trial and the target was
-               ;; not called; the phase is recorded here rather than inferred later
-               ;; from the condition's class.
-               (values :error :contract-error
-                       (case-selection-signature condition)
-                       (case-selection-error-data condition)
-                       condition nil outcome nil :case-selection
-                       (make-state-evidence contract :capture-status capture-status
+               ;; A selection error owns no case and cannot call the target.
+               (make-trial-classification
+                :status :error :reason :contract-error
+                :signature (case-selection-signature condition)
+                :explanation (case-selection-error-data condition)
+                :condition condition :outcome outcome :failure-phase :case-selection
+                :state (make-state-evidence contract :capture-status capture-status
                                             :captured captured-values
                                             :state-status :not-evaluated
                                             :state-reason :case-selection-failed
                                             :state-case selected-case)))
              (contract-failure (condition)
-               ;; The trial stopped in contract-side code.  When the target was
-               ;; already invoked the selected case still owns the failure: name
-               ;; it in the evidence and in the identity so the case report
-               ;; counts the call and shrinking and artifacts stay inside the
-               ;; case.  Before the target (a binding, :pre or capture error)
-               ;; there is no target failure to own.
-               (values :error :contract-error
-                       (if selected-case
-                           (cons :case (cons (function-case-name selected-case)
-                                             (list :contract-error (type-of condition))))
-                           (list :contract-error (type-of condition)))
-                       nil condition nil outcome
-                       (and selected-case (function-case-name selected-case))
-                       nil
-                       (make-state-evidence contract :capture-status capture-status
+               ;; Preserve the selected case and captured outcome after a call.
+               (make-trial-classification
+                :status :error :reason :contract-error
+                :signature (if selected-case
+                               (cons :case (cons (function-case-name selected-case)
+                                                 (list :contract-error (type-of condition))))
+                               (list :contract-error (type-of condition)))
+                :condition condition :outcome outcome
+                :selected-case (and selected-case (function-case-name selected-case))
+                :state (make-state-evidence contract :capture-status capture-status
                                             :captured captured-values
                                             :capture-condition capture-condition
                                             :capture-index capture-index
@@ -1611,92 +1605,99 @@ keeps its existing classification and leaves state-post explicitly
                                             :state-reason (if target-called-p
                                                               :outcome-failed
                                                               :contract-error)
-                                            :state-case selected-case))))
-      (handler-case
-          (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
-                 (values (bound-call-values bound)))
-            (if (precondition-refuses-p pre values)
-                (values :rejected nil nil nil nil nil nil nil nil
-                        (make-state-evidence contract :capture-status :not-evaluated
-                                             :state-status :not-evaluated
-                                             :state-reason :precondition-rejected))
-                (multiple-value-bind (captures condition index)
-                    (progn (coverage-mark-stage :pre-admitted)
-                           (run-captures contract values))
-                  (setf captured-values captures
-                        capture-condition condition
-                        capture-index index
-                        capture-status (if condition :error :completed))
-                  (if condition
-                      (let ((capture-errors
-                              (make-condition
-                               'capture-error
-                               :function (function-spec-name contract)
-                               :binding (first (nth index
-                                                    (function-spec-capture-bindings contract)))
-                               :index index
-                               :captured (project-capture-values contract captures)
-                               :original-condition condition)))
-                        (values :error :contract-error
-                                (list :capture index :contract-error (type-of condition))
-                                (capture-error-data capture-errors)
-                                capture-errors nil outcome nil :capture
-                                (make-state-evidence contract :capture-status :error
-                                                     :captured captures
-                                                     :capture-condition condition
-                                                     :capture-index index
-                                                     :state-status :not-evaluated
-                                                     :state-reason :capture-failed)))
-                      (multiple-value-bind (case selection-condition)
-                          (if cases
-                              (function-case-select cases values
-                                                    (function-spec-name contract) captures)
-                              (values nil nil))
-                        (if selection-condition
-                            (selection-failure selection-condition)
-                            (progn
-                              (setf selected-case case)
-                              (multiple-value-bind
-                                    (returns signals post post-forms values-post-p
-                                     state-post-function state-post-forms)
-                                  (function-case-outcome-parts contract case)
-                                (let* ((raw-outcome (invoke-target-once
-                                                     (checked-target property) arguments))
-                                       (target-condition
-                                         (when (eq :signaled (call-outcome-kind raw-outcome))
-                                           (call-outcome-condition raw-outcome))))
-                                  (coverage-mark-stage :target-observed)
-                                  (setf target-called-p t)
-                                  (setf outcome
-                                        (make-call-outcome
-                                         :kind (call-outcome-kind raw-outcome)
-                                         :values (snapshot-value
-                                                  (call-outcome-values raw-outcome))
-                                         :condition target-condition))
-                                  (multiple-value-bind
-                                        (status reason signature explanation condition value)
-                                      (classify-target-outcome returns signals post post-forms
-                                                               values-post-p values captures
-                                                               raw-outcome registry)
-                                    (let ((case-name (and case (function-case-name case))))
-                                      (if (eq status :passed)
-                                          (classify-state-post
-                                           contract case values captures value outcome
-                                           state-post-function state-post-forms)
-                                          (values status reason
-                                                  (if (and case (consp signature))
-                                                      (cons :case (cons case-name signature))
-                                                      signature)
-                                                  explanation condition value outcome
-                                                  case-name nil
-                                                  (make-state-evidence
-                                                   contract :capture-status :completed
-                                                   :captured captures
-                                                   :state-status :not-evaluated
-                                                   :state-reason :outcome-failed
-                                                   :state-case case))))))))))))))
-        ((and error (not undefined-function) (not program-error)) (condition)
-          (contract-failure condition))))))
+                                            :state-case selected-case)))
+             (evaluate ()
+               (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
+                      (argument-values (bound-call-values bound)))
+                 (when (precondition-refuses-p pre argument-values)
+                   (return-from evaluate
+                     (make-trial-classification
+                      :status :rejected
+                      :state (make-state-evidence contract :capture-status :not-evaluated
+                                                  :state-status :not-evaluated
+                                                  :state-reason :precondition-rejected))))
+                 (coverage-mark-stage :pre-admitted)
+                 (multiple-value-bind (captures condition index)
+                     (run-captures contract argument-values)
+                   (setf captured-values captures
+                         capture-condition condition
+                         capture-index index
+                         capture-status (if condition :error :completed))
+                   (when condition
+                     (let ((capture-error
+                             (make-condition
+                              'capture-error
+                              :function (function-spec-name contract)
+                              :binding (first (nth index
+                                                   (function-spec-capture-bindings contract)))
+                              :index index
+                              :captured (project-capture-values contract captures)
+                              :original-condition condition)))
+                       (return-from evaluate
+                         (make-trial-classification
+                          :status :error :reason :contract-error
+                          :signature (list :capture index :contract-error (type-of condition))
+                          :explanation (capture-error-data capture-error)
+                          :condition capture-error :outcome outcome :failure-phase :capture
+                          :state (make-state-evidence contract :capture-status :error
+                                                      :captured captures
+                                                      :capture-condition condition
+                                                      :capture-index index
+                                                      :state-status :not-evaluated
+                                                      :state-reason :capture-failed)))))
+                   (multiple-value-bind (case selection-condition)
+                       (if cases
+                           (function-case-select cases argument-values
+                                                 (function-spec-name contract) captures)
+                           (values nil nil))
+                     (when selection-condition
+                       (return-from evaluate (selection-failure selection-condition)))
+                     (setf selected-case case)
+                     (multiple-value-bind
+                           (returns signals post post-forms values-post-p
+                            state-post-function state-post-forms)
+                         (function-case-outcome-parts contract case)
+                       (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
+                              (target-condition
+                                (when (eq :signaled (call-outcome-kind raw-outcome))
+                                  (call-outcome-condition raw-outcome))))
+                         (coverage-mark-stage :target-observed)
+                         (setf target-called-p t
+                               outcome (make-call-outcome
+                                        :kind (call-outcome-kind raw-outcome)
+                                        :values (snapshot-value (call-outcome-values raw-outcome))
+                                        :condition target-condition))
+                         (let ((classification
+                                 (classify-target-outcome
+                                  returns signals post post-forms values-post-p
+                                  argument-values captures raw-outcome registry))
+                               (case-name (and case (function-case-name case))))
+                           (if (eq :passed (trial-classification-status classification))
+                               (classify-state-post
+                                contract case argument-values captures
+                                (trial-classification-value classification) outcome
+                                state-post-function state-post-forms)
+                               (progn
+                                 (when (and case (consp (trial-classification-signature
+                                                         classification)))
+                                   (setf (trial-classification-signature classification)
+                                         (cons :case
+                                               (cons case-name
+                                                     (trial-classification-signature
+                                                      classification)))))
+                                 (setf (trial-classification-outcome classification) outcome
+                                       (trial-classification-selected-case classification) case-name
+                                       (trial-classification-state classification)
+                                       (make-state-evidence contract :capture-status :completed
+                                                            :captured captures
+                                                            :state-status :not-evaluated
+                                                            :state-reason :outcome-failed
+                                                            :state-case case))
+                                 classification))))))))))
+      (trial-classification-values
+       (handler-case (evaluate)
+         ((and error (not undefined-function) (not program-error)) (condition)
+           (contract-failure condition)))))))
 
 (defstruct (case-trial-counts (:constructor make-case-trial-counts ()))
   "Target invocations of one case during one function-check run."
@@ -2218,52 +2219,30 @@ contract failure. Fixture results and artifacts use version 2."
                        (make-fixture-check-property contract :budget budget)
                        (make-function-check-property contract :budget budget)))
          (source (property-source-form property))
-         (case-run (make-case-run contract))
-         (result (progn
-                   ;; A past result stands in for a run: replaying it would
-                   ;; reapply the saved inputs to a target whose state was never
-                   ;; restored.  Refuse before the target is called.  An integer
-                   ;; seed starts a new run and stays allowed.
-                   (when (and seed-result (state-observing-contract-p contract)
-                              (not (function-spec-fixture contract)))
-                     (error 'unsupported-stateful-operation :operation :replay
-                            :function name))
-                   (let ((*case-run* case-run))
-                     (run-property property
-                                   :seed (if (and seed-result (function-spec-fixture contract))
-                                             seed-result seed)
-                                   :options (or options
-                                                (and seed-result
-                                                     (property-result-options seed-result)))
-                                   :registry registry)))))
-    (make-instance 'function-check-result
-                   :coverage (coverage-data result)
-                   :trial-report (property-result-trial-report result)
-                   :declared-cases (property-result-declared-cases result)
-                   :run-error (property-result-run-error result)
-                   :schema-metadata (property-result-schema-metadata result)
-                   :options (property-result-options result)
-                   :provenance (property-result-provenance result)
-                   :status (property-result-status result)
-                   :property name :budget budget :source-form source
-                   :trials (property-result-trials result)
-                   :seed (property-result-seed result)
-                   :profile (property-result-profile result)
-                   :counterexample (property-result-counterexample result)
-                   :shrunk-counterexample (property-result-shrunk-counterexample result)
-                   :failure-evidence (property-result-failure-evidence result)
-                   :shrunk-evidence (property-result-shrunk-evidence result)
-                   :shrunk-outcome (property-result-shrunk-outcome result)
-                   :case-report (validate-case-trial-report
-                                  (property-result-trial-report result) (case-run-report case-run))
-                    :shrink-report (property-result-shrink-report result)
-                   :generation-report (property-result-generation-report result)
-                   :failure-phase (property-result-failure-phase result)
-                   :condition (property-result-condition result)
-                   :elapsed (property-result-elapsed result)
-                   :rejected (property-result-rejected result)
-                   :failure-reason (property-result-failure-reason result)
-                   :explanation (property-result-explanation result))))
+         (case-run (make-case-run contract)))
+    ;; Replaying a state-observing contract requires explicit reconstruction.
+    (when (and seed-result (state-observing-contract-p contract)
+               (not (function-spec-fixture contract)))
+      (error 'unsupported-stateful-operation :operation :replay :function name))
+    (let ((enclosing-case-run *case-run*)
+          (*case-run* case-run))
+      (run-property-with-result-constructor
+       property
+       (lambda (initargs failure-reason explanation)
+         ;; The final result is initialized in the caller's case context.
+         (let ((*case-run* enclosing-case-run))
+           (setf (getf initargs :property) name
+                 (getf initargs :budget) budget
+                 (getf initargs :source-form) source
+                 (getf initargs :failure-reason) failure-reason
+                 (getf initargs :explanation) explanation
+                 (getf initargs :case-report)
+                 (validate-case-trial-report (getf initargs :trial-report)
+                                             (case-run-report case-run)))
+           (apply #'make-instance 'function-check-result initargs)))
+       :seed (if (and seed-result (function-spec-fixture contract)) seed-result seed)
+       :options (or options (and seed-result (property-result-options seed-result)))
+       :registry registry))))
 
 ;;; One concrete caller-supplied invocation (no generation).
 

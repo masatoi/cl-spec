@@ -41,6 +41,244 @@
   (getf (or (property-result-shrunk-counterexample result)
             (property-result-counterexample result)) 'x))
 
+(defclass legacy-six-value-property (property)
+  ((calls :initform 0 :accessor legacy-evaluation-calls)))
+
+(defmethod cl-spec/src/execution:evaluate-trial
+    ((property legacy-six-value-property) arguments &key context)
+  (declare (ignore arguments context))
+  (incf (legacy-evaluation-calls property))
+  (values :failed :predicate-false '(:property-false) nil nil nil))
+
+(deftest legacy-six-value-evaluator-remains-observable
+  (let* ((property (make-instance 'legacy-six-value-property :name 'legacy
+                                  :function (constantly t)))
+         (observation (observe-trial property '(17))))
+    (ok (= 1 (legacy-evaluation-calls property)))
+    (ok (equal '(17) (trial-observation-arguments observation)))
+    (ok (eq :failed (cl-spec/src/execution:trial-observation-status observation)))
+    (ok (eq :predicate-false (cl-spec/src/execution:trial-observation-reason observation)))
+    (ok (equal '(:property-false)
+               (cl-spec/src/execution:trial-observation-signature observation)))
+    (ok (eq :not-collected (cl-spec/src/execution:trial-observation-outcome observation)))
+    (ok (null (cl-spec/src/execution:trial-observation-case observation)))
+    (ok (null (cl-spec/src/execution:observation-failure-phase observation)))
+    (ok (null (cl-spec/src/execution:trial-observation-state observation)))))
+
+(defvar *function-result-initializer-hook* nil)
+
+(defun call-with-function-result-initializer (hook thunk)
+  "Call THUNK with HOOK temporarily installed for function result initialization."
+  (let* ((generic #'initialize-instance)
+         (specializers (list (find-class 'cl-spec/src/function-spec:function-check-result)))
+         (previous (find-method generic '(:after) specializers nil))
+         (*function-result-initializer-hook* hook)
+         (installed nil))
+    (unwind-protect
+         (progn
+           (setf installed
+                 (defmethod initialize-instance :after
+                     ((result cl-spec/src/function-spec:function-check-result)
+                      &key &allow-other-keys)
+                   (when *function-result-initializer-hook*
+                     (funcall *function-result-initializer-hook* result))))
+           (funcall thunk))
+      (when (and installed
+                 (eq installed (find-method generic '(:after) specializers nil)))
+        (remove-method generic installed)
+        (when previous (add-method generic previous))))))
+
+(deftest function-check-runs-result-initialization
+  (let ((*registry* (make-hash-table-registry))
+        (initializations 0))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (call-with-function-result-initializer
+     (lambda (result) (declare (ignore result)) (incf initializations))
+     (lambda ()
+       (let ((result (check-function 'identity :trials 0 :seed 7)))
+         (ok (eq :skipped (property-result-status result)))
+         (ok (= 1 initializations)))))))
+
+(defvar *existing-function-result-initializations* 0)
+
+(deftest temporary-result-initializer-restores-existing-hook
+  (let* ((generic #'initialize-instance)
+         (specializers (list (find-class 'cl-spec/src/function-spec:function-check-result)))
+         (previous (find-method generic '(:after) specializers nil))
+         (*existing-function-result-initializations* 0)
+         (test-initializations 0)
+         (installed nil))
+    (unwind-protect
+         (progn
+           (setf installed
+                 (defmethod initialize-instance :after
+                     ((result cl-spec/src/function-spec:function-check-result)
+                      &key &allow-other-keys)
+                   (declare (ignore result))
+                   (incf *existing-function-result-initializations*)))
+           (call-with-function-result-initializer
+            (lambda (result) (declare (ignore result)) (incf test-initializations))
+            (lambda () (make-instance 'cl-spec/src/function-spec:function-check-result
+                                      :trials 0)))
+           (ok (= 1 test-initializations))
+           (make-instance 'cl-spec/src/function-spec:function-check-result :trials 0)
+           (ok (= 1 *existing-function-result-initializations*))
+           (ok (handler-case
+                   (progn (call-with-function-result-initializer
+                           (constantly nil) (lambda () (error "probe"))) nil)
+                 (error () t)))
+           (make-instance 'cl-spec/src/function-spec:function-check-result :trials 0)
+           (ok (= 2 *existing-function-result-initializations*)))
+      (when (and installed
+                 (eq installed (find-method generic '(:after) specializers nil)))
+        (remove-method generic installed)
+        (when previous (add-method generic previous))))))
+
+(defclass legacy-zero-trial-backend () ())
+
+(defmethod run-generated-test ((backend legacy-zero-trial-backend) property &key options)
+  (declare (ignore backend property))
+  (list :status :passed :trials (getf options :trials) :rejected 0))
+
+(deftest result-initialization-does-not-inherit-finished-coverage
+  (let ((*registry* (make-hash-table-registry))
+        (*generator-backend* (make-instance 'legacy-zero-trial-backend))
+        (observation nil))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (call-with-function-result-initializer
+     (lambda (result)
+       (declare (ignore result))
+       (setf observation
+             (observe-trial (make-instance 'property :name 'helper :function (constantly t))
+                            nil)))
+     (lambda ()
+       (let ((result (check-function 'identity :trials 0 :seed 1
+                                     :options '(:coverage (:mode :observe)))))
+         (ok (eq :skipped (property-result-status result)))
+         (ok (eq :passed (cl-spec/src/execution:trial-observation-status observation))))))))
+
+(defvar *outer-property-for-initialization* nil)
+
+(defclass nested-coverage-backend () ())
+
+(defmethod run-generated-test ((backend nested-coverage-backend) property &key options)
+  (declare (ignore backend))
+  (if (eq (cl-spec/src/property:property-name property) 'outer-property-probe)
+      (progn
+        (cl-spec/src/execution:begin-trial-report property)
+        (let ((*outer-property-for-initialization* property))
+          (check-function 'identity :trials 0 :seed 2
+                          :options '(:coverage (:mode :observe))))
+        (list :status :passed :trials 1 :rejected 0))
+      (list :status :passed :trials (getf options :trials) :rejected 0)))
+
+(deftest result-initialization-preserves-enclosing-coverage
+  (let ((*registry* (make-hash-table-registry))
+        (*generator-backend* (make-instance 'nested-coverage-backend))
+        (initializations 0))
+    (cl-spec:defproperty outer-property-probe
+        ((payload (plist (:optional (:memo integer)))))
+      (:trials (:normal 1))
+      (listp payload))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (call-with-function-result-initializer
+     (lambda (result)
+       (declare (ignore result))
+       (when *outer-property-for-initialization*
+         (incf initializations)
+         (cl-spec/src/execution:note-trial-outcome
+          *outer-property-for-initialization*
+          (observe-trial *outer-property-for-initialization* (list (list :memo 7))))))
+     (lambda ()
+       (let* ((result (run-property 'outer-property-probe :seed 1
+                                    :options '(:coverage (:mode :observe))))
+              (coverage (cl-spec:coverage-data result)))
+         (ok (eq :passed (property-result-status result)))
+         (ok (= 1 initializations))
+         (ok (= 1 (getf coverage :trials))))))))
+
+(defclass nested-case-report-backend () ())
+
+(defun outer-case-target (x)
+  x)
+
+(defmethod run-generated-test ((backend nested-case-report-backend) property &key options)
+  (declare (ignore backend))
+  (if (eq (cl-spec/src/property:property-name property) 'outer-case-target)
+      (progn
+        (cl-spec/src/execution:begin-trial-report property)
+        (let ((*outer-property-for-initialization* property))
+          (check-function 'identity :trials 0 :seed 2))
+        (list :status :passed :trials 1 :rejected 0))
+      (list :status :passed :trials (getf options :trials) :rejected 0)))
+
+(deftest result-initialization-preserves-enclosing-case-report
+  (let ((*registry* (make-hash-table-registry))
+        (*generator-backend* (make-instance 'nested-case-report-backend)))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (defspec-function outer-case-target
+      (:args (x integer))
+      (:cases (:positive (:when (plusp x)) (:returns integer))))
+    (call-with-function-result-initializer
+     (lambda (result)
+       (declare (ignore result))
+       (when *outer-property-for-initialization*
+         (cl-spec/src/execution:note-trial-outcome
+          *outer-property-for-initialization*
+          (observe-trial *outer-property-for-initialization* '(1)))))
+     (lambda ()
+       (let* ((result (check-function 'outer-case-target :trials 1 :seed 1))
+              (report (cl-spec:function-check-result-case-report result)))
+         (ok (eq :passed (property-result-status result)))
+         (ok (= 1 (getf (first (getf report :cases)) :called)))
+         (ok (null (getf report :never-called))))))))
+
+(defvar *nested-property-result* nil)
+
+(defun nested-property-target (value)
+  (setf *nested-property-result* (run-property 'nested-property :seed 2))
+  value)
+
+(deftest nested-property-keeps-its-own-result-class
+  (let ((*registry* (make-hash-table-registry))
+        (*nested-property-result* nil))
+    (cl-spec:defproperty nested-property ((value integer)) (:trials (:normal 1))
+      (integerp value))
+    (defspec-function nested-property-target (:args (value integer)) (:returns integer))
+    (let ((result (check-function 'nested-property-target :trials 1 :seed 3)))
+      (ok (eq :passed (property-result-status result)))
+      (ok (typep *nested-property-result* 'property-result))
+      (ok (not (typep *nested-property-result*
+                      'cl-spec/src/function-spec:function-check-result)))
+      (ok (eq :passed (property-result-status *nested-property-result*))))))
+
+(defun nested-function-target (value)
+  (setf *nested-property-result* (check-function 'identity :trials 0 :seed 2))
+  value)
+
+(deftest nested-function-checks-keep-both-result-classes
+  (let ((*registry* (make-hash-table-registry))
+        (*nested-property-result* nil))
+    (defspec-function identity (:args (value integer)) (:returns integer))
+    (defspec-function nested-function-target (:args (value integer)) (:returns integer))
+    (let ((result (check-function 'nested-function-target :trials 1 :seed 3)))
+      (ok (typep result 'cl-spec/src/function-spec:function-check-result))
+      (ok (eq :passed (property-result-status result)))
+      (ok (typep *nested-property-result* 'cl-spec/src/function-spec:function-check-result))
+      (ok (eq :skipped (property-result-status *nested-property-result*))))))
+
+(defclass stored-reason-result (property-result) ())
+
+(defmethod property-result-shrunk-evidence ((result stored-reason-result))
+  (declare (ignore result))
+  (error "A stored run failure does not require trial evidence."))
+
+(deftest stored-run-failure-reason-does-not-read-trial-evidence
+  (let ((result (make-instance 'stored-reason-result :trials 0
+                               :failure-reason :generation-budget-exhausted)))
+    (ok (eq :generation-budget-exhausted
+            (cl-spec/src/property-runner:property-result-failure-reason result)))))
+
 (deftest property-shrinking-preserves-false-versus-error
   (let ((r (run-property
             (probe-property (lambda (x)

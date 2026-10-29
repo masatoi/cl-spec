@@ -19,7 +19,8 @@
   (:import-from #:cl-spec/src/schema #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:trial-observation-call-evidence)
-  (:export #:property-result-run-error #:prepare-property-run)
+  (:export #:property-result-run-error #:prepare-property-run
+           #:run-property-with-result-constructor)
   (:import-from #:cl-spec/src/schema #:definition-metadata
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
@@ -215,11 +216,21 @@ FUNCTION-CHECK-RESULT reader split.")
   (or (property-result-shrunk-evidence result)
       (property-result-failure-evidence result)))
 
+(defun selected-evidence-reason (stored-reason evidence)
+  "Return STORED-REASON, or the reason in selected EVIDENCE."
+  (or stored-reason (and evidence (trial-observation-reason evidence))))
+
+(defun selected-evidence-explanation (evidence)
+  "Return the public explanation captured in selected EVIDENCE."
+  (when (and evidence (member (trial-observation-reason evidence)
+                              '(:return-spec :condition-spec :missing-condition
+                                :contract-error :state-postcondition)))
+    (trial-observation-explanation evidence)))
+
 (defun property-result-failure-reason (result)
   "Return the selected observation's reason, a stored generation reason, or NIL."
   (or (property-result-stored-failure-reason result)
-      (let ((evidence (selected-evidence result)))
-        (when evidence (trial-observation-reason evidence)))))
+      (selected-evidence-reason nil (selected-evidence result))))
 
 (defun property-result-failure-signature (result)
   "Return the selected observation's failure identity, or NIL on success."
@@ -234,11 +245,7 @@ its structured explanation there, and :STATE-POSTCONDITION because a violated
 :state-post records the case, form position and source.  A contract-side error
 that records no explanation still reads NIL, so the projection of existing
 contract errors does not change."
-  (let ((evidence (selected-evidence result)))
-    (when (and evidence (member (trial-observation-reason evidence)
-                                '(:return-spec :condition-spec :missing-condition
-                                  :contract-error :state-postcondition)))
-      (trial-observation-explanation evidence))))
+  (selected-evidence-explanation (selected-evidence result)))
 
 (defun observation-data (observation)
   "Project captured trial evidence as Lisp data rather than a structure object.
@@ -424,6 +431,28 @@ their existing replay is unchanged."
   (:documentation "Capture run-specific executable state before metadata and replay validation.")
   (:method ((property t)) property))
 
+(defvar *pending-result-constructor* nil
+  "One run's result constructor, paired with its property designator.")
+
+(defun run-property-with-result-constructor
+    (property-designator result-constructor &key profile seed options (registry *registry*))
+  "Run PROPERTY-DESIGNATOR with a one-use PROPERTY-RESULT constructor.
+
+RESULT-CONSTRUCTOR receives captured initargs, the selected failure reason, and
+the selected explanation.  It must return a PROPERTY-RESULT.  Its coverage
+bindings are those enclosing the run, not the run's completed coverage context."
+  (let ((enclosing-context *coverage-context*)
+        (enclosing-trial *coverage-trial*))
+    (let ((*pending-result-constructor*
+            (cons property-designator
+                  (when result-constructor
+                    (lambda (initargs reason explanation)
+                      (let ((*coverage-context* enclosing-context)
+                            (*coverage-trial* enclosing-trial))
+                        (funcall result-constructor initargs reason explanation)))))))
+      (run-property property-designator :profile profile :seed seed :options options
+                    :registry registry))))
+
 (defun run-property (property-designator &key profile seed options (registry *registry*))
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
@@ -444,7 +473,13 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
               (and (integerp seed) (not (minusp seed))))
     (error 'type-error :datum seed
                        :expected-type '(or null property-result (integer 0 *))))
-  (let* ((seed-result (and (typep seed 'property-result) seed))
+  (let* ((result-constructor
+           (when (and *pending-result-constructor*
+                      (eq property-designator (car *pending-result-constructor*)))
+             ;; Consume before running user code so nested runs keep their own result type.
+             (prog1 (cdr *pending-result-constructor*)
+               (setf *pending-result-constructor* nil))))
+         (seed-result (and (typep seed 'property-result) seed))
          (profile (or profile
                       ;; A result stands in for its whole run.  The seed alone
                       ;; is not it: the profile fixes the trial count, so
@@ -523,43 +558,49 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
         (setf (getf capabilities :instrumentation)
               (getf (getf metadata :capabilities) :instrumentation)
               (getf metadata :capabilities) capabilities)))
-    (make-instance 'property-result
-                   ;; Zero generated trials or all preconditions rejected means
-                   ;; no admitted trial supplied verification evidence.
-                   :status (if (and (eq :passed (getf outcome :status))
-                                    (= (getf outcome :trials) (getf outcome :rejected 0)))
-                               :skipped
-                               (getf outcome :status))
-                   :coverage (coverage-report-data *coverage-context*
-                                                   (if coverage-options :unsupported-backend :disabled))
-                   :trial-report (getf outcome :trial-report :not-collected)
-                   :declared-cases declared-cases
-                   :run-error (getf outcome :run-error)
-                   :schema-metadata metadata :budget trials
-                   :options captured-options :provenance provenance
-                   :property (property-name property)
-                   :trials (getf outcome :trials)
-                   :seed effective-seed
-                   :profile effective-profile
-                   :failure-evidence original :shrunk-evidence shrunk
-                   :shrunk-outcome (getf outcome :shrunk-outcome)
-                    :shrink-report (snapshot-value (or (getf outcome :shrink-report)
-                                                      :not-collected))
-                   :generation-report (snapshot-value
-                                       (or (getf outcome :generation-report) :not-collected))
-                   :failure-phase (getf outcome :failure-phase)
-                   :failure-reason (getf outcome :failure-reason)
-                   :rejected (getf outcome :rejected 0)
-                   :counterexample (when original
-                                     (name-arguments property
-                                                     (trial-observation-arguments original)))
-                   :shrunk-counterexample
-                   (when shrunk
-                     (name-arguments property (trial-observation-arguments shrunk)))
-                   :condition (or (and (getf outcome :run-error) (getf outcome :condition))
-                                  (when selected (trial-observation-condition selected))
-                                  (getf outcome :condition))
-                   :elapsed elapsed)))
+    (let ((initargs
+            (list
+             ;; Zero trials or all preconditions rejected means no evidence.
+             :status (if (and (eq :passed (getf outcome :status))
+                              (= (getf outcome :trials) (getf outcome :rejected 0)))
+                         :skipped
+                         (getf outcome :status))
+             :coverage (coverage-report-data
+                        *coverage-context*
+                        (if coverage-options :unsupported-backend :disabled))
+             :trial-report (getf outcome :trial-report :not-collected)
+             :declared-cases declared-cases
+             :run-error (getf outcome :run-error)
+             :schema-metadata metadata :budget trials
+             :options captured-options :provenance provenance
+             :property (property-name property)
+             :trials (getf outcome :trials)
+             :seed effective-seed
+             :profile effective-profile
+             :failure-evidence original :shrunk-evidence shrunk
+             :shrunk-outcome (getf outcome :shrunk-outcome)
+             :shrink-report (snapshot-value (or (getf outcome :shrink-report)
+                                                :not-collected))
+             :generation-report (snapshot-value
+                                 (or (getf outcome :generation-report) :not-collected))
+             :failure-phase (getf outcome :failure-phase)
+             :failure-reason (getf outcome :failure-reason)
+             :rejected (getf outcome :rejected 0)
+             :counterexample (when original
+                               (name-arguments property
+                                               (trial-observation-arguments original)))
+             :shrunk-counterexample (when shrunk
+                                      (name-arguments property
+                                                      (trial-observation-arguments shrunk)))
+             :condition (or (and (getf outcome :run-error) (getf outcome :condition))
+                            (when selected (trial-observation-condition selected))
+                            (getf outcome :condition))
+             :elapsed elapsed)))
+      (if result-constructor
+          (funcall result-constructor initargs
+                   (selected-evidence-reason (getf initargs :failure-reason) selected)
+                   (selected-evidence-explanation selected))
+          (apply #'make-instance 'property-result initargs)))))
 
 (defun run-properties (property-designators &key profile options (registry *registry*))
   "Run each property in PROPERTY-DESIGNATORS and return the results in order.
