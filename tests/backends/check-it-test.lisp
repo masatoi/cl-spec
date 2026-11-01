@@ -118,6 +118,28 @@
                                               :min-length 3 :max-length 5))
                        :count 30 :seed 2)))))
 
+(defun distinct-sizes (form size-function &key (count 200) (seed 9))
+  "Return the distinct sizes SIZE-FUNCTION reads off COUNT values SAMPLE draws from FORM."
+  (remove-duplicates (mapcar size-function
+                             (sample (normalize-spec-form form) :count count :seed seed))))
+
+(deftest a-large-minimum-length-still-varies-the-length
+  ;; Issue #82: a minimum at or above CHECK-IT:*LIST-SIZE* raised the cap to the
+  ;; minimum itself, so every value had exactly the minimum length.
+  (testing "a list whose minimum exceeds the list size draws several lengths"
+    (let ((lengths (distinct-sizes '(list-of integer :min-length 25 :max-length 40) #'length)))
+      (ok (every (lambda (length) (<= 25 length 40)) lengths))
+      (ok (< 5 (length lengths)))))
+  (testing "an unbounded vector with a large minimum draws above it"
+    (let ((lengths (distinct-sizes '(vector-of integer :min-length 30) #'length)))
+      (ok (every (lambda (length) (<= 30 length)) lengths))
+      (ok (< 5 (length lengths)))))
+  (testing "a map whose minimum count exceeds the list size draws several counts"
+    (let ((counts (distinct-sizes '(hash-table-of integer integer :min-count 25 :max-count 60)
+                                  #'hash-table-count :count 50)))
+      (ok (every (lambda (count) (<= 25 count 60)) counts))
+      (ok (< 5 (length counts))))))
+
 (deftest a-single-child-member-or-or-does-not-crash-check-it
   ;; CHECK-IT:COMPUTE-WEIGHTS computes (log 1) for a lone sub-generator and
   ;; then divides by the resulting zero, signalling a floating point error
@@ -245,6 +267,28 @@
         (:returns integer))
       (check-function 'one-sided-target :trials 50 :seed 20261101)
       (ok (< 10 (length *one-sided-arguments*))))))
+
+(deftest an-infinite-bound-on-an-integer-range-is-an-open-bound
+  ;; Issue #86: CEILING of an infinite float signalled a raw SIMPLE-ERROR.
+  (let ((plus sb-ext:double-float-positive-infinity)
+        (minus sb-ext:double-float-negative-infinity))
+    (dolist (form (list `(range integer 0 ,plus)
+                        `(range integer ,minus 5)
+                        `(and integer (range real ,minus 5))
+                        `(range real 0 ,plus)))
+      (testing (format nil "every draw from ~S satisfies it" form)
+        (let* ((spec (normalize-spec-form form))
+               (values (outcome-of (lambda () (sample spec :count 20 :seed 1)))))
+          (ok (and (listp values) (every (lambda (value) (validp spec value)) values))))))
+    (testing "UNIQUE over an infinite range is refused as it is over an open one"
+      (ok (eq :unique-domain
+              (handler-case
+                  (progn (sample (normalize-spec-form
+                                  `(list-of (range integer 0 ,plus) :unique t :min-length 2))
+                                 :count 1 :seed 1)
+                         nil)
+                (generator-unavailable (condition)
+                  (generator-unavailable-kind condition))))))))
 
 (deftest references-are-followed
   (let ((registry (make-hash-table-registry)))

@@ -307,10 +307,25 @@
                           (distinct-under-p (alist-keys candidate) #'eql)))
                    offered))))))
 
+(deftest a-filtered-key-does-not-exhaust-a-map-that-holds-its-minimum
+  ;; Issue #83: after MIN-COUNT keys, the key's own AND filter reserved a unit the
+  ;; map had not checked for, so budgets 3 and 4 exhausted where 2 and 5 did not.
+  (dolist (budget '(1 2 3 4 5 6 8))
+    (testing (format nil "budget ~D completes with at least one key" budget)
+      (multiple-value-bind (values report)
+          (handler-case
+              (sample-form '(alist-of (and (range integer 0 2) (satisfies integerp)) integer
+                             :min-count 1)
+                           :count 1 :seed 4 :generation-budget budget)
+            (generation-budget-exhausted () (values nil '(:termination :budget-exhausted))))
+        (ok (and values (<= 1 (length (first values)))))
+        (ok (eq :completed (getf report :termination)))))))
+
 (deftest drawn-keys-widen-their-range-to-stay-distinct
   (multiple-value-bind (values report)
       (sample-form '(hash-table-of (range integer 0 *) null :min-count 300) :count 1 :seed 1)
-    (ok (= 300 (hash-table-count (first values))))
+    ;; At least the minimum: the count is drawn above it, not pinned to it (#82).
+    (ok (<= 300 (hash-table-count (first values))))
     (ok (eq :completed (getf report :termination)))
     (ok (< (getf report :attempts) 300))))
 

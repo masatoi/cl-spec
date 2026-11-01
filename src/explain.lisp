@@ -64,7 +64,7 @@
                 #:tagged-union-spec #:tagged-union-tag-reader #:tagged-union-branches
                 #:branch-name #:branch-spec #:read-tag-value)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry
@@ -312,12 +312,32 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
                                                  (list :expected descriptor :errors errors))
                                                descriptors (nreverse branch-errors)))))))))
 
+(defun errors-mention-cycle-p (errors)
+  "Return true when a :CYCLIC-VALUE datum occurs anywhere in ERRORS.
+
+Nested datums sit under :ERRORS (a conjunction, a reference, a field) or under the
+:ERRORS of each of a disjunction's :BRANCHES."
+  (some (lambda (datum)
+          (or (eq :cyclic-value (getf datum :kind))
+              (errors-mention-cycle-p (getf datum :errors))
+              (some (lambda (branch) (errors-mention-cycle-p (getf branch :errors)))
+                    (getf datum :branches))))
+        errors))
+
 (defmethod compile-node ((spec not-spec) context)
   (let ((inner (compile-node (not-spec-inner-spec spec) context))
         (expected (expected-descriptor spec)))
     (lambda (value path)
-      (when (null (funcall inner value path))
-        (list (error-datum :negation-failed path value :expected expected))))))
+      (let ((errors (funcall inner value path)))
+        (cond
+          ((null errors)
+           (list (error-datum :negation-failed path value :expected expected)))
+          ;; A value that contains itself is admitted by no recursive spec, and a
+          ;; NOT must not turn that refusal into an admission: where the cycle is
+          ;; cut depends on whether the check entered through a reference, so a
+          ;; flipped cut made an alias and its target disagree (issue #87).
+          ((errors-mention-cycle-p errors) errors)
+          (t nil))))))
 
 (defmethod compile-node ((spec nullable-spec) context)
   (let ((inner (compile-node (nullable-spec-inner-spec spec) context)))
@@ -419,12 +439,48 @@ REFERENCE-VISITS object as soon as that check reaches its first reference.")
   "What one check knows about the references it has reached.
 
 ACTIVE maps a value to the (TARGET . PATH) frames currently being checked against
-it, innermost first; RESULTS maps a structured value to the (TARGET PATH . ERRORS)
-entries already computed for it; NODES maps a target name to (REGISTRY . NODE),
-the target compiled once for this check."
+it, innermost first; RESULTS maps a structured value, then a target, to the root of
+a RESULT-TRIE holding the errors already computed for each path; NODES maps a
+target name to (REGISTRY . NODE), the target compiled once for this check."
   (active (make-hash-table :test #'eql) :type hash-table)
   (results (make-hash-table :test #'eq) :type hash-table)
   (nodes (make-hash-table :test #'eq) :type hash-table))
+
+(defstruct (result-trie (:constructor make-result-trie ()))
+  "One node of the memo of a value's results under one target, keyed by path.
+
+A path is walked one element at a time from its innermost step, each step an EQL
+lookup, so finding the result for a position costs the path's length however
+many other positions the value was reached at (issue #85).  KNOWN-P marks a node
+whose path has a computed result in ERRORS."
+  (known-p nil)
+  (errors nil)
+  (children nil))
+
+(defun result-trie-node (visits value target path create-p)
+  "Return the trie node for VALUE checked against TARGET at PATH, or NIL.
+
+With CREATE-P the missing nodes along the way are made, so the result can be
+stored there; without it a missing node means no result is known."
+  (let ((targets (or (gethash value (reference-visits-results visits))
+                     (and create-p
+                          (setf (gethash value (reference-visits-results visits))
+                                (make-hash-table :test #'eq))))))
+    (when targets
+      (let ((node (or (gethash target targets)
+                      (and create-p (setf (gethash target targets) (make-result-trie))))))
+        (loop for step in path
+              while node
+              do (let ((children (result-trie-children node)))
+                   (setf node
+                         (or (and children (gethash step children))
+                             (and create-p
+                                  (setf (gethash step
+                                                 (or children
+                                                     (setf (result-trie-children node)
+                                                           (make-hash-table :test #'eql))))
+                                        (make-result-trie)))))))
+        node))))
 
 (defun path-equal (path other)
   "Return true when PATH and OTHER name the same position.
@@ -472,8 +528,7 @@ A result is a function of TARGET, VALUE and PATH alone, so a structured value
 reached again at the same position through another branch -- an OR whose
 branches share a recursive child -- reuses it instead of checking that child once
 per branch, which made recursive disjunctions exponential (issue #59)."
-  (let ((active (reference-visits-active visits))
-        (results (reference-visits-results visits)))
+  (let ((active (reference-visits-active visits)))
     (loop for (frame-target . frame-path) in (gethash value active)
           when (eq frame-target target)
             do (if (path-equal frame-path path)
@@ -487,9 +542,9 @@ per branch, which made recursive disjunctions exponential (issue #59)."
                      (list (error-datum :cyclic-value path value :expected expected)))))
     (let ((memoize-p (memoizable-value-p value)))
       (when memoize-p
-        (loop for (entry-target entry-path . errors) in (gethash value results)
-              when (and (eq entry-target target) (path-equal entry-path path))
-                do (return-from check-reference errors)))
+        (let ((node (result-trie-node visits value target path nil)))
+          (when (and node (result-trie-known-p node))
+            (return-from check-reference (result-trie-errors node)))))
       (push (cons target path) (gethash value active))
       (let ((errors (unwind-protect
                          (funcall (reference-node visits target registry) value path)
@@ -498,7 +553,9 @@ per branch, which made recursive disjunctions exponential (issue #59)."
                             (setf (gethash value active) remaining)
                             (remhash value active))))))
         (when memoize-p
-          (push (list* target path errors) (gethash value results)))
+          (let ((node (result-trie-node visits value target path t)))
+            (setf (result-trie-known-p node) t
+                  (result-trie-errors node) errors)))
         errors))))
 
 (defmethod compile-node ((spec reference-spec) context)
@@ -842,6 +899,7 @@ even into a nested check a predicate starts."
 
 This is the primary representation; EXPLAIN, condition reports and any JSON or
 MCP projection are derived from it."
+  (check-registry registry 'explain-data)
   (let* ((spec (resolve-spec spec-designator registry))
          (errors (funcall (compile-explainer spec :context (list :registry registry))
                           value nil)))

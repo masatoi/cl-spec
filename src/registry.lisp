@@ -17,7 +17,14 @@
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:call-with-definition-rollback)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:export #:registry-find-spec
+  (:import-from #:cl-spec/src/conditions #:invalid-spec-form #:invalid-argument)
+  (:import-from #:cl-spec/src/ir #:spec)
+  (:import-from #:cl-spec/src/normalize #:cl-type-name-p)
+  (:export #:check-spec-name
+           #:registry-object-p
+           #:registry-refusal-method-p
+           #:check-registry
+           #:registry-find-spec
            #:registry-register-spec
            #:registry-list-specs
            #:registry-find-function-spec
@@ -58,9 +65,31 @@ Returns two values: the spec (NIL when absent) and a found-p boolean."))
   (:documentation "Register SPEC in REGISTRY under NAME, replacing any previous
 definition.  Returns SPEC."))
 
+(defun check-spec-name (name)
+  "Refuse NAME unless a spec registered under it can be referred to by name.
+
+The rule DEFPROPERTY, DEFSPEC-FUNCTION and DEFGENERATOR apply -- a symbol other
+than NIL or a keyword (specification §4.1) -- plus one more: a Common Lisp type
+name such as T or STRING is refused, because the DSL always reads that symbol as
+the type and never as a reference, so the registered spec could be reached only
+through a call that passes its name, and would then shadow the type there.  The
+registry protocol applies it to every write, so DEFSPEC, REGISTER-SPEC and any
+other registry implementation agree (issue #78)."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (error 'invalid-spec-form
+           :form name
+           :reason "a spec must be named by a symbol other than NIL or a keyword"))
+  (when (cl-type-name-p name)
+    (error 'invalid-spec-form
+           :form name
+           :reason (format nil "~S names a Common Lisp type, which the spec DSL always ~
+                                reads as that type rather than as a reference to a ~
+                                registered spec"
+                           name))))
+
 (defmethod registry-register-spec :around (registry name spec)
-  "Validate before changing registry storage or reverse indexes."
-  (check-type name symbol)
+  "Refuse a name the spec DSL cannot refer to, then validate before storing."
+  (check-spec-name name)
   (call-with-definition-rollback
    spec (lambda () (validate-definition spec) (call-next-method))))
 
@@ -139,6 +168,81 @@ sorted."))
 
 (defgeneric registry-clear (registry)
   (:documentation "Remove every entry from REGISTRY and return REGISTRY."))
+
+(defun refuse-registry (registry operator)
+  "Signal INVALID-ARGUMENT: REGISTRY, passed to OPERATOR, implements no registry protocol."
+  (error 'invalid-argument
+         :datum registry :expected-type '(satisfies registry-object-p)
+         :operator operator :argument :registry
+         :reason "no registry protocol method applies to it"))
+
+(defvar *registry-refusal-methods* (make-hash-table :test #'eq)
+  "The REGISTRY-* methods on T, which refuse a non-registry rather than implement.")
+
+(defun registry-refusal-method-p (method)
+  "Return true when METHOD is one of the REGISTRY-* methods on T that only refuse.
+
+A check of which protocol functions an object implements, such as the self-spec
+bundle's REGISTRY-IMPLEMENTATION-P, must not count these: they apply to every
+object."
+  (values (gethash method *registry-refusal-methods*)))
+
+(macrolet ((refuse-otherwise (operator &rest parameters)
+             "Define OPERATOR's method on T, reached only by a non-registry."
+             `(setf (gethash (defmethod ,operator ((registry t) ,@parameters)
+                               (declare (ignore ,@(remove-if
+                                                   (lambda (parameter)
+                                                     (member parameter lambda-list-keywords))
+                                                   parameters)))
+                               (refuse-registry registry ',operator))
+                             *registry-refusal-methods*)
+                    t)))
+  ;; Every public entry point that takes :REGISTRY reaches one of these, so a value
+  ;; that is not a registry is refused as an INVALID-ARGUMENT naming :REGISTRY
+  ;; rather than failing with NO-APPLICABLE-METHOD (issue #79).
+  (refuse-otherwise registry-find-spec name)
+  (refuse-otherwise registry-register-spec name spec)
+  (refuse-otherwise registry-list-specs)
+  (refuse-otherwise registry-find-function-spec name)
+  (refuse-otherwise registry-register-function-spec name function-spec)
+  (refuse-otherwise registry-list-function-specs)
+  (refuse-otherwise registry-find-generator name)
+  (refuse-otherwise registry-register-generator name generator)
+  (refuse-otherwise registry-list-generators)
+  (refuse-otherwise registry-find-property name)
+  (refuse-otherwise registry-register-property name property &key targets tags)
+  (refuse-otherwise registry-list-properties)
+  (refuse-otherwise registry-properties-for target)
+  (refuse-otherwise registry-properties-with-tag tag)
+  (refuse-otherwise registry-clear))
+
+(defun registry-object-p (object)
+  "Return true when OBJECT has a primary REGISTRY-FIND-SPEC method of its own.
+
+A registry is any object the REGISTRY-* generic functions have methods for; the
+methods on T only refuse.  Lookup is the one operation every registry needs, so
+it decides.  The self-spec bundle's REGISTRY-IMPLEMENTATION-P is the full check
+of every protocol function."
+  (and (some (lambda (method)
+               (and (null (method-qualifiers method))
+                    (not (registry-refusal-method-p method))))
+             (compute-applicable-methods #'registry-find-spec (list object nil)))
+       t))
+
+(defun check-registry (registry operator)
+  "Return REGISTRY, or signal INVALID-ARGUMENT naming :REGISTRY for OPERATOR.
+
+Public entry points call it first: one handed a spec object may never consult the
+registry and would otherwise accept any value, and RECHECK-COUNTEREXAMPLE would
+record the failure as a contract error.  The built-in registry is recognized by
+type, so the common call costs no method lookup.  NIL is let through: internal
+callers pass it for a spec with no references, which never consults a registry,
+and a lookup through NIL is still refused by the protocol's methods on T."
+  (if (or (null registry)
+          (typep registry 'hash-table-registry)
+          (registry-object-p registry))
+      registry
+      (refuse-registry registry operator)))
 
 (defstruct (property-entry (:constructor make-property-entry (property targets tags)))
   "A property together with the index keys it was registered under, so that
@@ -354,7 +458,18 @@ Index keys that end up empty are dropped so that lookups return NIL."
   (registry-list-specs registry))
 
 (defun register-spec (name spec &optional (registry *registry*))
-  "Register SPEC under NAME in REGISTRY and return SPEC."
+  "Register SPEC under NAME in REGISTRY and return SPEC.
+
+SPEC must be a spec object, such as NORMALIZE-SPEC-FORM returns; a DSL form or
+any other value is refused with INVALID-SPEC-FORM before the registry changes.
+The registry protocol underneath stores whatever it is handed, so this is the
+public entry point that keeps a non-spec out of the registry."
+  (unless (typep spec 'spec)
+    (error 'invalid-spec-form
+           :form spec
+           :reason (format nil "only a spec object can be registered as ~S; ~
+                                normalize a DSL form with NORMALIZE-SPEC-FORM first"
+                           name)))
   (registry-register-spec registry name spec))
 
 (defun find-function-spec (name &optional (registry *registry*))

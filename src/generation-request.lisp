@@ -9,6 +9,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
+                #:cl-spec-error
                 #:generation-budget-exhausted
                 #:generation-budget-exhausted-request
                 #:generation-budget-exhausted-phase)
@@ -26,6 +27,7 @@
            #:generation-report-p
            #:reserve-generation-candidate
            #:generation-candidate-available-p
+           #:call-declining-on-exhaustion
            #:record-generation-rejection
            #:record-generated-value
            #:record-generation-interruption
@@ -194,6 +196,42 @@ nothing to reserve from, and the answer is NIL."
          (< (generation-request-attempts request)
             (generation-request-budget request)))))
 
+(defvar *optional-draw-request* nil
+  "The request whose draws in progress may be declined, or NIL.
+
+A map that already holds MIN-COUNT keys may stop instead of drawing another, but
+the key generator it calls can contain bounded filters that reserve units of
+their own.  While this names the active request, a reservation that finds no unit
+left declines the draw instead of exhausting the request.")
+
+(define-condition optional-draw-declined (cl-spec-error)
+  ()
+  (:documentation "Internal: an optional draw found its request's budget spent.
+
+Signalled only while *OPTIONAL-DRAW-REQUEST* names the active request, and always
+handled by CALL-DECLINING-ON-EXHAUSTION, so it never reaches a caller."))
+
+(defun call-declining-on-exhaustion (thunk on-decline)
+  "Call THUNK as an optional draw; call ON-DECLINE instead if the budget runs out.
+
+A reservation THUNK makes when no unit remains signals nothing to the caller and
+does not mark the request :BUDGET-EXHAUSTED: the draw was optional, so stopping
+is not an exhausted request (issue #83).  Units THUNK reserved before that stay
+counted.  A nested public request rebinds *GENERATION-REQUEST*, so its own
+exhaustion is reported as before."
+  (handler-case (let ((*optional-draw-request* *generation-request*))
+                  (funcall thunk))
+    (optional-draw-declined () (funcall on-decline))))
+
+(defun path-argument (path)
+  "Return the argument a declaration PATH starts in, or NIL.
+
+A property or function run compiles its argument schema with each position named,
+so its paths begin (:ARGS NAME ...); a SAMPLE path begins at :VALUE and names no
+argument."
+  (and (consp path) (eq :args (first path)) (consp (rest path))
+       (second path)))
+
 (defun reserve-generation-candidate (path spec)
   "Reserve one candidate unit from the active request.
 
@@ -208,11 +246,14 @@ the rejection count."
       (error "~S requires an active generation request" 'reserve-generation-candidate))
     (when (>= (generation-request-attempts request)
               (generation-request-budget request))
+      (when (eq request *optional-draw-request*)
+        (error 'optional-draw-declined))
       (setf (generation-request-termination request) :budget-exhausted
             (generation-request-exhaustion-phase request) (generation-request-phase request)
             (generation-request-exhausted-at request) path)
       (error 'generation-budget-exhausted
              :spec spec
+             :argument (path-argument path)
              :reason "the request-owned candidate budget was exhausted"
              :report (generation-request-report request)
              :request request))

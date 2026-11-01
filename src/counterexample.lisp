@@ -29,7 +29,8 @@
                 #:observation-failure-p #:observe-trial #:failure-identities-match-p
                 #:observation-failure-phase
                 #:snapshot-value #:same-value-p)
-  (:import-from #:cl-spec/src/registry #:*registry*)
+  (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property #:property-argument-schema)
@@ -197,7 +198,8 @@ never reached the target -- and is refused before this point."
 
 (defun serialize-counterexample-artifact (artifact)
   "Return bounded AV1 wire data, never a Lisp reader form."
-  (check-type artifact counterexample-artifact)
+  (check-argument artifact 'counterexample-artifact 'serialize-counterexample-artifact
+                  :artifact)
   (copy-seq (counterexample-artifact-payload artifact)))
 
 (defun deserialize-counterexample-artifact (string)
@@ -422,6 +424,8 @@ A result without trial failure evidence is refused with the reason
 fixture run reports :FIXTURE-LIFECYCLE-INCOMPLETE for a run error).  A
 case-selection error never reached the target, so it is refused here rather
 than persisted as a call that never happened."
+  (check-argument result '(or fixture-check-result property-result)
+                  'make-counterexample-artifact :result)
   (let ((metadata (typecase result
                     (fixture-check-result (fixture-check-result-definition result))
                     (property-result (property-result-schema-metadata result)))))
@@ -502,7 +506,14 @@ other policy, including the one for the other artifact version, returns :STATUS
 :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
-Returns a :RECHECK record; never mutates the saved artifact or original result."
+Returns a :RECHECK record; never mutates the saved artifact or original result.
+A non-artifact, a non-registry or an unknown policy is the caller's mistake, not
+a finding about the definition, so it is refused with INVALID-ARGUMENT before
+anything runs rather than recorded as :CONTRACT-ERROR."
+  (check-argument artifact 'counterexample-artifact 'recheck-counterexample :artifact)
+  (check-registry registry 'recheck-counterexample)
+  (check-argument state-policy '(member :unconfirmed :stateless :fixture)
+                  'recheck-counterexample :state-policy)
   (let* ((data (counterexample-artifact-data artifact))
          (kind (getf data :entity-kind))
          (saved (getf data (getf data :selection))))

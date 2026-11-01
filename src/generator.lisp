@@ -38,7 +38,7 @@
   (:import-from #:cl-spec/src/ir
                 #:spec #:spec-children)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec)
   (:import-from #:cl-spec/src/tagged-union
@@ -408,6 +408,7 @@ from an agent.
 A COUNT, SEED or GENERATION-BUDGET that is not a nonnegative integer (SEED may
 also be NIL) signals INVALID-ARGUMENT before anything is generated."
   (check-argument count '(integer 0 *) 'sample :count)
+  (check-registry registry 'sample)
   (check-argument seed '(or null (integer 0 *)) 'sample :seed)
   (when generation-budget-p
     (check-argument generation-budget '(integer 0 *) 'sample :generation-budget))

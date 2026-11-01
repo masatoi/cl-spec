@@ -23,6 +23,7 @@
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
   (:import-from #:cl-spec/src/ir #:predicate-spec)
   (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
@@ -63,10 +64,11 @@ Installations and function redefinitions must be serialized by the caller.")
            :documentation "The failed arity, argument, precondition,
 return or postcondition check."))
   (:report (lambda (condition stream)
-             (format stream "Runtime contract violation in ~S (~S, ~S)."
-                     (instrumentation-violation-function condition)
-                     (instrumentation-violation-scope condition)
-                     (instrumentation-violation-reason condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "Runtime contract violation in ~S (~S, ~S)."
+                       (instrumentation-violation-function condition)
+                       (instrumentation-violation-scope condition)
+                       (instrumentation-violation-reason condition)))))
   (:documentation "Runtime contract failure with SPEC-VIOLATION's structured error evidence."))
 
 (define-condition unsupported-instrumentation-target (cl-spec-error program-error)
@@ -75,9 +77,10 @@ return or postcondition check."))
    (reason :initarg :reason :reader unsupported-instrumentation-target-reason
            :documentation "Why this definition is unsupported."))
   (:report (lambda (condition stream)
-             (format stream "Cannot instrument ~S: ~A."
-                     (unsupported-instrumentation-target-name condition)
-                     (unsupported-instrumentation-target-reason condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "Cannot instrument ~S: ~A."
+                       (unsupported-instrumentation-target-name condition)
+                       (unsupported-instrumentation-target-reason condition)))))
   (:documentation
    "A defined target is not an ordinary writable function supported by this module."))
 
@@ -293,13 +296,15 @@ establish a declaration comparison and return NIL/NIL."
         (values (snapshot-value records) t)
         (values nil nil))))
 
-(defun install-contract (name &key (registry *registry*) (scopes '(:input :output :post)))
+(defun install-contract (name &key (registry *registry*) (scopes '(:input :output :post))
+                                   (operator 'instrument-function))
   "Install enabled checks using REGISTRY, retaining the original definition for restoration.
-Build the new wrapper and all metadata before replacing the active installation."
-  ;; INSTRUMENT-FUNCTION is the public face of this function, so the refusal
-  ;; names it rather than this internal helper.
-  (check-argument name 'symbol 'instrument-function :name)
-  (check-argument scopes '(satisfies valid-scopes-p) 'instrument-function :scopes)
+Build the new wrapper and all metadata before replacing the active installation.
+OPERATOR names the public function a refusal is reported against."
+  ;; INSTRUMENT-FUNCTION and REFRESH-INSTRUMENTATION are the public faces of this
+  ;; function, so a refusal names the one called rather than this internal helper.
+  (check-argument name 'symbol operator :name)
+  (check-argument scopes '(satisfies valid-scopes-p) operator :scopes)
   (let* ((registry (or registry *registry*))
          (contract (or (registry-find-function-spec registry name)
                        (error 'unknown-function-spec :name name)))
@@ -413,6 +418,13 @@ inspection from a known empty omission list."
         t
         (progn (remhash name *instrumented-functions*) nil))))
 
+(defun instrument-options-p (options)
+  "Recognize INSTRUMENT-FUNCTION's options: a plist of :REGISTRY and :SCOPES only."
+  (and (proper-list-p options)
+       (evenp (length options))
+       (loop for (key) on options by #'cddr
+             always (member key '(:registry :scopes)))))
+
 (defun instrument-function (name &rest options)
   "Install checks for NAME and return NAME; refresh an existing wrapper without stacking.
 
@@ -428,9 +440,13 @@ and unsupported definitions UNSUPPORTED-INSTRUMENTATION-TARGET.
 :INPUT describes the entire argument list, not a prefix of the target lambda list.
 Checks capture the contract at installation; reinstall to refresh it. Previously
 captured function objects, lexical and inlined calls are not intercepted."
-  (if (and options (not (keywordp (first options))))
-      (apply #'install-contract name :registry (first options) (rest options))
-      (apply #'install-contract name options)))
+  (let ((keywords (if (and options (not (keywordp (first options))))
+                      (list* :registry (first options) (rest options))
+                      options)))
+    ;; A misspelt option such as :SCOPE would otherwise reach the internal
+    ;; helper as an unknown keyword argument (issue #79).
+    (check-argument keywords '(satisfies instrument-options-p) 'instrument-function :options)
+    (apply #'install-contract name keywords)))
 
 (defun refresh-instrumentation (name &key (registry nil registry-p) (scopes nil scopes-p))
   "Rebuild an active installation against its original target without stacking wrappers.
@@ -444,7 +460,8 @@ redefinitions and missing installations, preserving the function and table."
       (error 'unsupported-instrumentation-target :name name :reason :external-redefinition))
     (install-contract name
                       :registry (if registry-p registry (installation-registry entry))
-                      :scopes (if scopes-p scopes (installation-scopes entry)))))
+                      :scopes (if scopes-p scopes (installation-scopes entry))
+                      :operator 'refresh-instrumentation)))
 
 (defun uninstrument-function (name)
   "Restore NAME's original function only if its installed wrapper is still current.
