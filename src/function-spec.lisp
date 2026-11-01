@@ -54,6 +54,7 @@
                 #:state-post-error-data
                 #:unsupported-stateful-operation
                 #:spec-violation)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -771,6 +772,10 @@ POSTCONDITION-FUNCTION is what actually runs.")
                           :reader function-spec-precondition-function
                           :documentation "Compiled predicate over the parameters,
 true when every :PRE form holds, or NIL when the contract has no :PRE.
+DEFSPEC-FUNCTION compiles it so that a refusal returns
+\(values nil index :cl-spec-pre-form-failure), where INDEX is the zero-based
+position of the first :PRE form that did not hold; a hand-built predicate may
+return a plain NIL, and then no form is named.
 
 Compiled at macroexpansion time rather than interpreted at check time, because
 §60 forbids runtime EVAL and a stored form cannot otherwise be run.")
@@ -2201,12 +2206,8 @@ trial and shrink candidate. A result supplied as :SEED requires matching complet
 declaration identity, options, profile and budget. Cleanup failures stop the run
 with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
 contract failure. Fixture results and artifacts use version 2."
-  (unless (or (null trials) (and (integerp trials) (not (minusp trials))))
-    (error 'type-error :datum trials :expected-type '(or null (integer 0 *))))
-  (unless (or (null seed) (typep seed 'property-result)
-              (and (integerp seed) (not (minusp seed))))
-    (error 'type-error :datum seed
-                      :expected-type '(or null property-result (integer 0 *))))
+  (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
+  (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
   (let* ((seed-result (and (typep seed 'property-result) seed))
          (budget (or trials
                      (when (typep seed-result 'function-check-result)

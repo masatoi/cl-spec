@@ -6,6 +6,7 @@
 
 (defpackage #:cl-spec/src/conditions
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
   (:export #:invalid-backend-result
            #:invalid-backend-result-reason
            #:cl-spec-error
@@ -23,6 +24,9 @@
            #:unknown-function-spec
            #:unknown-function-spec-name
            #:unbound-target
+           #:invalid-argument
+           #:invalid-argument-operator
+           #:invalid-argument-argument
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -46,6 +50,8 @@
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
+           #:generator-unavailable-kind
+           #:generator-unavailable-argument
            #:generation-budget-exhausted
            #:generation-budget-exhausted-report
            #:generation-budget-exhausted-request
@@ -122,10 +128,11 @@
            :reader spec-violation-errors
            :documentation "Structured error list as produced by EXPLAIN-DATA."))
   (:report (lambda (condition stream)
-             (format stream "~S does not satisfy ~S~@[ at path ~S~]."
-                     (spec-violation-value condition)
-                     (spec-violation-spec condition)
-                     (spec-violation-path condition))))
+             (with-bounded-printing ()
+               (format stream "~S does not satisfy ~S~@[ at path ~S~]."
+                       (spec-violation-value condition)
+                       (spec-violation-spec condition)
+                       (spec-violation-path condition)))))
   (:documentation "Signalled when a value fails to satisfy a spec."))
 
 (define-condition unknown-spec (cl-spec-error)
@@ -180,6 +187,29 @@ so one unadopted function lost a whole batch of checks.  It is still an
 UNDEFINED-FUNCTION, because that is what it is, and a caller who wrote the
 standard handler keeps it."))
 
+(define-condition invalid-argument (cl-spec-error type-error)
+  ((operator :initarg :operator
+             :initform nil
+             :reader invalid-argument-operator
+             :documentation "Name of the public operator that refused the argument.")
+   (argument :initarg :argument
+             :initform nil
+             :reader invalid-argument-argument
+             :documentation "Keyword or symbol naming the refused parameter."))
+  (:report (lambda (condition stream)
+             (with-bounded-printing ()
+               (format stream "~S was given ~S as ~S, which is not of type ~S."
+                       (invalid-argument-operator condition)
+                       (type-error-datum condition)
+                       (invalid-argument-argument condition)
+                       (type-error-expected-type condition)))))
+  (:documentation "Signalled when a public operator is called with an argument of the wrong type.
+
+Inherits from both roots, as UNBOUND-TARGET does: a caller trapping the framework
+through CL-SPEC-ERROR (§21) catches it, and a caller who wrote the standard
+TYPE-ERROR handler still reads TYPE-ERROR-DATUM and TYPE-ERROR-EXPECTED-TYPE.
+OPERATOR and ARGUMENT say which call and which parameter were refused."))
+
 (define-condition no-generator-backend (cl-spec-error)
   ()
   (:report (lambda (condition stream)
@@ -191,9 +221,7 @@ standard handler keeps it."))
 
 (defun report-invalid-form (stream form description reason)
   "Print a malformed declaration without recursively expanding circular list structure."
-  (let ((*print-circle* t)
-        (*print-length* 20)
-        (*print-level* 8))
+  (with-bounded-printing ()
     (format stream "~S is not a valid ~A~@[: ~A~]." form description reason)))
 
 (define-condition invalid-spec-form (cl-spec-error)
@@ -303,9 +331,7 @@ produce values from a body called without the bindings its author wrote."))
            :reader invalid-call-arguments-errors
            :documentation "Structured EXPLAIN-DATA errors for the refused argument list."))
   (:report (lambda (condition stream)
-             (let ((*print-circle* t)
-                   (*print-length* 20)
-                   (*print-level* 8))
+             (with-bounded-printing ()
                (format stream "~S is not a valid call of ~S~@[: ~S~]."
                        (invalid-call-arguments-arguments condition)
                        (invalid-call-arguments-function condition)
@@ -323,15 +349,39 @@ structured EXPLAIN-DATA errors, so a caller does not have to re-run validation."
   ((spec :initarg :spec
          :initform nil
          :reader generator-unavailable-spec
-         :documentation "Spec no generator could be derived from.")
+         :documentation "Spec no generator could be derived from: the innermost node
+that refused, which is not necessarily the spec the caller asked for.")
    (reason :initarg :reason
            :initform nil
            :reader generator-unavailable-reason
-           :documentation "Human readable explanation, or NIL."))
+           :documentation "Human readable explanation, or NIL.")
+   (kind :initarg :kind
+         :initform :no-strategy
+         :reader generator-unavailable-kind
+         :documentation "Keyword classifying the refusal, for a caller that dispatches on it:
+:NO-STRATEGY (the node type has no generation strategy), :UNSUPPORTED-TYPE (no
+generator for this Common Lisp type), :EMPTY-DOMAIN (the spec admits too few
+values to draw what is asked), :UNREGISTERED-GENERATOR (a named custom generator
+is not registered), :RECURSIVE-SPEC, :RANGE-TOO-WIDE, :UNIQUE-DOMAIN (UNIQUE
+cannot enumerate the element domain), :AMBIGUOUS-GENERATOR (several AND
+conjuncts name a custom generator) or :REJECTED-DRAWS (generated values kept
+failing the declared constraints).")
+   (argument :initarg :argument
+             :initform nil
+             :reader generator-unavailable-argument
+             :documentation "Name of the property or function argument whose spec could
+not be generated, or NIL when the request was not for an argument (SAMPLE)."))
   (:report (lambda (condition stream)
-             (format stream "No generator can be derived from ~S~@[: ~A~]."
-                     (generator-unavailable-spec condition)
-                     (generator-unavailable-reason condition))))
+             (with-bounded-printing ()
+               (format stream "No generator can be derived from ~S~
+                               ~@[ for the argument ~S~]~@[: ~A~] (~S).  ~
+                               Define one with DEFGENERATOR and name it with ~
+                               (:GENERATOR NAME) on the DEFSPEC, or give the ~
+                               function spec an :ARGS-GENERATOR."
+                       (generator-unavailable-spec condition)
+                       (generator-unavailable-argument condition)
+                       (generator-unavailable-reason condition)
+                       (generator-unavailable-kind condition)))))
   (:documentation
    "Signalled when an IR node has no generation strategy on this backend."))
 
@@ -443,7 +493,7 @@ observation, but it depends on this file, so the projection here cannot reach
 that helper without closing the dependency graph into a cycle."
   (when condition
     (handler-case
-        (let ((*print-circle* t))
+        (with-bounded-printing ()
           (princ-to-string condition))
       (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
 

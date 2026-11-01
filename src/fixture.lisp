@@ -1,6 +1,7 @@
 ;;;; src/fixture.lisp
 (defpackage #:cl-spec/src/fixture
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots
                 #:call-with-definition-rollback #:finite-definition-form-p)
@@ -14,7 +15,7 @@
            #:fixture-data #:snapshot-fixture #:fixture-error #:fixture-error-reason))
 (in-package #:cl-spec/src/fixture)
 
-(define-condition fixture-error (error)
+(define-condition fixture-error (cl-spec-error)
   ((reason :initarg :reason :reader fixture-error-reason))
   (:documentation "An invalid fixture declaration or execution boundary.")
   (:report (lambda (condition stream)

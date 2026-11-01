@@ -53,6 +53,9 @@
                 #:unknown-function-spec
                 #:unknown-function-spec-name
                 #:unbound-target
+                #:invalid-argument
+                #:invalid-argument-operator
+                #:invalid-argument-argument
                 #:no-generator-backend
                 #:invalid-spec-form
                 #:invalid-spec-form-form
@@ -76,6 +79,8 @@
                 #:generator-unavailable
                 #:generator-unavailable-spec
                 #:generator-unavailable-reason
+                #:generator-unavailable-kind
+                #:generator-unavailable-argument
                 #:generation-budget-exhausted
                 #:generation-budget-exhausted-report
                 #:generation-budget-exhausted-request
@@ -311,6 +316,9 @@
            #:unknown-function-spec
            #:unknown-function-spec-name
            #:unbound-target
+           #:invalid-argument
+           #:invalid-argument-operator
+           #:invalid-argument-argument
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -334,6 +342,8 @@
            #:generator-unavailable
            #:generator-unavailable-spec
            #:generator-unavailable-reason
+           #:generator-unavailable-kind
+           #:generator-unavailable-argument
            #:generation-budget-exhausted
            #:generation-budget-exhausted-report
            #:generation-budget-exhausted-request

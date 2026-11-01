@@ -20,6 +20,11 @@
                 #:run-property
                 #:run-properties
                 #:replay-property)
+  (:import-from #:cl-spec/src/conditions
+                #:invalid-argument
+                #:invalid-argument-argument
+                #:invalid-property-form)
+  (:import-from #:cl-spec/src/property #:property)
   (:import-from #:cl-spec/src/backends/check-it))
 
 (in-package #:cl-spec/tests/property-runner-test)
@@ -210,13 +215,13 @@
   (with-fresh-registry
     (eval '(cl-spec/src/dsl:defspec d5-thousand (range integer 1 1000)))
     ;; D5-INNER fails for exactly one value in a thousand.  :NORMAL's 5-trial budget
-    ;; is far too small to reliably find it; :THOROUGH's 20000-trial budget is large
+    ;; is far too small to reliably find it; :STRESS's 20000-trial budget is large
     ;; enough that it virtually always does.  That gap is what makes a replay under
     ;; the wrong profile observable rather than a matter of luck.
     (eval '(cl-spec/src/dsl:defproperty d5-inner ((x d5-thousand))
-             (:trials (:normal 5 :thorough 20000))
+             (:trials (:normal 5 :stress 20000))
              (/= x 500)))
-    (let ((first-run (run-property 'd5-inner :profile :thorough)))
+    (let ((first-run (run-property 'd5-inner :profile :stress)))
       (testing "the large profile finds the rare failure"
         (ok (eq :failed (property-result-status first-run))))
       (testing "replaying with the result object and no :profile argument reproduces
@@ -233,9 +238,9 @@ the failure"
   (with-fresh-registry
     (eval '(cl-spec/src/dsl:defspec d5-thousand (range integer 1 1000)))
     (eval '(cl-spec/src/dsl:defproperty d5-inner ((x d5-thousand))
-             (:trials (:normal 5 :thorough 20000))
+             (:trials (:normal 5 :stress 20000))
              (/= x 500)))
-    (let* ((first-run (run-property 'd5-inner :profile :thorough))
+    (let* ((first-run (run-property 'd5-inner :profile :stress))
            (direct-normal (run-property 'd5-inner
                                         :profile :normal
                                         :seed (property-result-seed first-run)))
@@ -295,6 +300,48 @@ exactly as before this fix"
         (ok (= 2 (length results)))
         (ok (equal '(holds fails) (mapcar #'property-result-property results)))
         (ok (equal '(:passed :failed) (mapcar #'property-result-status results)))))))
+
+(defun refused-profile-argument (thunk)
+  "Return the parameter name THUNK's INVALID-ARGUMENT refusal names, or NIL."
+  (handler-case (progn (funcall thunk) nil)
+    (invalid-argument (condition)
+      (invalid-argument-argument condition))))
+
+(deftest an-unknown-profile-is-refused-rather-than-defaulted
+  (with-fresh-registry
+    (eval '(cl-spec/src/dsl:defproperty profile-check ((value (range integer 0 10)))
+             (:trials (:smoke 3 :normal 20))
+             (<= value 10)))
+    (testing "a standard profile still selects its count"
+      (ok (= 3 (property-result-trials (run-property 'profile-check :profile :smoke :seed 1)))))
+    (testing "a misspelled profile is refused by every runner instead of running 100 trials"
+      (ok (eq :profile (refused-profile-argument
+                        (lambda () (run-property 'profile-check :profile :smok :seed 1)))))
+      (ok (eq :profile (refused-profile-argument
+                        (lambda () (run-properties '(profile-check) :profile :smok)))))
+      (ok (eq :profile (refused-profile-argument
+                        (lambda () (replay-property 'profile-check 1 :profile :smok))))))))
+
+(deftest an-unknown-profile-in-a-trials-table-is-refused-at-definition
+  (with-fresh-registry
+    (testing "DEFPROPERTY refuses a table key that is not a §33 profile"
+      (ok (signals (macroexpand-1 '(cl-spec/src/dsl:defproperty typo ((value integer))
+                                    (:trials (:nromal 7))
+                                    (integerp value)))
+                   'invalid-property-form)))
+    (testing "every §33 profile is accepted"
+      (ok (macroexpand-1 '(cl-spec/src/dsl:defproperty all-profiles ((value integer))
+                           (:trials (:smoke 1 :normal 2 :extended 3 :stress 4))
+                           (integerp value)))))
+    (testing "a property built directly through the CLOS API is refused too"
+      (ok (handler-case
+              (progn (make-instance 'property
+                                    :name 'direct-typo
+                                    :arguments nil
+                                    :trials '(:nromal 7)
+                                    :function (lambda () t))
+                     nil)
+            (error () t))))))
 
 (deftest run-property-does-not-call-an-empty-run-a-pass
   (with-fresh-registry

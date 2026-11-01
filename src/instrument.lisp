@@ -22,7 +22,8 @@
   (:nicknames #:cl-spec/instrument)
   (:import-from #:cl-spec/src/conditions
                 #:spec-violation #:unknown-function-spec #:cl-spec-error #:unbound-target)
-  (:import-from #:cl-spec/src/ir #:predicate-spec #:predicate-spec-predicate)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/ir #:predicate-spec)
   (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
@@ -35,7 +36,7 @@
                 #:function-spec #:function-spec-name
                 #:function-spec-signal-spec
                 #:function-spec-cases
-                #:function-spec-precondition-function
+                #:function-spec-precondition-function #:function-spec-preconditions
                 #:function-spec-postcondition-function #:function-spec-postconditions
                 #:function-spec-post-value-variables
                 #:precondition-refuses-p)
@@ -130,6 +131,37 @@ enforce.  Existing case-less instrumentation is unaffected."
          :function name :scope scope :reason reason :spec spec :value value
          :path (getf (first errors) :path) :errors errors))
 
+(defun clause-form-index (index tag expected-tag form-count)
+  "Return INDEX when a clause predicate tagged it EXPECTED-TAG and it names a form, else NIL.
+
+A hand-built predicate returns a plain NIL, and a value that merely looks like an
+index is not trusted unless it carries the tag DEFSPEC-FUNCTION compiles in."
+  (and (eq tag expected-tag) (integerp index) (<= 0 index) (< index form-count) index))
+
+(defun precondition-verdict (precondition arguments form-count)
+  "Return (values REFUSED INDEX) for PRECONDITION applied to ARGUMENTS.
+
+REFUSED follows PRECONDITION-REFUSES-P: a false value or a SPEC-VIOLATION refuses
+the call.  INDEX is the zero-based position of the :PRE form that did not hold
+when the predicate reports one, and NIL otherwise."
+  (handler-case
+      (multiple-value-bind (holds index tag) (apply precondition arguments)
+        (if holds
+            (values nil nil)
+            (values t (clause-form-index index tag :cl-spec-pre-form-failure form-count))))
+    (spec-violation () (values t nil))))
+
+(defun clause-descriptor (kind forms index)
+  "Return the :EXPECTED descriptor of a failed clause of KIND, as plain data.
+
+KIND is :PRECONDITION or :POSTCONDITION and FORMS the clause's declared forms.
+With INDEX the descriptor names that one form, (KIND FORM :INDEX INDEX);
+without one it names the whole clause.  It holds no function object, so a
+violation record can be printed, compared and read back."
+  (if index
+      (list kind (nth index forms) :index index)
+      (list kind (if (rest forms) (cons 'and forms) (first forms)))))
+
 (defun make-contract-wrapper (name original contract registry scopes)
   "Compile enabled checks and capture their predicates around ORIGINAL."
   (let* ((layout (make-call-layout (function-spec-argument-specs contract)))
@@ -154,21 +186,26 @@ enforce.  Existing case-less instrumentation is unaffected."
                      (lambda (values)
                        (not (precondition-refuses-p
                              pre (bound-call-values (bind-call-arguments layout values)))))))
-         (pre-spec (when pre (make-instance 'predicate-spec :predicate pre-test)))
+         (pre-forms (function-spec-preconditions contract))
+         (pre-spec (when pre (make-instance 'predicate-spec
+                                            :predicate pre-test
+                                            :source-form (cons :pre pre-forms))))
          (return-schema (function-spec-return-schema contract))
          (returns (return-schema-primary-spec return-schema))
          (output (when (and (member :output scopes) returns)
                    (compile-explainer returns :context context)))
          (post (when (member :post scopes) (function-spec-postcondition-function contract)))
          (values-post-p (not (eq :primary (function-spec-post-value-variables contract))))
+         (post-forms (function-spec-postconditions contract))
          (post-spec (when post
                       (make-instance 'predicate-spec
+                                     :source-form (cons :post post-forms)
                                      :predicate (lambda (value-and-args)
                                                   (apply post (first value-and-args)
                                                           (bound-call-values
                                                            (bind-call-arguments
                                                             layout (rest value-and-args))))))))
-         (post-count (length (function-spec-postconditions contract))))
+         (post-count (length post-forms)))
     (lambda (&rest values)
       (let ((cached nil) (spine nil))
         (labels ((unchanged-p ()
@@ -207,13 +244,17 @@ enforce.  Existing case-less instrumentation is unaffected."
                     when errors do (contract-failure name :input :argument-spec spec value errors)))
             ;; APPLY may expose its argument spine to a user &REST parameter.
             ;; Preserve the cache's scalar projection while sharing argument objects.
-            (when (and pre
-                       (precondition-refuses-p
-                         pre (copy-list (bound-call-values (current-bindings)))))
-              (contract-failure name :input :precondition pre-spec values
-                                (list (error-datum :predicate-failed '(:pre) values
-                                                   :predicate pre-test
-                                                   :expected (expected-descriptor pre-spec))))))
+            (when pre
+              (multiple-value-bind (refused index)
+                  (precondition-verdict pre (copy-list (bound-call-values (current-bindings)))
+                                        (length pre-forms))
+                (when refused
+                  (contract-failure
+                   name :input :precondition pre-spec values
+                   (list (error-datum :predicate-failed (if index (list index :pre) '(:pre))
+                                      values
+                                      :expected (clause-descriptor :precondition pre-forms
+                                                                   index))))))))
           (if (not (or output post))
               (apply original values)
               (multiple-value-call
@@ -229,15 +270,16 @@ enforce.  Existing case-less instrumentation is unaffected."
                              (apply post post-value
                                      (bound-call-values (current-bindings)))
                           (unless holds
-                            (let ((path (if (and (eq tag :cl-spec-post-form-failure)
-                                                 (integerp index) (<= 0 index) (< index post-count))
-                                            (list index :post) '(:post)))
-                                  (value-and-args (cons post-value values)))
+                            (let* ((form-index (clause-form-index
+                                                index tag :cl-spec-post-form-failure post-count))
+                                   (path (if form-index (list form-index :post) '(:post)))
+                                   (value-and-args (cons post-value values)))
                               (contract-failure
                                name :post :postcondition post-spec value-and-args
                                (list (error-datum :predicate-failed path value-and-args
-                                                  :predicate (predicate-spec-predicate post-spec)
-                                                  :expected (expected-descriptor post-spec))))))))
+                                                  :expected (clause-descriptor
+                                                             :postcondition post-forms
+                                                             form-index))))))))
                       (values-list results)))
                 (apply original values))))))))
 
@@ -254,8 +296,10 @@ establish a declaration comparison and return NIL/NIL."
 (defun install-contract (name &key (registry *registry*) (scopes '(:input :output :post)))
   "Install enabled checks using REGISTRY, retaining the original definition for restoration.
 Build the new wrapper and all metadata before replacing the active installation."
-  (check-type name symbol)
-  (check-type scopes (satisfies valid-scopes-p))
+  ;; INSTRUMENT-FUNCTION is the public face of this function, so the refusal
+  ;; names it rather than this internal helper.
+  (check-argument name 'symbol 'instrument-function :name)
+  (check-argument scopes '(satisfies valid-scopes-p) 'instrument-function :scopes)
   (let* ((registry (or registry *registry*))
          (contract (or (registry-find-function-spec registry name)
                        (error 'unknown-function-spec :name name)))
@@ -291,7 +335,7 @@ their changes are reported separately. Incomplete evidence is indeterminate.
 Installed omissions and digest exclusions are installation-time snapshots.
 Current omissions are freshly collected; :NOT-COLLECTED distinguishes absent
 inspection from a known empty omission list."
-  (check-type name symbol)
+  (check-argument name 'symbol 'instrumentation-status :name)
   (let ((entry (gethash name *instrumented-functions*))
         (reasons nil) (stale nil) (current-digest nil) (current-complete nil)
         (local-available nil) (current-omissions :not-collected))
@@ -392,7 +436,7 @@ captured function objects, lexical and inlined calls are not intercepted."
   "Rebuild an active installation against its original target without stacking wrappers.
 Omitted REGISTRY and SCOPES retain the installation's settings. Refuse external
 redefinitions and missing installations, preserving the function and table."
-  (check-type name symbol)
+  (check-argument name 'symbol 'refresh-instrumentation :name)
   (let ((entry (gethash name *instrumented-functions*)))
     (unless (typep entry 'installation)
       (error 'unsupported-instrumentation-target :name name :reason :not-installed))

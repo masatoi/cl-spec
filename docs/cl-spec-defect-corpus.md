@@ -689,6 +689,10 @@ went on to rewrite."
 `d5-inner` は千に一つの値でだけ失敗するので、既定の100回ではたいてい見逃し、
 `:thorough` の20000回では必ず見つかる。これが profile の差を観測可能にしている。
 
+> 注（2026-11-01、issue #67）: profile は §33 の `:smoke :normal :extended :stress` に
+> 限られるようになった。上のコードは測定当時のまま残すが、現在のコードでは `:thorough` の
+> `:trials` 表を `defproperty` が拒否する。今再現するなら `:thorough` を `:stress` に置き換える。
+
 結果:
 
 | | bd6c5b5 | b38d432 | 45dd675 |

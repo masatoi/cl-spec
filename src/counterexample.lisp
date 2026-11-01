@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/src/counterexample
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
   (:import-from #:cl-spec/src/function-spec
                 #:fixture-check-result #:fixture-check-result-observation
                 #:fixture-check-result-definition #:fixture-check-result-name
@@ -42,7 +43,7 @@
 
 (in-package #:cl-spec/src/counterexample)
 
-(define-condition invalid-counterexample-artifact (error)
+(define-condition invalid-counterexample-artifact (cl-spec-error)
   ((reason :initarg :reason
            :reader invalid-counterexample-artifact-reason
            :documentation "Why the serialized artifact cannot be accepted."))

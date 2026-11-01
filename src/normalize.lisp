@@ -23,6 +23,7 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
   (:export #:normalize-spec-form
+           #:cl-type-name-p
            #:*spec-primitives*))
 
 (in-package #:cl-spec/src/normalize)

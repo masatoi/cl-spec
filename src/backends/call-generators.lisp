@@ -3,12 +3,14 @@
 (defpackage #:cl-spec/src/backends/call-generators
   (:use #:cl)
   (:import-from #:check-it #:generator #:generate #:shrink #:cached-value)
-  (:import-from #:cl-spec/src/backends/check-it-generators #:spec-generator)
+  (:import-from #:cl-spec/src/backends/check-it-generators
+                #:spec-generator #:with-declaration-steps)
   (:import-from #:cl-spec/src/call-schema
                 #:call-arguments-spec #:call-arguments-spec-layout
                 #:call-layout-bindings #:call-layout-required-count #:call-layout-positional-count
                 #:call-layout-rest-binding #:call-layout-key-p
-                #:argument-binding-spec #:argument-binding-kind #:argument-binding-keyword)
+                #:argument-binding-spec #:argument-binding-kind #:argument-binding-keyword
+                #:argument-binding-name)
   (:import-from #:cl-spec/src/ir
                 #:spec-generator-name #:list-of-spec #:collection-spec-element-spec
                 #:collection-constraint-plist
@@ -119,7 +121,7 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
          (upper (cdr span)))
     (when (> lowest upper)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :empty-domain
              :reason (format nil "the declared keywords cannot fill a rest tail of ~D to ~D elements"
                              minimum maximum)))
     (let* ((low-pairs (/ lowest 2))
@@ -156,6 +158,7 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
           for proper-tail = (if (finite-list-p tail) tail
                                 (error 'generator-unavailable
                                        :spec (call-generator-spec generator)
+                                       :kind :rejected-draws
                                        :reason "rest generator must produce a finite proper list"))
           for count = (if tail positional
                           (+ required (random (1+ (- positional required)))))
@@ -169,6 +172,7 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
                    (funcall (call-generator-validator generator) arguments))
             do (return-from generate (setf (cached-value generator) arguments)))
     (error 'generator-unavailable :spec (call-generator-spec generator)
+           :kind :rejected-draws
            :reason "rest and keyword constraints rejected 100 generated calls")))
 
 (defun remove-call-key (arguments positional key)
@@ -295,5 +299,6 @@ keyword pairs can promise, so that combination keeps the rest-driven path."
                                               (eq :key (argument-binding-kind binding)))
                                          (and (not rest-driven)
                                               (eq :rest (argument-binding-kind binding))))
-                               (spec-generator (argument-binding-spec binding) context)))
+                               (with-declaration-steps (:args (argument-binding-name binding))
+                                 (spec-generator (argument-binding-spec binding) context))))
                            (call-layout-bindings layout)))))

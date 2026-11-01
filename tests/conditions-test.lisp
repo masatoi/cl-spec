@@ -23,7 +23,9 @@
                 #:invalid-spec-form-reason
                 #:generator-unavailable
                 #:generator-unavailable-spec
-                #:unsupported-seed))
+                #:unsupported-seed
+                #:invalid-argument
+                #:invalid-argument-argument))
 
 (in-package #:cl-spec/tests/conditions-test)
 
@@ -50,6 +52,77 @@
     (ok (subtypep 'unknown-spec 'cl-spec-error))
     (ok (subtypep 'unknown-property 'cl-spec-error))
     (ok (subtypep 'no-generator-backend 'cl-spec-error))))
+
+(defun error-class-name-p (symbol package)
+  "Return true when SYMBOL is PACKAGE's own symbol and names a subclass of ERROR."
+  (let ((class (and (eq (symbol-package symbol) package) (find-class symbol nil))))
+    (and class (subtypep class 'error))))
+
+(defun cl-spec-error-classes ()
+  "Return the names of every error class defined by a loaded cl-spec source package."
+  (let ((names nil))
+    (dolist (package (list-all-packages) names)
+      (when (eql 0 (search "CL-SPEC/SRC/" (package-name package)))
+        (do-symbols (symbol package)
+          (when (error-class-name-p symbol package)
+            (pushnew symbol names)))))))
+
+(deftest every-cl-spec-error-inherits-from-the-root
+  (testing "the enumeration reaches the subsystems as well as the core"
+    (ok (member "INVALID-COVERAGE-OPTIONS" (cl-spec-error-classes) :test #'string=))
+    (ok (member "INSTRUMENTATION-VIOLATION" (cl-spec-error-classes) :test #'string=)))
+  (testing "a handler for CL-SPEC-ERROR catches every error cl-spec defines"
+    (dolist (name (cl-spec-error-classes))
+      (ok (subtypep name 'cl-spec-error)
+          (format nil "~S inherits from CL-SPEC-ERROR" name)))))
+
+(defun refusal-of (thunk)
+  "Return the condition THUNK signals, or NIL when it returns."
+  (handler-case (progn (funcall thunk) nil)
+    (error (condition) condition)))
+
+(defun bad-argument-cases ()
+  "Return (ARGUMENT THUNK) pairs, each calling a public operator with a bad ARGUMENT."
+  (list (list :seed (lambda ()
+                      (cl-spec/src/property-runner:run-property
+                       'argument-check-property :seed -1)))
+        (list :seed (lambda ()
+                      (cl-spec/src/property-runner:run-property
+                       'argument-check-property :seed "abc")))
+        (list :seed (lambda ()
+                      (cl-spec/src/property-runner:replay-property
+                       'argument-check-property 1.5)))
+        (list :trials (lambda ()
+                        (cl-spec/src/function-spec:check-function
+                         'argument-check-target :trials -5 :seed 1)))
+        (list :scopes (lambda ()
+                        (cl-spec/src/instrument:instrument-function
+                         'argument-check-target :scopes '(:bogus))))
+        (list :count (lambda ()
+                       (cl-spec/src/generator:sample
+                        (cl-spec/src/normalize:normalize-spec-form 'integer) :count -1)))
+        (list :seed (lambda ()
+                      (cl-spec/src/generator:sample
+                       (cl-spec/src/normalize:normalize-spec-form 'integer) :seed -1)))))
+
+(defun refused-argument (condition)
+  "Return the parameter CONDITION names when it is an INVALID-ARGUMENT, else NIL."
+  (and (typep condition 'invalid-argument)
+       (invalid-argument-argument condition)))
+
+(deftest a-bad-argument-to-a-public-entry-point-is-a-cl-spec-error
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty argument-check-property ((value integer))
+            (integerp value)))
+    (eval '(cl-spec/src/dsl:defspec-function argument-check-target
+            (:args (value integer))
+            (:returns integer)))
+    (loop for (argument thunk) in (bad-argument-cases)
+          for condition = (refusal-of thunk)
+          do (testing (format nil "the ~S refusal is both kinds of error" argument)
+               (ok (typep condition 'cl-spec-error))
+               (ok (typep condition 'type-error))
+               (ok (eq argument (refused-argument condition)))))))
 
 (deftest not-implemented-reports-operator
   (testing "NOT-IMPLEMENTED carries and prints the stubbed operator"

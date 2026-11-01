@@ -15,6 +15,7 @@
                 #:regenerate
                 #:*size*
                 #:*list-size*
+                #:*list-size-decay*
                 #:cached-value
                 #:int-generator
                 #:real-generator
@@ -29,13 +30,14 @@
                 #:field-spec-fields #:field-key-test #:key-test-name #:key-test-function
                 #:field-key #:field-value-spec #:field-required-p)
   (:import-from #:cl-spec/src/tagged-union
-                #:tagged-union-spec #:tagged-union-branches #:branch-spec)
+                #:tagged-union-spec #:tagged-union-branches #:branch-spec #:branch-name)
   (:import-from #:cl-spec/src/map-spec
                 #:hash-table-of-spec #:alist-of-spec
                 #:map-spec-key-spec #:map-spec-value-spec #:map-spec-key-test
                 #:map-spec-min-count #:map-spec-max-count)
   (:import-from #:cl-spec/src/conditions
                 #:generator-unavailable #:generator-unavailable-reason
+                #:generator-unavailable-kind
                 #:generation-budget-exhausted)
   (:import-from #:cl-spec/src/ir
                 #:spec
@@ -92,7 +94,8 @@
            #:bounded-generator-element-probe
            #:map-value-generator #:map-generator-min-count #:map-generator-max-count
            #:map-generator-domain-size #:map-generator-key-probe #:map-generator-value-probe
-           #:compile-spec-generator))
+           #:compile-spec-generator
+           #:*declaration-path* #:*argument-names* #:with-declaration-steps))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
 
@@ -110,6 +113,45 @@ and the caller binds it around GENERATE.")
 Compiling a generator walks references eagerly, so a self referential spec
 would recurse forever.  The trail turns that into a clear condition.")
 
+(defvar *declaration-path* '(:value)
+  "Declaration steps from the generated root down to the node being compiled, innermost first.
+
+A bounded filter records this path when it is built, and reports it as the
+generation report's :EXHAUSTED-AT when its reservation is denied, so the report
+says where in the declaration the budget ran out (Bounded AND addendum).  The
+root is :VALUE for SAMPLE and GENERATOR-FOR; a property or function run starts
+from (:ARGS NAME) instead.  The steps are a tuple position, :ELEMENT for a
+collection element, a field key, :MAP-KEY or :MAP-VALUE, a tagged-union branch
+name, (:OR INDEX), and (:AND . CONJUNCT-PATH) inside an AND.  It is consulted
+only while generators are built; a child compiled later, at draw time, is given
+the path captured when its parent was built.")
+
+(defvar *argument-names* nil
+  "Names of the arguments a property's root tuple binds, or NIL.
+
+Bound only while a run compiles its argument schema, so the root tuple reports
+(:ARGS NAME) rather than a bare position.")
+
+(defmacro with-declaration-steps ((&rest steps) &body body)
+  "Run BODY with STEPS appended, in order, to the declaration path being compiled."
+  `(let ((*declaration-path* (append (reverse (list ,@steps)) *declaration-path*)))
+     ,@body))
+
+(defun declaration-path (&rest steps)
+  "Return the root-first declaration path of the node being compiled, followed by STEPS."
+  (append (reverse *declaration-path*) steps))
+
+(defun deferred-generator (spec context &rest steps)
+  "Return a function that compiles SPEC afresh, under the current path plus STEPS.
+
+Collections and maps compile a fresh child generator per drawn element, at draw
+time, when the path bound around their own compilation is gone.  The closure
+captures that path, so a filter built at draw time still reports where it sits."
+  (let ((path (append (reverse steps) *declaration-path*)))
+    (lambda ()
+      (let ((*declaration-path* path))
+        (spec-generator spec context)))))
+
 (defgeneric spec-generator (spec context)
   (:documentation "Return a check-it generator producing values that satisfy SPEC.
 
@@ -121,7 +163,7 @@ check-it's GENERATE treats a non-generator as a constant."))
 (defmethod spec-generator ((spec spec) context)
   (declare (ignore context))
   (error 'generator-unavailable
-         :spec spec
+         :spec spec :kind :no-strategy
          :reason (format nil "~S has no generation strategy" (spec-kind spec))))
 
 (defclass custom-value-generator (generator)
@@ -209,7 +251,8 @@ where it can validate and observe the complete correlated candidate."
     (make-instance 'plist-value-generator
                    :source spec :fields fields
                    :children (mapcar (lambda (field)
-                                       (spec-generator (field-value-spec field) context))
+                                       (with-declaration-steps ((field-key field))
+                                         (spec-generator (field-value-spec field) context)))
                                      fields)
                    :validators (mapcar (lambda (field)
                                          (compile-validator (field-value-spec field)
@@ -326,7 +369,8 @@ valid and still failing."
                    :fields fields
                    :key-test (field-key-test spec)
                    :children (mapcar (lambda (field)
-                                       (spec-generator (field-value-spec field) context))
+                                       (with-declaration-steps ((field-key field))
+                                         (spec-generator (field-value-spec field) context)))
                                      fields)
                    :validators (mapcar (lambda (field)
                                          (compile-validator (field-value-spec field)
@@ -345,7 +389,7 @@ A (:GENERATOR NAME) on the definition is the supported way to draw instances,
 because only its author knows the constructor and its initargs."
   (declare (ignore context))
   (error 'generator-unavailable
-         :spec spec
+         :spec spec :kind :no-strategy
          :reason (format nil "an OBJECT-OF spec is observed through readers and cannot be ~
                               constructed; declare a (:GENERATOR NAME) to draw instances")))
 
@@ -355,8 +399,11 @@ A branch spec must produce a value whose tag reads as the branch name; the union
 does not inject the tag, because it does not know the branch representation."
   (let ((branches (tagged-union-branches spec)))
     (when (null branches)
-      (error 'generator-unavailable :spec spec :reason "an empty tagged union admits nothing"))
-    (let ((generators (mapcar (lambda (branch) (spec-generator (branch-spec branch) context))
+      (error 'generator-unavailable :spec spec :kind :empty-domain
+                                    :reason "an empty tagged union admits nothing"))
+    (let ((generators (mapcar (lambda (branch)
+                                (with-declaration-steps ((branch-name branch))
+                                  (spec-generator (branch-spec branch) context)))
                               branches)))
       ;; A single branch needs no weighted choice, matching OR's handling.
       (if (null (rest generators))
@@ -377,7 +424,7 @@ generator on the whole AND overrides all of that explicitly."
   (let ((entry (registry-find-generator (context-registry context) name)))
     (unless entry
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :unregistered-generator
              :reason (format nil "the custom generator ~S is not registered" name)))
     (make-instance 'custom-value-generator
                    :function (custom-generator-function entry)
@@ -409,7 +456,7 @@ so FLOAT and RATIONAL are absent rather than silently wrong."
     ((null) nil)
     ((boolean) (make-instance 'or-generator :sub-generators (list t nil)))
     (t (error 'generator-unavailable
-              :spec spec
+              :spec spec :kind :unsupported-type
               :reason (format nil "no generator is registered for the type ~S"
                               type-specifier)))))
 
@@ -437,7 +484,7 @@ when float traps are masked, and no shifted draw can cover the interval."
     (when (or (null width)
               (and (floatp width) (> (abs width) most-positive-long-float)))
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :range-too-wide
              :reason "the range is too wide to sample: its width overflows a float"))
     width))
 
@@ -508,7 +555,7 @@ minimum above the maximum -- is refused rather than handed to check-it."
     (let ((finite-p (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))))
       (when (and finite-p (> minimum maximum))
         (error 'generator-unavailable
-               :spec spec
+               :spec spec :kind :empty-domain
                :reason (if (eq base-type 'integer)
                            "no integer lies between the range's endpoints"
                            "the range's minimum is above its maximum")))
@@ -524,7 +571,7 @@ minimum above the maximum -- is refused rather than handed to check-it."
         ((integer) (make-instance 'int-generator :lower-limit lower :upper-limit upper))
         ((real) (real-range-generator lower upper))
         (t (error 'generator-unavailable
-                  :spec spec
+                  :spec spec :kind :unsupported-type
                   :reason (format nil "~S cannot carry a numeric range" base-type)))))))
 
 (defmethod spec-generator ((spec range-spec) context)
@@ -539,7 +586,8 @@ minimum above the maximum -- is refused rather than handed to check-it."
   (let ((values (member-spec-values spec)))
     (cond
       ((null values)
-       (error 'generator-unavailable :spec spec :reason "an empty MEMBER admits nothing"))
+       (error 'generator-unavailable :spec spec :kind :empty-domain
+                                    :reason "an empty MEMBER admits nothing"))
       ;; CHECK-IT:COMPUTE-WEIGHTS divides by (1- LEN), so a single-valued
       ;; MEMBER would signal a floating point error inside check-it rather
       ;; than generating its one admissible value. check-it's GENERATE treats
@@ -552,14 +600,18 @@ minimum above the maximum -- is refused rather than handed to check-it."
   (let ((children (or-spec-children spec)))
     (cond
       ((null children)
-       (error 'generator-unavailable :spec spec :reason "an empty OR admits nothing"))
+       (error 'generator-unavailable :spec spec :kind :empty-domain
+                                    :reason "an empty OR admits nothing"))
       ;; A single child needs no weighted choice, and check-it's
       ;; COMPUTE-WEIGHTS divides by zero when asked to choose among one
       ;; generator, so return it directly rather than wrapping it.
-      ((null (rest children)) (spec-generator (first children) context))
+      ((null (rest children))
+       (with-declaration-steps (:or 0) (spec-generator (first children) context)))
       (t (make-instance 'or-generator
-                        :sub-generators (mapcar (lambda (child) (spec-generator child context))
-                                                children))))))
+                        :sub-generators (loop for child in children
+                                              for index from 0
+                                              collect (with-declaration-steps (:or index)
+                                                        (spec-generator child context))))))))
 
 (defmethod spec-generator ((spec nullable-spec) context)
   (make-instance 'or-generator
@@ -567,9 +619,18 @@ minimum above the maximum -- is refused rather than handed to check-it."
                  (list nil (spec-generator (nullable-spec-inner-spec spec) context))))
 
 (defmethod spec-generator ((spec tuple-spec) context)
-  (make-instance 'tuple-generator
-                 :sub-generators (mapcar (lambda (child) (spec-generator child context))
-                                         (tuple-spec-element-specs spec))))
+  ;; A run's argument schema is a tuple at the root; its positions are then the
+  ;; property's arguments, and the path names them as (:ARGS NAME).
+  (let ((names (and (null *declaration-path*) *argument-names*)))
+    (make-instance 'tuple-generator
+                   :sub-generators
+                   (loop for child in (tuple-spec-element-specs spec)
+                         for index from 0
+                         collect (if names
+                                     (with-declaration-steps (:args (nth index names))
+                                       (spec-generator child context))
+                                     (with-declaration-steps (index)
+                                       (spec-generator child context)))))))
 
 (defun collection-constrained-p (spec)
   "Return true when SPEC declares a length or uniqueness constraint."
@@ -666,7 +727,7 @@ generation even though the target is one of the enumerable domains."
         (registry (context-registry context)))
     (when (member target *reference-trail*)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :recursive-spec
              :reason "recursive specs have no finite element enumeration"))
     (let ((resolved (resolve-spec target registry))
           (*reference-trail* (cons target *reference-trail*)))
@@ -693,7 +754,7 @@ generation even though the target is one of the enumerable domains."
         (registry (context-registry context)))
     (when (member target *reference-trail*)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :recursive-spec
              :reason "recursive specs have no finite integer range"))
     (let ((resolved (resolve-spec target registry))
           (*reference-trail* (cons target *reference-trail*)))
@@ -736,12 +797,14 @@ each draw removes the chosen value from the remaining pool."
           do (setf (gethash item seen) t)
           finally (return nil))))
 
-(defun draw-collection-count (minimum maximum &optional (size *size*))
+(defun draw-collection-count (minimum maximum &optional (size *list-size*))
   "Draw an element or entry count from [MINIMUM, MAXIMUM], capped by SIZE.
 
 MAXIMUM may be :UNBOUNDED.  SIZE is the soft cap for an unbounded or large maximum:
-collections pass the ambient CHECK-IT:*SIZE*, maps pass CHECK-IT:*LIST-SIZE*.  It is
-raised to MINIMUM first, so a declared minimum is always reachable."
+collections and maps both pass CHECK-IT:*LIST-SIZE*, the allowance an
+unconstrained list draws its length from, never CHECK-IT:*SIZE*, which a run
+raises to its widest numeric bound.  It is raised to MINIMUM first, so a declared
+minimum is always reachable."
   (let* ((size (max size minimum))
          (upper (if (eq maximum :unbounded) size (min maximum size))))
     (if (>= upper minimum)
@@ -796,8 +859,18 @@ reports 0 rather than falling through to the element generators."
           (and range (1+ (- (cdr range) (car range))))))))
 
 (defmethod generate ((generator bounded-collection-generator))
+  "Draw a collection whose length comes from CHECK-IT:*LIST-SIZE*, as an unconstrained list's does.
+
+The length must not come from CHECK-IT:*SIZE*: a run raises *SIZE* to the
+widest numeric bound among all its arguments, so a (RANGE INTEGER 0 1000)
+element -- or a neighbouring argument's range -- stretched a :MIN-LENGTH list to
+hundreds of elements and spent the generation budget on them (specification §9:
+a collection's length is drawn from the ordinary size, never borrowed from a
+range's width).  Elements are drawn with *LIST-SIZE* decayed by
+*LIST-SIZE-DECAY*, as CHECK-IT:LIST-GENERATOR does, so nested lists shrink."
   (let ((count (draw-collection-count (bounded-generator-min-length generator)
-                                      (bounded-generator-max-length generator)))
+                                      (bounded-generator-max-length generator)
+                                      *list-size*))
         (enumerated (bounded-generator-enumerated generator))
         (distinct-range (bounded-generator-distinct-range generator)))
     (cond
@@ -815,7 +888,8 @@ reports 0 rather than falling through to the element generators."
                (cached-value generator) (bounded-candidate generator items))))
       (t
        (let ((children nil)
-             (items nil))
+             (items nil)
+             (*list-size* (floor (* *list-size* *list-size-decay*))))
          (loop repeat count
                do (let ((child (funcall (bounded-generator-element-generator generator))))
                     (push child children)
@@ -919,7 +993,7 @@ domain would silently replace it."
                        :distinct-range nil)))
     (when (and unique (effective-generator-name element context))
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :unique-domain
              :reason "UNIQUE cannot enumerate a spec whose custom generator owns its distribution"))
     (let ((probe nil)
           (enumerated nil)
@@ -933,24 +1007,24 @@ domain would silently replace it."
               (let ((width (1+ (- range-maximum range-minimum))))
                 (when (< width minimum)
                   (error 'generator-unavailable
-                         :spec spec
+                         :spec spec :kind :empty-domain
                          :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
                                          width minimum)))
                 (setf distinct-range (cons range-minimum range-maximum)))
               (multiple-value-bind (values enumerable-p) (enumerable-values element context)
                 (unless enumerable-p
                   (error 'generator-unavailable
-                         :spec spec
+                         :spec spec :kind :unique-domain
                          :reason "UNIQUE needs a finite element domain to draw distinct values"))
                 (when (> (length values) *enumeration-limit*)
                   (error 'generator-unavailable
-                         :spec spec
+                         :spec spec :kind :unique-domain
                          :reason (format nil "UNIQUE domain has ~D values, more than the ~D ~
                                               the enumeration limit allows"
                                          (length values) *enumeration-limit*)))
                 (when (< (length values) minimum)
                   (error 'generator-unavailable
-                         :spec spec
+                         :spec spec :kind :empty-domain
                          :reason (format nil "UNIQUE admits ~D values, fewer than MIN-LENGTH ~D"
                                          (length values) minimum)))
                 ;; A vector keeps an empty domain distinct from "no domain": the
@@ -962,10 +1036,10 @@ domain would silently replace it."
       ;; raise *REQUIRED-SIZE* to the element range's width and make GENERATE try
       ;; to build a collection that wide.
       (unless unique
-        (setf probe (spec-generator element context)))
+        (setf probe (with-declaration-steps (:element) (spec-generator element context))))
       (setf *required-size* (max *required-size* minimum))
       (make-instance 'bounded-collection-generator
-                     :element-generator (lambda () (spec-generator element context))
+                     :element-generator (deferred-generator element context :element)
                      :element-probe probe
                      :element-validator (compile-validator element :context context)
                      :min-length minimum
@@ -985,9 +1059,9 @@ domain would silently replace it."
         ;; generator per element for element-wise shrinking, which the closure
         ;; below provides; it calls the generator function once per element per
         ;; draw.
-        (spec-generator element context)
+        (with-declaration-steps (:element) (spec-generator element context))
         (make-instance 'list-generator
-                       :generator-function (lambda () (spec-generator element context))))))
+                       :generator-function (deferred-generator element context :element)))))
 
 (defmethod spec-generator ((spec vector-of-spec) context)
   (if (collection-constrained-p spec)
@@ -996,13 +1070,14 @@ domain would silently replace it."
         ;; See LIST-OF-SPEC's method: the eager call below exists only to raise
         ;; *REQUIRED-SIZE*; the closure still supplies a fresh generator per
         ;; element.
-        (spec-generator element context)
+        (with-declaration-steps (:element) (spec-generator element context))
         (make-instance 'mapped-generator
                        :mapping (lambda (items) (coerce items 'vector))
                        :sub-generators
                        (list (make-instance 'list-generator
                                             :generator-function
-                                            (lambda () (spec-generator element context))))))))
+                                            (deferred-generator element context
+                                                                :element)))))))
 
 (defparameter *map-key-collision-limit* 8
   "Consecutive key collisions after which a map holding MIN-COUNT keys stops.
@@ -1021,6 +1096,9 @@ to shrink with."
 (defclass map-value-generator (generator)
   ((key-spec :initarg :key-spec :reader map-generator-key-spec
              :documentation "Key spec, named when a key redraw's reservation is denied.")
+   (key-path :initarg :key-path :initform '(:value :map-key)
+             :reader map-generator-key-path
+             :documentation "Declaration path a denied key-redraw reservation reports.")
    (key-test :initarg :key-test :reader map-generator-key-test
              :documentation "Canonical keyword naming the key comparison.")
    (min-count :initarg :min-count :reader map-generator-min-count)
@@ -1111,7 +1189,7 @@ has room; values keep the ambient size."
                                 (or (>= collisions *map-key-collision-limit*)
                                     (not (generation-candidate-available-p))))
                        (return-from draw-distinct-keys (nreverse placed)))
-                     (reserve-generation-candidate '(:map-key)
+                     (reserve-generation-candidate (map-generator-key-path generator)
                                                    (map-generator-key-spec generator)))
                    (let* ((child (funcall (map-generator-key-generator generator)))
                           (key (generate child)))
@@ -1167,7 +1245,7 @@ filter's does, so a key redraw always has a budget to reserve from."
     (generation-budget-exhausted (condition) (error condition))
     (generator-unavailable (condition)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind (generator-unavailable-kind condition)
              :reason (format nil "the map ~A spec cannot be generated~@[: ~A~]"
                              side (generator-unavailable-reason condition))))))
 
@@ -1190,7 +1268,7 @@ GENERATION-BUDGET-EXHAUSTED, never in a claim that the spec is unsatisfiable."
         (eq-p (eq (map-spec-key-test spec) :eq)))
     (flet ((refuse (size)
              (error 'generator-unavailable
-                    :spec spec
+                    :spec spec :kind :empty-domain
                     :reason (format nil "the key domain admits ~D distinct key~:P, fewer ~
                                          than MIN-COUNT ~D"
                                     size minimum))))
@@ -1222,6 +1300,7 @@ GENERATION-BUDGET-EXHAUSTED, never in a claim that the spec is unsatisfiable."
     (flet ((build (&rest initargs)
              (apply #'make-instance class
                     :key-spec key-spec :key-test (map-spec-key-test spec)
+                    :key-path (declaration-path :map-key)
                     :min-count minimum :max-count maximum initargs)))
       (if (eql maximum 0)
           ;; No entry can be drawn, so neither child need compile: the empty map
@@ -1234,12 +1313,14 @@ GENERATION-BUDGET-EXHAUSTED, never in a claim that the spec is unsatisfiable."
                    ;; child now.  A sampled key domain is not compiled: its range
                    ;; width would otherwise inflate *REQUIRED-SIZE*.
                    (key-probe (unless sampled-p
-                                (map-child-generator spec key-spec "key" context)))
-                   (value-probe (map-child-generator spec value-spec "value" context)))
+                                (with-declaration-steps (:map-key)
+                                  (map-child-generator spec key-spec "key" context))))
+                   (value-probe (with-declaration-steps (:map-value)
+                                  (map-child-generator spec value-spec "value" context))))
               (setf *required-size* (max *required-size* minimum))
               (build :key-generator (unless sampled-p
-                                      (lambda () (spec-generator key-spec context)))
-                     :value-generator (lambda () (spec-generator value-spec context))
+                                      (deferred-generator key-spec context :map-key))
+                     :value-generator (deferred-generator value-spec context :map-value)
                      :key-validator (compile-validator key-spec :context context)
                      :value-validator (compile-validator value-spec :context context)
                      :key-probe key-probe :value-probe value-probe
@@ -1318,7 +1399,7 @@ collides with another under the key test, is refused before the callback runs."
         (registry (context-registry context)))
     (when (member target *reference-trail*)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :recursive-spec
              :reason "recursive specs have no generator in this version"))
     (let ((resolved (resolve-spec target registry))
           (*reference-trail* (cons target *reference-trail*)))
@@ -1465,7 +1546,7 @@ distribution. Anything else is collected into LEFTOVERS."
   (dolist (child children)
     (when (spec-generator-name child)
       (error 'generator-unavailable
-             :spec spec
+             :spec spec :kind :ambiguous-generator
              :reason "a conjunct has a custom generator; name a generator on the whole AND"))
     (typecase child
       (type-spec
@@ -1483,7 +1564,7 @@ distribution. Anything else is collected into LEFTOVERS."
              (registry (context-registry context)))
          (when (member target *reference-trail*)
            (error 'generator-unavailable
-                  :spec spec
+                  :spec spec :kind :recursive-spec
                   :reason "recursive specs have no generator in this version"))
          (let ((resolved (resolve-spec target registry))
                (*reference-trail* (cons target *reference-trail*)))
@@ -1513,7 +1594,7 @@ enforced too."
                  (let ((target (reference-spec-target node)))
                    (when (member target seen)
                      (error 'generator-unavailable
-                            :spec node
+                            :spec node :kind :recursive-spec
                             :reason "recursive specs have no generator in this version"))
                    (setf seen (cons target seen)
                          node (resolve-spec target (context-registry context)))))))
@@ -1535,25 +1616,34 @@ enforced too."
                                                    (append prefix (list index))
                                                    trail))))
                collected))
+           (source-generator (entry)
+             "Compile ENTRY's conjunct under its own declaration path."
+             (let ((*declaration-path* (append (reverse (cons :and (getf entry :path)))
+                                               *declaration-path*)))
+               (spec-generator (getf entry :spec) context)))
            (constructible (candidates)
              "Return (VALUES GENERATOR ENTRY) for the first candidate that compiles."
              (dolist (entry candidates)
                (handler-case
-                   (return (values (spec-generator (getf entry :spec) context) entry))
+                   (return (values (source-generator entry) entry))
                  (generator-unavailable () nil))))
-           (filtered (source path)
+           (filtered (source conjunct-path)
+             ;; The path runs from the declaration root to this AND, then to the
+             ;; conjunct that is the source; a folded source has no conjunct, so
+             ;; it is the AND itself.  Either way it is never NIL, which the
+             ;; report reserves for "no exhaustion".
              (make-instance 'bounded-filter-generator
                             :sub-generator source
                             :filter (compile-validator spec :context context)
                             :spec spec
-                            :path path)))
+                            :path (apply #'declaration-path :and conjunct-path))))
     (let* ((candidates (entries (and-spec-children spec) nil *reference-trail*))
            (customs (remove-if-not (lambda (entry) (getf entry :custom-p)) candidates))
            (ordinaries (remove-if (lambda (entry) (getf entry :custom-p)) candidates)))
       (cond
         ((rest customs)
          (error 'generator-unavailable
-                :spec spec
+                :spec spec :kind :ambiguous-generator
                 :reason (format nil "~D conjuncts name a custom generator (~{~S~^, ~}); ~
                                      name one on the whole AND to choose explicitly"
                                 (length customs)
@@ -1561,8 +1651,7 @@ enforced too."
         (customs
          ;; P1: a unique custom source wins ahead of numeric folding.
          (let ((entry (first customs)))
-           (filtered (spec-generator (getf entry :spec) context)
-                     (getf entry :path))))
+           (filtered (source-generator entry) (getf entry :path))))
         (t
          (multiple-value-bind (base-type minimum maximum leftovers)
              (fold-and-children (and-spec-children spec) context spec
@@ -1573,7 +1662,7 @@ enforced too."
                       (not (eq maximum :unbounded))
                       (> minimum maximum))
              (error 'generator-unavailable
-                    :spec spec :reason "the folded range is empty"))
+                    :spec spec :kind :empty-domain :reason "the folded range is empty"))
            (if (and base-type
                     (not (eq base-type :no-base))
                     (member base-type '(integer real character string null boolean)))
@@ -1592,5 +1681,5 @@ enforced too."
                      (filtered source (getf entry :path))
                      ;; P4: no eligible source.
                      (error 'generator-unavailable
-                            :spec spec
+                            :spec spec :kind :no-strategy
                             :reason "no conjunct has an ordinary generator strategy"))))))))))

@@ -35,9 +35,13 @@ and a `:state-post` (top-level for a case-less contract, or inside each case)
 checked after a passed outcome; a capture variable is not a target argument, a
 capture or state-post failure keeps the recorded phase and evidence rather than
 inferring either from a condition's class, and such a state-observing contract
-is not shrunk, replayed from a past result, persisted as a counterexample
-artifact or instrumented in this version. Capture observes a value and does not
-copy it, and this feature does not restore anything. A direct one-shot check
+without an explicit `:fixture` is not shrunk, replayed from a past result,
+persisted as a counterexample artifact or instrumented in this version. Capture
+observes a value and does not copy it, and this feature does not restore
+anything. A contract with `:fixture` (`:isolation :fresh` only) generates and
+shrinks a recipe, rebuilds fresh state for every trial and shrink candidate
+through its setup and cleanup, and its results and counterexample artifacts use
+schema version 2; `check-fixture` runs one recipe once. A direct one-shot check
 (`check-call`, `call-check-result`, `call-check-data`) validates one
 caller-supplied raw argument list through the same single-trial path -- binding,
 `:pre`, `:capture`, exclusive case selection, one target call, outcome and
@@ -92,6 +96,7 @@ This project is developed with cl-mcp's tools:
 | `cl-spec/examples/structured-data` | executable structured-data integration example (inferred subsystem) | `check-it` |
 | `cl-spec/examples/function-spec-cases` | executable named per-condition Function Spec example (inferred subsystem) | `check-it` |
 | `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example (inferred subsystem) | `check-it` |
+| `cl-spec/examples/reproducible-withdraw` | executable `:fixture` Function Spec example: fresh state per trial, shrinking and artifacts (inferred subsystem) | `check-it` |
 | `cl-spec/examples/tutorial-cart` | executable shopping-cart example behind the introductory tutorial (inferred subsystem) | `check-it` |
 
 The core system must never load `check-it`. The generator backend is injected

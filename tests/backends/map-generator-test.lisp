@@ -177,7 +177,7 @@
             (generation-budget-exhausted (condition)
               (and (= 5 (generation-budget-exhausted-attempts condition))
                    (= 5 (generation-budget-exhausted-rejections condition))
-                   (equal '(:map-key) (generation-budget-exhausted-path condition)))))))))
+                   (equal '(:value :map-key) (generation-budget-exhausted-path condition)))))))))
 
 (deftest key-filters-share-the-request-budget
   (multiple-value-bind (values report)

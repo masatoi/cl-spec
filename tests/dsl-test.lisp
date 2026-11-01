@@ -89,6 +89,26 @@
         (ok (eq 'positive-integer (spec-name spec)))
         (ok (equal '(and integer (range 1 *)) (spec-source-form spec)))))))
 
+(deftest defspec-refuses-a-name-it-could-not-register-or-reach
+  (let ((*registry* (make-hash-table-registry)))
+    (testing "NIL, a keyword or a non-symbol is refused when the macro expands"
+      (dolist (form '((defspec nil integer)
+                      (defspec :keyword-name integer)
+                      (defspec "string-name" integer)
+                      (defspec 12 integer)))
+        (ok (signals (macroexpand-1 form) 'invalid-spec-form))))
+    (testing "a Common Lisp type name is refused: the DSL always reads it as that type"
+      (dolist (form '((defspec t integer)
+                      (defspec string (satisfies evenp))))
+        (ok (signals (macroexpand-1 form) 'invalid-spec-form))))
+    (testing "the refusal names the offending name"
+      (ok (eq :keyword-name
+              (handler-case (progn (macroexpand-1 '(defspec :keyword-name integer)) nil)
+                (invalid-spec-form (condition)
+                  (cl-spec/src/conditions:invalid-spec-form-form condition))))))
+    (testing "nothing was registered"
+      (ok (null (cl-spec/src/registry:list-specs))))))
+
 (deftest defproperty-registers-a-normalized-property
   (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
     (eval '(cl-spec/src/dsl:defspec positive-integer (and integer (range 1 *))))

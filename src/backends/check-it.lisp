@@ -39,6 +39,7 @@
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
+                #:*declaration-path* #:*argument-names*
                 #:bounded-filter-generator #:bounded-filter-sub-generator
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children
                 #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
@@ -70,7 +71,11 @@
                 #:trial-observation-signature)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-generated-arguments
-                #:generation-budget-exhausted)
+                #:generation-budget-exhausted
+                #:generator-unavailable #:generator-unavailable-spec
+                #:generator-unavailable-reason #:generator-unavailable-kind
+                #:generator-unavailable-argument)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/validator #:compile-validator)
@@ -301,6 +306,38 @@ Return accepted observation, whether another failure occurred, and a bounded rep
                               (setf different t)))))))))
             (unless improved (finish :exhausted))))))))
 
+(defun refusing-argument (property context)
+  "Return the name of the first argument of PROPERTY whose spec has no generator, or NIL."
+  (loop for (name spec) in (property-arguments property)
+        when (handler-case (progn (compile-spec-generator spec context) nil)
+               (generator-unavailable () t))
+          return name))
+
+(defun compile-argument-generator (backend property schema context)
+  "Compile SCHEMA for PROPERTY's run, naming the argument a refusal is about.
+
+A GENERATOR-UNAVAILABLE from the argument schema names only the innermost node
+that refused, which says nothing about which of several arguments needs a
+generator.  The arguments are compiled one at a time only on that failure path,
+and the refusal is signalled again with the first argument that reproduces it.
+
+The schema is compiled as the root of the run's declaration paths, so a bounded
+filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
+  (let ((*declaration-path* nil)
+        (*argument-names* (mapcar #'first (property-arguments property))))
+    (handler-bind ((generator-unavailable
+                     (lambda (condition)
+                       (when (and (eq (type-of condition) 'generator-unavailable)
+                                  (null (generator-unavailable-argument condition)))
+                         (let ((argument (refusing-argument property context)))
+                           (when argument
+                             (error 'generator-unavailable
+                                    :spec (generator-unavailable-spec condition)
+                                    :reason (generator-unavailable-reason condition)
+                                    :kind (generator-unavailable-kind condition)
+                                    :argument argument)))))))
+      (compile-generator backend schema :context context))))
+
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
   "Generate trials and retain only admitted, observed reductions of the original failure.
 The shrinker's return value is not evidence: some generators transform it after
@@ -318,12 +355,12 @@ target never produced is not a reduction of it."
          (schema (property-argument-schema property))
          (custom-name (spec-generator-name schema))
          (whole-validator (compile-validator schema :context context))
-         (compiled (compile-generator backend schema :context context))
+         (compiled (compile-argument-generator backend property schema context))
          (capabilities (compiled-capabilities compiled shrink-p))
          (generator (compiled-generator-generator compiled))
          (rejected 0)
          (coverage-targets (prepare-coverage-plan property (getf options :registry))))
-    (check-type shrink-budget (integer 0 100000))
+    (check-argument shrink-budget '(integer 0 100000) 'run-generated-test :shrink-budget)
     ;; Report that this run is being measured before the first draw, so a run
     ;; that produces no observation -- zero trials, or a first draw that
     ;; exhausts the generation budget -- still reports the zeros it knows
@@ -633,7 +670,7 @@ Lists can shrink in length even when their element generator cannot shrink."
          (context (list :registry (getf options :registry)))
          (schema (property-argument-schema property))
          (validator (compile-validator schema :context context))
-         (compiled (compile-generator backend schema :context context))
+         (compiled (compile-argument-generator backend property schema context))
          (generator (compiled-generator-generator compiled))
          (shrink-p (getf (property-metadata property) :shrink t))
          (strategy (or (generator-shrink-strategy-p generator)
@@ -641,7 +678,7 @@ Lists can shrink in length even when their element generator cannot shrink."
          (capabilities (list :generation :available :shrinking
                              (if (and shrink-p strategy) :available :none)))
          (rejected 0))
-    (check-type shrink-budget (integer 0 100000))
+    (check-argument shrink-budget '(integer 0 100000) 'run-generated-test :shrink-budget)
     (begin-trial-report property)
     (begin-coverage-report property)
     (prepare-coverage-plan property (getf options :registry))

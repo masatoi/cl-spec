@@ -59,8 +59,10 @@
 
 ## 0.2 実装状況表
 
-この表は2026-09-13時点（main `502a6f2`と本改訂）のスナップショットであり、
-実行時のcapability APIではない。直近の現状整理と残課題の優先順位は§73.5を参照する。
+この表は2026-11-01時点のmainのスナップショットであり、実行時のcapability APIではない。
+2026-09-13（main `502a6f2`）に作り、その後に入った機能の行を足している。
+各機能の正確な意味は、表が指す節と§73.5以降のimplementation addendumを参照する。
+直近の現状整理と残課題の優先順位は§73.5を参照する。
 
 | 機能 | 状況 | 現在の利用範囲・制限 |
 |---|---|---|
@@ -78,10 +80,16 @@
 | 一回限りの具象呼び出し検査 | 実装済み | `check-call`と`call-check-result`／`call-check-data`。generator・trial loop・shrinking・replayを使わず、呼び出し側が渡したraw引数リストを既存のsingle-trial経路で検査する。生引数の不正は`invalid-call-arguments`、`:pre`拒否は`:rejected`の結果。coreのみで動作しcheck-itを要求しない（§17.4） |
 | 名前付き条件別Function Spec | 実装済み | `defspec-function`の`:cases`。入力条件ごとに`:returns`か`:signals`を要求し、exclusiveに選択する。ケース別reportは`function-check-result-case-report`。ケース付きinstrumentationは非対応（§17.2） |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの生成元選択は§10・§73.4に従い、競合するcustom generator指定が一つだけならそれを優先してAND全体のvalidatorでfilterし、複数なら`generator-unavailable`とする。AND全体へのgenerator指定は可能 |
+| 事前観測・終了後の状態制約 | 実装済み | `defspec-function`の`:capture`と`:state-post`。`:fixture`を持たない状態観測契約は、縮小・過去の結果からのreplay・反例artifactとしての保存・instrumentationの対象外（§17.3） |
+| Fixture | 実装済み（`:isolation :fresh`のみ） | `defspec-function`の`:fixture`と`check-fixture`。recipeを生成・縮小し、試行ごとにsetup／cleanupで新しい状態を作る。fixtureを持つ契約は縮小され、結果と反例artifactはschema version 2になる。DB rollbackや外部サービスの復元は含まない（§73.5 addendum: reproducible fresh fixtures） |
+| 反例artifactと直接再検査 | 実装済み | `make-counterexample-artifact`、`serialize-counterexample-artifact`／`deserialize-counterexample-artifact`（reader を使わない有界codec）、`recheck-counterexample`。再生成によるreplayとは別の操作（§57、§73.5 addendum: counterexample artifacts） |
+| 検証の十分性評価 | 実装済み | `evidence-summary`、`assess-evidence`。`:passed`と、方針を満たした`:satisfied`を区別する（Evidence sufficiency addendum） |
+| Coverage | 実装済み（宣言から導ける範囲） | `coverage-schema`、`coverage-data`、実行関数の`:coverage`オプション。計測していない次元は未測定と明示する（`docs/superpowers/specs/2026-09-27-coverage-protocol-design.md`） |
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
-| Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post` |
+| Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post`。`instrumentation-status`で導入状態と宣言の鮮度を、`refresh-instrumentation`で再構築を扱う（Instrumentation freshness addendum） |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
-| timeout・状態隔離・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
+| 状態隔離 | 一部実装 | `:fixture`の`:isolation :fresh`による試行ごとの新しい状態だけ。それ以外の隔離は保証しない |
+| timeout・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
 | state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
 
 現在のstubは `not-implemented` を通知する。LLMはこれを対象関数の契約違反や、
@@ -706,6 +714,8 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
 有限な整数`range`は列挙せず直接samplingするため幅の上限はない。この場合も生成される
 コレクション長は要素rangeの幅ではなく通常のsizeから抽選し、幅を長さへ流用しない。
+「通常のsize」は無制約の`list-of`が長さを引く`check-it:*list-size*`であり、
+`:unique`の有無によらず、同じ実行の他の引数の範囲が引き上げる`check-it:*size*`ではない。
 端点が小数でもvalidationと同じく区間に含まれる整数を対象にし、整数が無ければ空domainとする。
 `member`、
 `boolean`/`null`、`nullable`、およびこれらの`or`は列挙し、その全体は1000要素までに限り、
@@ -718,6 +728,11 @@ propertyを通る値や要素specに違反する値をcounterexampleへ混入さ
 通知する（`nullable`・`or`の子にネストしたカスタムgeneratorも同じく分布を所有する）。`:max-length`が0のコレクションは要素specをcompileせず空コレクションを生成する。
 無制約の`list-of`/`vector-of`のdigestと`spec-data`は変更しない（制約が宣言された
 ノードだけが`:min-length`/`:max-length`/`:unique`を持つ）。
+
+`defspec`の名前は、§4.1と同じくNIL・keyword以外のsymbolとする。加えて、
+`t`や`string`のようなCOMMON-LISPパッケージの型名は拒否する。DSLはそのsymbolを常に
+その型として読むため、登録したspecを参照できないからである。違反は
+マクロ展開時の`invalid-spec-form`になる。
 
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
@@ -2386,7 +2401,11 @@ preの`:value`は引数list、postの`:value`は通常`(primary-value . argument
 errorsには`error-datum`を使い、値は`:actual`、kindは`:wrong-length`や`:predicate-failed`など
 既存explainerの語彙で表す。scope・reasonはconditionの専用readerで区別する。
 pathのprefixは`(:args parameter)`、`(:pre)`、`(:returns)`、`(:post)`。
-DSLで識別できるpost形式は`(:post zero-based-index)`となる。
+DSLで識別できるpre／post形式は`(:pre zero-based-index)`／`(:post zero-based-index)`となる。
+pre／postの失敗datumは`:expected`に宣言した式をそのまま持つ。たとえば
+`(:precondition (< x 100) :index 1)`や`(:postcondition (< result 50) :index 1)`である。
+式を特定できないときは`:index`を省き、節全体の式を持つ。datumは関数objectを含まない。
+合成したpredicate specの`spec-source-form`は`(:pre FORM...)`／`(:post FORM...)`とする。
 引数・戻り値のerrorsはexplainerの構造化エラーを保持し、分類のために述語を再実行しない。
 
 インストール時の契約の引数名・直接のspec検査・pre/post関数を保持する。
@@ -2457,6 +2476,29 @@ path:
 ```
 
 LLMがstack traceを解析しなくても原因を取得できることを目標とする。
+
+cl-specが定義するerror conditionは、すべて`cl-spec-error`を継承する。
+`(handler-case ... (cl-spec-error ...))`でフレームワーク全体を捕捉できるようにするためである。
+標準のconditionとしての性質も持つものは二重継承とする。
+
+- `unbound-target`は`undefined-function`も継承する。
+- 公開関数への型の合わない引数は`invalid-argument`で、`type-error`も継承する。
+  `invalid-argument-operator`と`invalid-argument-argument`で、どの呼び出しのどの引数かを返す。
+
+`generator-unavailable`は、拒否した最も内側のspecを`generator-unavailable-spec`に持つ。
+加えて次の2つを持つ。
+
+- `generator-unavailable-kind`：理由のキーワード。
+  `:no-strategy`、`:unsupported-type`、`:empty-domain`、`:unregistered-generator`、
+  `:recursive-spec`、`:range-too-wide`、`:unique-domain`、`:ambiguous-generator`、
+  `:rejected-draws`のいずれか。
+- `generator-unavailable-argument`：property／function実行で、生成できなかった引数の名前。
+
+specはregistered nameかDSL formで表示する。
+
+条件のreportは`*print-circle*`をTにし、呼び出し側が上限を設けていなければ
+`*print-length*`と`*print-level*`を有限にして値を表示する。`explain`も同様である。
+循環値や非常に深い値でも、表示は有限時間で終わる。
 
 ---
 
@@ -2943,6 +2985,11 @@ Propertyごとに、
 (:trials (:smoke 10 :normal 100 :extended 1000 :stress 100000))
 
 ```
+
+profileはこの4つに限る。`:trials`表がほかのキーを持つと`defproperty`は
+`invalid-property-form`で拒否し、`run-property`・`run-properties`・`replay-property`の
+`:profile`にほかの値を渡すと`invalid-argument`になる。表が指定profileを持たないときは
+backendの既定試行数を使う。綴り誤りが既定試行数に黙って置き換わらないための制限である。
 
 のように指定可能にする。
 
@@ -5031,10 +5078,17 @@ readerは入力を変更してはならず、cl-specはその違反を検出・�
 
 ## 73.5 現在の残課題と受け入れ順（2026-09-13）
 
-以下は未実装・未確定の作業であり、新しい公開APIが利用できるという意味ではない。
-純粋関数の反例を修正根拠として扱う用途から順に進める。
+以下は2026-09-13時点で未実装・未確定だった作業の一覧であり、項目の記載そのものは
+新しい公開APIが利用できるという意味ではない。純粋関数の反例を修正根拠として扱う用途から順に進める。
+
+AとBはその後に実装された。現在の意味は、本節末尾の
+「§73.5 implementation addendum: counterexample artifacts (issue #9)」と
+「§73.5 implementation addendum: reproducible fresh fixtures」が定める。
+A・Bの本文は決定前の検討記録として残す。未着手の項目はC〜Eである。
 
 ### A. 保存反例の直接再検査と最小artifact（D3、優先度高）
+
+**状況：実装済み**（§73.5 implementation addendum: counterexample artifacts）。
 
 現状のreplay-propertyはseedとprofileを使って再生成する。resultには予算とdigestが保存されるが、
 replayはそれらを強制復元しない。実測では元の予算2を7へ変更してから同じresultでreplayすると、
@@ -5051,6 +5105,9 @@ replayはそれらを強制復元しない。実測では元の予算2を7へ変
 既存の再生成replayと直接再検査を、API・結果・文書のすべてで区別する。
 
 ### B. Fixture・中断・cleanup（D4/D5、副作用対象を広げる前）
+
+**状況：`:isolation :fresh`の範囲で実装済み**（§73.5 implementation addendum:
+reproducible fresh fixtures）。DB rollback、外部サービスの復元、worker kill時の監督は含まない。
 
 cons/array snapshotとmutation検知は、初期状態の復元ではない。
 cl-mcpのホストtimeoutも、coreのtrial／縮小候補の独立性を保証しない。
@@ -5453,7 +5510,15 @@ rejection bounds, attempts within budget, and coherent exhaustion fields; owned
 exhaustion requires attempts = budget. `:termination` is `:completed`,
 `:budget-exhausted` or `:interrupted`. `:exhaustion-phase` is `:generation` or
 `:shrinking` for owned exhaustion and NIL otherwise; `:exhausted-at` is the
-stable declaration path of the denied reservation. `generated-values` counts
+stable declaration path of the denied reservation, NIL only when nothing was
+exhausted. The path runs from the declaration root: `:value` for `sample` and
+`generator-for`, `:args NAME` for a property or function argument. It then names
+each step down to the filter: a tuple position, `:element` for a collection
+element, a field key, `:map-key` or `:map-value`, a tagged-union branch name,
+`:or INDEX`, and `:and` followed by the conjunct path of the selected source
+(nothing after `:and` when the source is the folded numeric range). A denied map
+key redraw ends in `:map-key`. For example `(:args items :element :and)` or
+`(:value :and 0)`. `generated-values` counts
 roots the top-level generator returned normally, including a tuple later
 refused by a precondition; `attempts - rejections` is not that count. `:rejected`
 keeps its existing meaning (precondition-refused trials) and is not the report's

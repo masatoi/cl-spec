@@ -10,6 +10,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions
                 #:unsupported-seed)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:export #:make-seed
            #:seed->random-state))
 
@@ -27,6 +28,6 @@
 
 The caller binds *RANDOM-STATE* to the result; the current state is left
 untouched.  Signals UNSUPPORTED-SEED on implementations with no such mapping."
-  (check-type seed (integer 0))
+  (check-argument seed '(integer 0 *) 'seed->random-state :seed)
   #+sbcl (sb-ext:seed-random-state seed)
   #-sbcl (error 'unsupported-seed))

@@ -8,6 +8,7 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
+  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
@@ -924,12 +925,18 @@ descriptor, which is why the common cases are unwrapped here."
   "Print a human readable rendering of (EXPLAIN-DATA SPEC-DESIGNATOR VALUE).
 
 Writes to STREAM and returns NIL.  This is a projection of EXPLAIN-DATA and
-must not compute anything EXPLAIN-DATA does not already report."
+must not compute anything EXPLAIN-DATA does not already report.
+
+The value is printed with *PRINT-CIRCLE* true and, unless the caller set
+tighter limits, *PRINT-LENGTH* 20 and *PRINT-LEVEL* 8, so a circular or very
+deep value is abbreviated rather than printed without end.  EXPLAIN-DATA keeps
+the complete value."
   (let ((data (explain-data spec-designator value :registry registry)))
-    (if (getf data :valid)
-        (format stream "~&~S satisfies ~S~%" value (getf data :spec))
-        (progn
-          (format stream "~&~S does not satisfy ~S~%" value (getf data :spec))
-          (dolist (datum (getf data :errors))
-            (print-explain-error datum stream 2)))))
+    (with-bounded-printing ()
+      (if (getf data :valid)
+          (format stream "~&~S satisfies ~S~%" value (getf data :spec))
+          (progn
+            (format stream "~&~S does not satisfy ~S~%" value (getf data :spec))
+            (dolist (datum (getf data :errors))
+              (print-explain-error datum stream 2))))))
   nil)
