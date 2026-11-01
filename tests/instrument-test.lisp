@@ -8,7 +8,7 @@
                 #:unknown-function-spec #:cl-spec-error #:unbound-target
                 #:spec-violation-spec #:spec-violation-value)
   (:import-from #:cl-spec/src/validator #:validate #:validp)
-  (:import-from #:cl-spec/src/ir #:spec)
+  (:import-from #:cl-spec/src/ir #:spec #:spec-source-form)
   (:import-from #:cl-spec/src/property-runner #:property-result)
   (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry #:find-spec)
   (:import-from #:cl-spec/src/dsl #:defspec-function #:defspec)
@@ -203,6 +203,38 @@
     (let ((failure (handler-case (funcall (fdefinition 'target) '(20))
                      (spec-violation (condition) condition))))
       (ok (equal '(:post 1) (spec-violation-path failure))))))
+
+(defun contains-function-object-p (tree)
+  "Return true when a function object occurs anywhere in TREE."
+  (cond ((functionp tree) t)
+        ((consp tree) (or (contains-function-object-p (car tree))
+                          (contains-function-object-p (cdr tree))))
+        (t nil)))
+
+(defun violation-of (thunk)
+  "Return the SPEC-VIOLATION THUNK signals, or NIL when it returns."
+  (handler-case (progn (funcall thunk) nil)
+    (spec-violation (condition) condition)))
+
+(deftest violation-records-name-the-declared-clause-form
+  (with-target (#'identity)
+    (defspec-function target (:args (x integer))
+      (:pre (plusp x) (< x 100))
+      (:returns integer)
+      (:post (= result x) (< result 50)))
+    (instrument-function 'target)
+    (let* ((failure (violation-of (lambda () (funcall (fdefinition 'target) 500))))
+           (datum (first (spec-violation-errors failure))))
+      (ok (equal '(:pre 1) (getf datum :path)) "the failing :pre form is numbered like :post")
+      (ok (equal '(:precondition (< x 100) :index 1) (getf datum :expected)))
+      (ok (not (contains-function-object-p (spec-violation-errors failure)))
+          "the record is plain data")
+      (ok (spec-source-form (spec-violation-spec failure))))
+    (let* ((failure (violation-of (lambda () (funcall (fdefinition 'target) 70))))
+           (datum (first (spec-violation-errors failure))))
+      (ok (equal '(:post 1) (getf datum :path)))
+      (ok (equal '(:postcondition (< result 50) :index 1) (getf datum :expected)))
+      (ok (not (contains-function-object-p (spec-violation-errors failure)))))))
 
 (deftest pre-and-post-predicate-errors-are-not-reclassified
   (let ((failure (make-condition 'simple-error :format-control "predicate failed"))

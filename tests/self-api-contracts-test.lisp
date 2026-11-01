@@ -248,7 +248,7 @@ The head symbols are compared by name: the corpus lives in another package."
         (let ((reports (generation-exhaustion-observations budget)))
           (ok (= 3 (length reports)))
           (loop for report in reports
-                for path in '((0) (:map-key) (:map-key))
+                for path in '((:value :and 0) (:value :map-key) (:value :map-key))
                 do (ok (eq :budget-exhausted (getf report :termination)))
                    (ok (eq :generation (getf report :exhaustion-phase)))
                    (ok (equal path (getf report :exhausted-at)))

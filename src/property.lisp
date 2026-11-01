@@ -32,10 +32,23 @@
            #:property-source-form
            #:property-source-location
            #:property-trials
+           #:+trial-profiles+
+           #:trial-profile-p
            #:property-metadata
            #:register-property))
 
 (in-package #:cl-spec/src/property)
+
+(defparameter +trial-profiles+ '(:smoke :normal :extended :stress)
+  "The trial profiles of specification §33, from cheapest to most expensive.
+
+A :TRIALS table may name only these, and a runner's :PROFILE must be one of
+them.  An unknown name used to fall back silently to the backend's default count,
+so a misspelled :SMOK ran 100 trials and the run still looked complete.")
+
+(defun trial-profile-p (object)
+  "Return true when OBJECT is one of the §33 trial profiles in +TRIAL-PROFILES+."
+  (and (member object +trial-profiles+) t))
 
 (defclass property ()
   ((name :initarg :name
@@ -140,8 +153,10 @@ introspection can show the author's source.")
       (refuse (property-documentation object) "documentation must be NIL or a string"))
     (unless (and (definition-keyword-plist-p (property-trials object))
                  (loop for (key count) on (property-trials object) by #'cddr
-                       always (typep count '(integer 0 *))))
-      (refuse (property-trials object) "trials require unique keyword profiles and nonnegative counts"))
+                       always (and (trial-profile-p key) (typep count '(integer 0 *)))))
+      (refuse (property-trials object)
+              (format nil "trials require unique keyword profiles among ~S and nonnegative counts"
+                      +trial-profiles+)))
     (unless (definition-keyword-plist-p (property-metadata object))
       (refuse (property-metadata object) "metadata must be a finite plist with unique keyword keys"))
     (unless (member (getf (property-metadata object) :shrink) '(nil t))

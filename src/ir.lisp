@@ -93,6 +93,23 @@ Attached to the top level node only, like NAME and SOURCE-LOCATION: a
 (:GENERATOR NAME) clause belongs to the definition, not to each conjunct of it."))
   (:documentation "Base class of every Semantic IR node."))
 
+(defmethod print-object ((spec spec) stream)
+  "Print SPEC by its registered name, else by the DSL form it was normalized from.
+
+A spec reaches people and agents inside condition reports -- GENERATOR-UNAVAILABLE
+names the node that refused -- and the default #<PREDICATE-SPEC {1004...}> says
+nothing about which spec that was.  The address is printed only when SPEC has
+neither a name nor a source form to tell it apart by.  The label is printed on
+one line, abbreviated, so it can sit inside a sentence."
+  (let ((label (or (spec-name spec) (spec-source-form spec)))
+        (*print-pretty* nil)
+        (*print-circle* t)
+        (*print-length* (or *print-length* 10))
+        (*print-level* (or *print-level* 4)))
+    (print-unreadable-object (spec stream :type t :identity (null label))
+      (when label
+        (prin1 label stream)))))
+
 (defgeneric spec-kind (spec)
   (:documentation "Return the canonical keyword identifying SPEC's node type.
 

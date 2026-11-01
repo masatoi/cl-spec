@@ -27,10 +27,12 @@
                 #:property
                 #:property-name
                 #:property-named-arguments
-                #:property-trials)
+                #:property-trials
+                #:+trial-profiles+)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-backend-result
                 #:unsupported-stateful-operation)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
                 #:trial-observation-status #:trial-observation-case
@@ -356,10 +358,16 @@ results without captured metadata have an explicitly incomplete digest."
   "Return the trial count for PROPERTY under PROFILE (specification §33).
 
 PROPERTY-TRIALS is a plist keyed by profile; a property that names no count for
-the profile in effect falls back to the backend's own default."
+the profile in effect falls back to the backend's own default.  PROFILE is one
+of +TRIAL-PROFILES+ (see CHECK-PROFILE), so the fallback means only that the
+table leaves this profile out, never that the profile was misspelled."
   (let ((table (property-trials property)))
     (or (and table (getf table (or profile :normal)))
         (backend-default-trials backend))))
+
+(defun check-profile (profile operator)
+  "Return PROFILE when it is NIL or a §33 profile, else signal INVALID-ARGUMENT for OPERATOR."
+  (check-argument profile `(or null (member ,@+trial-profiles+)) operator :profile))
 
 (defun name-arguments (property values)
   "Project raw counterexamples through the property's binding protocol."
@@ -468,11 +476,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
   ;; unusable seed with a condition naming an internal symbol.  A result stands
   ;; in for its seed, as REPLAY-PROPERTY and CHECK-FUNCTION both allow.
-  (unless (or (null seed)
-              (typep seed 'property-result)
-              (and (integerp seed) (not (minusp seed))))
-    (error 'type-error :datum seed
-                       :expected-type '(or null property-result (integer 0 *))))
+  (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
+  (check-profile profile 'run-property)
   (let* ((result-constructor
            (when (and *pending-result-constructor*
                       (eq property-designator (car *pending-result-constructor*)))
@@ -606,7 +611,9 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   "Run each property in PROPERTY-DESIGNATORS and return the results in order.
 
 Each run draws its own seed, so one failure can be replayed without re-running
-the others."
+the others.  PROFILE must be NIL or one of +TRIAL-PROFILES+; any other value
+signals INVALID-ARGUMENT before the first property runs."
+  (check-profile profile 'run-properties)
   (mapcar (lambda (designator)
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
@@ -636,11 +643,8 @@ Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
 definition declares state constraints without a fixture refuses that, before the seed is
 extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed."
-  (unless (or (typep seed 'property-result)
-              (and (integerp seed) (>= seed 0)))
-    (error 'type-error
-           :datum seed
-           :expected-type '(or property-result (integer 0 *))))
+  (check-argument seed '(or property-result (integer 0 *)) 'replay-property :seed)
+  (check-profile profile 'replay-property)
   ;; Preserve the result through RUN-PROPERTY so fixture identity and run
   ;; parameters are validated before any hooks execute.
   (refuse-stateful-replay (resolve-property property-designator registry)

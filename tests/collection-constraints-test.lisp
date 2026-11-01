@@ -379,9 +379,11 @@ returns the last one even when the callback rejected it."))
                   '(list-of (range integer 0 100000) :min-length 2 :unique t)))
            (compiled (cl-spec:generator-for spec)))
       (ok (<= (cl-spec/src/backends/check-it::compiled-generator-size compiled) 10))
+      ;; The length is drawn the way an unconstrained list's is, from
+      ;; CHECK-IT:*LIST-SIZE* (20), never from the range's width.
       (let ((samples (sample spec :count 5 :seed 1)))
         (ok (every (lambda (items)
-                     (and (<= 2 (length items) 10)
+                     (and (<= 2 (length items) 20)
                           (= (length items)
                              (length (remove-duplicates items :test #'eql)))))
                    samples))))))

@@ -393,8 +393,44 @@
                (= 7 (generation-budget-exhausted-budget condition))
                (= 7 (generation-budget-exhausted-rejections condition))
                (eq :generation (generation-budget-exhausted-phase condition))
-               (equal '(0) (generation-budget-exhausted-path condition))
+               (equal '(:value :and 0) (generation-budget-exhausted-path condition))
                (search "unsatisfiable" (princ-to-string condition)))))))
+
+(defun exhausted-path-of-sample (form)
+  "Return the :EXHAUSTED-AT path SAMPLE reports when FORM exhausts a budget of 5."
+  (handler-case (progn (sample-spec form :count 1 :generation-budget 5) :not-exhausted)
+    (generation-budget-exhausted (condition)
+      (generation-budget-exhausted-path condition))))
+
+(defun exhausted-path-of-run (property)
+  "Run PROPERTY with a budget of 5 and return its report's :EXHAUSTED-AT path."
+  (getf (property-result-generation-report
+         (run-property property :seed 1 :options '(:generation-budget 5)))
+        :exhausted-at))
+
+(deftest exhaustion-names-the-declaration-path-from-the-root
+  (testing "a folded numeric source no longer reports NIL, which means no exhaustion"
+    (ok (equal '(:value :and)
+               (exhausted-path-of-sample '(and (range integer 1 9) (satisfies zerop))))))
+  (testing "a conjunct source is named inside its AND"
+    (ok (equal '(:value :and 0)
+               (exhausted-path-of-sample '(and (member 1) (satisfies evenp))))))
+  (testing "the path descends through collections"
+    (ok (equal '(:value :element :and)
+               (exhausted-path-of-sample
+                '(list-of (and (range integer 1 9) (satisfies zerop)) :min-length 1)))))
+  (let ((*registry* (make-hash-table-registry)))
+    (eval '(defproperty exhaust-second ((count integer)
+                                        (items (list-of (and (range integer 1 9)
+                                                             (satisfies zerop))
+                                                        :min-length 1)))
+            (listp items)))
+    (eval '(defproperty exhaust-first ((odd (and (member 1) (satisfies evenp)))
+                                       (count integer))
+            (integerp count)))
+    (testing "a property run names the argument the same AND sits under"
+      (ok (equal '(:args items :element :and) (exhausted-path-of-run 'exhaust-second)))
+      (ok (equal '(:args odd :and 0) (exhausted-path-of-run 'exhaust-first))))))
 
 (deftest last-permitted-candidate-and-explicit-zero
   (let ((*registry* (make-hash-table-registry)))

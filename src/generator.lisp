@@ -20,6 +20,7 @@
                 #:no-generator-backend
                 #:invalid-backend-result
                 #:generation-budget-exhausted)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/generation-request
                 #:make-generation-request
                 #:*generation-request*
@@ -402,7 +403,14 @@ branch and is refused rather than read as \"no branch requested\", so a caller
 forwarding a computed branch value is told when it is bad.  GENERATION-BUDGET,
 when supplied, is the request-wide bounded-filter candidate budget; explicit zero
 is not an omission.  Intended for inspecting what a spec admits, from the REPL or
-from an agent."
+from an agent.
+
+A COUNT, SEED or GENERATION-BUDGET that is not a nonnegative integer (SEED may
+also be NIL) signals INVALID-ARGUMENT before anything is generated."
+  (check-argument count '(integer 0 *) 'sample :count)
+  (check-argument seed '(or null (integer 0 *)) 'sample :seed)
+  (when generation-budget-p
+    (check-argument generation-budget '(integer 0 *) 'sample :generation-budget))
   (let* ((backend (current-generator-backend))
          (spec (if branch-p
                    (tagged-union-branch (resolve-spec spec-designator registry) branch)

@@ -1,12 +1,13 @@
 ;;;; src/utils/artifact-values.lisp
 (defpackage #:cl-spec/src/utils/artifact-values
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
   (:export #:encode-artifact-value #:decode-artifact-value
            #:serialize-artifact-value #:deserialize-artifact-value
            #:artifact-value-error #:artifact-value-error-reason))
 (in-package #:cl-spec/src/utils/artifact-values)
 
-(define-condition artifact-value-error (error)
+(define-condition artifact-value-error (cl-spec-error)
   ((reason :initarg :reason :reader artifact-value-error-reason
            :documentation "The reason the artifact value was rejected."))
   (:documentation "An unsupported, malformed, or excessive artifact value."))

@@ -25,12 +25,14 @@
                 #:validate-call-declarations #:call-declaration-variables
                 #:normalize-return-declaration)
   (:import-from #:cl-spec/src/normalize
-                #:normalize-spec-form)
+                #:normalize-spec-form #:cl-type-name-p)
   (:import-from #:cl-spec/src/registry
                 #:register-spec)
   (:import-from #:cl-spec/src/property
                 #:property
-                #:register-property)
+                #:register-property
+                #:+trial-profiles+
+                #:trial-profile-p)
   (:import-from #:cl-spec/src/function-spec
                 #:function-spec
                 #:function-case
@@ -58,6 +60,26 @@ Deliberately short: §52 keeps the MVP spec syntax to a form and this one clause
 and a clause DEFSPEC does not know is refused rather than ignored -- a definition
 that named a generator and lost the clause would look like a spec drawing from
 that generator while the backend went on deriving values from the DSL.")
+
+(defun check-spec-name (name)
+  "Refuse NAME unless DEFSPEC can register it and the spec DSL can refer to it.
+
+The rule DEFPROPERTY, DEFSPEC-FUNCTION and DEFGENERATOR apply -- a symbol other
+than NIL or a keyword (specification §4.1) -- plus one more: a Common Lisp type
+name such as T or STRING is refused, because the DSL always reads that symbol as
+the type and never as a reference, so the registered spec could be reached only
+through a call that passes its name."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (error 'invalid-spec-form
+           :form name
+           :reason "a spec must be named by a symbol other than NIL or a keyword"))
+  (when (cl-type-name-p name)
+    (error 'invalid-spec-form
+           :form name
+           :reason (format nil "~S names a Common Lisp type, which the spec DSL always ~
+                                reads as that type rather than as a reference to a ~
+                                registered spec"
+                           name))))
 
 (defun spec-generator-option (options)
   "Return the custom generator named by the DEFSPEC OPTIONS, or NIL.
@@ -112,7 +134,11 @@ instead of deriving them from FORM (specification §11).  For an AND, a generato
 on the whole AND wins.  Otherwise a unique conjunct that carries a custom
 generator is used as the generation source and the whole AND filters its draws;
 two or more such conjuncts signal GENERATOR-UNAVAILABLE, because the backend never
-silently picks one or ignores one.  See the bounded-AND addendum in §73.5."
+silently picks one or ignores one.  See the bounded-AND addendum in §73.5.
+
+NAME must be a symbol other than NIL, a keyword or a Common Lisp type name;
+anything else signals INVALID-SPEC-FORM when the macro expands."
+  (check-spec-name name)
   (let ((location (current-source-location))
         (generator (spec-generator-option options)))
     `(register-spec ',name
@@ -801,9 +827,13 @@ read but never checked."
                        :capture-bindings ',capture
                        :precondition-function
                        ,(when pre
+                          ;; Compiled like :POST, so the primary value is the
+                          ;; conjunction and a refusal also says which form
+                          ;; refused: (values NIL INDEX :CL-SPEC-PRE-FORM-FAILURE).
                           `(lambda ,variables
                              (declare (ignorable ,@variables))
-                             (and ,@pre)))
+                             ,(expand-postcondition-forms
+                               pre 0 :cl-spec-pre-form-failure)))
                        :postcondition-function
                        ,(expand-postcondition-function post post-values variables result
                                                        capture-names)
@@ -982,14 +1012,16 @@ be silently discarded by SECOND when constructing the registered property."
     (property-form-error clause (format nil "~S takes exactly one value" (first clause)))))
 
 (defun trials-plist-p (value)
-  "Recognize a finite plist of unique keyword profiles and nonnegative budgets.
+  "Recognize a finite plist of unique §33 profiles and nonnegative budgets.
 Duplicate profiles make GETF silently ignore a budget; a negative or fractional
-count cannot describe executed trials. NIL remains a valid empty table."
+count cannot describe executed trials; and a profile outside +TRIAL-PROFILES+ is
+a misspelling no runner would ever select, so its budget would be ignored and the
+backend default run in its place. NIL remains a valid empty table."
   (and (proper-list-p value)
        (evenp (length value))
        (let ((seen nil))
          (loop for (profile count) on value by #'cddr
-               always (and (keywordp profile) (not (member profile seen))
+               always (and (trial-profile-p profile) (not (member profile seen))
                            (integerp count) (>= count 0)
                            (progn (push profile seen) t))))))
 
@@ -1014,7 +1046,9 @@ predicate has to be compiled into a real function rather than kept as a list."
       (when (and trials-clause (not (trials-plist-p (second trials-clause))))
         (error 'invalid-property-form
                :form trials-clause
-               :reason ":TRIALS requires unique keyword profiles and nonnegative integer budgets"))
+               :reason (format nil ":TRIALS requires unique keyword profiles among ~S and ~
+                                    nonnegative integer budgets"
+                               +trial-profiles+)))
       `(register-property
         (make-instance 'property
                        :name ',name

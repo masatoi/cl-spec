@@ -238,3 +238,51 @@
       (let ((text (with-output-to-string (stream)
                     (ok (null (explain 'positive-money 1 :stream stream :registry registry))))))
         (ok (string= (format nil "1 satisfies POSITIVE-MONEY~%") text))))))
+
+(defmacro finishes-within-seconds (seconds &body body)
+  "Return true when BODY returns within SECONDS, NIL when it is still running then."
+  #+sbcl
+  `(handler-case (sb-ext:with-timeout ,seconds ,@body t)
+     (sb-ext:timeout () nil))
+  #-sbcl
+  (declare (ignore seconds))
+  #-sbcl
+  `(progn ,@body t))
+
+(defun circular-list-of-integers ()
+  "Return a two-element list whose last cons points back at its first."
+  (let ((cells (list 1 2)))
+    (setf (cdr (last cells)) cells)
+    cells))
+
+(defun deeply-nested-list (depth)
+  "Return a list nested DEPTH levels deep around the integer 0."
+  (let ((value 0))
+    (dotimes (i depth value)
+      (setf value (list value)))))
+
+(deftest rendering-a-violation-terminates-whatever-the-printer-settings
+  (let ((spec (normalize-spec-form '(list-of integer)))
+        (*print-circle* nil)
+        (*print-length* nil)
+        (*print-level* nil))
+    (testing "EXPLAIN prints a circular value in finite time"
+      (ok (finishes-within-seconds 5
+            (explain spec (circular-list-of-integers) :stream (make-broadcast-stream)))))
+    (testing "EXPLAIN prints a deeply nested value without exhausting the stack"
+      (ok (finishes-within-seconds 5
+            (explain spec (list (deeply-nested-list 3000))
+                     :stream (make-broadcast-stream)))))
+    (testing "a SPEC-VIOLATION reports a circular value in finite time"
+      (let ((violation (handler-case
+                           (progn (cl-spec/src/validator:validate
+                                   spec (circular-list-of-integers))
+                                  nil)
+                         (cl-spec/src/conditions:spec-violation (condition) condition))))
+        (ok violation)
+        (ok (finishes-within-seconds 5
+              (format (make-broadcast-stream) "~A" violation)))))
+    (testing "the rendering still names the value"
+      (ok (search "does not satisfy"
+                  (with-output-to-string (stream)
+                    (explain spec (circular-list-of-integers) :stream stream)))))))

@@ -5,7 +5,9 @@
   (:import-from #:rove
                 #:deftest #:testing #:ok)
   (:import-from #:cl-spec/src/conditions
-                #:generator-unavailable)
+                #:generator-unavailable
+                #:generator-unavailable-kind
+                #:generator-unavailable-argument)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:current-generator-backend
@@ -93,6 +95,29 @@
     (ok (every (lambda (vector) (every (lambda (value) (<= 20 value 100)) vector))
                (draws-for '(vector-of (range integer 20 100)))))))
 
+(defun mean-length (form &key (count 60) (seed 1))
+  "Return the mean length of COUNT values SAMPLE draws from FORM with SEED."
+  (let ((values (sample (normalize-spec-form form) :count count :seed seed)))
+    (/ (reduce #'+ values :key #'length) (length values))))
+
+(deftest a-length-constraint-does-not-borrow-its-length-from-a-range-width
+  (testing "a wide element range does not stretch a constrained collection"
+    (ok (< (mean-length '(list-of (range integer 0 1000) :min-length 1)) 25))
+    (ok (< (mean-length '(vector-of (range integer 0 100000) :min-length 1)) 25)))
+  (testing "a constrained collection draws its length the way an unconstrained one does"
+    (ok (< (abs (- (mean-length '(list-of (range integer 0 1000) :min-length 1))
+                   (mean-length '(list-of (range integer 0 10) :min-length 1))))
+           5)))
+  (testing "a neighbouring argument's range does not change a collection's length"
+    (ok (< (mean-length '(tuple (range integer 0 100000) (list-of integer :min-length 1)))
+           (+ 2 (mean-length '(tuple (range integer 0 10) (list-of integer :min-length 1))))))
+    (ok (< (mean-length '(list-of integer :min-length 1)) 25)))
+  (testing "the declared bounds still hold"
+    (ok (every (lambda (items) (<= 3 (length items) 5))
+               (sample (normalize-spec-form '(list-of (range integer 0 1000)
+                                              :min-length 3 :max-length 5))
+                       :count 30 :seed 2)))))
+
 (deftest a-single-child-member-or-or-does-not-crash-check-it
   ;; CHECK-IT:COMPUTE-WEIGHTS computes (log 1) for a lone sub-generator and
   ;; then divides by the resulting zero, signalling a floating point error
@@ -171,6 +196,37 @@
     (testing (format nil "~S signals GENERATOR-UNAVAILABLE" form)
       (ok (handler-case (progn (draws-for form :count 1) nil)
             (generator-unavailable () t))))))
+
+(defun generation-refusal (thunk)
+  "Return the GENERATOR-UNAVAILABLE THUNK signals, or NIL when it returns."
+  (handler-case (progn (funcall thunk) nil)
+    (generator-unavailable (condition) condition)))
+
+(deftest generation-refusals-name-the-spec-the-argument-and-a-remedy
+  (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
+    (eval '(defspec odd-int (satisfies oddp)))
+    (eval '(cl-spec/src/dsl:defproperty odd-argument ((count integer) (odd odd-int))
+            (oddp odd)))
+    (let* ((condition (generation-refusal
+                       (lambda ()
+                         (cl-spec/src/property-runner:run-property 'odd-argument :seed 1))))
+           (message (and condition (princ-to-string condition))))
+      (testing "the refusal says which argument needs a generator"
+        (ok (eq 'odd (generator-unavailable-argument condition))))
+      (testing "the reason is a keyword an agent can dispatch on"
+        (ok (eq :no-strategy (generator-unavailable-kind condition))))
+      (testing "the message names the spec rather than printing an internal object"
+        (ok (search "ODD-INT" message))
+        (ok (search "ODD" message))
+        (ok (not (search "{" message))))
+      (testing "the message points at the remedy"
+        (ok (search "DEFGENERATOR" message))
+        (ok (search ":GENERATOR" message))))
+    (testing "a refusal from SAMPLE has no argument but still a kind"
+      (let ((condition (generation-refusal
+                        (lambda () (sample (normalize-spec-form '(member)) :count 1)))))
+        (ok (null (generator-unavailable-argument condition)))
+        (ok (eq :empty-domain (generator-unavailable-kind condition)))))))
 
 (deftest recursive-specs-are-refused-rather-than-hanging
   (let ((registry (make-hash-table-registry)))

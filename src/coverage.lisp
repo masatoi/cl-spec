@@ -1,6 +1,7 @@
 ;;;; src/coverage.lisp
 (defpackage #:cl-spec/src/coverage
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
   (:import-from #:cl-spec/src/registry #:*registry*)
   (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema #:observe-dimension)
   (:export #:definition-coverage-schema #:observe-coverage-dimension
@@ -12,7 +13,7 @@
            #:backend-coverage-protocol #:backend-coverage-capabilities))
 (in-package #:cl-spec/src/coverage)
 
-(define-condition invalid-coverage-options (error)
+(define-condition invalid-coverage-options (cl-spec-error)
   ((reason :initarg :reason :reader invalid-coverage-options-reason))
   (:documentation "Malformed or unsupported coverage options.")
   (:report (lambda (c s) (format s "Invalid coverage options: ~A"
@@ -21,7 +22,7 @@
 (defgeneric invalid-coverage-options-reason (condition)
   (:documentation "Return the reason coverage options were refused."))
 
-(define-condition unsupported-coverage-operation (error)
+(define-condition unsupported-coverage-operation (cl-spec-error)
   ((reason :initarg :reason :reader unsupported-coverage-operation-reason))
   (:documentation "The requested execution path cannot perform this coverage operation.")
   (:report (lambda (c s) (format s "Unsupported coverage operation: ~A"

@@ -1,6 +1,7 @@
 ;;;; src/evidence.lisp
 (defpackage #:cl-spec/src/evidence
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
   (:import-from #:cl-spec/src/execution #:snapshot-value)
   (:export #:evidence-declared-cases #:evidence-facts #:evidence-summary #:assess-evidence
            #:invalid-evidence-policy #:invalid-evidence-policy-reason
@@ -10,7 +11,7 @@
 (defgeneric invalid-evidence-policy-reason (condition)
   (:documentation "Return the reason an evidence policy was refused."))
 
-(define-condition invalid-evidence-policy (error)
+(define-condition invalid-evidence-policy (cl-spec-error)
   ((reason :initarg :reason :reader invalid-evidence-policy-reason))
   (:documentation "An unsupported or malformed declarative evidence policy.")
   (:report (lambda (condition stream)
