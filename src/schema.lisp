@@ -3,6 +3,7 @@
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
   (:export #:definition-fixture-metadata)
+  (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:import-from #:cl-spec/src/call-schema
                 #:return-values-spec #:call-arguments-spec #:call-arguments-spec-layout
                 #:call-layout-data
@@ -530,7 +531,15 @@ The first two values retain their version-one meaning and complete digest bytes.
 Missing or opaque declarations return NIL/NIL with explanatory omissions.
 Extension programming errors propagate rather than becoming incompleteness."
   (when (symbolp designator)
-    (check-type entity-kind (member :spec :property :function-spec)))
+    ;; A name can denote a spec, a property and a function spec at once, so a
+    ;; symbol designator says which with :ENTITY-KIND (issue #79).
+    (unless (typep entity-kind '(member :spec :property :function-spec))
+      (error 'invalid-argument
+             :datum entity-kind :expected-type '(member :spec :property :function-spec)
+             :operator 'definition-digest :argument :entity-kind
+             :reason (format nil "a symbol designator such as ~S needs :ENTITY-KIND ~
+                                  to say which definition it names"
+                             designator))))
   (let ((root (resolve-definition designator entity-kind registry)))
     (unless root
       (return-from definition-digest

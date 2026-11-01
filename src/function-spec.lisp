@@ -54,11 +54,11 @@
                 #:state-post-error-data
                 #:unsupported-stateful-operation
                 #:spec-violation)
-  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument #:check-run-options)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
-                #:*registry*
+                #:*registry* #:check-registry
                 #:registry-find-function-spec
                 #:registry-register-function-spec)
   (:import-from #:cl-spec/src/schema
@@ -87,6 +87,7 @@
   (:import-from #:cl-spec/src/property-runner
                 #:prepare-property-run #:run-property-with-result-constructor
                 #:property-result #:property-result-case-report #:property-result-entity-kind
+                #:check-replayed-result
                 #:property-result-budget #:property-result-options #:property-result-property
                 #:property-result-seed #:observation-data)
   (:import-from #:cl-spec/src/generator
@@ -1214,14 +1215,18 @@ layout data. Comparing against finite snapshots also bounds malformed cycles."
 
 This lives here rather than beside RESOLVE-SPEC and RESOLVE-PROPERTY because
 CHECK-FUNCTION needs the property runner, which needs SRC/RESOLVE: putting the
-function spec case there would close the dependency graph into a cycle."
+function spec case there would close the dependency graph into a cycle.  An
+entry that is not a function spec is refused with INVALID-FUNCTION-SPEC-FORM, as
+RESOLVE-SPEC refuses a stored non-spec."
   (if (typep designator 'function-spec)
       designator
       (multiple-value-bind (entry found-p)
           (registry-find-function-spec registry designator)
-        (if found-p
-            entry
-            (error 'unknown-function-spec :name designator)))))
+        (cond ((not found-p) (error 'unknown-function-spec :name designator))
+              ((typep entry 'function-spec) entry)
+              (t (error 'invalid-function-spec-form
+                        :form designator
+                        :reason "the value registered under this name is not a function spec"))))))
 
 (defclass function-check-result (property-result)
   ((source-form :initarg :source-form
@@ -2208,6 +2213,8 @@ with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlie
 contract failure. Fixture results and artifacts use version 2."
   (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
   (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
+  (check-run-options options 'check-function)
+  (check-registry registry 'check-function)
   (let* ((seed-result (and (typep seed 'property-result) seed))
          (budget (or trials
                      (when (typep seed-result 'function-check-result)
@@ -2221,6 +2228,8 @@ contract failure. Fixture results and artifacts use version 2."
                        (make-function-check-property contract :budget budget)))
          (source (property-source-form property))
          (case-run (make-case-run contract)))
+    ;; A result replays only the contract run it came from (#84).
+    (check-replayed-result seed-result :function-spec name 'check-function)
     ;; Replaying a state-observing contract requires explicit reconstruction.
     (when (and seed-result (state-observing-contract-p contract)
                (not (function-spec-fixture contract)))
@@ -2353,6 +2362,7 @@ the top level because OBSERVATION-DATA does not carry it, so a reader does not
 have to reach into the observation structure.  This is data, not prose: a caller
 or an MCP projection reads :STATUS, :ARGUMENTS, :NAME and the observation
 without re-running the target, its guards, its captures or its post forms."
+  (check-argument result 'call-check-result 'call-check-data :result)
   (let ((metadata (copy-list (call-check-result-definition result))))
     (setf (getf metadata :record-kind) :result
           (getf metadata :entity-kind) :function-spec)
@@ -2404,6 +2414,7 @@ signals either condition is an ordinary target observation with reason
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction."
+  (check-registry registry 'check-call)
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))

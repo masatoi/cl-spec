@@ -6,7 +6,9 @@
                 #:deftest #:testing #:ok #:signals)
   (:import-from #:cl-spec/src/conditions
                 #:unknown-spec
-                #:unknown-property)
+                #:unknown-property
+                #:invalid-spec-form
+                #:invalid-property-form)
   (:import-from #:cl-spec/src/ir
                 #:type-spec)
   (:import-from #:cl-spec/src/property
@@ -51,14 +53,23 @@
     (testing "an empty context falls back to *REGISTRY*"
       (ok (eq cl-spec/src/registry:*registry* (context-registry nil))))))
 
+(defun refusal-type (thunk)
+  "Return the type of the error THUNK signals, or :RETURNED."
+  (handler-case (progn (funcall thunk) :returned)
+    (error (condition) (type-of condition))))
+
 (deftest resolving-a-spec-registered-as-nil
+  ;; Registered is not absent (found-p), but NIL is not a spec either: the entry
+  ;; is refused as a stored non-spec, never reported as unregistered (#78).
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'nil-spec nil)
-    (testing "a symbol registered as NIL resolves to NIL"
-      (ok (null (resolve-spec 'nil-spec registry))))))
+    (testing "a symbol registered as NIL is refused, not reported as unknown"
+      (ok (eq 'invalid-spec-form
+              (refusal-type (lambda () (resolve-spec 'nil-spec registry))))))))
 
 (deftest resolving-a-property-registered-as-nil
   (let ((registry (make-hash-table-registry)))
     (registry-register-property registry 'nil-prop nil)
-    (testing "a symbol registered as NIL resolves to NIL"
-      (ok (null (resolve-property 'nil-prop registry))))))
+    (testing "a symbol registered as NIL is refused, not reported as unknown"
+      (ok (eq 'invalid-property-form
+              (refusal-type (lambda () (resolve-property 'nil-prop registry))))))))

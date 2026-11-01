@@ -14,7 +14,7 @@
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:spec-display-name)
@@ -41,6 +41,7 @@ disagree about whether a value is admissible."
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
 Signals UNKNOWN-SPEC when a symbol resolves to nothing."
+  (check-registry registry 'validp)
   (let ((spec (resolve-spec spec-designator registry)))
     (null (funcall (compile-explainer spec :context (list :registry registry))
                    value nil))))
@@ -50,6 +51,7 @@ Signals UNKNOWN-SPEC when a symbol resolves to nothing."
 
 The signalled condition carries the structured error list produced by
 EXPLAIN-DATA so that callers do not have to re-run the check."
+  (check-registry registry 'validate)
   (let* ((spec (resolve-spec spec-designator registry))
          (errors (funcall (compile-explainer spec :context (list :registry registry))
                           value nil)))

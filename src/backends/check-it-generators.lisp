@@ -70,7 +70,7 @@
   (:import-from #:cl-spec/src/registry
                 #:registry-find-generator)
   (:import-from #:cl-spec/src/generator-definition
-                #:custom-generator-function #:custom-generator-shrinker)
+                #:custom-generator #:custom-generator-function #:custom-generator-shrinker)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-spec
                 #:context-registry)
@@ -82,6 +82,7 @@
                 #:reserve-generation-candidate
                 #:record-generation-rejection
                 #:generation-candidate-available-p
+                #:call-declining-on-exhaustion
                 #:with-generation-phase)
   (:export #:custom-value-generator #:custom-value-generator-shrinker #:spec-generator
            #:bounded-filter-generator #:bounded-filter-sub-generator
@@ -424,10 +425,14 @@ An AND uses a unique custom-generator conjunct as its source and filters its
 draws with the whole-AND validator; two or more such conjuncts are refused.  A
 generator on the whole AND overrides all of that explicitly."
   (let ((entry (registry-find-generator (context-registry context) name)))
-    (unless entry
+    (unless (typep entry 'custom-generator)
       (error 'generator-unavailable
              :spec spec :kind :unregistered-generator
-             :reason (format nil "the custom generator ~S is not registered" name)))
+             :reason (if entry
+                         (format nil "the value registered as the custom generator ~S is ~
+                                      not a custom generator"
+                                 name)
+                         (format nil "the custom generator ~S is not registered" name))))
     (make-instance 'custom-value-generator
                    :function (custom-generator-function entry)
                    :shrinker (custom-generator-shrinker entry))))
@@ -593,6 +598,18 @@ drawn near and is refused as :RANGE-TOO-WIDE."
   (declare (ignore context))
   (type-specifier-generator (type-spec-type-specifier spec) spec))
 
+(defun infinite-bound-p (bound)
+  "Return true when BOUND is an infinite float."
+  (and (floatp bound) (> (abs bound) most-positive-long-float)))
+
+(defun open-if-infinite (bound)
+  "Return :UNBOUNDED for an infinite float BOUND, else BOUND itself.
+
+A range bounded by an infinity admits every finite number on that side, which is
+what an open bound says, and generation can only produce finite numbers anyway.
+Rounding or shifting by an infinity instead signalled a raw error (issue #86)."
+  (if (infinite-bound-p bound) :unbounded bound))
+
 (defun integer-interval (minimum maximum)
   "Return (VALUES LOW HIGH): MINIMUM rounded up and MAXIMUM rounded down.
 
@@ -615,14 +632,17 @@ generates outside the range.  A one-sided INTEGER range is drawn from
 raises nothing: raising *SIZE* to the bound is what collapsed it to the bound
 alone (issue #77).
 
-An INTEGER range's bounds are first rounded inward by INTEGER-INTERVAL, as
+An infinite float bound is read as an open one (OPEN-IF-INFINITE).  An INTEGER
+range's bounds are then rounded inward by INTEGER-INTERVAL, as
 validation reads them; check-it's integer generator would otherwise draw the
 bound's own fraction.  An interval that admits nothing -- no integer in it, or a
 minimum above the maximum -- is refused rather than handed to check-it."
   (multiple-value-bind (minimum maximum)
-      (if (eq base-type 'integer)
-          (integer-interval minimum maximum)
-          (values minimum maximum))
+      (let ((minimum (open-if-infinite minimum))
+            (maximum (open-if-infinite maximum)))
+        (if (eq base-type 'integer)
+            (integer-interval minimum maximum)
+            (values minimum maximum)))
     (let ((finite-p (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))))
       (when (and finite-p (> minimum maximum))
         (error 'generator-unavailable
@@ -724,17 +744,17 @@ integer lies in the interval (MINIMUM above MAXIMUM) or that a bound is not a
 finite number, which is why INTEGER-RANGE-P tells the two apart."
   (let ((minimum (range-spec-minimum spec))
         (maximum (range-spec-maximum spec)))
-    (when (and (eq (range-spec-base-type spec) 'integer)
-               (realp minimum) (realp maximum))
+    (when (integer-range-p spec)
       (multiple-value-bind (low high) (integer-interval minimum maximum)
         (when (<= low high)
           (values low high))))))
 
 (defun integer-range-p (spec)
   "Return true when SPEC is an integer range with finite real endpoints."
-  (and (eq (range-spec-base-type spec) 'integer)
-       (realp (range-spec-minimum spec))
-       (realp (range-spec-maximum spec))))
+  (flet ((finite-p (bound) (and (realp bound) (not (infinite-bound-p bound)))))
+    (and (eq (range-spec-base-type spec) 'integer)
+         (finite-p (range-spec-minimum spec))
+         (finite-p (range-spec-maximum spec)))))
 
 (defgeneric enumerable-values (spec context)
   (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
@@ -871,15 +891,17 @@ each draw removes the chosen value from the remaining pool."
           finally (return nil))))
 
 (defun draw-collection-count (minimum maximum &optional (size *list-size*))
-  "Draw an element or entry count from [MINIMUM, MAXIMUM], capped by SIZE.
+  "Draw an element or entry count from [MINIMUM, MAXIMUM], at most SIZE above MINIMUM.
 
-MAXIMUM may be :UNBOUNDED.  SIZE is the soft cap for an unbounded or large maximum:
-collections and maps both pass CHECK-IT:*LIST-SIZE*, the allowance an
-unconstrained list draws its length from, never CHECK-IT:*SIZE*, which a run
-raises to its widest numeric bound.  It is raised to MINIMUM first, so a declared
-minimum is always reachable."
-  (let* ((size (max size minimum))
-         (upper (if (eq maximum :unbounded) size (min maximum size))))
+MAXIMUM may be :UNBOUNDED.  SIZE is the allowance an unconstrained list draws its
+length from: collections and maps both pass CHECK-IT:*LIST-SIZE*, never
+CHECK-IT:*SIZE*, which a run raises to its widest numeric bound.  It is counted
+from MINIMUM rather than from zero, so a minimum at or above SIZE still leaves
+room for longer values; using SIZE as a ceiling that the minimum overrode gave
+every value exactly the minimum length (issue #82)."
+  (let ((upper (if (eq maximum :unbounded)
+                   (+ minimum size)
+                   (min maximum (+ minimum size)))))
     (if (>= upper minimum)
         (+ minimum (random (1+ (- upper minimum))))
         minimum)))
@@ -1239,11 +1261,15 @@ child generators returned."))
 
 The first draw for each slot is free.  Every redraw first reserves one candidate
 from the active generation request and records a rejection when it collides
-again, so REJECTIONS never exceeds ATTEMPTS.  Once MIN-COUNT keys are placed, a
-slot gives up after *MAP-KEY-COLLISION-LIMIT* consecutive collisions, or when no
-candidate remains -- asked without reserving, so stopping early never marks the
-request exhausted -- and the map keeps the keys it has.  Below MIN-COUNT the slot
-keeps redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED.
+again, so REJECTIONS never exceeds ATTEMPTS.  Below MIN-COUNT a slot keeps
+redrawing until the reservation signals GENERATION-BUDGET-EXHAUSTED.
+
+Once MIN-COUNT keys are placed every further key is optional.  A slot gives up
+after *MAP-KEY-COLLISION-LIMIT* consecutive collisions, or when no candidate
+remains -- asked without reserving -- and the whole draw of the slot, its first
+draw included, runs under CALL-DECLINING-ON-EXHAUSTION, so a bounded filter
+inside the key spec that finds the budget spent stops the map with the keys it
+has instead of exhausting the request (issue #83).
 
 Keys must be distinct, so the ambient size is widened by four times the number of keys
 wanted, added to it, so a range whose lower bound already sits at the ambient size still
@@ -1253,26 +1279,34 @@ has room; values keep the ambient size."
         (placed nil)
         (placed-count 0)
         (*size* (+ *size* (* 4 count))))
-    (loop while (< placed-count count)
-          do (let ((collisions 0))
-               (loop
-                 (let ((redraw-p (plusp collisions)))
-                   (when redraw-p
-                     (when (and (>= placed-count minimum)
-                                (or (>= collisions *map-key-collision-limit*)
-                                    (not (generation-candidate-available-p))))
-                       (return-from draw-distinct-keys (nreverse placed)))
-                     (reserve-generation-candidate (map-generator-key-path generator)
-                                                   (map-generator-key-spec generator)))
-                   (let* ((child (funcall (map-generator-key-generator generator)))
-                          (key (generate child)))
-                     (if (nth-value 1 (gethash key seen))
-                         (progn (when redraw-p (record-generation-rejection))
-                                (incf collisions))
-                         (progn (setf (gethash key seen) t)
-                                (push (cons key child) placed)
-                                (incf placed-count)
-                                (return))))))))
+    (block drawing
+      (loop while (< placed-count count)
+            do (let ((optional-p (>= placed-count minimum)))
+                 (flet ((place-one ()
+                          (let ((collisions 0))
+                            (loop
+                              (let ((redraw-p (plusp collisions)))
+                                (when redraw-p
+                                  (when (and optional-p
+                                             (or (>= collisions *map-key-collision-limit*)
+                                                 (not (generation-candidate-available-p))))
+                                    (return-from drawing))
+                                  (reserve-generation-candidate
+                                   (map-generator-key-path generator)
+                                   (map-generator-key-spec generator)))
+                                (let* ((child (funcall (map-generator-key-generator generator)))
+                                       (key (generate child)))
+                                  (if (nth-value 1 (gethash key seen))
+                                      (progn (when redraw-p (record-generation-rejection))
+                                             (incf collisions))
+                                      (progn (setf (gethash key seen) t)
+                                             (push (cons key child) placed)
+                                             (incf placed-count)
+                                             (return)))))))))
+                   (if optional-p
+                       (call-declining-on-exhaustion #'place-one
+                                                     (lambda () (return-from drawing)))
+                       (place-one))))))
     (nreverse placed)))
 
 (defun draw-map-keys (generator count)

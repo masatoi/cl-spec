@@ -25,7 +25,15 @@
                 #:generator-unavailable-spec
                 #:unsupported-seed
                 #:invalid-argument
-                #:invalid-argument-argument))
+                #:invalid-argument-argument
+                #:unknown-function-spec
+                #:invalid-generated-arguments
+                #:generation-budget-exhausted
+                #:generator-unavailable-kind
+                #:generator-unavailable-argument)
+  (:import-from #:cl-spec/src/property-runner
+                #:run-property
+                #:property-result-condition))
 
 (in-package #:cl-spec/tests/conditions-test)
 
@@ -123,6 +131,193 @@
                (ok (typep condition 'cl-spec-error))
                (ok (typep condition 'type-error))
                (ok (eq argument (refused-argument condition)))))))
+
+(defun more-bad-argument-cases ()
+  "Return (ARGUMENT THUNK) pairs for the entry points issue #79 found unchecked."
+  (let ((integer-spec (cl-spec/src/normalize:normalize-spec-form 'integer)))
+    (list (list :options (lambda ()
+                           (run-property 'argument-check-property :seed 1 :options 42)))
+          (list :options (lambda ()
+                           (run-property 'argument-check-property :seed 1
+                                         :options '(:generation-budget))))
+          (list :options (lambda ()
+                           (run-property 'argument-check-property :seed 1
+                                         :options '(:trials 5))))
+          (list :generation-budget (lambda ()
+                                     (run-property 'argument-check-property :seed 1
+                                                   :options '(:generation-budget -3))))
+          (list :shrink-budget (lambda ()
+                                 (run-property 'argument-check-property :seed 1
+                                               :options '(:shrink-budget -3))))
+          (list :generation-budget (lambda ()
+                                     (cl-spec/src/function-spec:check-function
+                                      'argument-check-target :seed 1
+                                      :options '(:generation-budget "x"))))
+          (list :options (lambda ()
+                           (cl-spec/src/property-runner:run-properties
+                            '(argument-check-property) :options 42)))
+          (list :options (lambda ()
+                           (cl-spec/src/property-runner:replay-property
+                            'argument-check-property 1 :options 42)))
+          (list :property-designator (lambda () (funcall 'run-property 3 :seed 1)))
+          (list :property-designators (lambda ()
+                                        (cl-spec/src/property-runner:run-properties 42)))
+          (list :registry (lambda () (run-property 'argument-check-property :seed 1
+                                                   :registry 42)))
+          (list :registry (lambda () (cl-spec/src/validator:validp integer-spec 1
+                                                                   :registry 42)))
+          (list :registry (lambda () (cl-spec/src/generator:sample 'argument-check-spec :seed 1
+                                                                   :registry 42)))
+          (list :registry (lambda () (cl-spec/src/function-spec:check-call
+                                      'argument-check-target '(1) :registry 42)))
+          (list :result (lambda () (cl-spec/src/property-runner:result-data 3)))
+          (list :result (lambda () (cl-spec/src/evidence:evidence-summary 3)))
+          (list :result (lambda () (cl-spec/src/function-spec:call-check-data 3)))
+          (list :result (lambda () (cl-spec/src/counterexample:make-counterexample-artifact 3)))
+          (list :artifact (lambda ()
+                            (cl-spec/src/counterexample:serialize-counterexample-artifact 3)))
+          (list :artifact (lambda () (cl-spec/src/counterexample:recheck-counterexample 3)))
+          (list :entity-kind (lambda () (cl-spec/src/schema:definition-digest 'no-such-name)))
+          (list :options (lambda ()
+                           (cl-spec/src/instrument:instrument-function
+                            'argument-check-target :scope '(:input)))))))
+
+(deftest more-public-entry-points-check-their-arguments
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty argument-check-property ((value integer))
+            (integerp value)))
+    (eval '(cl-spec/src/dsl:defspec-function argument-check-target
+            (:args (value integer))
+            (:returns integer)))
+    (setf (symbol-function 'argument-check-target) #'identity)
+    (loop for (argument thunk) in (more-bad-argument-cases)
+          for condition = (refusal-of thunk)
+          do (testing (format nil "a bad ~S is refused as an INVALID-ARGUMENT" argument)
+               (ok (typep condition 'cl-spec-error))
+               (ok (eq argument (refused-argument condition))
+                   (format nil "~S refused ~S" (type-of condition) argument))))))
+
+(deftest recheck-refuses-its-own-bad-arguments-before-running
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defspec-function argument-check-target
+            (:args (value integer))
+            (:returns (range integer 1000 *))))
+    (setf (symbol-function 'argument-check-target) #'identity)
+    (let ((artifact (cl-spec/src/counterexample:make-counterexample-artifact
+                     (cl-spec/src/function-spec:check-function 'argument-check-target
+                                                               :seed 1 :trials 20))))
+      (testing "a non-registry is refused, not reported as a contract error"
+        (ok (eq :registry (refused-argument
+                           (refusal-of (lambda ()
+                                         (cl-spec/src/counterexample:recheck-counterexample
+                                          artifact :registry 42)))))))
+      (testing "an unknown state policy is refused"
+        (ok (eq :state-policy (refused-argument
+                               (refusal-of (lambda ()
+                                             (cl-spec/src/counterexample:recheck-counterexample
+                                              artifact :state-policy :bogus))))))))))
+
+(deftest a-result-replays-only-the-run-it-came-from
+  ;; Issue #84: a result handed to another property donated its seed, profile and
+  ;; options, and a failed run could then look fixed.
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty replay-source ((x (range integer 0 100))) (< x 50)))
+    (eval '(cl-spec/src/dsl:defproperty replay-other ((x (range integer 0 100))) t))
+    (eval '(cl-spec/src/dsl:defspec-function argument-check-target
+            (:args (value integer))
+            (:returns integer)))
+    (setf (symbol-function 'argument-check-target) #'identity)
+    (let ((source (run-property 'replay-source :seed 3 :profile :smoke))
+          (contract (cl-spec/src/function-spec:check-function 'argument-check-target
+                                                              :seed 1 :trials 5)))
+      (testing "the property that produced a result can still replay it"
+        (ok (eq :failed (cl-spec/src/property-runner:property-result-status
+                         (cl-spec/src/property-runner:replay-property 'replay-source source)))))
+      (testing "another property refuses it"
+        (ok (eq :seed (refused-argument
+                       (refusal-of (lambda ()
+                                     (cl-spec/src/property-runner:replay-property
+                                      'replay-other source)))))))
+      (testing "RUN-PROPERTY refuses a function check's result"
+        (ok (eq :seed (refused-argument
+                       (refusal-of (lambda () (run-property 'replay-other :seed contract)))))))
+      (testing "CHECK-FUNCTION refuses a property's result"
+        (ok (eq :seed (refused-argument
+                       (refusal-of (lambda ()
+                                     (cl-spec/src/function-spec:check-function
+                                      'argument-check-target :seed source)))))))
+      (testing "an integer seed still starts a new run of any property"
+        (ok (cl-spec/src/property-runner:property-result-status
+             (run-property 'replay-other
+                           :seed (cl-spec/src/property-runner:property-result-seed source))))))))
+
+(defun report-within-seconds (condition seconds)
+  "Return CONDITION's report printed with *PRINT-CIRCLE* NIL, or :TIMED-OUT."
+  #+sbcl
+  (handler-case (sb-ext:with-timeout seconds
+                  (let ((*print-circle* nil)) (princ-to-string condition)))
+    (sb-ext:timeout () :timed-out))
+  #-sbcl
+  (progn seconds (let ((*print-circle* nil)) (princ-to-string condition))))
+
+(defun circular-designator ()
+  "Return a circular list, a designator no registry can hold."
+  (let ((list (list 1 2 3)))
+    (setf (cdr (last list)) list)
+    list))
+
+(defun conditions-carrying (datum)
+  "Return a condition of every report-bearing class that prints DATUM."
+  (list (make-condition 'unknown-spec :name datum)
+        (make-condition 'unknown-property :name datum)
+        (make-condition 'unknown-function-spec :name datum)
+        (make-condition 'not-implemented :operator datum)
+        (make-condition 'invalid-generated-arguments
+                        :generator datum :value datum :reason "bad")
+        (make-condition 'generation-budget-exhausted
+                        :report (list :attempts 1 :budget 1 :rejections 0
+                                      :exhausted-at datum))))
+
+(deftest every-condition-report-is-bounded
+  (testing "a circular datum prints in finite time when *PRINT-CIRCLE* is NIL"
+    (dolist (condition (conditions-carrying (circular-designator)))
+      (ok (stringp (report-within-seconds condition 2))
+          (format nil "~S prints a circular datum" (type-of condition)))))
+  (testing "a very long datum prints a short report"
+    (dolist (condition (conditions-carrying (make-list 100000 :initial-element 7)))
+      (let ((report (report-within-seconds condition 2)))
+        (ok (and (stringp report) (< (length report) 2000))
+            (format nil "~S keeps a long datum short" (type-of condition)))))))
+
+(deftest an-invalid-argument-report-is-one-line
+  (let ((condition (refusal-of (lambda ()
+                                 (cl-spec/src/generator:sample
+                                  (cl-spec/src/normalize:normalize-spec-form 'integer)
+                                  :count -1)))))
+    (ok (typep condition 'invalid-argument))
+    (ok (not (find #\Newline (princ-to-string condition))))))
+
+(deftest budget-exhaustion-has-its-own-kind-and-names-the-argument
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty exhausting-property
+            ((items (list-of (and (range integer 0 1000000) (satisfies zerop))
+                             :min-length 1)))
+            t))
+    (let ((condition (property-result-condition
+                      (run-property 'exhausting-property
+                                    :seed 1 :options '(:generation-budget 20)))))
+      (ok (typep condition 'generation-budget-exhausted))
+      (ok (eq :budget-exhausted (generator-unavailable-kind condition)))
+      (ok (eq 'items (generator-unavailable-argument condition))))
+    (testing "SAMPLE names no argument"
+      (let ((condition (refusal-of
+                        (lambda ()
+                          (cl-spec/src/generator:sample
+                           (cl-spec/src/normalize:normalize-spec-form
+                            '(and (range integer 0 1000000) (satisfies zerop)))
+                           :count 1 :seed 1 :generation-budget 2)))))
+        (ok (eq :budget-exhausted (generator-unavailable-kind condition)))
+        (ok (null (generator-unavailable-argument condition)))))))
 
 (deftest not-implemented-reports-operator
   (testing "NOT-IMPLEMENTED carries and prints the stubbed operator"

@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
-  (:import-from #:cl-spec/src/registry #:registry-find-spec)
+  (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/main
                 #:compile-explainer
@@ -338,10 +338,13 @@ The check dispatches on OBJECT as the registry argument with NIL for the others,
 so it describes implementations that specialize only the registry, as the
 built-in HASH-TABLE-REGISTRY does.  It inspects method applicability only and
 calls none of the methods.  The core's unqualified :AROUND validation methods
-apply to every object and are not counted."
+apply to every object and are not counted, and neither are the core's methods
+on T, which only refuse a non-registry."
   (every (lambda (entry)
            (destructuring-bind (name arity) entry
-             (some (lambda (method) (null (method-qualifiers method)))
+             (some (lambda (method)
+                     (and (null (method-qualifiers method))
+                          (not (registry-refusal-method-p method))))
                    (compute-applicable-methods
                     (fdefinition name)
                     (cons object (make-list (1- arity) :initial-element nil))))))

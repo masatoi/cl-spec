@@ -56,6 +56,7 @@
                 #:invalid-argument
                 #:invalid-argument-operator
                 #:invalid-argument-argument
+                #:invalid-argument-reason
                 #:no-generator-backend
                 #:invalid-spec-form
                 #:invalid-spec-form-form
@@ -319,6 +320,7 @@
            #:invalid-argument
            #:invalid-argument-operator
            #:invalid-argument-argument
+           #:invalid-argument-reason
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form

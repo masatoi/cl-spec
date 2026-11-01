@@ -28,7 +28,9 @@
                 #:register-spec
                 #:find-property
                 #:properties-for
-                #:clear-registry))
+                #:clear-registry)
+  (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error #:invalid-spec-form))
 
 (in-package #:cl-spec/tests/registry-test)
 
@@ -178,9 +180,10 @@
 
 (deftest default-registry-front-end
   (testing "the front-end functions operate on *REGISTRY* and accept an override"
-    (let ((*registry* (make-hash-table-registry)))
-      (register-spec 'money :spec-object)
-      (ok (eq :spec-object (find-spec 'money)))
+    (let ((*registry* (make-hash-table-registry))
+          (money (normalize-spec-form '(range integer 0 *))))
+      (register-spec 'money money)
+      (ok (eq money (find-spec 'money)))
       (ok (equal '(money) (list-specs)))
       (registry-register-property *registry* 'invariant :property
                                   :targets '(transfer))
@@ -190,10 +193,59 @@
       (ok (null (list-specs)))))
   (testing "an explicit registry argument overrides *REGISTRY*"
     (let ((other (make-hash-table-registry))
-          (*registry* (make-hash-table-registry)))
-      (register-spec 'money :in-other other)
+          (*registry* (make-hash-table-registry))
+          (money (normalize-spec-form 'integer)))
+      (register-spec 'money money other)
       (ok (null (find-spec 'money)))
-      (ok (eq :in-other (find-spec 'money other))))))
+      (ok (eq money (find-spec 'money other))))))
+
+(defun refusal-of (thunk)
+  "Return the error THUNK signals, or NIL when it returns."
+  (handler-case (progn (funcall thunk) nil)
+    (error (condition) condition)))
+
+(deftest a-spec-is-registered-only-under-a-name-the-dsl-can-refer-to
+  ;; Issue #78: DEFSPEC refused these names, but the registry took them, and a
+  ;; spec registered as STRING then shadowed the type when looked up by name.
+  (let ((registry (make-hash-table-registry))
+        (spec (normalize-spec-form 'integer)))
+    (dolist (name '(nil :keyword string integer t))
+      (testing (format nil "~S is refused by REGISTER-SPEC and the protocol" name)
+        (ok (typep (refusal-of (lambda () (register-spec name spec registry)))
+                   'invalid-spec-form))
+        (ok (typep (refusal-of (lambda () (registry-register-spec registry name spec)))
+                   'invalid-spec-form))))
+    (testing "the registry is unchanged by the refusals"
+      (ok (null (registry-list-specs registry))))))
+
+(deftest register-spec-takes-only-a-spec
+  (let ((registry (make-hash-table-registry)))
+    (dolist (value (list 42 nil :spec-object '(range integer 0 10)))
+      (testing (format nil "~S is refused as a spec" value)
+        (ok (typep (refusal-of (lambda () (register-spec 'not-a-spec value registry)))
+                   'invalid-spec-form))))
+    (testing "the registry is unchanged by the refusals"
+      (ok (null (registry-list-specs registry))))))
+
+(deftest reading-a-stored-non-definition-is-a-cl-spec-error
+  ;; The protocol stores whatever it is given, so a reader must not fail with a
+  ;; raw NO-APPLICABLE-METHOD on a value some other writer put there.
+  (let ((registry (make-hash-table-registry)))
+    (registry-register-spec registry 'stored-junk 42)
+    (registry-register-function-spec registry 'stored-junk-contract 42)
+    (registry-register-property registry 'stored-junk-property 42)
+    (testing "a spec lookup"
+      (ok (typep (refusal-of (lambda () (cl-spec/src/validator:validp 'stored-junk 1
+                                                                      :registry registry)))
+                 'cl-spec-error)))
+    (testing "a function spec lookup"
+      (ok (typep (refusal-of (lambda () (cl-spec/src/function-spec:check-function
+                                         'stored-junk-contract :seed 1 :registry registry)))
+                 'cl-spec-error)))
+    (testing "a property lookup"
+      (ok (typep (refusal-of (lambda () (cl-spec/src/property-runner:run-property
+                                         'stored-junk-property :seed 1 :registry registry)))
+                 'cl-spec-error)))))
 
 (deftest default-registry-exists-at-load-time
   (testing "*REGISTRY* is bound to a usable registry without any setup"

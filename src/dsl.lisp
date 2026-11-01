@@ -25,9 +25,9 @@
                 #:validate-call-declarations #:call-declaration-variables
                 #:normalize-return-declaration)
   (:import-from #:cl-spec/src/normalize
-                #:normalize-spec-form #:cl-type-name-p)
+                #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
-                #:register-spec)
+                #:register-spec #:check-spec-name)
   (:import-from #:cl-spec/src/property
                 #:property
                 #:register-property
@@ -60,26 +60,6 @@ Deliberately short: §52 keeps the MVP spec syntax to a form and this one clause
 and a clause DEFSPEC does not know is refused rather than ignored -- a definition
 that named a generator and lost the clause would look like a spec drawing from
 that generator while the backend went on deriving values from the DSL.")
-
-(defun check-spec-name (name)
-  "Refuse NAME unless DEFSPEC can register it and the spec DSL can refer to it.
-
-The rule DEFPROPERTY, DEFSPEC-FUNCTION and DEFGENERATOR apply -- a symbol other
-than NIL or a keyword (specification §4.1) -- plus one more: a Common Lisp type
-name such as T or STRING is refused, because the DSL always reads that symbol as
-the type and never as a reference, so the registered spec could be reached only
-through a call that passes its name."
-  (unless (and name (symbolp name) (not (keywordp name)))
-    (error 'invalid-spec-form
-           :form name
-           :reason "a spec must be named by a symbol other than NIL or a keyword"))
-  (when (cl-type-name-p name)
-    (error 'invalid-spec-form
-           :form name
-           :reason (format nil "~S names a Common Lisp type, which the spec DSL always ~
-                                reads as that type rather than as a reference to a ~
-                                registered spec"
-                           name))))
 
 (defun spec-generator-option (options)
   "Return the custom generator named by the DEFSPEC OPTIONS, or NIL.

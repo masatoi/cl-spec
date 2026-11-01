@@ -123,6 +123,57 @@ than left to hang the suite."
           (ok (consp outcome))
           (ok (and (consp outcome) (null (getf (second outcome) :valid)))))))))
 
+(defun shared-dag (depth)
+  "Return a binary DAG DEPTH levels deep whose two children are the same object."
+  (let ((node 1))
+    (dotimes (index depth node)
+      (setf node (list node node)))))
+
+(deftest shared-objects-validate-in-linear-time
+  ;; Issue #85: memoized reference results were scanned linearly per value, so a
+  ;; value reached at N positions cost N^2.
+  (let ((registry (registry-with '(leaf (or string real null))
+                                 '(tree (or integer (tuple tree tree))))))
+    (testing "a list of one shared string under a named spec is checked within a second"
+      (ok (equal '(:returned t)
+                 (within-seconds (1)
+                   (and (validp (normalize-spec-form '(list-of leaf))
+                                (make-list 40000 :initial-element "x")
+                                :registry registry)
+                        t)))))
+    (testing "a shared binary DAG 16 levels deep is checked within a second"
+      (ok (equal '(:returned t)
+                 (within-seconds (1)
+                   (and (validp 'tree (shared-dag 16) :registry registry) t)))))
+    (testing "an invalid shared leaf is still found at every position"
+      (let ((dag (shared-dag 3)))
+        (setf (first (first (first dag))) "bad"
+              (second (first (first dag))) "bad")
+        (ok (not (validp 'tree dag :registry registry)))))))
+
+(defun self-containing-singleton ()
+  "Return the list (X) whose only element is the list itself."
+  (let ((value (list nil)))
+    (setf (car value) value)
+    value))
+
+(deftest negation-does-not-admit-a-cyclic-value
+  ;; Issue #87: the cut of a cycle landed at a different depth through an alias,
+  ;; and a NOT flipped the cut, so an alias disagreed with its own target.
+  (let ((registry (registry-with '(negated (not (list-of negated)))
+                                 '(negated-alias negated))))
+    (testing "the target and its alias agree, and neither admits the cyclic value"
+      (ok (equal '(:returned (nil nil nil))
+                 (within-seconds (2)
+                   (list (validp 'negated (self-containing-singleton) :registry registry)
+                         (validp 'negated-alias (self-containing-singleton)
+                                 :registry registry)
+                         (validp (normalize-spec-form '(and negated (list-of negated)))
+                                 (self-containing-singleton) :registry registry))))))
+    (testing "a finite value is still judged by the negation"
+      (ok (validp 'negated 5 :registry registry))
+      (ok (not (validp 'negated '() :registry registry))))))
+
 (defun circular-list (&rest items)
   "Return a fresh list of ITEMS whose last cons points back at the first."
   (let ((list (copy-list items)))

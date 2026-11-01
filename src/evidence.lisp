@@ -1,7 +1,7 @@
 ;;;; src/evidence.lisp
 (defpackage #:cl-spec/src/evidence
   (:use #:cl)
-  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error #:invalid-argument)
   (:import-from #:cl-spec/src/execution #:snapshot-value)
   (:export #:evidence-declared-cases #:evidence-facts #:evidence-summary #:assess-evidence
            #:invalid-evidence-policy #:invalid-evidence-policy-reason
@@ -175,8 +175,18 @@
                              :shrink-report (getf facts :shrink-report :not-collected)
                              :capabilities (getf facts :capabilities :not-collected)))))
 
+(defun evidence-result-p (object)
+  "Return true when EVIDENCE-FACTS has a method for OBJECT."
+  (and (compute-applicable-methods #'evidence-facts (list object)) t))
+
 (defun evidence-summary (result)
-  "Summarize saved evidence without re-execution or an implicit verification policy."
+  "Summarize saved evidence without re-execution or an implicit verification policy.
+RESULT is any result EVIDENCE-FACTS has a method for; anything else is refused
+with INVALID-ARGUMENT."
+  (unless (evidence-result-p result)
+    (error 'invalid-argument :datum result :expected-type '(satisfies evidence-result-p)
+                             :operator 'evidence-summary :argument :result
+                             :reason "no EVIDENCE-FACTS method applies to it"))
   (snapshot-value (summary-from-facts (evidence-facts result))))
 
 (defun assess-requirement (requirement dimensions)

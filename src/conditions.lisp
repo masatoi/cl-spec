@@ -28,6 +28,7 @@
            #:invalid-argument
            #:invalid-argument-operator
            #:invalid-argument-argument
+           #:invalid-argument-reason
            #:no-generator-backend
            #:invalid-spec-form
            #:invalid-spec-form-form
@@ -108,8 +109,9 @@
              :reader not-implemented-operator
              :documentation "Symbol naming the operator that is still a stub."))
   (:report (lambda (condition stream)
-             (format stream "~S is not implemented yet."
-                     (not-implemented-operator condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "~S is not implemented yet."
+                       (not-implemented-operator condition)))))
   (:documentation
    "Signalled by skeleton stubs that carry a settled signature but no body."))
 
@@ -129,7 +131,7 @@
            :reader spec-violation-errors
            :documentation "Structured error list as produced by EXPLAIN-DATA."))
   (:report (lambda (condition stream)
-             (with-bounded-printing ()
+             (with-bounded-printing (:one-line t)
                (format stream "~S does not satisfy ~S~@[ at path ~S~]."
                        (spec-violation-value condition)
                        (spec-violation-spec condition)
@@ -141,16 +143,17 @@
          :reader unknown-spec-name
          :documentation "Symbol that is not registered as a spec."))
   (:report (lambda (condition stream)
-             (let ((name (unknown-spec-name condition)))
-               (format stream "No spec named ~S is registered." name)
-               ;; Only COMMON-LISP type names are types when written bare, so a
-               ;; user's condition, structure or class name lands here.
-               (when (and (symbolp name)
-                          (not (eq (symbol-package name) (find-package '#:common-lisp)))
-                          (find-class name nil))
-                 (format stream "  ~S names a class; to use it as a type in a spec form, ~
-                                 write (~S ~S)."
-                         name 'type name)))))
+             (with-bounded-printing (:one-line t)
+               (let ((name (unknown-spec-name condition)))
+                 (format stream "No spec named ~S is registered." name)
+                 ;; Only COMMON-LISP type names are types when written bare, so a
+                 ;; user's condition, structure or class name lands here.
+                 (when (and (symbolp name)
+                            (not (eq (symbol-package name) (find-package '#:common-lisp)))
+                            (find-class name nil))
+                   (format stream "  ~S names a class; to use it as a type in a spec form, ~
+                                   write (~S ~S)."
+                           name 'type name))))))
   (:documentation "Signalled when a spec designator resolves to nothing.
 When the name is a class outside COMMON-LISP, the report suggests the (TYPE NAME)
 form.  A DEFTYPE name that is not a class gets no suggestion."))
@@ -160,8 +163,9 @@ form.  A DEFTYPE name that is not a class gets no suggestion."))
          :reader unknown-property-name
          :documentation "Symbol that is not registered as a property."))
   (:report (lambda (condition stream)
-             (format stream "No property named ~S is registered."
-                     (unknown-property-name condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "No property named ~S is registered."
+                       (unknown-property-name condition)))))
   (:documentation "Signalled when a property designator resolves to nothing."))
 
 (define-condition unknown-function-spec (cl-spec-error)
@@ -169,8 +173,9 @@ form.  A DEFTYPE name that is not a class gets no suggestion."))
          :reader unknown-function-spec-name
          :documentation "Symbol that has no registered function spec."))
   (:report (lambda (condition stream)
-             (format stream "No function spec is registered for ~S."
-                     (unknown-function-spec-name condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "No function spec is registered for ~S."
+                       (unknown-function-spec-name condition)))))
   (:documentation "Signalled when CHECK-FUNCTION is given a name with no contract.
 
 Distinct from a contract that holds: an agent that reads \"nothing is
@@ -196,14 +201,22 @@ standard handler keeps it."))
    (argument :initarg :argument
              :initform nil
              :reader invalid-argument-argument
-             :documentation "Keyword or symbol naming the refused parameter."))
+             :documentation "Keyword or symbol naming the refused parameter.")
+   (reason :initarg :reason
+           :initform nil
+           :reader invalid-argument-reason
+           :documentation "Why the value was refused when its type alone does not say,
+or NIL."))
   (:report (lambda (condition stream)
-             (with-bounded-printing ()
-               (format stream "~S was given ~S as ~S, which is not of type ~S."
+             ;; A compound expected type would otherwise be pretty-printed across
+             ;; lines at the column the message has reached.
+             (with-bounded-printing (:one-line t)
+               (format stream "~S was given ~S as ~S, which is not of type ~S~@[: ~A~]."
                        (invalid-argument-operator condition)
                        (type-error-datum condition)
                        (invalid-argument-argument condition)
-                       (type-error-expected-type condition)))))
+                       (type-error-expected-type condition)
+                       (invalid-argument-reason condition)))))
   (:documentation "Signalled when a public operator is called with an argument of the wrong type.
 
 Inherits from both roots, as UNBOUND-TARGET does: a caller trapping the framework
@@ -222,7 +235,7 @@ OPERATOR and ARGUMENT say which call and which parameter were refused."))
 
 (defun report-invalid-form (stream form description reason)
   "Print a malformed declaration without recursively expanding circular list structure."
-  (with-bounded-printing ()
+  (with-bounded-printing (:one-line t)
     (format stream "~S is not a valid ~A~@[: ~A~]." form description reason)))
 
 (define-condition invalid-spec-form (cl-spec-error)
@@ -311,9 +324,10 @@ produce values from a body called without the bindings its author wrote."))
    (reason :initarg :reason :reader invalid-generated-arguments-reason
            :documentation "Why the generated value cannot be used as arguments."))
   (:report (lambda (condition stream)
-             (format stream "Argument generator ~S produced invalid arguments: ~A."
-                     (invalid-generated-arguments-generator condition)
-                     (invalid-generated-arguments-reason condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "Argument generator ~S produced invalid arguments: ~A."
+                       (invalid-generated-arguments-generator condition)
+                       (invalid-generated-arguments-reason condition)))))
   (:documentation "Signalled before invoking a target when an argument-set draw is invalid."))
 
 (define-condition invalid-call-arguments (cl-spec-error)
@@ -332,7 +346,7 @@ produce values from a body called without the bindings its author wrote."))
            :reader invalid-call-arguments-errors
            :documentation "Structured EXPLAIN-DATA errors for the refused argument list."))
   (:report (lambda (condition stream)
-             (with-bounded-printing ()
+             (with-bounded-printing (:one-line t)
                (format stream "~S is not a valid call of ~S~@[: ~S~]."
                        (invalid-call-arguments-arguments condition)
                        (invalid-call-arguments-function condition)
@@ -365,15 +379,16 @@ generator for this Common Lisp type), :EMPTY-DOMAIN (the spec admits too few
 values to draw what is asked), :UNREGISTERED-GENERATOR (a named custom generator
 is not registered), :RECURSIVE-SPEC, :RANGE-TOO-WIDE, :UNIQUE-DOMAIN (UNIQUE
 cannot enumerate the element domain), :AMBIGUOUS-GENERATOR (several AND
-conjuncts name a custom generator) or :REJECTED-DRAWS (generated values kept
-failing the declared constraints).")
+conjuncts name a custom generator), :REJECTED-DRAWS (generated values kept
+failing the declared constraints) or :BUDGET-EXHAUSTED (a request-owned candidate
+budget ran out; always the kind of GENERATION-BUDGET-EXHAUSTED).")
    (argument :initarg :argument
              :initform nil
              :reader generator-unavailable-argument
              :documentation "Name of the property or function argument whose spec could
 not be generated, or NIL when the request was not for an argument (SAMPLE)."))
   (:report (lambda (condition stream)
-             (with-bounded-printing ()
+             (with-bounded-printing (:one-line t)
                (format stream "No generator can be derived from ~S~
                                ~@[ for the argument ~S~]~@[: ~A~] (~S).  ~
                                Define one with DEFGENERATOR and name it with ~
@@ -400,15 +415,17 @@ at the moment the budget was exhausted.")
 Compared by the runner against the request it owns, so an inner public request's
 or a target's condition of the same class is not misread as this request's own
 depletion.  The live object is internal state, never wire metadata."))
+  (:default-initargs :kind :budget-exhausted)
   (:report (lambda (condition stream)
-             (format stream "The selected generation strategy exhausted its ~
-                             candidate budget (~D of ~D attempts, ~D rejected)~
-                             ~@[ at ~S~].  No claim is made that the ~
-                             specification is unsatisfiable."
-                     (generation-budget-exhausted-attempts condition)
-                     (generation-budget-exhausted-budget condition)
-                     (generation-budget-exhausted-rejections condition)
-                     (generation-budget-exhausted-path condition))))
+             (with-bounded-printing (:one-line t)
+               (format stream "The selected generation strategy exhausted its ~
+                               candidate budget (~D of ~D attempts, ~D rejected)~
+                               ~@[ at ~S~].  No claim is made that the ~
+                               specification is unsatisfiable."
+                       (generation-budget-exhausted-attempts condition)
+                       (generation-budget-exhausted-budget condition)
+                       (generation-budget-exhausted-rejections condition)
+                       (generation-budget-exhausted-path condition)))))
   (:documentation "Signalled when a request-owned candidate budget is exhausted.
 
 A subclass of GENERATOR-UNAVAILABLE, so a caller that already treats \"this

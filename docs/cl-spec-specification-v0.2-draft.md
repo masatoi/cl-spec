@@ -598,6 +598,20 @@ registryを単一のglobal hash-tableとして固定しない。
 (properties-for 'transfer)
 ```
 
+registry protocolは渡された値をそのまま保存し、値の種類を検査しない。名前の規則は
+protocolが課す。`registry-register-spec`は、NIL・keyword・Common Lispの型名を
+`invalid-spec-form`で拒否する（DSLはその記号を常に型として読むため、登録しても名前で
+参照できず、名前で引くと型を隠してしまう）。値の検査は公開の入口と読み出し側が行う。
+
+- `register-spec`はspec objectだけを受け付け、DSL formやその他の値を`invalid-spec-form`で拒否する。
+- 名前で解決する側（`validp`、`run-property`、`check-function`、custom generatorの参照など）は、
+  登録された値が期待する種類でなければ、それぞれ`invalid-spec-form`・`invalid-property-form`・
+  `invalid-function-spec-form`・`generator-unavailable`（`:unregistered-generator`）とする。
+  未登録（`unknown-*`）とは区別する。
+- 各`registry-*`総称関数にはTに対するmethodがあり、registryでない値には
+  `invalid-argument`（argument `:registry`）を通知する。protocolを実装したかを調べる側は
+  `registry-refusal-method-p`でこれらのmethodを除く。
+
 初期backend候補：
 
 ```text
@@ -711,7 +725,9 @@ keyword引数として受け取る。`:max-length`は`*`で無制限を表し、
 `:duplicate-element`として説明し、`:too-short`/`:too-long`は`:minimum-length`または
 `:maximum-length`と`:actual-length`を、重複は2個目の要素の`:path`と最初の出現位置
 `:first-index`を持つ。制約は生成にも反映し、長さは宣言範囲から抽選し、縮小は
-`:min-length`を下回らない。`:unique`の生成は有限な要素domainから重複なしで抽選する。
+`:min-length`を下回らない。長さは`:min-length`から最大で`check-it:*list-size*`だけ上の範囲で
+抽選する（`:min-length`が`*list-size*`以上でも最小長に固定しない）。map のエントリ数も同じ規則で
+`:min-count`から抽選する。`:unique`の生成は有限な要素domainから重複なしで抽選する。
 有限な整数`range`は列挙せず直接samplingするため幅の上限はない。この場合も生成される
 コレクション長は要素rangeの幅ではなく通常のsizeから抽選し、幅を長さへ流用しない。
 「通常のsize」は無制約の`list-of`が長さを引く`check-it:*list-size*`であり、
@@ -1162,7 +1178,8 @@ simple structures
 double-floatで生成し、double-floatの範囲を超える端点や幅は`:range-too-wide`の
 `generator-unavailable`とする。`check-it:*size*`を引き上げるのは、両端が有限な
 整数の区間だけである。片側が無制限の区間と実数の区間は引き上げないので、同じ実行の
-他の引数が引く値の大きさを変えない。
+他の引数が引く値の大きさを変えない。浮動小数点の無限大の端点は、無制限の端点`*`と
+同じに扱う（その側の有限の数をすべて受け付けるため）。
 
 ## ANDの生成元選択
 
@@ -1455,8 +1472,10 @@ API：
 LLMが失敗を再現可能であることを必須条件とする。ただしseedだけで任意の環境・状態を再現する
 とは保証しない。現在の整数seed対応はSBCLに限定され、未対応実装では`unsupported-seed`となる。
 
-現在の`replay-property`は生成から再実行するAPIである。resultを渡すとseedとprofileを再利用し、
-明示したprofileがあればそちらを優先する。optionsは自動保存されないため呼び出し側が再指定する。
+現在の`replay-property`は生成から再実行するAPIである。resultを渡すとseed・profile・optionsを
+再利用し、明示したprofileやoptionsがあればそちらを優先する。resultはその実行全体を表すため、
+別のproperty・contractのresultは`invalid-argument`（argument `:seed`、`invalid-argument-reason`に
+どの定義のresultか）で拒否する。乱数列を意図して借りる場合は整数seedを渡す。
 同じコード、Spec/Property、generator、profile定義、backend、Lisp実装、初期状態を前提とする。
 
 保存した反例を修正後の実装へ直接入力する「反例の再検査」は、生成列のreplayとは別の操作である。
@@ -2500,6 +2519,23 @@ cl-specが定義するerror conditionは、すべて`cl-spec-error`を継承す�
 - `unbound-target`は`undefined-function`も継承する。
 - 公開関数への型の合わない引数は`invalid-argument`で、`type-error`も継承する。
   `invalid-argument-operator`と`invalid-argument-argument`で、どの呼び出しのどの引数かを返す。
+  型だけでは理由が分からない拒否（別の定義のresultを`:seed`に渡した場合など）は
+  `invalid-argument-reason`に文で理由を持つ。
+
+公開の入口は次の引数を実行前に検査し、`invalid-argument`とする。
+
+- `:registry`：registry protocolを実装しない値（NILは既定のregistryとして扱う）。
+- runnerの`:options`（`run-property`、`run-properties`、`replay-property`、`check-function`）：
+  keywordをキーとする有限のplistで、runnerが自ら設定する`:trials`と`:registry`を含まないこと。
+  `:generation-budget`は非負整数、`:shrink-budget`は0〜100000の整数で、それぞれの名前で拒否する。
+  backend固有のキーは受け付け、resultに記録する。
+- designatorとresult：`run-property`のdesignator、`run-properties`のlist、`result-data`・
+  `evidence-summary`・`call-check-data`・`make-counterexample-artifact`のresult、
+  `serialize-counterexample-artifact`・`recheck-counterexample`のartifact、
+  `recheck-counterexample`の`:state-policy`（`:unconfirmed`・`:stateless`・`:fixture`）、
+  名前で引く`definition-digest`の`:entity-kind`、`instrument-function`のoptions
+  （`:registry`と`:scopes`だけ）。`recheck-counterexample`はこれらを`:contract-error`として
+  記録しない。
 
 `generator-unavailable`は、拒否した最も内側のspecを`generator-unavailable-spec`に持つ。
 加えて次の2つを持つ。
@@ -2507,14 +2543,19 @@ cl-specが定義するerror conditionは、すべて`cl-spec-error`を継承す�
 - `generator-unavailable-kind`：理由のキーワード。
   `:no-strategy`、`:unsupported-type`、`:empty-domain`、`:unregistered-generator`、
   `:recursive-spec`、`:range-too-wide`、`:unique-domain`、`:ambiguous-generator`、
-  `:rejected-draws`のいずれか。
+  `:rejected-draws`、`:budget-exhausted`のいずれか。`generation-budget-exhausted`の
+  kindは常に`:budget-exhausted`である。
 - `generator-unavailable-argument`：property／function実行で、生成できなかった引数の名前。
+  `generation-budget-exhausted`では、`:exhausted-at`のパスが`(:args NAME ...)`で始まるとき
+  そのNAMEを持つ。
 
 specはregistered nameかDSL formで表示する。
 
 条件のreportは`*print-circle*`をTにし、呼び出し側が上限を設けていなければ
 `*print-length*`と`*print-level*`を有限にして値を表示する。`explain`も同様である。
-循環値や非常に深い値でも、表示は有限時間で終わる。
+循環値や非常に深い値でも、表示は有限時間で終わる。値を文の途中に表示するreportは
+`*print-pretty*`をNILにして1行で表示する（`unknown-spec`・`unknown-property`・
+`unknown-function-spec`の名前、`invalid-argument`の期待する型を含む）。
 
 ---
 

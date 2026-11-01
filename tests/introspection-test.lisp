@@ -13,7 +13,6 @@
                 #:registry-register-spec
                 #:registry-register-function-spec
                 #:registry-register-property
-                #:register-spec
                 #:properties-for)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
@@ -217,7 +216,8 @@ signals, or NIL if it signals no such condition."
 
 (deftest semantic-data-does-not-mistake-a-registered-nil-value-for-absent
   (let ((registry (make-hash-table-registry)))
-    (register-spec 'nil-spec nil registry)
+    ;; REGISTER-SPEC takes only a spec object (#78); the protocol stores NIL.
+    (registry-register-spec registry 'nil-spec nil)
     (registry-register-function-spec registry 'nil-function-spec nil)
     (registry-register-property registry 'nil-property nil)
     (testing "a NIL spec value still reads as registered, via found-p"

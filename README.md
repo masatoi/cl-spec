@@ -592,7 +592,10 @@ explains as `:duplicate-element` at the later element's `:path`, with
 `:first-index` naming the earlier occurrence.
 
 The constraints reach generation and shrinking: lengths are drawn inside the
-declared range, and a shrink never removes past `:min-length`. `:unique`
+declared range, at most `check-it:*list-size*` (20 by default) above
+`:min-length`, so `(list-of integer :max-length 100)` draws up to 20 elements and
+`(list-of integer :min-length 50)` from 50 to 70; a shrink never removes past
+`:min-length`. `:unique`
 generation draws distinct elements from a finite element domain. A finite
 integer `range` is sampled directly, so any width works and does not widen the
 generated collection length; fractional endpoints admit the integers between
@@ -1019,6 +1022,15 @@ rove cl-spec.asd
 `cl-spec/check-it` cannot generate values for every spec it can validate and
 explain:
 
+- Only six Common Lisp type names generate on their own: `integer`, `real`,
+  `character`, `string`, `null` and `boolean`. Every other type name — `keyword`,
+  `symbol`, `float`, `fixnum`, `rational`, `number`, `list`, `cons`, `vector`, `t`,
+  `hash-table` — and every compound `(type ...)` such as `(type (integer 0 10))`
+  signals `generator-unavailable` with kind `:unsupported-type`. Write a
+  generatable spec instead (`(range integer 0 10)`, `(member :a :b)`,
+  `(list-of integer)`), constrain a generatable base (`(and real (satisfies
+  floatp))`), or attach a custom generator with `defgenerator` and
+  `(:generator NAME)`.
 - `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
   refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
   have no generator; `sample`/`generator-for` signal `generator-unavailable`.
@@ -1026,7 +1038,8 @@ explain:
   reaches itself again on the same value without descending into it (two aliases
   naming each other, or `(and integer self)`) signals `invalid-spec-form` when
   checked. A value that contains itself is not admitted by a recursive spec; it is
-  reported as a `:cyclic-value` error instead of being followed.
+  reported as a `:cyclic-value` error instead of being followed, and a `not`
+  does not turn that refusal into an admission, so an alias and its target agree.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as
   `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
   `generator-unavailable` with kind `:range-too-wide`.

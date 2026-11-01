@@ -31,8 +31,10 @@
                 #:+trial-profiles+)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-backend-result
+                #:invalid-argument
                 #:unsupported-stateful-operation)
-  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument #:check-run-options)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
                 #:trial-observation-status #:trial-observation-case
@@ -40,7 +42,7 @@
                 #:trial-observation-reason #:trial-observation-signature
                 #:trial-observation-explanation #:trial-observation-state)
   (:import-from #:cl-spec/src/registry
-                #:*registry*)
+                #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve
                 #:resolve-property)
   (:import-from #:cl-spec/src/generator
@@ -55,6 +57,7 @@
            #:property-result-schema-metadata #:property-result-budget
            #:property-result-generation-report #:property-result-failure-phase
            #:property-result-entity-kind
+           #:check-replayed-result
            #:property-result-case-report
            #:property-result-failure-evidence #:property-result-shrunk-evidence
            #:property-result-shrunk-outcome #:property-result-rejected
@@ -190,7 +193,9 @@ and the shrunk counterexample are what make a failure actionable."))
                (not (minusp (property-result-trials result))))
     (error 'invalid-backend-result :reason "result :trials must be a nonnegative integer")))
 
-(declaim (ftype (function ((or symbol property)
+;; The designator is declared T and checked in the body, so a bad one is refused
+;; as an INVALID-ARGUMENT rather than by the compiler's own type check (#79).
+(declaim (ftype (function (t
                            &key (:profile t) (:seed t) (:options t) (:registry t))
                           (values property-result &optional))
                 run-property))
@@ -311,8 +316,10 @@ reader never has to classify application data by its shape."
 
 (defun result-data (result)
   "Return a versioned result record using metadata captured before execution.
+RESULT must be a PROPERTY-RESULT, or INVALID-ARGUMENT is signalled.
 Never resolve the current registry to describe an old result. Manually constructed
 results without captured metadata have an explicitly incomplete digest."
+  (check-argument result 'property-result 'result-data :result)
   (let ((metadata
           (copy-list
            (or (property-result-schema-metadata result)
@@ -368,6 +375,25 @@ table leaves this profile out, never that the profile was misspelled."
 (defun check-profile (profile operator)
   "Return PROFILE when it is NIL or a §33 profile, else signal INVALID-ARGUMENT for OPERATOR."
   (check-argument profile `(or null (member ,@+trial-profiles+)) operator :profile))
+
+(defun check-replayed-result (seed-result entity-kind name operator)
+  "Refuse SEED-RESULT unless it is a result of the ENTITY-KIND definition NAME.
+
+A result handed as a seed stands in for its whole run -- seed, profile and
+options -- so one from another property or contract would replay a run that
+never happened, and a failure could look fixed (issue #84).  An integer seed
+stays the way to borrow a random stream on purpose.  NIL is accepted."
+  (when (and seed-result
+             (not (and (eq entity-kind (property-result-entity-kind seed-result))
+                       (eq name (property-result-property seed-result)))))
+    (error 'invalid-argument
+           :datum seed-result :expected-type 'property-result
+           :operator operator :argument :seed
+           :reason (format nil "the result belongs to the ~(~A~) ~S, not to the ~(~A~) ~S; ~
+                                pass its integer seed to start a new run instead"
+                           (property-result-entity-kind seed-result)
+                           (property-result-property seed-result)
+                           entity-kind name))))
 
 (defun name-arguments (property values)
   "Project raw counterexamples through the property's binding protocol."
@@ -476,8 +502,12 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
   ;; unusable seed with a condition naming an internal symbol.  A result stands
   ;; in for its seed, as REPLAY-PROPERTY and CHECK-FUNCTION both allow.
+  (check-argument property-designator '(or symbol property) 'run-property
+                  :property-designator)
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
   (check-profile profile 'run-property)
+  (check-run-options options 'run-property)
+  (check-registry registry 'run-property)
   (let* ((result-constructor
            (when (and *pending-result-constructor*
                       (eq property-designator (car *pending-result-constructor*)))
@@ -504,6 +534,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                      ;; Refuse a state-observing property before metadata
                      ;; probing, generation, capture or the target run.
                      (refuse-stateful-replay resolved seed-result)
+                     ;; A run made through CHECK-FUNCTION checks its own result.
+                     (unless result-constructor
+                       (check-replayed-result seed-result :property
+                                              (property-name resolved) 'run-property))
                       (when (and seed-result (definition-fixture-metadata resolved))
                         (validate-fixture-replay resolved seed-result options registry))
                      resolved))
@@ -613,7 +647,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
 Each run draws its own seed, so one failure can be replayed without re-running
 the others.  PROFILE must be NIL or one of +TRIAL-PROFILES+; any other value
 signals INVALID-ARGUMENT before the first property runs."
+  (check-argument property-designators '(satisfies finite-list-p) 'run-properties
+                  :property-designators)
   (check-profile profile 'run-properties)
+  (check-run-options options 'run-properties)
   (mapcar (lambda (designator)
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
@@ -645,6 +682,7 @@ extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed."
   (check-argument seed '(or property-result (integer 0 *)) 'replay-property :seed)
   (check-profile profile 'replay-property)
+  (check-run-options options 'replay-property)
   ;; Preserve the result through RUN-PROPERTY so fixture identity and run
   ;; parameters are validated before any hooks execute.
   (refuse-stateful-replay (resolve-property property-designator registry)
