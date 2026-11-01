@@ -1022,7 +1022,13 @@ explain:
 - `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
   refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
   have no generator; `sample`/`generator-for` signal `generator-unavailable`.
-  Validation and `explain` still work on these.
+  Validation and `explain` still work on these, with two limits. A spec that
+  reaches itself again on the same value without descending into it (two aliases
+  naming each other, or `(and integer self)`) signals `invalid-spec-form` when
+  checked. A value that contains itself is not admitted by a recursive spec; it is
+  reported as a `:cyclic-value` error instead of being followed.
+- A `(range real ...)` whose width overflows a float, such as
+  `(range real -1d308 1d308)`, signals `generator-unavailable`.
 - `(and ...)` generates from one source chosen by a fixed policy: the AND's own
   `(:generator NAME)`, else a unique conjunct carrying a custom generator, else
   the folded `(type ...)`/`(range ...)` base, else the first conjunct whose

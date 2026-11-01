@@ -69,6 +69,7 @@
   (:import-from #:cl-spec/tests/map-spec-test)
   (:import-from #:cl-spec/tests/validator-test)
   (:import-from #:cl-spec/tests/explain-test)
+  (:import-from #:cl-spec/tests/recursive-validation-test)
   (:import-from #:cl-spec/tests/generator-test)
   (:import-from #:cl-spec/tests/property-test)
   (:import-from #:cl-spec/tests/property-runner-test)

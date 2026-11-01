@@ -11,7 +11,8 @@
                 #:explain-data
                 #:explain)
   (:import-from #:cl-spec/src/conditions
-                #:unknown-spec)
+                #:unknown-spec
+                #:invalid-spec-form)
   (:import-from #:cl-spec/src/registry
                 #:make-hash-table-registry
                 #:registry-register-spec))
@@ -69,6 +70,32 @@
     (ok (eq :maximum (getf (first (errors-for '(range 1 100) 101)) :violated-bound))))
   (testing "RANGE rejects a value of the wrong type before comparing"
     (ok (eq :type-failed (getf (first (errors-for '(range 1 100) "x")) :kind)))))
+
+(defun quiet-nan ()
+  "Return a double-float quiet NaN without letting the compiler fold it away."
+  #+sbcl
+  (sb-int:with-float-traps-masked (:invalid)
+    (let ((infinity (symbol-value 'sb-ext:double-float-positive-infinity)))
+      (- infinity infinity)))
+  #-sbcl nil)
+
+#+sbcl
+(deftest range-refuses-not-a-number
+  ;; Issue #61: both comparisons are false for NaN, so NaN used to pass with
+  ;; float traps masked and signal FLOATING-POINT-INVALID-OPERATION without.
+  (let ((nan (quiet-nan)))
+    (testing "with the default traps NaN is refused and nothing escapes"
+      (let ((datum (first (errors-for '(range real 0 10) nan))))
+        (ok (eq :out-of-range (getf datum :kind)))
+        (ok (eq :not-a-number (getf datum :violated-bound)))))
+    (testing "with :invalid masked NaN is still refused"
+      (ok (sb-int:with-float-traps-masked (:invalid)
+            (errors-for '(range real 0 10) nan))))
+    (testing "a one-sided range refuses NaN too"
+      (ok (errors-for '(range real 0 *) nan))
+      (ok (errors-for '(range real * 0) nan)))
+    (testing "a NaN endpoint is refused when the range is normalized"
+      (ok (signals (normalize-spec-form (list 'range 'real 0 nan)) 'invalid-spec-form)))))
 
 (deftest instance-of-failures
   (testing "an unrelated value is not an instance"
