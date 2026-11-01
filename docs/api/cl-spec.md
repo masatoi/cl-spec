@@ -418,7 +418,9 @@ Compile SPEC into a function of (VALUE PATH) returning structured errors.
 ```text
 CONTEXT is a plist; :REGISTRY names the registry references resolve against.
 The returned function returns an empty list exactly when VALUE satisfies SPEC,
-which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing.
+which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing.  Each call
+is one check: the reference bookkeeping of a check never leaks into another, not
+even into a nested check a predicate starts.
 ```
 
 <a name="compile-validator"></a>
