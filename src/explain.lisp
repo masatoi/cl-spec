@@ -8,7 +8,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
-  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
+  (:import-from #:cl-spec/src/utils/printing
+                #:with-bounded-printing #:condition-report-text)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
@@ -221,7 +222,7 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
           (list (error-datum :predicate-errored path value
                              :predicate predicate :expected expected
                              :condition-type (type-of condition)
-                             :condition-report (princ-to-string condition))))))))
+                             :condition-report (condition-report-text condition))))))))
 
 (defmethod compile-node ((spec member-spec) context)
   (declare (ignore context))
@@ -765,7 +766,7 @@ reader rather than a bad value and propagate to the author."
                                            :expected
                                            (expected-descriptor (field-value-spec field))
                                            :condition-type (type-of condition)
-                                           :condition-report (princ-to-string condition)))
+                                           :condition-report (condition-report-text condition)))
                         key))
                       ((field-required-p field)
                        (field-path-errors
@@ -814,7 +815,7 @@ branch."
         (if (not ok)
             (list (error-datum :reader-errored path value :expected expected
                                :condition-type (type-of condition)
-                               :condition-report (princ-to-string condition)))
+                               :condition-report (condition-report-text condition)))
             (let ((index (position tag tags :test #'eql)))
               (if index
                   (branch-errors (funcall (nth index compiled) value path) (nth index tags))

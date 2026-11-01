@@ -1027,8 +1027,9 @@ explain:
   naming each other, or `(and integer self)`) signals `invalid-spec-form` when
   checked. A value that contains itself is not admitted by a recursive spec; it is
   reported as a `:cyclic-value` error instead of being followed.
-- A `(range real ...)` whose width overflows a float, such as
-  `(range real -1d308 1d308)`, signals `generator-unavailable`.
+- A `(range real ...)` whose width or bound is beyond double-float range, such as
+  `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
+  `generator-unavailable` with kind `:range-too-wide`.
 - `(and ...)` generates from one source chosen by a fixed policy: the AND's own
   `(:generator NAME)`, else a unique conjunct carrying a custom generator, else
   the folded `(type ...)`/`(range ...)` base, else the first conjunct whose

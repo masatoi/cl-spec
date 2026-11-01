@@ -251,6 +251,59 @@ and KEYS retains their input order. Callers can reuse the checked index."
              (push key keys))
     (values nil nil index (nreverse keys))))
 
+(defun compared-components (object test)
+  "Return the components the key test TEST compares OBJECT by, as a list.
+
+EQUAL descends only into conses; EQUALP also descends into the elements of a
+general array, the keys and values of a hash table and, on SBCL, the slots of a
+structure instance.  A string or a specialized array holds no object that could
+lead back to OBJECT, so it has no components here."
+  (cond
+    ((consp object) (list (car object) (cdr object)))
+    ((not (eq test :equalp)) nil)
+    ((and (arrayp object) (eq t (array-element-type object)))
+     (loop for index from 0 below (array-total-size object)
+           collect (row-major-aref object index)))
+    ((hash-table-p object)
+     (let ((items '()))
+       (maphash (lambda (key value) (push key items) (push value items)) object)
+       items))
+    #+sbcl
+    ((typep object 'structure-object)
+     (loop for slot in (sb-mop:class-slots (class-of object))
+           collect (slot-value object (sb-mop:slot-definition-name slot))))
+    (t nil)))
+
+(defun key-contains-cycle-p (key test)
+  "Return true when KEY reaches itself through the components TEST compares.
+
+Two such keys would make EQUAL or EQUALP compare them for ever, so a key with a
+cycle is reported instead of compared (issue #75).  EQ and EQL never descend, so
+under them no key is cyclic.  The walk is iterative and visits each component
+once, so it is linear in the key's size and safe on a deep key; a component
+shared by two branches is not a cycle."
+  (when (member test '(:equal :equalp))
+    (let ((on-path (make-hash-table :test #'eq))
+          (finished (make-hash-table :test #'eq))
+          (stack (list (cons :enter key))))
+      (loop while stack
+            do (destructuring-bind (action . object) (pop stack)
+                 (cond
+                   ((eq action :leave)
+                    (remhash object on-path)
+                    (setf (gethash object finished) t))
+                   ((gethash object on-path)
+                    (return-from key-contains-cycle-p t))
+                   ((gethash object finished))
+                   (t
+                    (let ((components (compared-components object test)))
+                      (when components
+                        (setf (gethash object on-path) t)
+                        (push (cons :leave object) stack)
+                        (dolist (component components)
+                          (push (cons :enter component) stack))))))))
+      nil)))
+
 (defun alist-structure-error (value key-test)
   "Return (values KIND KEY) after checking that VALUE is a well-formed alist.
 
@@ -258,14 +311,19 @@ KIND and KEY describe malformed structure and are NIL on success.  An entry is a
 cons whose CAR is the key and whose CDR is the value, so the value of (:id . NIL)
 is present but NIL, exactly as ASSOC reads it.  Keys are unique under KEY-TEST.
 Every accepted test is also a hash-table test, so the duplicate check is one
-pass over a table rather than a pairwise MEMBER walk."
+pass over a table rather than a pairwise MEMBER walk.  Under EQUAL or EQUALP a
+key that reaches itself is reported as :CYCLIC-VALUE before it is compared,
+because comparing two such keys would not terminate."
   (unless (finite-list-p value)
     (return-from alist-structure-error (values :not-an-alist nil)))
-  (let ((seen (make-hash-table :test (key-test-name (key-test-designator key-test)))))
+  (let* ((test (key-test-designator key-test))
+         (seen (make-hash-table :test (key-test-name test))))
     (dolist (entry value)
       (unless (consp entry)
         (return-from alist-structure-error (values :bad-association entry)))
       (let ((key (car entry)))
+        (when (key-contains-cycle-p key test)
+          (return-from alist-structure-error (values :cyclic-value key)))
         (when (nth-value 1 (gethash key seen))
           (return-from alist-structure-error (values :duplicate-key key)))
         (setf (gethash key seen) t)))
