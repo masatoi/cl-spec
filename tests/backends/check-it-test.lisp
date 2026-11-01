@@ -135,6 +135,28 @@
   (testing "every draw from (range real 5 5) is 5, and it does not signal"
     (ok (every (lambda (value) (= value 5)) (draws-for '(range real 5 5))))))
 
+(deftest one-sided-real-ranges-far-from-zero-generate-inside-themselves
+  ;; Issue #60: check-it's one-sided REAL-GENERATOR draws from
+  ;; [min(|bound|, *SIZE*), *SIZE*), and *REQUIRED-SIZE* raises *SIZE* to
+  ;; |bound|, so a bound of magnitude >= 10 left a zero-width interval and
+  ;; (RANDOM 0.0) signalled a TYPE-ERROR.
+  (dolist (form '((range real 100 *) (range real 10 *) (range real -50 *)
+                  (range real * -100) (range real * 10) (range real * 50)))
+    (testing (format nil "every draw from ~S satisfies it" form)
+      (let ((spec (normalize-spec-form form)))
+        (ok (every (lambda (value) (validp spec value))
+                   (draws-for form :count 50)))))))
+
+(deftest a-real-range-too-wide-to-measure-is-refused
+  (testing "a width that overflows a double-float signals GENERATOR-UNAVAILABLE"
+    (ok (handler-case (progn (draws-for '(range real -1d308 1d308) :count 1) nil)
+          (generator-unavailable () t)))))
+
+(deftest sample-draws-from-a-one-sided-real-range
+  (testing "the public SAMPLE path no longer leaks a TYPE-ERROR"
+    (ok (every (lambda (value) (>= value 100))
+               (sample (normalize-spec-form '(range real 100 *)) :count 5 :seed 42)))))
+
 (deftest references-are-followed
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'small

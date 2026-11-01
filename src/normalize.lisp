@@ -21,6 +21,7 @@
   (:import-from #:cl-spec/src/map-spec
                 #:hash-table-of-spec #:alist-of-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
   (:export #:normalize-spec-form
            #:*spec-primitives*))
 
@@ -109,7 +110,12 @@ belongs to the definition, so a child normalized from inside it is passed NIL."
       (unless (or (unbounded-marker-p bound-value) (realp bound-value))
         (error 'invalid-spec-form :form form
                                   :reason (format nil "RANGE bounds must be a number or *, got ~S"
-                                                  bound-value))))
+                                                  bound-value)))
+      ;; A NaN endpoint is a real that orders against nothing, so a range built
+      ;; on it would admit nothing or everything depending on the float traps.
+      (when (not-a-number-p bound-value)
+        (error 'invalid-spec-form :form form
+                                  :reason "RANGE bounds must not be NaN")))
     (flet ((bound (value) (if (unbounded-marker-p value) :unbounded value)))
       (apply #'make-instance 'range-spec
              :base-type base-type

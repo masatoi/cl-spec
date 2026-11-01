@@ -7,6 +7,7 @@
 (defpackage #:cl-spec/src/explain
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
@@ -239,6 +240,12 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
       (cond
         ((not (typep value base-type))
          (list (error-datum :type-failed path value :expected expected)))
+        ;; Testing (< VALUE MINIMUM) alone admits NaN, because the comparison
+        ;; is false, or signals under the default traps; NaN lies inside no
+        ;; interval, so it is refused before either bound is compared.
+        ((not-a-number-p value)
+         (list (error-datum :out-of-range path value
+                            :expected expected :violated-bound :not-a-number)))
         ((and (not (eq minimum :unbounded)) (< value minimum))
          (list (error-datum :out-of-range path value
                             :expected expected :violated-bound :minimum)))
@@ -288,13 +295,20 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
          (compiled (mapcar (lambda (child) (compile-node child context)) children))
          (descriptors (mapcar #'expected-descriptor children)))
     (lambda (value path)
-      (let ((branch-errors (mapcar (lambda (function) (funcall function value path))
-                                   compiled)))
-        (unless (some #'null branch-errors)
+      ;; The first branch that admits VALUE decides the answer, and the
+      ;; branches after it cannot change it, so they are not checked.  Every
+      ;; branch's errors are needed only when none admits VALUE.
+      (let ((branch-errors '()))
+        (dolist (function compiled)
+          (let ((errors (funcall function value path)))
+            (when (null errors)
+              (return-from nil))
+            (push errors branch-errors)))
+        (when (= (length branch-errors) (length compiled))
           (list (error-datum :no-branch-matched path value
                              :branches (mapcar (lambda (descriptor errors)
                                                  (list :expected descriptor :errors errors))
-                                               descriptors branch-errors))))))))
+                                               descriptors (nreverse branch-errors)))))))))
 
 (defmethod compile-node ((spec not-spec) context)
   (let ((inner (compile-node (not-spec-inner-spec spec) context))
@@ -393,15 +407,122 @@ with DOLIST rather than indexed access, so a long unique list stays linear."
                                      (cons index (getf datum :tuple-path)))
                                copy))))))))
 
+(defvar *reference-visits* nil
+  "Bookkeeping of the reference nodes reached by the check in progress.
+
+NIL outside a check, :PENDING once COMPILE-EXPLAINER has started one, and a
+REFERENCE-VISITS object as soon as that check reaches its first reference.")
+
+(defstruct (reference-visits (:constructor make-reference-visits ()))
+  "What one check knows about the references it has reached.
+
+ACTIVE maps a value to the (TARGET . PATH) frames currently being checked against
+it, innermost first; RESULTS maps a structured value to the (TARGET PATH . ERRORS)
+entries already computed for it; NODES maps a target name to (REGISTRY . NODE),
+the target compiled once for this check."
+  (active (make-hash-table :test #'eql) :type hash-table)
+  (results (make-hash-table :test #'eq) :type hash-table)
+  (nodes (make-hash-table :test #'eq) :type hash-table))
+
+(defun path-equal (path other)
+  "Return true when PATH and OTHER name the same position.
+
+Two paths to the same position hold the same index and key objects, usually
+sharing their tail, so element-wise EQL is exact and an EQ tail ends the walk
+early.  EQUAL would also descend into keys, which may be circular."
+  (loop
+    (cond ((eq path other) (return t))
+          ((or (atom path) (atom other)) (return nil))
+          ((not (eql (car path) (car other))) (return nil))
+          (t (setf path (cdr path)
+                   other (cdr other))))))
+
+(defun memoizable-value-p (value)
+  "Return true when VALUE has structure a spec can descend into.
+
+Only such a value can be reached again at the same position through another
+branch at a cost that grows with its size; a number, character or symbol is
+checked in time bounded by the spec alone, so its results are not kept."
+  (not (typep value '(or number character symbol))))
+
+(defun reference-node (visits target registry)
+  "Return TARGET resolved in REGISTRY and compiled, once per check."
+  (let ((entry (gethash target (reference-visits-nodes visits))))
+    (if (and entry (eq (car entry) registry))
+        (cdr entry)
+        (let ((node (compile-node (resolve-spec target registry) (list :registry registry))))
+          (setf (gethash target (reference-visits-nodes visits)) (cons registry node))
+          node))))
+
+(defun check-reference (visits target registry expected value path)
+  "Check VALUE at PATH against the spec TARGET names, within the check VISITS records.
+
+A reference is the only way back into a spec, so it is where both kinds of
+unbounded recursion are cut (issue #58):
+  - reaching TARGET again for the same value at the same PATH means the spec
+    returned to itself without consuming any structure, as two aliases naming
+    each other or (and integer self) do.  That would recurse for ever on every
+    value, so it is refused as a malformed spec with INVALID-SPEC-FORM;
+  - reaching it again for the same value at a longer PATH means the value
+    contains itself.  No finite derivation can admit a value that is its own
+    descendant, so it is reported as a :CYCLIC-VALUE datum and not followed.
+A result is a function of TARGET, VALUE and PATH alone, so a structured value
+reached again at the same position through another branch -- an OR whose
+branches share a recursive child -- reuses it instead of checking that child once
+per branch, which made recursive disjunctions exponential (issue #59)."
+  (let ((active (reference-visits-active visits))
+        (results (reference-visits-results visits)))
+    (loop for (frame-target . frame-path) in (gethash value active)
+          when (eq frame-target target)
+            do (if (path-equal frame-path path)
+                   (error 'invalid-spec-form
+                          :form target
+                          :reason (format nil "~S reaches itself again on the same value ~
+                                               without consuming any structure (a ~
+                                               non-productive reference cycle)"
+                                          target))
+                   (return-from check-reference
+                     (list (error-datum :cyclic-value path value :expected expected)))))
+    (let ((memoize-p (memoizable-value-p value)))
+      (when memoize-p
+        (loop for (entry-target entry-path . errors) in (gethash value results)
+              when (and (eq entry-target target) (path-equal entry-path path))
+                do (return-from check-reference errors)))
+      (push (cons target path) (gethash value active))
+      (let ((errors (unwind-protect
+                         (funcall (reference-node visits target registry) value path)
+                      (let ((remaining (rest (gethash value active))))
+                        (if remaining
+                            (setf (gethash value active) remaining)
+                            (remhash value active))))))
+        (when memoize-p
+          (push (list* target path errors) (gethash value results)))
+        errors))))
+
 (defmethod compile-node ((spec reference-spec) context)
   (let ((target (reference-spec-target spec))
-        (registry (context-registry context)))
-    ;; Resolving on every call rather than at compile time is what makes forward
+        (registry (context-registry context))
+        (expected (expected-descriptor spec)))
+    ;; Resolving on every check rather than at compile time is what makes forward
     ;; references, redefinition and recursive specs all work: compiling the
     ;; target eagerly would either capture a stale definition or never terminate.
+    ;; Within one check the target is compiled once and its results reused; see
+    ;; CHECK-REFERENCE.
     (lambda (value path)
-      (let ((resolved (resolve-spec target registry)))
-        (funcall (compile-node resolved (list :registry registry)) value path)))))
+      (let ((visits *reference-visits*))
+        (cond
+          ((reference-visits-p visits)
+           (check-reference visits target registry expected value path))
+          ((eq visits :pending)
+           ;; COMPILE-EXPLAINER marks a check as started without allocating,
+           ;; so a spec with no references pays nothing; the first reference
+           ;; reached allocates for every reference of the same check.
+           (setf *reference-visits* (make-reference-visits))
+           (check-reference *reference-visits* target registry expected value path))
+          (t
+           ;; Reached through COMPILE-NODE directly, outside any check.
+           (let ((*reference-visits* (make-reference-visits)))
+             (check-reference *reference-visits* target registry expected value path))))))))
 
 (defmethod compile-node ((spec plist-spec) context)
   (let* ((fields (field-spec-fields spec))
@@ -704,8 +825,13 @@ branch."
 
 CONTEXT is a plist; :REGISTRY names the registry references resolve against.
 The returned function returns an empty list exactly when VALUE satisfies SPEC,
-which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing."
-  (compile-node spec context))
+which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing.  Each call
+is one check: the reference bookkeeping of a check never leaks into another, not
+even into a nested check a predicate starts."
+  (let ((node (compile-node spec context)))
+    (lambda (value path)
+      (let ((*reference-visits* :pending))
+        (funcall node value path)))))
 
 (defun explain-data (spec-designator value &key (registry *registry*))
   "Return a plist describing whether VALUE satisfies SPEC-DESIGNATOR and why not.
@@ -761,6 +887,9 @@ descriptor, which is why the common cases are unwrapped here."
     (:no-branch
      (format stream "~vT✗ no branch for tag ~S; known tags ~S~%"
              indent (getf datum :observed-tag) (getf datum :known-tags)))
+    (:cyclic-value
+     (format stream "~vT✗ value contains itself~@[ at ~S~]; expected ~A~%"
+             indent (getf datum :path) (format-expected (getf datum :expected))))
     (:conjunct-failed
      (dolist (conjunct (getf datum :conjuncts))
        (format stream "~vT~A ~A~%"
