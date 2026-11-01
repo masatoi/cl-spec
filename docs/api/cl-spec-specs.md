@@ -112,7 +112,8 @@ The check dispatches on OBJECT as the registry argument with NIL for the others,
 so it describes implementations that specialize only the registry, as the
 built-in HASH-TABLE-REGISTRY does.  It inspects method applicability only and
 calls none of the methods.  The core's unqualified :AROUND validation methods
-apply to every object and are not counted.
+apply to every object and are not counted, and neither are the core's methods
+on T, which only refuse a non-registry.
 ```
 
 
