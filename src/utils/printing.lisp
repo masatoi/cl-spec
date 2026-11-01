@@ -2,7 +2,8 @@
 
 (defpackage #:cl-spec/src/utils/printing
   (:use #:cl)
-  (:export #:with-bounded-printing))
+  (:export #:with-bounded-printing
+           #:condition-report-text))
 
 (in-package #:cl-spec/src/utils/printing)
 
@@ -18,3 +19,17 @@ with 20 elements and 8 levels."
          (*print-length* (or *print-length* 20))
          (*print-level* (or *print-level* 8)))
      ,@body))
+
+(defun condition-report-text (condition)
+  "Render CONDITION as text without losing evidence to a broken condition printer.
+
+The report is printed under WITH-BOUNDED-PRINTING, because a condition caught
+while checking a value usually prints that value, which may be circular or very
+large.  A report that itself signals is replaced by the condition's type, so a
+printer the user supplied can neither stop nor unwind the caller.  NIL renders
+as NIL."
+  (when condition
+    (handler-case
+        (with-bounded-printing ()
+          (princ-to-string condition))
+      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))

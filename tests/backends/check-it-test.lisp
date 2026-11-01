@@ -182,6 +182,70 @@
     (ok (every (lambda (value) (>= value 100))
                (sample (normalize-spec-form '(range real 100 *)) :count 5 :seed 42)))))
 
+(defun outcome-of (thunk)
+  "Return THUNK's value, or the type of the error it signals."
+  (handler-case (funcall thunk)
+    (error (condition) (type-of condition))))
+
+(deftest real-ranges-beyond-single-float-range-do-not-overflow
+  ;; Issue #76: check-it's REAL-GENERATOR converts *SIZE* to a single-float, so
+  ;; any *SIZE* beyond about 3.4e38 signalled FLOATING-POINT-OVERFLOW.
+  (dolist (form '((range real 1d39 *) (range real * -1d39) (range real 0 1d39)
+                  (range real -1d300 1d300) (range real 1d307 *)))
+    (testing (format nil "every draw from ~S satisfies it" form)
+      (let* ((spec (normalize-spec-form form))
+             (values (outcome-of (lambda () (sample spec :count 20 :seed 1)))))
+        (ok (and (listp values) (every (lambda (value) (validp spec value)) values))))))
+  (testing "a bound beyond double-float range is refused as too wide"
+    (ok (eq :range-too-wide
+            (handler-case (progn (sample (normalize-spec-form `(range real 0 ,(expt 10 400)))
+                                         :count 1 :seed 1)
+                                 nil)
+              (generator-unavailable (condition) (generator-unavailable-kind condition))))))
+  (testing "a huge integer bound in a neighbouring position does not break a REAL"
+    (let* ((spec (normalize-spec-form `(tuple (range integer 0 ,(expt 10 40)) real)))
+           (values (outcome-of (lambda () (sample spec :count 20 :seed 1)))))
+      (ok (and (listp values) (every (lambda (value) (validp spec value)) values))))))
+
+(defvar *one-sided-arguments* '()
+  "Distinct arguments ONE-SIDED-TARGET has been called with.")
+
+(defun one-sided-target (n)
+  "Record N and return it."
+  (pushnew n *one-sided-arguments*)
+  n)
+
+(deftest one-sided-integer-ranges-draw-more-than-their-bound
+  ;; Issue #77: the bound raised *SIZE* to |N|, so check-it drew from [N, N].
+  (dolist (form '((range integer 50 *) (range integer * -50) (range integer 5 *)
+                  (range integer 1000000 *)))
+    (testing (format nil "~S yields many distinct values inside itself" form)
+      (let* ((spec (normalize-spec-form form))
+             (values (sample spec :count 50 :seed 1)))
+        (ok (every (lambda (value) (validp spec value)) values))
+        (ok (< 10 (length (remove-duplicates values)))))))
+  (testing "a bound far from zero widens the draw in proportion to it"
+    (ok (some (lambda (value) (> value 1000100))
+              (sample (normalize-spec-form '(range integer 1000000 *)) :count 50 :seed 1)))
+    (ok (some (lambda (value) (< value -1000100))
+              (sample (normalize-spec-form '(range integer * -1000000)) :count 50 :seed 1))))
+  (testing "a one-sided range does not widen a neighbouring unconstrained integer"
+    (ok (every (lambda (pair) (<= (abs (second pair)) 1000))
+               (sample (normalize-spec-form '(tuple (range integer 1000000 *) integer))
+                       :count 50 :seed 1))))
+  (testing "a satisfiable AND over a one-sided integer range is generated"
+    (let* ((spec (normalize-spec-form '(and (range integer 50 *) (satisfies oddp))))
+           (values (outcome-of (lambda () (sample spec :count 10 :seed 1)))))
+      (ok (and (listp values) (every (lambda (value) (validp spec value)) values)))))
+  (testing "a function check over a one-sided range reaches more than one argument"
+    (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
+      (setf *one-sided-arguments* '())
+      (defspec-function one-sided-target
+        (:args (n (range integer 100 *)))
+        (:returns integer))
+      (check-function 'one-sided-target :trials 50 :seed 20261101)
+      (ok (< 10 (length *one-sided-arguments*))))))
+
 (deftest references-are-followed
   (let ((registry (make-hash-table-registry)))
     (registry-register-spec registry 'small

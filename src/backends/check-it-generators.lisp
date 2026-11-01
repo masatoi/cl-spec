@@ -100,12 +100,14 @@
 (in-package #:cl-spec/src/backends/check-it-generators)
 
 (defvar *required-size* 0
-  "Largest bound magnitude seen while compiling the current generator.
+  "Largest magnitude CHECK-IT:*SIZE* has to reach for the generator being compiled.
 
-check-it clamps every numeric limit to CHECK-IT:*SIZE*, so a range that does not
-overlap [-*size*, *size*] silently generates values outside itself: (range
-integer 20 100) draws 10.  Compilation records how far *SIZE* has to be raised,
-and the caller binds it around GENERATE.")
+check-it clamps every numeric limit to CHECK-IT:*SIZE*, so a bounded integer range
+that does not overlap [-*size*, *size*] silently generates values outside itself:
+(range integer 20 100) draws 10.  Compilation records how far *SIZE* has to be
+raised, and the caller binds it around GENERATE.  Only a range check-it is handed
+with both limits, and a map's minimum count, raise it: one-sided integer ranges
+and every real range are drawn relative to their own bounds instead.")
 
 (defvar *reference-trail* nil
   "Spec names currently being compiled, innermost first.
@@ -450,7 +452,7 @@ values the corresponding TYPEP actually accepts: REAL-GENERATOR yields floats,
 so FLOAT and RATIONAL are absent rather than silently wrong."
   (case type-specifier
     ((integer) (make-instance 'int-generator))
-    ((real) (make-instance 'real-generator))
+    ((real) (real-range-generator '* '* spec))
     ((character) (make-instance 'char-generator))
     ((string) (make-instance 'string-generator))
     ((null) nil)
@@ -460,18 +462,78 @@ so FLOAT and RATIONAL are absent rather than silently wrong."
               :reason (format nil "no generator is registered for the type ~S"
                               type-specifier)))))
 
-(defun shifted-real-generator (offset lower-limit upper-limit)
-  "Return a generator drawing from check-it's [LOWER-LIMIT, UPPER-LIMIT) plus OFFSET.
+(defun float-operand (number)
+  "Return NUMBER ready for arithmetic against a single-float draw.
 
-LOWER-LIMIT is zero or check-it's open marker *, and so is UPPER-LIMIT unless it
-is a positive finite width: the shapes check-it's REAL-GENERATOR-FUNCTION draws
-correctly (see REAL-RANGE-GENERATOR)."
-  (make-instance 'mapped-generator
+Float contagion converts a rational to a single-float when it meets one, which
+overflows once the rational is beyond single-float range, so such a rational is
+converted to a double-float instead.  A float, or a rational a single-float can
+hold, is returned unchanged, so a small range still yields the single-floats
+check-it's own REAL-GENERATOR yields."
+  (if (and (rationalp number) (> (abs number) most-positive-single-float))
+      (float number 1d0)
+      number))
+
+(defun scaled-real-generator (origin scale &key (direction 1) symmetric-p minimum maximum)
+  "Return a generator for ORIGIN + DIRECTION * U * SCALE.
+
+U is drawn by check-it's REAL-GENERATOR from [0, 1), or from [-1, 1) when
+SYMMETRIC-P.  Neither limit exceeds 1 in magnitude, so CHECK-IT:*SIZE* neither
+clamps nor collapses the interval, and the draw never converts *SIZE* to a
+single-float -- which overflowed once *SIZE* passed about 3.4e38 (issue #76).
+
+SCALE is a non-negative real, or a function of no arguments called at each draw
+so that it can follow CHECK-IT:*SIZE*.  It is limited so that |ORIGIN| + SCALE
+stays within double-float range.  Converting ORIGIN or the product to a float
+rounds, so the result is clamped into [MINIMUM, MAXIMUM] where those are given: a
+draw never leaves its declared range.  Shrinking U towards zero moves the value
+towards ORIGIN."
+  (let* ((origin (float-operand origin))
+         (headroom (- most-positive-double-float (abs origin))))
+    (make-instance 'mapped-generator
+                   :mapping
+                   (lambda (unit)
+                     (let* ((wanted (if (functionp scale) (funcall scale) scale))
+                            (value (+ origin
+                                      (* direction unit
+                                         (float-operand (min wanted headroom))))))
+                       (cond ((and minimum (< value minimum)) minimum)
+                             ((and maximum (> value maximum)) maximum)
+                             (t value))))
+                   :sub-generators
+                   (list (make-instance 'real-generator
+                                        :lower-limit (if symmetric-p -1 0)
+                                        :upper-limit 1)))))
+
+(defclass widened-generator (mapped-generator)
+  ((minimum-size :initarg :minimum-size :reader widened-generator-minimum-size))
+  (:documentation "A mapped generator whose draws see CHECK-IT:*SIZE* at least MINIMUM-SIZE.
+
+The widening is bound around each draw only, so it reaches the sub-generators of
+this one value and no other generator of the run."))
+
+(defmethod generate ((generator widened-generator))
+  "Draw with CHECK-IT:*SIZE* raised to GENERATOR's minimum size for this draw only."
+  (let ((*size* (max *size* (widened-generator-minimum-size generator))))
+    (call-next-method)))
+
+(defun shifted-integer-generator (offset lower-limit upper-limit)
+  "Return a generator drawing from check-it's [LOWER-LIMIT, UPPER-LIMIT] plus OFFSET.
+
+One of the limits is zero and the other check-it's open marker *, so the draw is
+[0, S] or [-S, 0] with S = max(|OFFSET|, *SIZE*): a bound far from zero still
+yields values that differ in proportion to it, as a one-sided real range does.
+Handing check-it the bound itself instead made it draw from
+[min(|bound|, *SIZE*), *SIZE*], a single value once *SIZE* had been raised to
+|bound| (issue #77).  The size is widened for this draw only, so a one-sided
+range does not change the magnitude other generators draw.  Shrinking moves the
+value towards OFFSET."
+  (make-instance 'widened-generator
+                 :minimum-size (abs offset)
                  :mapping (lambda (value) (+ value offset))
-                 :sub-generators
-                 (list (make-instance 'real-generator
-                                      :lower-limit lower-limit
-                                      :upper-limit upper-limit))))
+                 :sub-generators (list (make-instance 'int-generator
+                                                      :lower-limit lower-limit
+                                                      :upper-limit upper-limit))))
 
 (defun range-width (minimum maximum spec)
   "Return MAXIMUM - MINIMUM, or signal GENERATOR-UNAVAILABLE when it is not finite.
@@ -488,37 +550,44 @@ when float traps are masked, and no shifted draw can cover the interval."
              :reason "the range is too wide to sample: its width overflows a float"))
     width))
 
-(defun real-range-generator (lower upper)
+(defun real-range-generator (lower upper spec)
   "Return a generator producing reals in [LOWER, UPPER], where either bound may
 be check-it's open-bound marker, *.  A degenerate range (LOWER and UPPER equal
 and finite) returns LOWER itself: check-it's GENERATE treats a non-generator as
 a constant, and an interval of width zero admits exactly LOWER anyway.
 
-check-it's REAL-GENERATOR-FUNCTION clamps a bound to *SIZE* before drawing, and
-BOUNDED-GENERATOR raises *SIZE* to each bound's magnitude so the bound is not
-clamped away.  Both together collapse the interval to zero width -- (RANDOM 0.0)
-then signals a TYPE-ERROR -- whenever the bound is not zero:
-  - finite/finite: the lower-bound calculation reads (ABS UPPER) where it should
-    read (ABS LOWER), so a range that does not straddle zero has no width;
-  - LOWER/*: it draws from [min(|LOWER|, *SIZE*), *SIZE*), which is empty once
-    *SIZE* is |LOWER| (issue #60), and * /UPPER is the mirror image.
-Confirmed by calling CHECK-IT::REAL-GENERATOR-FUNCTION directly with no cl-spec
-code involved.  Every shape is therefore handed to check-it with zero for its
-finite bound -- [0, UPPER - LOWER], [0, *SIZE*) or [-*SIZE*, 0), where the clamp
-cannot bite -- and mapped back by adding the bound.  Adding a non-negative draw
-to LOWER, or a non-positive one to UPPER, rounds monotonically, so a one-sided
-draw never crosses its bound."
-  (cond
-    ((and (eq lower '*) (eq upper '*))
-     (make-instance 'real-generator :lower-limit '* :upper-limit '*))
-    ((eq upper '*)
-     (shifted-real-generator lower 0 '*))
-    ((eq lower '*)
-     (shifted-real-generator upper '* 0))
-    ((= lower upper)
-     lower)
-    (t
-     (shifted-real-generator lower 0 (- upper lower)))))
+check-it's REAL-GENERATOR-FUNCTION clamps a bound to *SIZE* and converts *SIZE*
+to a single-float, so handing it the bounds collapsed a range far from zero to
+zero width and overflowed beyond single-float range (issues #60 and #76).  Every
+shape is therefore drawn as a unit draw scaled by SCALED-REAL-GENERATOR, which
+depends on neither:
+  - finite/finite: LOWER plus [0, 1) of the width;
+  - LOWER/*: LOWER plus [0, 1) of max(|LOWER|, *SIZE*), and * /UPPER its mirror
+    image, so a bound far from zero still yields values that differ;
+  - * / *: [-1, 1) of *SIZE*, as check-it's own unbounded REAL draws.
+A real range draws without raising *SIZE*, so it neither needs nor inflates the
+size other generators see.  A bound or width beyond double-float range cannot be
+drawn near and is refused as :RANGE-TOO-WIDE."
+  (flet ((too-wide (reason)
+           (error 'generator-unavailable :spec spec :kind :range-too-wide :reason reason)))
+    (dolist (bound (list lower upper))
+      (when (and (realp bound) (> (abs bound) most-positive-double-float))
+        (too-wide "a bound of the range is beyond double-float range, so no float lies near it")))
+    (cond
+      ((and (eq lower '*) (eq upper '*))
+       (scaled-real-generator 0 (lambda () *size*) :symmetric-p t))
+      ((eq upper '*)
+       (scaled-real-generator lower (lambda () (max (abs lower) *size*)) :minimum lower))
+      ((eq lower '*)
+       (scaled-real-generator upper (lambda () (max (abs upper) *size*))
+                              :direction -1 :maximum upper))
+      ((= lower upper)
+       lower)
+      (t
+       (let ((width (range-width lower upper spec)))
+         (when (> width most-positive-double-float)
+           (too-wide "the range is too wide to sample: its width overflows a float"))
+         (scaled-real-generator lower width :minimum lower :maximum upper))))))
 
 (defmethod spec-generator ((spec type-spec) context)
   (declare (ignore context))
@@ -536,13 +605,15 @@ HIGH means no integer lies in the interval."
 (defun bounded-generator (base-type minimum maximum spec)
   "Return a numeric generator for BASE-TYPE limited by MINIMUM and MAXIMUM.
 
-:UNBOUNDED is written back as check-it's own open bound marker, *.  Each finite
-bound also raises *REQUIRED-SIZE*: without it check-it clamps the bound away and
-generates outside the range.  When both bounds are finite, the interval's width
-raises it too: REAL-RANGE-GENERATOR asks check-it for the shifted interval
-[0, MAXIMUM - MINIMUM], which is wider than either bound's own magnitude
-whenever MINIMUM and MAXIMUM straddle zero, and *SIZE* has to cover that
-shifted width or half the declared range goes unreachable.
+:UNBOUNDED is written back as check-it's own open bound marker, *.  A REAL range
+is drawn by REAL-RANGE-GENERATOR, which does not depend on CHECK-IT:*SIZE*'s
+clamp.  An INTEGER range with both bounds finite is handed to check-it's integer
+generator, which clamps each limit to *SIZE*, so each bound raises
+*REQUIRED-SIZE* to its magnitude; without that check-it clamps the bound away and
+generates outside the range.  A one-sided INTEGER range is drawn from
+[0, max(|bound|, *SIZE*)] shifted by its bound (SHIFTED-INTEGER-GENERATOR), so it
+raises nothing: raising *SIZE* to the bound is what collapsed it to the bound
+alone (issue #77).
 
 An INTEGER range's bounds are first rounded inward by INTEGER-INTERVAL, as
 validation reads them; check-it's integer generator would otherwise draw the
@@ -559,17 +630,19 @@ minimum above the maximum -- is refused rather than handed to check-it."
                :reason (if (eq base-type 'integer)
                            "no integer lies between the range's endpoints"
                            "the range's minimum is above its maximum")))
-      (let ((width (and finite-p (range-width minimum maximum spec))))
+      (when (and finite-p (eq base-type 'integer))
         (dolist (bound (list minimum maximum))
-          (unless (eq bound :unbounded)
-            (setf *required-size* (max *required-size* (ceiling (abs bound))))))
-        (when width
-          (setf *required-size* (max *required-size* (ceiling width))))))
+          (setf *required-size* (max *required-size* (abs bound))))))
     (let ((lower (if (eq minimum :unbounded) '* minimum))
           (upper (if (eq maximum :unbounded) '* maximum)))
       (case base-type
-        ((integer) (make-instance 'int-generator :lower-limit lower :upper-limit upper))
-        ((real) (real-range-generator lower upper))
+        ((integer)
+         (cond ((and (eq lower '*) (eq upper '*))
+                (make-instance 'int-generator :lower-limit '* :upper-limit '*))
+               ((eq upper '*) (shifted-integer-generator lower 0 '*))
+               ((eq lower '*) (shifted-integer-generator upper '* 0))
+               (t (make-instance 'int-generator :lower-limit lower :upper-limit upper))))
+        ((real) (real-range-generator lower upper spec))
         (t (error 'generator-unavailable
                   :spec spec :kind :unsupported-type
                   :reason (format nil "~S cannot carry a numeric range" base-type)))))))

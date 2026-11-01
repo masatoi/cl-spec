@@ -887,7 +887,10 @@ AND全体のvalidatorが呼ぶ述語とreaderは、検証対象の入力とそ�
 `assoc`と同じ読み方をする。したがって`(:id . nil)`はキーが存在し値がNILであり、
 キー欠落とは区別する。各要素がconsでない場合は`:bad-association`、listでない場合は
 `:not-an-alist`、宣言した`:test`で重複するキーは`:duplicate-key`として拒否する。
-重複の`:path`は2個目の出現位置を持つ。
+重複の`:path`は2個目の出現位置を持つ。`:test`が`equal`か`equalp`のとき、その比較が
+たどる構成要素を通って自分に戻るキーは、比較する前に`:cyclic-value`として拒否する。
+そのような2つのキーの比較は終わらないためである（`equal`はcons、`equalp`はさらに
+一般の配列の要素、hash tableのキーと値、構造体のslotをたどる）。
 
 `hash-table`の値はhash tableであり、そのtestは宣言した`:test`と一致しなければならない。
 一致しない場合は`:wrong-key-test`（`:actual-test`に実際のtest）として拒否する。
@@ -943,7 +946,10 @@ reader名が入る。子IRの列挙は宣言順である。
 `slot-value`が`unbound-slot`を通知するunbound slotは区別する。必須フィールドの
 readerが`unbound-slot`を通知した場合は`:unbound-slot`、任意フィールドでは
 「フィールド欠落」として扱う。readerが`unbound-slot`以外のconditionを通知した場合は
-`:reader-errored`とし、`:condition-type`・`:condition-report`を持つ。ただし
+`:reader-errored`とし、`:condition-type`・`:condition-report`を持つ。`:condition-report`は
+§21と同じ上限付きの表示で作り、表示自体が通知した場合はconditionの型名で代える。
+conditionの表示は検査した値を含むことが多く、その値が循環していても、利用者の
+`print-object`が通知・停止しても、検査は答えを返す。ただし
 `undefined-function`（reader名の誤り）と`program-error`（引数個数の誤り）は
 著者の誤りなので伝播させる。これは`predicate-spec`の扱いと同じ規則である。
 
@@ -1055,7 +1061,8 @@ optionsは`:test`（`eq`・`eql`・`equal`・`equalp`、省略時`eql`）、`:mi
 `:test`は正規のkeywordとして保持する。
 
 構造検査は子specより先に行い、§9.3と同じkindを使う（`:not-a-hash-table`、
-`:wrong-key-test`、`:not-an-alist`、`:bad-association`、`:duplicate-key`）。
+`:wrong-key-test`、`:not-an-alist`、`:bad-association`、`:duplicate-key`、循環するキーの
+`:cyclic-value`）。
 構造不正なら1件だけ報告する。エントリ数の違反は`:too-few-entries`
 （`:minimum-count`）・`:too-many-entries`（`:maximum-count`）で、どちらも
 `:actual-count`を持つ。各エントリはまずキーをK、次に値をVで検査し、両方の違反を
@@ -1147,6 +1154,15 @@ simple structures
 生成する（下端は切り上げ、上端は切り捨てる）。例えば`(range integer 1/2 7/2)`は1・2・3を
 生成する。片側が無制限の区間と、ANDの数値foldにも同じ規則を適用する。含まれる整数が無い
 区間や、下端が上端を上回る区間は、何も受け付けないので`generator-unavailable`を通知する。
+
+片側が無制限の区間（`(range integer 50 *)`、`(range real * -100)`など）は、有限の端点から
+`[0, max(|端点|, check-it:*size*)]`だけ離れた値を引く。端点が0から遠くても値は端点
+1つに潰れず、端点の大きさに比例して散らばる。両端が有限な実数の区間は、下端に
+幅の`[0, 1)`倍を足して引く。実数の区間はsingle-floatの範囲を超える端点でも
+double-floatで生成し、double-floatの範囲を超える端点や幅は`:range-too-wide`の
+`generator-unavailable`とする。`check-it:*size*`を引き上げるのは、両端が有限な
+整数の区間だけである。片側が無制限の区間と実数の区間は引き上げないので、同じ実行の
+他の引数が引く値の大きさを変えない。
 
 ## ANDの生成元選択
 

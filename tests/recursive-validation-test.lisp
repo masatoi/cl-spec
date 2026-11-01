@@ -122,3 +122,88 @@ than left to hang the suite."
                          (explain-data 'ast value :registry registry))))
           (ok (consp outcome))
           (ok (and (consp outcome) (null (getf (second outcome) :valid)))))))))
+
+(defun circular-list (&rest items)
+  "Return a fresh list of ITEMS whose last cons points back at the first."
+  (let ((list (copy-list items)))
+    (setf (cdr (last list)) list)
+    list))
+
+(defstruct (looping-node (:constructor make-looping-node ()))
+  "A structure instance whose NEXT slot is set to the instance itself."
+  (next nil))
+
+(defun self-referencing-node ()
+  "Return a LOOPING-NODE whose NEXT slot is the node itself."
+  (let ((node (make-looping-node)))
+    (setf (looping-node-next node) node)
+    node))
+
+(defun exploding-reader (object)
+  "Signal an error whose report prints OBJECT."
+  (error "cannot read ~S" object))
+
+(defstruct (unprintable (:constructor make-unprintable ()))
+  "A structure instance whose printer signals.")
+
+(defmethod print-object ((object unprintable) stream)
+  (declare (ignore stream))
+  (error "printer broken"))
+
+(deftest a-signalling-check-on-a-cyclic-value-terminates
+  (let ((registry (make-hash-table-registry))
+        (*print-circle* nil))
+    (testing "a predicate signalling on a circular list answers NIL"
+      (ok (equal '(:returned nil)
+                 (within-seconds (2)
+                   (validp (normalize-spec-form '(or integer (satisfies evenp)))
+                           (circular-list 1 2 3) :registry registry)))))
+    (testing "a tag reader signalling on a circular list answers NIL"
+      (ok (equal '(:returned nil)
+                 (within-seconds (2)
+                   (validp (normalize-spec-form '(tagged-by 1+ (:a integer)))
+                           (circular-list 1 2 3) :registry registry)))))
+    (testing "an object reader signalling on a self-referencing instance answers NIL"
+      (ok (equal '(:returned nil)
+                 (within-seconds (2)
+                   (validp (normalize-spec-form
+                            '(object-of looping-node (:required (exploding-reader t))))
+                           (self-referencing-node) :registry registry)))))
+    (testing "EXPLAIN-DATA records a bounded report for the signalling predicate"
+      (let* ((outcome (within-seconds (2)
+                        (explain-data (normalize-spec-form '(satisfies evenp))
+                                      (circular-list 1 2 3) :registry registry)))
+             (datum (and (consp outcome) (first (getf (second outcome) :errors)))))
+        (ok (eq :predicate-errored (getf datum :kind)))
+        (ok (stringp (getf datum :condition-report)))))
+    (testing "a value whose printer signals is still answered, not unwound"
+      (ok (equal '(:returned nil)
+                 (within-seconds (2)
+                   (handler-case
+                       (validp (normalize-spec-form '(satisfies plusp)) (make-unprintable)
+                               :registry registry)
+                     (error (condition) (type-of condition)))))))))
+
+(deftest equal-keyed-alists-with-cyclic-keys-terminate
+  (let ((registry (make-hash-table-registry)))
+    (dolist (test '(equal equalp))
+      (testing (format nil "two circular keys under :TEST ~(~A~) are refused, not compared forever"
+                       test)
+        (ok (equal '(:returned nil)
+                   (within-seconds (2)
+                     (validp (normalize-spec-form `(alist-of t integer :test ,test))
+                             (list (cons (circular-list 1) 1) (cons (circular-list 1) 2))
+                             :registry registry))))))
+    (testing "the alist field spec with :TEST EQUAL terminates on circular keys too"
+      (ok (equal '(:returned nil)
+                 (within-seconds (2)
+                   (validp (normalize-spec-form '(alist (:test equal) (:optional ("a" integer))))
+                           (list (cons (circular-list 1) 1) (cons (circular-list 1) 2))
+                           :registry registry)))))
+    (testing "finite EQUAL keys are still compared by EQUAL"
+      (ok (not (validp (normalize-spec-form '(alist-of t integer :test equal))
+                       (list (cons (list 1 2) 1) (cons (list 1 2) 2))
+                       :registry registry)))
+      (ok (validp (normalize-spec-form '(alist-of t integer :test equal))
+                  (list (cons (list 1 2) 1) (cons (list 1 3) 2))
+                  :registry registry)))))

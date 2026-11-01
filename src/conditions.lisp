@@ -6,7 +6,8 @@
 
 (defpackage #:cl-spec/src/conditions
   (:use #:cl)
-  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
+  (:import-from #:cl-spec/src/utils/printing
+                #:with-bounded-printing #:condition-report-text)
   (:export #:invalid-backend-result
            #:invalid-backend-result-reason
            #:cl-spec-error
@@ -484,18 +485,6 @@ is a target counterexample or a precondition rejection.
 
 This is the condition carried by the trial observation of such a trial; it is
 not raised out of CHECK-FUNCTION."))
-
-(defun condition-report-text (condition)
-  "Render CONDITION as text without losing evidence to a broken condition printer.
-
-LOCAL to the condition vocabulary: SRC/EXECUTION keeps the same rule for trial
-observation, but it depends on this file, so the projection here cannot reach
-that helper without closing the dependency graph into a cycle."
-  (when condition
-    (handler-case
-        (with-bounded-printing ()
-          (princ-to-string condition))
-      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
 
 (defun case-selection-error-data (condition)
   "Project CONDITION as the explanation plist a function-check result carries.
