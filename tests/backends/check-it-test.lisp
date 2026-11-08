@@ -229,6 +229,22 @@
            (values (outcome-of (lambda () (sample spec :count 20 :seed 1)))))
       (ok (and (listp values) (every (lambda (value) (validp spec value)) values))))))
 
+(deftest real-ranges-near-the-double-float-limit-cover-their-domain
+  ;; The overflow guard limited every step to MOST-POSITIVE-DOUBLE-FLOAT - |ORIGIN|,
+  ;; even a step towards zero that cannot overflow, so a range starting near
+  ;; -1.8e308 never drew most of itself and a property over it passed falsely.
+  (flet ((draws (form)
+           (sample (normalize-spec-form form) :count 400 :seed 2026)))
+    (testing "(range real -1d308 5d307) draws non-negative values"
+      (ok (some (lambda (value) (>= value 0)) (draws '(range real -1d308 5d307)))))
+    (testing "(range real -1.7d308 0) draws from its upper half"
+      (ok (some (lambda (value) (> value -8.5d307)) (draws '(range real -1.7d308 0)))))
+    (testing "(range real * 1.7d308) draws from below its upper half"
+      (ok (some (lambda (value) (< value 8.5d307)) (draws '(range real * 1.7d308)))))
+    (testing "(range real 1.7d308 *) still stays inside double-float range"
+      (ok (every (lambda (value) (and (>= value 1.7d308) (<= value most-positive-double-float)))
+                 (draws '(range real 1.7d308 *)))))))
+
 (defvar *one-sided-arguments* '()
   "Distinct arguments ONE-SIDED-TARGET has been called with.")
 
