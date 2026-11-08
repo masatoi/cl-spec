@@ -30,6 +30,9 @@
                 #:properties-for
                 #:clear-registry)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
+  (:import-from #:cl-spec/src/function-spec)
+  (:import-from #:cl-spec/src/property)
+  (:import-from #:cl-spec/src/generator-definition)
   (:import-from #:cl-spec/src/conditions #:cl-spec-error #:invalid-spec-form))
 
 (in-package #:cl-spec/tests/registry-test)
@@ -246,6 +249,37 @@
       (ok (typep (refusal-of (lambda () (cl-spec/src/property-runner:run-property
                                          'stored-junk-property :seed 1 :registry registry)))
                  'cl-spec-error)))))
+
+(deftest every-definition-kind-refuses-a-name-the-dsl-could-not-write
+  ;; DEFSPEC-FUNCTION, DEFPROPERTY and DEFGENERATOR refuse NIL and keywords as
+  ;; names, and the spec write already did; the other three writes checked only
+  ;; that the name was a symbol.
+  (let ((registry (make-hash-table-registry)))
+    (dolist (name '(nil :keyword-name "string-name"))
+      (dolist (write (list (lambda () (registry-register-function-spec registry name :stored))
+                           (lambda () (registry-register-property registry name :stored))
+                           (lambda () (registry-register-generator registry name :stored))))
+        (let ((condition (refusal-of write)))
+          (ok (typep condition 'cl-spec/src/conditions:invalid-argument))
+          (ok (and (typep condition 'cl-spec/src/conditions:invalid-argument)
+                   (eq :name (cl-spec/src/conditions:invalid-argument-argument condition)))))))
+    (testing "and nothing was stored"
+      (ok (null (registry-list-function-specs registry)))
+      (ok (null (registry-list-properties registry)))
+      (ok (null (registry-list-generators registry))))))
+
+(deftest the-register-front-ends-take-only-their-own-definition-kind
+  (dolist (case (list (list 'cl-spec/src/function-spec:register-function-spec
+                            #'cl-spec/src/function-spec:register-function-spec)
+                      (list 'cl-spec/src/property:register-property
+                            #'cl-spec/src/property:register-property)
+                      (list 'cl-spec/src/generator-definition:register-generator
+                            #'cl-spec/src/generator-definition:register-generator)))
+    (destructuring-bind (operator function) case
+      (let ((condition (refusal-of (lambda () (funcall function 42 (make-hash-table-registry))))))
+        (ok (typep condition 'cl-spec/src/conditions:invalid-argument))
+        (ok (and (typep condition 'cl-spec/src/conditions:invalid-argument)
+                 (eq operator (cl-spec/src/conditions:invalid-argument-operator condition))))))))
 
 (deftest default-registry-exists-at-load-time
   (testing "*REGISTRY* is bound to a usable registry without any setup"

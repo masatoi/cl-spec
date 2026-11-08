@@ -1206,7 +1206,8 @@ layout data. Comparing against finite snapshots also bounds malformed cycles."
 
 (defun register-function-spec (function-spec &optional (registry *registry*))
   "Register FUNCTION-SPEC in REGISTRY under its own name and return it."
-  (registry-register-function-spec registry
+  (check-argument function-spec 'function-spec 'register-function-spec :function-spec)
+  (registry-register-function-spec (check-registry registry 'register-function-spec)
                                    (function-spec-name function-spec)
                                    function-spec))
 

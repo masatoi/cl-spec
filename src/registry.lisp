@@ -93,6 +93,20 @@ other registry implementation agree (issue #78)."
   (call-with-definition-rollback
    spec (lambda () (validate-definition spec) (call-next-method))))
 
+(defun check-definition-name (name operator)
+  "Refuse NAME for OPERATOR unless it is a symbol other than NIL or a keyword.
+
+This is the rule DEFSPEC-FUNCTION, DEFPROPERTY and DEFGENERATOR apply to the name
+they register (specification §4.1); the registry protocol applies it to every
+write, so a programmatic write cannot store what the DSL would refuse.  The
+protocol otherwise stores whatever value it is given, and a reader refuses a
+stored value of the wrong kind."
+  (unless (and name (symbolp name) (not (keywordp name)))
+    (error 'invalid-argument
+           :operator operator :argument :name :datum name
+           :expected-type '(and symbol (not null) (not keyword))
+           :reason "a definition is named by a symbol other than NIL or a keyword")))
+
 (defgeneric registry-list-specs (registry)
   (:documentation "Return the names of every spec in REGISTRY, sorted."))
 
@@ -106,7 +120,7 @@ previous definition.  Returns FUNCTION-SPEC."))
 
 (defmethod registry-register-function-spec :around (registry name function-spec)
   "Validate before changing registry storage or reverse indexes."
-  (check-type name symbol)
+  (check-definition-name name 'registry-register-function-spec)
   (call-with-definition-rollback
    function-spec (lambda () (validate-definition function-spec) (call-next-method))))
 
@@ -123,7 +137,7 @@ previous definition.  Returns GENERATOR."))
 
 (defmethod registry-register-generator :around (registry name generator)
   "Validate before changing registry storage or reverse indexes."
-  (check-type name symbol)
+  (check-definition-name name 'registry-register-generator)
   (call-with-definition-rollback
    generator (lambda () (validate-definition generator) (call-next-method))))
 
@@ -148,11 +162,14 @@ Returns PROPERTY."))
 
 (defmethod registry-register-property :around (registry name property &key targets tags)
   "Validate before changing registry storage or reverse indexes."
-  (check-type name symbol)
-  (dolist (keys (list targets tags))
-    ;; Low-level callers supply these independently of the object's own slots.
-    (unless (registry-index-keys-p keys)
-      (error 'type-error :datum keys :expected-type '(satisfies registry-index-keys-p))))
+  (check-definition-name name 'registry-register-property)
+  (loop for keys in (list targets tags)
+        for argument in '(:targets :tags)
+        ;; Low-level callers supply these independently of the object's own slots.
+        unless (registry-index-keys-p keys)
+          do (error 'invalid-argument
+                    :operator 'registry-register-property :argument argument
+                    :datum keys :expected-type '(satisfies registry-index-keys-p)))
   (call-with-definition-rollback
    property (lambda () (validate-definition property) (call-next-method))))
 

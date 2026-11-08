@@ -12,8 +12,9 @@
                 #:invalid-generator-form #:invalid-generator-form-reason
                 #:invalid-generator-form-form)
   (:import-from #:cl-spec/src/registry
-                #:*registry*
+                #:*registry* #:check-registry
                 #:registry-register-generator)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots
@@ -113,6 +114,7 @@ be shared by several specs and found by name the way a spec or a contract can.")
 
 (defun register-generator (generator &optional (registry *registry*))
   "Register GENERATOR in REGISTRY under its own name and return it."
-  (registry-register-generator registry
+  (check-argument generator 'custom-generator 'register-generator :generator)
+  (registry-register-generator (check-registry registry 'register-generator)
                                (custom-generator-name generator)
                                generator))
