@@ -16,6 +16,7 @@
                 #:properties-for)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
+  (:import-from #:cl-spec/src/schema)
   ;; No symbols imported: the body reaches CL-SPEC/SRC/DSL:DEFSPEC and
   ;; CL-SPEC/SRC/DSL:DEFPROPERTY through package-qualified references inside
   ;; EVAL, but package-inferred-system only infers a dependency from
@@ -148,6 +149,45 @@ signals, or NIL if it signals no such condition."
           ;; The tail, not the value: :METADATA's value is legitimately NIL,
           ;; and a presence check that reads the value would call it absent.
           (ok (nth-value 2 (get-properties data (list key)))))))))
+
+(deftest projections-are-copies-the-caller-may-change
+  ;; The projections handed out the stored forms themselves, so changing the
+  ;; returned data rewrote the registered declaration while its compiled
+  ;; predicate kept running the old one.
+  (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
+    (eval (copy-tree '(cl-spec/src/dsl:defspec copied-digit (range integer 0 9))))
+    (eval (copy-tree '(cl-spec/src/dsl:defspec-function copied-negate
+                       (:args (x integer)) (:pre (> x 0)) (:returns integer)
+                       (:post (< result 0)))))
+    (eval (copy-tree '(cl-spec/src/dsl:defproperty copied-property ((x integer))
+                       (:tags :copied) (:trials (:normal 50)) (integerp x))))
+    (testing "FUNCTION-SPEC-DATA"
+      (let ((digest (cl-spec/src/schema:definition-digest
+                     (cl-spec/src/registry:find-function-spec 'copied-negate)))
+            (data (function-spec-data 'copied-negate)))
+        (setf (first (getf data :preconditions)) '(< x 0)
+              (first (getf data :source-form)) 'mutated)
+        (ok (equal '((> x 0)) (getf (function-spec-data 'copied-negate) :preconditions)))
+        (ok (equal digest (cl-spec/src/schema:definition-digest
+                           (cl-spec/src/registry:find-function-spec 'copied-negate))))))
+    (testing "PROPERTY-DATA"
+      (let ((data (property-data 'copied-property)))
+        (setf (getf (getf data :trials) :normal) 1
+              (first (getf data :tags)) :mutated
+              (first (getf data :body)) nil)
+        (let ((again (property-data 'copied-property)))
+          (ok (eql 50 (getf (getf again :trials) :normal)))
+          (ok (equal '(:copied) (getf again :tags)))
+          (ok (equal '((integerp x)) (getf again :body))))))
+    (testing "SPEC-DATA"
+      (let ((data (spec-data 'copied-digit)))
+        (setf (second (getf data :source-form)) 'mutated)
+        (ok (equal '(range integer 0 9) (getf (spec-data 'copied-digit) :source-form)))))
+    (testing "SCHEMA-INFO"
+      (let ((info (cl-spec/src/schema:schema-info)))
+        (setf (first (getf info :record-kinds)) :mutated)
+        (ok (not (eq :mutated (first (getf (cl-spec/src/schema:schema-info)
+                                           :record-kinds)))))))))
 
 (deftest semantic-data-reports-everything-registered-about-a-symbol
   (let ((registry (make-hash-table-registry)))
