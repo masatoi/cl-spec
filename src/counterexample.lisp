@@ -376,42 +376,50 @@ never reached the target -- and is refused before this point."
         (%make-counterexample-artifact (artifact-record-wire data))))))
 
 (defun recheck-fixture-artifact (data registry state-policy target-revision)
-  "Reconstruct one saved recipe through the core checker, without a generator."
-  (let ((saved (getf data (getf data :selection)))
-        (definition (resolve-definition (getf data :name) :function-spec registry)))
+  "Reconstruct one saved recipe through the core checker, without a generator.
+
+As in a version 1 recheck, an error the recheck meets -- a target that is no
+longer defined, say -- is recorded as :CONTRACT-ERROR with the condition's type
+as :DETAIL rather than signalled, so a batch of rechecks reports every artifact."
+  (let ((saved (getf data (getf data :selection))))
     (labels ((result (status &optional detail observation)
                (list :schema-version 2 :record-kind :recheck :status status
                      :name (getf data :name) :entity-kind :function-spec
                      :input-kind :fixture-recipe :selection (getf data :selection)
                      :target-revision target-revision :detail detail
                      :observation observation)))
-      (unless definition (return-from recheck-fixture-artifact (result :definition-missing)))
-      (unless (function-spec-fixture definition)
-        (return-from recheck-fixture-artifact (result :definition-mismatch)))
-      (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
-        (unless complete
-          (return-from recheck-fixture-artifact (result :incomparable-definition)))
-        (unless (and (equal digest (getf data :definition-digest))
-                     (= (fixture-version (function-spec-fixture definition))
-                        (getf data :fixture-version)))
-          (return-from recheck-fixture-artifact (result :definition-mismatch))))
-      (unless (eq state-policy :fixture)
-        (return-from recheck-fixture-artifact (result :unsupported :state-unconfirmed)))
-      (let* ((check (check-fixture definition (first (getf saved :arguments)) :registry registry))
-             (observation (fixture-check-result-observation check))
-             (projected (fixture-check-data check)))
-        (cond
-          ((eq :fixture (observation-failure-phase observation))
-           (result :fixture-error (trial-observation-reason observation) projected))
-          ((eq :rejected (trial-observation-status observation))
-           (result :precondition-rejected nil projected))
-          ((eq :passed (trial-observation-status observation)) (result :passed nil projected))
-          ((eq :contract-error (trial-observation-reason observation))
-           (result :contract-error nil projected))
-          (t (result (if (failure-identities-match-p
-                          (getf saved :signature) (trial-observation-signature observation))
-                         :same-failure :different-failure)
-                     nil projected)))))))
+      (handler-case
+          (let ((definition (resolve-definition (getf data :name) :function-spec registry)))
+            (unless definition (return-from recheck-fixture-artifact (result :definition-missing)))
+            (unless (function-spec-fixture definition)
+              (return-from recheck-fixture-artifact (result :definition-mismatch)))
+            (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
+              (unless complete
+                (return-from recheck-fixture-artifact (result :incomparable-definition)))
+              (unless (and (equal digest (getf data :definition-digest))
+                           (= (fixture-version (function-spec-fixture definition))
+                              (getf data :fixture-version)))
+                (return-from recheck-fixture-artifact (result :definition-mismatch))))
+            (unless (eq state-policy :fixture)
+              (return-from recheck-fixture-artifact (result :unsupported :state-unconfirmed)))
+            (let* ((check (check-fixture definition (first (getf saved :arguments))
+                                         :registry registry))
+                   (observation (fixture-check-result-observation check))
+                   (projected (fixture-check-data check)))
+              (cond
+                ((eq :fixture (observation-failure-phase observation))
+                 (result :fixture-error (trial-observation-reason observation) projected))
+                ((eq :rejected (trial-observation-status observation))
+                 (result :precondition-rejected nil projected))
+                ((eq :passed (trial-observation-status observation)) (result :passed nil projected))
+                ((eq :contract-error (trial-observation-reason observation))
+                 (result :contract-error nil projected))
+                (t (result (if (failure-identities-match-p
+                                (getf saved :signature) (trial-observation-signature observation))
+                               :same-failure :different-failure)
+                           nil projected)))))
+        (error (condition)
+          (result :contract-error (type-of condition)))))))
 
 (defun make-counterexample-artifact (result &key (selection :selected))
   "Freeze original and accepted shrunk evidence from RESULT.
@@ -507,6 +515,8 @@ other policy, including the one for the other artifact version, returns :STATUS
 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 Returns a :RECHECK record; never mutates the saved artifact or original result.
+In both versions an error the recheck itself meets, such as a target that is no
+longer defined, is recorded as :STATUS :CONTRACT-ERROR rather than signalled.
 A non-artifact, a non-registry or an unknown policy is the caller's mistake, not
 a finding about the definition, so it is refused with INVALID-ARGUMENT before
 anything runs rather than recorded as :CONTRACT-ERROR."
