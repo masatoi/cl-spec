@@ -5,6 +5,7 @@
   (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:check-argument
+           #:check-keyword-arguments
            #:run-options-p
            #:check-run-options))
 
@@ -19,6 +20,22 @@ VALUE was passed as, so the refusal says which one was wrong."
       value
       (error 'invalid-argument :datum value :expected-type type
                                :operator operator :argument argument)))
+
+(defun check-keyword-arguments (arguments allowed operator)
+  "Return ARGUMENTS after refusing any keyword in it that is not in ALLOWED.
+
+ARGUMENTS is the keyword tail an entry point received through &REST; the entry
+point declares &ALLOW-OTHER-KEYS so that a misspelt keyword reaches this check
+rather than failing in the Lisp's own argument parsing with a condition outside
+CL-SPEC-ERROR (issue #79).  :ALLOW-OTHER-KEYS itself is accepted, as Common Lisp
+accepts it for every function with keyword parameters."
+  (loop for (key) on arguments by #'cddr
+        unless (or (member key allowed) (eq key :allow-other-keys))
+          do (error 'invalid-argument
+                    :operator operator :argument key :datum key
+                    :expected-type `(member ,@allowed)
+                    :reason "it is not a keyword argument of this operator"))
+  arguments)
 
 (defparameter +runner-owned-options+ '(:trials :registry)
   "Keys a runner sets itself on the options it hands its backend.

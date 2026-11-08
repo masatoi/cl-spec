@@ -54,7 +54,8 @@
                 #:state-post-error-data
                 #:unsupported-stateful-operation
                 #:spec-violation)
-  (:import-from #:cl-spec/src/utils/arguments #:check-argument #:check-run-options)
+  (:import-from #:cl-spec/src/utils/arguments
+                #:check-argument #:check-keyword-arguments #:check-run-options)
   (:import-from #:cl-spec/src/normalize
                 #:normalize-spec-form)
   (:import-from #:cl-spec/src/registry
@@ -2138,7 +2139,11 @@ closure reaches the digest."
            (fixture-check-result-observation result) (fixture-check-result-declared-cases result))))
 
 (defun fixture-check-data (result)
-  "Return a version-two record for a one-shot fixture execution."
+  "Return a version-two record for a one-shot fixture execution.
+
+RESULT is what CHECK-FIXTURE returned; anything else is refused with
+INVALID-ARGUMENT."
+  (check-argument result 'fixture-check-result 'fixture-check-data :result)
   (let ((observation (fixture-check-result-observation result))
         (metadata (copy-list (fixture-check-result-definition result))))
     (setf (getf metadata :schema-version) 2
@@ -2155,8 +2160,11 @@ closure reaches the digest."
                    :lifecycle (trial-observation-lifecycle observation)
                    :observation (trial-observation-call-evidence observation))))))
 
-(defun check-fixture (function-designator recipe &key coverage (registry *registry*))
+(defun check-fixture (function-designator recipe &rest keyword-arguments
+                      &key coverage (registry *registry*) &allow-other-keys)
   "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
+  (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-fixture)
+  (check-registry registry 'check-fixture)
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))
@@ -2174,7 +2182,8 @@ closure reaches the digest."
                                                         :context (list :registry registry))
                    :coverage (coverage-report-data *coverage-context*))))
 
-(defun check-function (function-designator &key trials seed options (registry *registry*))
+(defun check-function (function-designator &rest keyword-arguments
+                       &key trials seed options (registry *registry*) &allow-other-keys)
   "Check a function contract using evidence captured during each invocation.
 
 No target or predicate is called again to classify the result.  Shrinking still
@@ -2212,6 +2221,8 @@ trial and shrink candidate. A result supplied as :SEED requires matching complet
 declaration identity, options, profile and budget. Cleanup failures stop the run
 with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
 contract failure. Fixture results and artifacts use version 2."
+  (check-keyword-arguments keyword-arguments '(:trials :seed :options :registry)
+                           'check-function)
   (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
   (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
   (check-run-options options 'check-function)
@@ -2377,7 +2388,8 @@ without re-running the target, its guards, its captures or its post forms."
                    :observation (observation-data
                                  (call-check-result-observation result)))))))
 
-(defun check-call (function-designator arguments &key coverage (registry *registry*))
+(defun check-call (function-designator arguments &rest keyword-arguments
+                   &key coverage (registry *registry*) &allow-other-keys)
   "Check one caller-supplied invocation of a registered Function Spec.
 
 FUNCTION-DESIGNATOR names a registered contract, or is the FUNCTION-SPEC object
@@ -2415,6 +2427,7 @@ signals either condition is an ordinary target observation with reason
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction."
+  (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-call)
   (check-registry registry 'check-call)
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
