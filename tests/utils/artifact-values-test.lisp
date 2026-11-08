@@ -57,7 +57,10 @@
                          (decode-artifact-value
                           (list 4 (format nil "~D" (ash 1 13000)))))))))
   (testing "negative values and the bound itself still round-trip"
-    (dolist (value (list (- (1- (ash 1 13000))) (1- (ash 1 13000)) -7 0 -1/3))
+    ;; The encoder bounds the signed INTEGER-LENGTH, so -2^13000 (13000 bits)
+    ;; is in range while +2^13000 (13001 bits) is not.
+    (dolist (value (list (- (ash 1 13000)) (/ (- (ash 1 13000)) 3)
+                         (- (1- (ash 1 13000))) (1- (ash 1 13000)) -7 0 -1/3))
       (ok (= value (deserialize-artifact-value (serialize-artifact-value value)))))))
 
 (deftest limits-total-string-storage

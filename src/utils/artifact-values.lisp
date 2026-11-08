@@ -47,9 +47,11 @@ The encoder writes at most 13000 bits, which is 3914 decimal digits."
                             always (digit-char-p (char text i) 10)))))
     (value-error :invalid-integer))
   (let* ((negative (char= (char text 0) #\-))
-         (magnitude (parse-decimal-digits text (if negative 1 0) (length text))))
-    (when (> (integer-length magnitude) 13000) (value-error :integer-limit))
-    (if negative (- magnitude) magnitude)))
+         (magnitude (parse-decimal-digits text (if negative 1 0) (length text)))
+         (value (if negative (- magnitude) magnitude)))
+    ;; Bound the signed value, as INTEGER-TEXT does: -2^13000 has 13000 bits.
+    (when (> (integer-length value) 13000) (value-error :integer-limit))
+    value))
 
 (defun encode-artifact-value (value &key (max-nodes 10000) (max-depth 128))
   "Encode VALUE into a bounded tagged tree; reject sharing and cycles.

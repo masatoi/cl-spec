@@ -124,7 +124,10 @@ Malformed lists must not enter a law that promises normalization succeeds."
       (2 (- (/ odd 2)))
       (3 (/ odd 1024))
       (4 (- (random (ash 1 200))))
-      (5 (- (1- (ash 1 13000)) (random 1000)))
+      ;; Both ends of the 13000-bit range: -2^13000 is in it, +2^13000 is not.
+      (5 (if (zerop (random 2))
+             (- (ash 1 13000))
+             (- (1- (ash 1 13000)) (random 1000))))
       (6 -0.0d0)
       (7 (- (random 1d6)))
       (8 (- (random 1f3)))

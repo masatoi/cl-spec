@@ -5269,8 +5269,8 @@ existing symbols and documented scalar/tree values are supported; aliasing,
 cycles and opaque values are rejected rather than silently copied with changed
 semantics. A symbol's package is resolved by its exact package name, with no
 global or package-local nickname in effect, so decoding does not depend on the
-caller's `*package*`. Integers are limited to 13,000 bits on both sides, and
-decoding allocates close to linearly in the digits it reads. The public data
+caller's `*package*`. Integers are limited to 13,000 bits as `integer-length`
+counts them, the same bound on both sides, and decoding allocates close to linearly in the digits it reads. The public data
 reader and serializer return independent copies.
 Invalid version, duplicate/unknown record fields, malformed tags and excessive
 resources signal `invalid-counterexample-artifact`. See README for value types
