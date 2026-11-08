@@ -197,7 +197,8 @@ and the shrunk counterexample are what make a failure actionable."))
 ;; The designator is declared T and checked in the body, so a bad one is refused
 ;; as an INVALID-ARGUMENT rather than by the compiler's own type check (#79).
 (declaim (ftype (function (t
-                           &key (:profile t) (:seed t) (:options t) (:registry t))
+                           &key (:profile t) (:seed t) (:options t) (:registry t)
+                           &allow-other-keys)
                           (values property-result &optional))
                 run-property))
 

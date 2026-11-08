@@ -750,6 +750,14 @@ propertyを通る値や要素specに違反する値をcounterexampleへ混入さ
 その型として読むため、登録したspecを参照できないからである。違反は
 マクロ展開時の`invalid-spec-form`になる。
 
+正規化は複合フォームの入れ子を1000段までに限る。それより深いフォームと、子として
+自分自身を含むフォーム（CARを通る循環）は`invalid-spec-form`で拒否する。2つの枝が
+同じ子フォームを共有するだけなら循環ではなく、受け付ける。
+
+`function-spec`、`property`、`custom-generator`を低レベルのregistry関数で書き込むときも、
+名前はNIL・keyword以外のsymbolに限り、違反は`invalid-argument`（引数`:name`）で拒否する。
+registryプロトコルは渡された値をそのまま保存し、種類の違う値は読み出し時に拒否する。
+
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
 ただしCommon Lisp type languageと完全互換にすることは目標としない。
@@ -2556,6 +2564,13 @@ specはregistered nameかDSL formで表示する。
 循環値や非常に深い値でも、表示は有限時間で終わる。値を文の途中に表示するreportは
 `*print-pretty*`をNILにして1行で表示する（`unknown-spec`・`unknown-property`・
 `unknown-function-spec`の名前、`invalid-argument`の期待する型を含む）。
+
+`*print-length*`と`*print-level*`は文字列と整数の大きさを制限しない。そのため、
+reportと`explain`が値を表示するときは、表示される範囲にある1000文字を超える文字列と
+4096ビットを超える整数を、大きさを示す要約（`#<STRING of N characters starting "...">`、
+`#<INTEGER of N bits>`）に置き換える。共有構造と循環は保ったままにする。
+捕まえたconditionのreport（`:condition-report`）は10000文字で切る。
+`explain-data`と`spec-violation-value`は値そのものを持ち、要約しない。
 
 ---
 
