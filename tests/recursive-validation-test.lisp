@@ -151,6 +151,46 @@ than left to hang the suite."
               (second (first (first dag))) "bad")
         (ok (not (validp 'tree dag :registry registry)))))))
 
+(defun nested-chain (depth)
+  "Return (DEPTH-1 (DEPTH-2 ... (0 NIL))), a linked chain DEPTH nodes deep."
+  (let ((value nil))
+    (dotimes (index depth value)
+      (setf value (list index value)))))
+
+(defun last-node (chain)
+  "Return the innermost (INDEX NIL) node of CHAIN."
+  (loop while (second chain)
+        do (setf chain (second chain)))
+  chain)
+
+(defun bytes-allocated-by (thunk)
+  "Call THUNK and return the bytes it allocated, or 0 where that is not measurable."
+  #+sbcl
+  (let ((before (sb-ext:get-bytes-consed)))
+    (funcall thunk)
+    (- (sb-ext:get-bytes-consed) before))
+  #-sbcl
+  (progn (funcall thunk) 0))
+
+(deftest deep-recursive-values-validate-in-linear-space
+  ;; The path trie of #85 made one chain of trie nodes per value, as long as the
+  ;; value's depth, so a linked structure N deep allocated N^2 nodes.
+  (let ((registry (registry-with '(chain (or null (tuple integer chain))))))
+    (testing "a chain 4000 nodes deep is checked within two seconds"
+      (ok (equal '(:returned t)
+                 (within-seconds (2)
+                   (and (validp 'chain (nested-chain 4000) :registry registry) t)))))
+    (testing "checking it allocates a bounded amount per node"
+      (let ((value (nested-chain 4000)))
+        (ok (< (bytes-allocated-by (lambda () (validp 'chain value :registry registry)))
+               (* 16 1024 1024)))
+        (ok (< (bytes-allocated-by (lambda () (explain-data 'chain value :registry registry)))
+               (* 16 1024 1024)))))
+    (testing "an invalid leaf at the bottom is still found"
+      (let ((value (nested-chain 300)))
+        (setf (first (last-node value)) "bad")
+        (ok (not (validp 'chain value :registry registry)))))))
+
 (defun self-containing-singleton ()
   "Return the list (X) whose only element is the list itself."
   (let ((value (list nil)))

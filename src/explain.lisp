@@ -79,14 +79,25 @@
 
 (in-package #:cl-spec/src/explain)
 
-(declaim (ftype (function (spec &key (:context t)) function) compile-explainer))
+(declaim (ftype (function (spec &key (:context t) (:validity-only t)) function) compile-explainer))
+
+(defvar *validity-only* nil
+  "True while the check in progress needs only whether the value is admitted.
+
+Such a check still returns error datums, so every node behaves the same way,
+but their :PATH is left innermost first and is not meant to be read.  VALIDP,
+COMPILE-VALIDATOR and the first pass of a disjunction run this way.")
 
 (defun error-datum (kind path value &rest extra)
   "Build one structured error plist.
 
 PATH is accumulated innermost first and reversed here, so callers always see it
-running from the root value down to the failing part."
-  (list* :kind kind :path (reverse path) :actual value extra))
+running from the root value down to the failing part.  Within a check that only
+asks whether the value is admitted (*VALIDITY-ONLY*), nobody reads the path, and
+reversing it would cost its whole length for every refusal an admitted value
+meets on the way -- quadratic in the depth of a recursive value -- so it is kept
+as it was built."
+  (list* :kind kind :path (if *validity-only* path (reverse path)) :actual value extra))
 
 (defparameter +field-structure-error-kinds+
   '(:not-a-plist :not-an-alist :not-a-hash-table :bad-association
@@ -299,18 +310,27 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
     (lambda (value path)
       ;; The first branch that admits VALUE decides the answer, and the
       ;; branches after it cannot change it, so they are not checked.  Every
-      ;; branch's errors are needed only when none admits VALUE.
-      (let ((branch-errors '()))
-        (dolist (function compiled)
-          (let ((errors (funcall function value path)))
-            (when (null errors)
-              (return-from nil))
-            (push errors branch-errors)))
-        (when (= (length branch-errors) (length compiled))
-          (list (error-datum :no-branch-matched path value
-                             :branches (mapcar (lambda (descriptor errors)
-                                                 (list :expected descriptor :errors errors))
-                                               descriptors (nreverse branch-errors)))))))))
+      ;; branch's errors are needed only when none admits VALUE, so the branches
+      ;; are first tried for admission alone: the refusals an admitted value
+      ;; meets in earlier branches are never rendered.  A reference's results
+      ;; are memoized per mode, so the second pass that renders them reuses
+      ;; every admission the first pass found.
+      (when (or *validity-only*
+                (notany (lambda (function)
+                          (null (let ((*validity-only* t))
+                                  (funcall function value path))))
+                        compiled))
+        (let ((branch-errors '()))
+          (dolist (function compiled)
+            (let ((errors (funcall function value path)))
+              (when (null errors)
+                (return-from nil))
+              (push errors branch-errors)))
+          (when (= (length branch-errors) (length compiled))
+            (list (error-datum :no-branch-matched path value
+                               :branches (mapcar (lambda (descriptor errors)
+                                                   (list :expected descriptor :errors errors))
+                                                 descriptors (nreverse branch-errors))))))))))
 
 (defun errors-mention-cycle-p (errors)
   "Return true when a :CYCLIC-VALUE datum occurs anywhere in ERRORS.
@@ -435,65 +455,101 @@ with DOLIST rather than indexed access, so a long unique list stays linear."
 NIL outside a check, :PENDING once COMPILE-EXPLAINER has started one, and a
 REFERENCE-VISITS object as soon as that check reaches its first reference.")
 
+(defstruct (path-node (:constructor make-path-node ()))
+  "One position of a check, interned so that equal paths share one node.
+
+Two paths naming the same position -- the same steps, EQL one by one -- map to
+the same node, so a memoized result is found without walking the path however
+deep it is.  The path trie of issue #85 walked it, which made a value N deep cost
+N^2.  CHILDREN maps a step to the node one level further in: an alist while it is
+short, as almost every position has one or two, and an EQL table once it grows.
+RESULTS and ADMISSIONS hold (VALUE TARGET . ERRORS) entries computed at this
+position, for a check that renders errors and one that only asks for admission."
+  (children nil)
+  (results nil)
+  (admissions nil))
+
+(defconstant +path-node-alist-limit+ 8
+  "How many children a PATH-NODE keeps in an alist before using a hash table.")
+
+(defun path-node-child (node step)
+  "Return the node reached from NODE by STEP, creating it the first time."
+  (let ((children (path-node-children node)))
+    (if (hash-table-p children)
+        (or (gethash step children)
+            (setf (gethash step children) (make-path-node)))
+        (let ((entry (assoc step children :test #'eql)))
+          (if entry
+              (cdr entry)
+              (let ((child (make-path-node)))
+                (if (< (length children) +path-node-alist-limit+)
+                    (push (cons step child) (path-node-children node))
+                    (let ((table (make-hash-table :test #'eql)))
+                      (loop for (key . value) in children
+                            do (setf (gethash key table) value))
+                      (setf (gethash step table) child
+                            (path-node-children node) table)))
+                child))))))
+
 (defstruct (reference-visits (:constructor make-reference-visits ()))
   "What one check knows about the references it has reached.
 
-ACTIVE maps a value to the (TARGET . PATH) frames currently being checked against
-it, innermost first; RESULTS maps a structured value, then a target, to the root of
-a RESULT-TRIE holding the errors already computed for each path; NODES maps a
-target name to (REGISTRY . NODE), the target compiled once for this check."
+ACTIVE maps a value to the (TARGET . PATH-NODE) frames currently being checked
+against it, innermost first; NODES maps a target name to (REGISTRY . NODE), the
+target compiled once for this check.  PATH-NODES maps each path cons seen so far
+to its interned PATH-NODE, which also holds the results memoized there, and ROOT
+is the node of the empty path."
   (active (make-hash-table :test #'eql) :type hash-table)
-  (results (make-hash-table :test #'eq) :type hash-table)
-  (nodes (make-hash-table :test #'eq) :type hash-table))
+  (nodes (make-hash-table :test #'eq) :type hash-table)
+  (path-nodes (make-hash-table :test #'eq) :type hash-table)
+  (root (make-path-node) :type path-node))
 
-(defstruct (result-trie (:constructor make-result-trie ()))
-  "One node of the memo of a value's results under one target, keyed by path.
+(defun path-node-of (visits path)
+  "Return the PATH-NODE interned for PATH within the check VISITS records.
 
-A path is walked one element at a time from its innermost step, each step an EQL
-lookup, so finding the result for a position costs the path's length however
-many other positions the value was reached at (issue #85).  KNOWN-P marks a node
-whose path has a computed result in ERRORS."
-  (known-p nil)
-  (errors nil)
-  (children nil))
+Paths are built innermost-first by consing a step onto the enclosing path, so the
+tail of a new path is almost always a path already interned and this costs one
+EQ lookup and one step.  A tail never seen is interned on the way, each cons at
+most once per check, so interning stays linear in the paths a check builds
+however deep they are."
+  (let ((cache (reference-visits-path-nodes visits))
+        (pending '())
+        (node nil))
+    (loop
+      (cond ((null path) (setf node (reference-visits-root visits)) (return))
+            ((setf node (gethash path cache)) (return))
+            (t (push path pending)
+               (setf path (cdr path)))))
+    (dolist (cell pending node)
+      (setf node (path-node-child node (car cell))
+            (gethash cell cache) node))))
 
-(defun result-trie-node (visits value target path create-p)
-  "Return the trie node for VALUE checked against TARGET at PATH, or NIL.
+(defun known-result (value target node)
+  "Return the errors memoized for VALUE against TARGET at NODE, and whether known.
 
-With CREATE-P the missing nodes along the way are made, so the result can be
-stored there; without it a missing node means no result is known."
-  (let ((targets (or (gethash value (reference-visits-results visits))
-                     (and create-p
-                          (setf (gethash value (reference-visits-results visits))
-                                (make-hash-table :test #'eq))))))
-    (when targets
-      (let ((node (or (gethash target targets)
-                      (and create-p (setf (gethash target targets) (make-result-trie))))))
-        (loop for step in path
-              while node
-              do (let ((children (result-trie-children node)))
-                   (setf node
-                         (or (and children (gethash step children))
-                             (and create-p
-                                  (setf (gethash step
-                                                 (or children
-                                                     (setf (result-trie-children node)
-                                                           (make-hash-table :test #'eql))))
-                                        (make-result-trie)))))))
-        node))))
+A check that renders errors can also use an admission the other mode found: an
+admitted value has no errors in either."
+  (flet ((lookup (entries)
+           (loop for entry in entries
+                 when (and (eq (first entry) value) (eq (second entry) target))
+                   return (values (cddr entry) t)
+                 finally (return (values nil nil)))))
+    (if *validity-only*
+        (lookup (path-node-admissions node))
+        (multiple-value-bind (errors known-p) (lookup (path-node-results node))
+          (cond (known-p (values errors t))
+                (t (multiple-value-bind (refusal admission-known-p)
+                       (lookup (path-node-admissions node))
+                     (if (and admission-known-p (null refusal))
+                         (values nil t)
+                         (values nil nil)))))))))
 
-(defun path-equal (path other)
-  "Return true when PATH and OTHER name the same position.
-
-Two paths to the same position hold the same index and key objects, usually
-sharing their tail, so element-wise EQL is exact and an EQ tail ends the walk
-early.  EQUAL would also descend into keys, which may be circular."
-  (loop
-    (cond ((eq path other) (return t))
-          ((or (atom path) (atom other)) (return nil))
-          ((not (eql (car path) (car other))) (return nil))
-          (t (setf path (cdr path)
-                   other (cdr other))))))
+(defun remember-result (value target node errors)
+  "Memoize ERRORS as the result of VALUE against TARGET at NODE, in this mode."
+  (let ((entry (list* value target errors)))
+    (if *validity-only*
+        (push entry (path-node-admissions node))
+        (push entry (path-node-results node)))))
 
 (defun memoizable-value-p (value)
   "Return true when VALUE has structure a spec can descend into.
@@ -528,10 +584,11 @@ A result is a function of TARGET, VALUE and PATH alone, so a structured value
 reached again at the same position through another branch -- an OR whose
 branches share a recursive child -- reuses it instead of checking that child once
 per branch, which made recursive disjunctions exponential (issue #59)."
-  (let ((active (reference-visits-active visits)))
-    (loop for (frame-target . frame-path) in (gethash value active)
+  (let ((active (reference-visits-active visits))
+        (node (path-node-of visits path)))
+    (loop for (frame-target . frame-node) in (gethash value active)
           when (eq frame-target target)
-            do (if (path-equal frame-path path)
+            do (if (eq frame-node node)
                    (error 'invalid-spec-form
                           :form target
                           :reason (format nil "~S reaches itself again on the same value ~
@@ -542,10 +599,10 @@ per branch, which made recursive disjunctions exponential (issue #59)."
                      (list (error-datum :cyclic-value path value :expected expected)))))
     (let ((memoize-p (memoizable-value-p value)))
       (when memoize-p
-        (let ((node (result-trie-node visits value target path nil)))
-          (when (and node (result-trie-known-p node))
-            (return-from check-reference (result-trie-errors node)))))
-      (push (cons target path) (gethash value active))
+        (multiple-value-bind (errors known-p) (known-result value target node)
+          (when known-p
+            (return-from check-reference errors))))
+      (push (cons target node) (gethash value active))
       (let ((errors (unwind-protect
                          (funcall (reference-node visits target registry) value path)
                       (let ((remaining (rest (gethash value active))))
@@ -553,9 +610,7 @@ per branch, which made recursive disjunctions exponential (issue #59)."
                             (setf (gethash value active) remaining)
                             (remhash value active))))))
         (when memoize-p
-          (let ((node (result-trie-node visits value target path t)))
-            (setf (result-trie-known-p node) t
-                  (result-trie-errors node) errors)))
+          (remember-result value target node errors))
         errors))))
 
 (defmethod compile-node ((spec reference-spec) context)
@@ -879,17 +934,21 @@ branch."
                   (list (error-datum :no-branch path value :expected expected
                                      :observed-tag tag :known-tags tags)))))))))
 
-(defun compile-explainer (spec &key context)
+(defun compile-explainer (spec &key context validity-only)
   "Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
 CONTEXT is a plist; :REGISTRY names the registry references resolve against.
 The returned function returns an empty list exactly when VALUE satisfies SPEC,
 which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing.  Each call
 is one check: the reference bookkeeping of a check never leaks into another, not
-even into a nested check a predicate starts."
+even into a nested check a predicate starts.
+
+With VALIDITY-ONLY the caller needs only whether the list is empty: the errors
+are still returned, but their :PATH is not rendered and must not be read."
   (let ((node (compile-node spec context)))
     (lambda (value path)
-      (let ((*reference-visits* :pending))
+      (let ((*reference-visits* :pending)
+            (*validity-only* validity-only))
         (funcall node value path)))))
 
 (defun explain-data (spec-designator value &key (registry *registry*))

@@ -32,7 +32,7 @@
 CONTEXT is a plist; :REGISTRY names the registry references resolve against.
 The validator is a thin wrapper over the explainer so that the two can never
 disagree about whether a value is admissible."
-  (let ((explainer (compile-explainer spec :context context)))
+  (let ((explainer (compile-explainer spec :context context :validity-only t)))
     (lambda (value)
       (null (funcall explainer value nil)))))
 
@@ -43,7 +43,7 @@ SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
 Signals UNKNOWN-SPEC when a symbol resolves to nothing."
   (check-registry registry 'validp)
   (let ((spec (resolve-spec spec-designator registry)))
-    (null (funcall (compile-explainer spec :context (list :registry registry))
+    (null (funcall (compile-explainer spec :context (list :registry registry) :validity-only t)
                    value nil))))
 
 (defun validate (spec-designator value &key (registry *registry*))
