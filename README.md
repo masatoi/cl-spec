@@ -1046,7 +1046,8 @@ explain:
   A value nested more than `*reference-depth-limit*` (default 1000) references
   deep — a linked structure validated through a recursive spec — signals
   `validation-depth-exceeded` instead of exhausting the control stack; it is
-  neither admitted nor refused. Bind the limit higher for a larger control stack. Explaining a
+  neither admitted nor refused, also when a predicate or a reader started the
+  nested check. Bind the limit higher for a larger control stack. Explaining a
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as

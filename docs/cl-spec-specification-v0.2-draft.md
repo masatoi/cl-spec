@@ -756,10 +756,12 @@ propertyを通る値や要素specに違反する値をcounterexampleへ混入さ
 
 検証は、値の中で入れ子になった参照の検査を`*reference-depth-limit*`段（既定1000）までに
 限る。参照を1段たどるたびに制御スタックを使うため、これより深い値は
-`validation-depth-exceeded`（`cl-spec-error`）を通知する。述語が始めた入れ子の検査で
-通知された場合も、外側の値を拒否せずにそのまま伝える。このとき値を受理も拒否もしない。`validp`がNILを返すと、検査していない値を
+`validation-depth-exceeded`（`cl-spec-error`）を通知する。述語、`object-of`のreader、`tagged-by`の
+tag readerが始めた入れ子の検査で通知された場合も、外側の値を拒否せずにそのまま伝える。このとき値を受理も拒否もしない。`validp`がNILを返すと、検査していない値を
 不正と呼ぶことになるからである。`explain-data`の誤りは入れ子の各datumが根からの`:path`を
 持つので、深さdで失敗した値の説明はO(d²)の大きさになる。この上限がdを1000までに抑える。
+`validp`と`explain-data`は一つの検査の中で同じメモを共有し、同じ順に値をたどるので、
+上限の近くでも答えが食い違わない。
 
 `function-spec`、`property`、`custom-generator`を低レベルのregistry関数で書き込むときも、
 名前はNIL・keyword以外のsymbolに限り、違反は`invalid-argument`（引数`:name`）で拒否する。
