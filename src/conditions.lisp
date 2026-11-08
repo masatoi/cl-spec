@@ -18,6 +18,9 @@
            #:spec-violation-value
            #:spec-violation-path
            #:spec-violation-errors
+           #:validation-depth-exceeded
+           #:validation-depth-exceeded-spec
+           #:validation-depth-exceeded-limit
            #:unknown-spec
            #:unknown-spec-name
            #:unknown-property
@@ -137,6 +140,29 @@
                        (spec-violation-spec condition)
                        (abbreviate-for-print (spec-violation-path condition))))))
   (:documentation "Signalled when a value fails to satisfy a spec."))
+
+(define-condition validation-depth-exceeded (cl-spec-error)
+  ((spec :initarg :spec
+         :initform nil
+         :reader validation-depth-exceeded-spec
+         :documentation "Name of the spec whose reference reached the limit.")
+   (limit :initarg :limit
+          :initform nil
+          :reader validation-depth-exceeded-limit
+          :documentation "How many nested reference checks one check allows."))
+  (:report (lambda (condition stream)
+             (with-bounded-printing (:one-line t)
+               (format stream "The value is nested more than ~D references deep under ~S; ~
+                               it was neither admitted nor refused."
+                       (validation-depth-exceeded-limit condition)
+                       (validation-depth-exceeded-spec condition)))))
+  (:documentation "Signalled when a check descends through more nested references than it allows.
+
+Validating a recursive spec descends the control stack once per level of the
+value, so a value nested deep enough would exhaust it.  The check stops at the
+limit instead and makes no claim about the value: VALIDP, VALIDATE and
+EXPLAIN-DATA signal this rather than answer, because answering NIL would call a
+value invalid that nobody checked."))
 
 (define-condition unknown-spec (cl-spec-error)
   ((name :initarg :name

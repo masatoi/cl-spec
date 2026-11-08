@@ -174,22 +174,84 @@ than left to hang the suite."
 
 (deftest deep-recursive-values-validate-in-linear-space
   ;; The path trie of #85 made one chain of trie nodes per value, as long as the
-  ;; value's depth, so a linked structure N deep allocated N^2 nodes.
+  ;; value's depth, so a linked structure N deep allocated N^2 nodes: 769 MB at
+  ;; 2000.  900 levels, under the reference depth limit, now cost well under 4 MB.
   (let ((registry (registry-with '(chain (or null (tuple integer chain))))))
-    (testing "a chain 4000 nodes deep is checked within two seconds"
+    (testing "a chain 900 nodes deep is checked within a second"
       (ok (equal '(:returned t)
-                 (within-seconds (2)
-                   (and (validp 'chain (nested-chain 4000) :registry registry) t)))))
+                 (within-seconds (1)
+                   (and (validp 'chain (nested-chain 900) :registry registry) t)))))
     (testing "checking it allocates a bounded amount per node"
-      (let ((value (nested-chain 4000)))
+      (let ((value (nested-chain 900)))
         (ok (< (bytes-allocated-by (lambda () (validp 'chain value :registry registry)))
-               (* 16 1024 1024)))
+               (* 4 1024 1024)))
         (ok (< (bytes-allocated-by (lambda () (explain-data 'chain value :registry registry)))
-               (* 16 1024 1024)))))
+               (* 4 1024 1024)))))
     (testing "an invalid leaf at the bottom is still found"
       (let ((value (nested-chain 300)))
         (setf (first (last-node value)) "bad")
         (ok (not (validp 'chain value :registry registry)))))))
+
+(deftest atoms-reached-through-a-name-cost-no-bookkeeping
+  ;; Interning the position of every reference visit, atoms included, made a
+  ;; list of a million digits under a named spec allocate 300 MB.
+  (let ((registry (registry-with '(digit (range integer 0 9))))
+        (value (make-list 200000 :initial-element 5)))
+    (ok (< (bytes-allocated-by
+            (lambda () (validp (normalize-spec-form '(list-of digit)) value
+                               :registry registry)))
+           ;; One active-frame cons pair per visit, which the cycle check needs,
+           ;; and nothing retained: about 50 bytes an element, not 270.
+           (* 16 1024 1024)))))
+
+(deftest a-value-nested-past-the-reference-limit-is-refused
+  ;; Each nested reference descends the control stack, so a chain tens of
+  ;; thousands deep exhausted it and could end the process.
+  (let ((registry (registry-with '(chain (or null (tuple integer chain)))))
+        (deep (nested-chain 20000)))
+    (dolist (check (list (lambda () (validp 'chain deep :registry registry))
+                         (lambda () (explain-data 'chain deep :registry registry))
+                         (lambda () (cl-spec/src/validator:validate 'chain deep
+                                                                    :registry registry))))
+      (let ((outcome (refusal-of check)))
+        (ok (typep outcome 'cl-spec/src/conditions:validation-depth-exceeded))
+        (ok (and (typep outcome 'cl-spec/src/conditions:validation-depth-exceeded)
+                 (eq 'chain (cl-spec/src/conditions:validation-depth-exceeded-spec outcome))))))
+    (testing "a chain just inside the limit is still admitted"
+      (ok (validp 'chain (nested-chain 990) :registry registry)))))
+
+(defvar *predicate-calls* 0
+  "How many times COUNTED-ODD-P and COUNTED-POSITIVE-P were called.")
+
+(defun counted-odd-p (value)
+  "Count the call and return whether VALUE is an odd integer."
+  (incf *predicate-calls*)
+  (and (integerp value) (oddp value)))
+
+(defun counted-positive-p (value)
+  "Count the call and return whether VALUE is a positive integer."
+  (incf *predicate-calls*)
+  (and (integerp value) (plusp value)))
+
+(deftest a-refused-disjunction-runs-each-branch-once
+  ;; Explaining a refusal must not re-run the predicates that refused it.
+  (let ((spec (normalize-spec-form '(or (satisfies counted-odd-p)
+                                       (or (satisfies counted-positive-p)
+                                           (satisfies counted-odd-p))))))
+    (let ((*predicate-calls* 0))
+      (explain-data spec -4)
+      (ok (= 3 *predicate-calls*)))
+    (testing "and the explanation still locates the refusal from the root"
+      (let* ((registry (registry-with '(pair (or null (tuple integer pair)))))
+             (data (explain-data 'pair '(1 (2 ("x" nil))) :registry registry)))
+        (ok (not (getf data :valid)))
+        (ok (labels ((paths (errors)
+                       (loop for datum in errors
+                             append (cons (getf datum :path)
+                                          (append (paths (getf datum :errors))
+                                                  (loop for branch in (getf datum :branches)
+                                                        append (paths (getf branch :errors))))))))
+              (member '(1 1 0) (paths (getf data :errors)) :test #'equal)))))))
 
 (defun self-containing-singleton ()
   "Return the list (X) whose only element is the list itself."

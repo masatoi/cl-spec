@@ -46,6 +46,9 @@
                 #:spec-violation-value
                 #:spec-violation-path
                 #:spec-violation-errors
+                #:validation-depth-exceeded
+                #:validation-depth-exceeded-spec
+                #:validation-depth-exceeded-limit
                 #:unknown-spec
                 #:unknown-spec-name
                 #:unknown-property
@@ -310,6 +313,9 @@
            #:spec-violation-value
            #:spec-violation-path
            #:spec-violation-errors
+           #:validation-depth-exceeded
+           #:validation-depth-exceeded-spec
+           #:validation-depth-exceeded-limit
            #:unknown-spec
            #:unknown-spec-name
            #:unknown-property

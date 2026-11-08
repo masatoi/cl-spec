@@ -11,7 +11,7 @@
   (:import-from #:cl-spec/src/utils/printing
                 #:with-bounded-printing #:abbreviate-for-print #:condition-report-text)
   (:import-from #:cl-spec/src/conditions
-                #:invalid-spec-form)
+                #:invalid-spec-form #:validation-depth-exceeded)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-kind
@@ -303,6 +303,42 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
                                                                          (t :unchecked))))
                             :errors child-errors))))))
 
+(defun render-unread-paths (errors)
+  "Return ERRORS, collected for admission alone, with every :PATH rendered root first.
+
+Outside a check that needs only admission this copies the datums, nested :ERRORS
+and :BRANCHES included, reversing each innermost-first :PATH, so they read as if
+the check had rendered them; within one, ERRORS are returned as they are.
+Memoized results make the datum tree a graph whose subtrees are shared, so each
+list is rendered once and shared again in the copy, and the stored errors are
+never changed."
+  (if *validity-only*
+      errors
+      (let ((rendered (make-hash-table :test #'eq)))
+        (labels ((render-errors (list)
+                   (or (gethash list rendered)
+                       (setf (gethash list rendered)
+                             (mapcar #'render-datum list))))
+                 (render-datum (datum)
+                   (or (gethash datum rendered)
+                       (setf (gethash datum rendered)
+                             (loop for (key item) on datum by #'cddr
+                                   append (list key
+                                                (case key
+                                                  (:path (reverse item))
+                                                  (:errors (render-errors item))
+                                                  (:branches
+                                                   (loop for branch in item
+                                                         collect (loop for (bkey bitem) on branch
+                                                                         by #'cddr
+                                                                       append
+                                                                       (list bkey
+                                                                             (if (eq bkey :errors)
+                                                                                 (render-errors bitem)
+                                                                                 bitem)))))
+                                                  (otherwise item))))))))
+          (render-errors errors)))))
+
 (defmethod compile-node ((spec or-spec) context)
   (let* ((children (or-spec-children spec))
          (compiled (mapcar (lambda (child) (compile-node child context)) children))
@@ -311,26 +347,24 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
       ;; The first branch that admits VALUE decides the answer, and the
       ;; branches after it cannot change it, so they are not checked.  Every
       ;; branch's errors are needed only when none admits VALUE, so the branches
-      ;; are first tried for admission alone: the refusals an admitted value
-      ;; meets in earlier branches are never rendered.  A reference's results
-      ;; are memoized per mode, so the second pass that renders them reuses
-      ;; every admission the first pass found.
-      (when (or *validity-only*
-                (notany (lambda (function)
-                          (null (let ((*validity-only* t))
-                                  (funcall function value path))))
-                        compiled))
-        (let ((branch-errors '()))
-          (dolist (function compiled)
-            (let ((errors (funcall function value path)))
-              (when (null errors)
-                (return-from nil))
-              (push errors branch-errors)))
-          (when (= (length branch-errors) (length compiled))
-            (list (error-datum :no-branch-matched path value
-                               :branches (mapcar (lambda (descriptor errors)
-                                                   (list :expected descriptor :errors errors))
-                                                 descriptors (nreverse branch-errors))))))))))
+      ;; are checked for admission alone: the refusals an admitted value meets in
+      ;; earlier branches are never rendered, which kept a recursive value N deep
+      ;; from costing N^2.  When every branch refuses, the errors that pass
+      ;; collected have their paths rendered once -- no branch, predicate or
+      ;; reader is run a second time.
+      (let ((branch-errors '()))
+        (dolist (function compiled)
+          (let ((errors (let ((*validity-only* t))
+                          (funcall function value path))))
+            (when (null errors)
+              (return-from nil))
+            (push errors branch-errors)))
+        (when (= (length branch-errors) (length compiled))
+          (list (error-datum :no-branch-matched path value
+                             :branches (mapcar (lambda (descriptor errors)
+                                                 (list :expected descriptor
+                                                       :errors (render-unread-paths errors)))
+                                               descriptors (nreverse branch-errors)))))))))
 
 (defun errors-mention-cycle-p (errors)
   "Return true when a :CYCLIC-VALUE datum occurs anywhere in ERRORS.
@@ -491,18 +525,28 @@ position, for a check that renders errors and one that only asks for admission."
                             (path-node-children node) table)))
                 child))))))
 
+(defconstant +reference-depth-limit+ 1000
+  "How many reference checks may be nested in one check before it is refused.
+
+Each reference reached inside another descends the control stack by a few frames
+per level of the value, so a linked structure tens of thousands deep exhausted
+the stack -- and, once the guard page had been spent, ended the process.  The
+spec form itself is limited to +SPEC-FORM-DEPTH-LIMIT+ levels, so the value's
+depth through references is the only unbounded recursion left.")
+
 (defstruct (reference-visits (:constructor make-reference-visits ()))
   "What one check knows about the references it has reached.
 
-ACTIVE maps a value to the (TARGET . PATH-NODE) frames currently being checked
-against it, innermost first; NODES maps a target name to (REGISTRY . NODE), the
-target compiled once for this check.  PATH-NODES maps each path cons seen so far
-to its interned PATH-NODE, which also holds the results memoized there, and ROOT
-is the node of the empty path."
+ACTIVE maps a value to the (TARGET . PATH) frames currently being checked against
+it, innermost first; NODES maps a target name to (REGISTRY . NODE), the target
+compiled once for this check.  PATH-NODES maps each path cons interned so far to
+its PATH-NODE, which also holds the results memoized there, and ROOT is the node
+of the empty path.  DEPTH counts the reference checks currently in progress."
   (active (make-hash-table :test #'eql) :type hash-table)
   (nodes (make-hash-table :test #'eq) :type hash-table)
   (path-nodes (make-hash-table :test #'eq) :type hash-table)
-  (root (make-path-node) :type path-node))
+  (root (make-path-node) :type path-node)
+  (depth 0 :type fixnum))
 
 (defun path-node-of (visits path)
   "Return the PATH-NODE interned for PATH within the check VISITS records.
@@ -583,34 +627,46 @@ unbounded recursion are cut (issue #58):
 A result is a function of TARGET, VALUE and PATH alone, so a structured value
 reached again at the same position through another branch -- an OR whose
 branches share a recursive child -- reuses it instead of checking that child once
-per branch, which made recursive disjunctions exponential (issue #59)."
+per branch, which made recursive disjunctions exponential (issue #59).
+
+A position is interned as a PATH-NODE only when it is needed: to memoize a
+structured value's result, or to compare against an enclosing check of the same
+target on the same value.  An atom reached through a name costs nothing more.
+A value nested more than +REFERENCE-DEPTH-LIMIT+ references deep signals
+VALIDATION-DEPTH-EXCEEDED rather than exhausting the control stack."
   (let ((active (reference-visits-active visits))
-        (node (path-node-of visits path)))
-    (loop for (frame-target . frame-node) in (gethash value active)
-          when (eq frame-target target)
-            do (if (eq frame-node node)
-                   (error 'invalid-spec-form
-                          :form target
-                          :reason (format nil "~S reaches itself again on the same value ~
-                                               without consuming any structure (a ~
-                                               non-productive reference cycle)"
-                                          target))
-                   (return-from check-reference
-                     (list (error-datum :cyclic-value path value :expected expected)))))
-    (let ((memoize-p (memoizable-value-p value)))
+        (memoize-p (memoizable-value-p value))
+        (node nil))
+    (flet ((node ()
+             (or node (setf node (path-node-of visits path)))))
+      (loop for (frame-target . frame-path) in (gethash value active)
+            when (eq frame-target target)
+              do (if (eq (path-node-of visits frame-path) (node))
+                     (error 'invalid-spec-form
+                            :form target
+                            :reason (format nil "~S reaches itself again on the same value ~
+                                                 without consuming any structure (a ~
+                                                 non-productive reference cycle)"
+                                            target))
+                     (return-from check-reference
+                       (list (error-datum :cyclic-value path value :expected expected)))))
       (when memoize-p
-        (multiple-value-bind (errors known-p) (known-result value target node)
+        (multiple-value-bind (errors known-p) (known-result value target (node))
           (when known-p
             (return-from check-reference errors))))
-      (push (cons target node) (gethash value active))
+      (when (>= (reference-visits-depth visits) +reference-depth-limit+)
+        (error 'validation-depth-exceeded :spec target :limit +reference-depth-limit+))
+      (push (cons target path) (gethash value active))
+      (incf (reference-visits-depth visits))
       (let ((errors (unwind-protect
                          (funcall (reference-node visits target registry) value path)
+                      (decf (reference-visits-depth visits))
                       (let ((remaining (rest (gethash value active))))
                         (if remaining
                             (setf (gethash value active) remaining)
                             (remhash value active))))))
         (when memoize-p
-          (remember-result value target node errors))
+          (remember-result value target (node) errors))
         errors))))
 
 (defmethod compile-node ((spec reference-spec) context)

@@ -1037,12 +1037,17 @@ explain:
 - `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
   refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
   have no generator; `sample`/`generator-for` signal `generator-unavailable`.
-  Validation and `explain` still work on these, with two limits. A spec that
+  Validation and `explain` still work on these, with three limits. A spec that
   reaches itself again on the same value without descending into it (two aliases
   naming each other, or `(and integer self)`) signals `invalid-spec-form` when
   checked. A value that contains itself is not admitted by a recursive spec; it is
   reported as a `:cyclic-value` error instead of being followed, and a `not`
   does not turn that refusal into an admission, so an alias and its target agree.
+  A value nested more than 1000 references deep — a linked structure validated
+  through a recursive spec — signals `validation-depth-exceeded` instead of
+  exhausting the control stack; it is neither admitted nor refused. Explaining a
+  refusal d levels deep costs O(d²), because every nested error carries its
+  path from the root.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as
   `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
   `generator-unavailable` with kind `:range-too-wide`.

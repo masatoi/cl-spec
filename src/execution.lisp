@@ -8,6 +8,7 @@
   (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/printing #:condition-report-text)
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property #:property #:property-function)
@@ -305,12 +306,11 @@ Specializations must classify during this invocation, never by rerunning it."))
               nil condition nil))))
 
 (defun render-condition-report (condition)
-  "Capture diagnostic text without losing evidence to a broken condition printer."
-  (when condition
-    (handler-case
-        (let ((*print-circle* t))
-          (princ-to-string condition))
-      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
+  "Capture diagnostic text without losing evidence to a broken condition printer.
+
+The text is CONDITION-REPORT-TEXT's: printed under bounded printing and cut to a
+fixed length, because every observation, result record and artifact keeps it."
+  (condition-report-text condition))
 
 (defvar *trial-observations* nil
   "Fresh identity token for the active backend invocation; retains no observations.")

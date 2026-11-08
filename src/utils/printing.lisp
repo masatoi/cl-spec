@@ -45,15 +45,47 @@ value of millions of bits takes seconds per copy printed, not only space.")
 (defmethod print-object ((object abbreviation) stream)
   (write-string (abbreviation-text object) stream))
 
+(defun wide-integer-p (integer)
+  "Return true when INTEGER is wider than +PRINTED-INTEGER-BITS+."
+  (> (integer-length integer) +printed-integer-bits+))
+
 (defun abbreviate-atom (object)
-  "Return an ABBREVIATION for a string or integer too large to print, or NIL."
-  (cond ((and (stringp object) (> (length object) +printed-string-limit+))
-         (make-abbreviation
-          (format nil "#<STRING of ~D characters starting ~S>"
-                  (length object) (subseq object 0 (min 80 (length object))))))
-        ((and (integerp object) (> (integer-length object) +printed-integer-bits+))
-         (make-abbreviation
-          (format nil "#<INTEGER of ~D bits>" (integer-length object))))))
+  "Return an ABBREVIATION for an object the printer would print whole and too
+large to print, or NIL.
+
+*PRINT-LENGTH* and *PRINT-LEVEL* do not reach inside a string, a bit vector, a
+symbol's name or the digits of a number, so each of these is summarized by its
+size once it passes the limits: an integer, or the numerator, denominator or a
+part of a complex, wider than +PRINTED-INTEGER-BITS+, and a string, bit vector
+or symbol name longer than +PRINTED-STRING-LIMIT+."
+  (typecase object
+    (string
+     (when (> (length object) +printed-string-limit+)
+       (make-abbreviation
+        (format nil "#<STRING of ~D characters starting ~S>"
+                (length object) (subseq object 0 (min 80 (length object)))))))
+    (integer
+     (when (wide-integer-p object)
+       (make-abbreviation (format nil "#<INTEGER of ~D bits>" (integer-length object)))))
+    (ratio
+     (when (or (wide-integer-p (numerator object)) (wide-integer-p (denominator object)))
+       (make-abbreviation
+        (format nil "#<RATIO of ~D/~D bits>"
+                (integer-length (numerator object)) (integer-length (denominator object))))))
+    (complex
+     (when (or (abbreviate-atom (realpart object)) (abbreviate-atom (imagpart object)))
+       (make-abbreviation
+        (format nil "#<COMPLEX with parts ~A and ~A>"
+                (or (abbreviate-atom (realpart object)) (realpart object))
+                (or (abbreviate-atom (imagpart object)) (imagpart object))))))
+    (bit-vector
+     (when (> (length object) +printed-string-limit+)
+       (make-abbreviation (format nil "#<BIT-VECTOR of ~D bits>" (length object)))))
+    (symbol
+     (when (> (length (symbol-name object)) +printed-string-limit+)
+       (make-abbreviation
+        (format nil "#<SYMBOL whose name has ~D characters, starting ~S>"
+                (length (symbol-name object)) (subseq (symbol-name object) 0 80)))))))
 
 (defun abbreviate-for-print (value)
   "Return VALUE, or a copy of the part of it the printer will show, made printable

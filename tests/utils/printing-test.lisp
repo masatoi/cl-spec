@@ -12,7 +12,11 @@
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
   (:import-from #:cl-spec/src/validator #:validate)
   (:import-from #:cl-spec/src/explain #:explain)
-  (:import-from #:cl-spec/src/conditions #:spec-violation))
+  (:import-from #:cl-spec/src/conditions #:spec-violation)
+  (:import-from #:cl-spec/src/registry)
+  (:import-from #:cl-spec/src/dsl)
+  (:import-from #:cl-spec/src/property-runner)
+  (:import-from #:cl-spec/src/backends/check-it))
 
 (in-package #:cl-spec/tests/utils/printing-test)
 
@@ -57,6 +61,21 @@
         (ok (< (length text) 2000))
         (ok (search "100001" text))))))
 
+(deftest other-atoms-the-printer-prints-whole-are-bounded
+  ;; Ratios, complexes, bit vectors and symbol names are printed whole whatever
+  ;; *PRINT-LENGTH* says, as strings and integers are.
+  (dolist (value (list (/ (ash 1 100000) 3)
+                       (/ 1 (1+ (ash 1 100000)))
+                       (complex (ash 1 100000) 1)
+                       (make-array 100000 :element-type 'bit :initial-element 1)
+                       (make-symbol (make-string 100000 :initial-element #\y))))
+    (testing (format nil "a ~S prints as a bounded summary" (type-of value))
+      (ok (< (length (printed value)) 2000))))
+  (testing "small ones print unchanged"
+    (dolist (value (list 2/3 #c(1 2) #*0101 'small-symbol))
+      (ok (string= (printed value)
+                   (with-bounded-printing (:one-line t) (prin1-to-string value)))))))
+
 (deftest reports-and-explanations-of-large-values-are-bounded
   (let ((string (make-string 1000000 :initial-element #\x)))
     (testing "a SPEC-VIOLATION report"
@@ -73,3 +92,20 @@
       (let ((condition (make-condition 'simple-error :format-control "boom ~A"
                                                      :format-arguments (list string))))
         (ok (< (length (condition-report-text condition)) 20000))))))
+
+(defun loud-failure (x)
+  "Signal an error whose report quotes a million characters."
+  (declare (ignore x))
+  (error "boom ~A" (make-string 1000000 :initial-element #\x)))
+
+(deftest a-trial-records-a-bounded-condition-report
+  ;; The report a trial observation keeps was rendered unbounded, so one failing
+  ;; trial put a megabyte into every result record and artifact.
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty loud-property ((x integer)) (loud-failure x)))
+    (let* ((data (cl-spec/src/property-runner:result-data
+                  (cl-spec/src/property-runner:run-property 'loud-property :seed 1)))
+           (report (getf (getf data :failure) :condition-report)))
+      (ok (stringp report))
+      (ok (and (stringp report) (< (length report) 20000)))
+      (ok (and (stringp report) (search "boom xxx" report))))))
