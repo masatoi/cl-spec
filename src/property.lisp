@@ -16,8 +16,9 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/ir #:tuple-spec)
   (:import-from #:cl-spec/src/registry
-                #:*registry*
+                #:*registry* #:check-registry
                 #:registry-register-property)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:export #:validate-property-executable
            #:property
            #:property-name
@@ -217,7 +218,8 @@ introspection can show the author's source.")
 The target and tag index keys are taken from the property object, which is why
 this function lives here rather than in the registry: the registry deliberately
 knows nothing about property objects."
-  (registry-register-property registry
+  (check-argument property 'property 'register-property :property)
+  (registry-register-property (check-registry registry 'register-property)
                               (property-name property)
                               property
                               :targets (property-targets property)

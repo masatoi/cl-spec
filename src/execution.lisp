@@ -7,6 +7,8 @@
                 #:collect-deferred-coverage-trial #:call-with-coverage-trial #:coverage-mark-stage #:coverage-implicit-pre)
   (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/printing #:condition-report-text)
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property #:property #:property-function)
@@ -237,7 +239,11 @@ A function-spec case wraps that identity as (:CASE NAME . INNER): the case names
 must be EQ and the inner comparison is exactly the one above, so the same
 violation in a different case is a different failure while the rules inside a
 case are unchanged.  A wrapped identity never matches an unwrapped one, so
-evidence that names no case cannot be adopted for a case-carrying failure."
+evidence that names no case cannot be adopted for a case-carrying failure.
+A signature is a list, or NIL for no failure; anything else is refused with
+INVALID-ARGUMENT."
+  (check-argument original 'list 'failure-identities-match-p :original)
+  (check-argument candidate 'list 'failure-identities-match-p :candidate)
   (and original candidate
        (if (or (case-headed-signature-p original) (case-headed-signature-p candidate))
            (and (case-wrapped-signature-p original)
@@ -279,6 +285,11 @@ returns only those stays valid.
 Backends call OBSERVE-TRIAL to capture these values with the input snapshot.
 Specializations must classify during this invocation, never by rerunning it."))
 
+(defmethod evaluate-trial ((property t) arguments &key context)
+  "Refuse anything but a property, rather than fail with no applicable method."
+  (declare (ignore arguments context))
+  (check-argument property 'property 'evaluate-trial :property))
+
 (defmethod evaluate-trial ((property property) arguments &key context)
   "Evaluate an ordinary property once and classify false results and conditions."
   (declare (ignore context))
@@ -295,12 +306,11 @@ Specializations must classify during this invocation, never by rerunning it."))
               nil condition nil))))
 
 (defun render-condition-report (condition)
-  "Capture diagnostic text without losing evidence to a broken condition printer."
-  (when condition
-    (handler-case
-        (let ((*print-circle* t))
-          (princ-to-string condition))
-      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
+  "Capture diagnostic text without losing evidence to a broken condition printer.
+
+The text is CONDITION-REPORT-TEXT's: printed under bounded printing and cut to a
+fixed length, because every observation, result record and artifact keeps it."
+  (condition-report-text condition))
 
 (defvar *trial-observations* nil
   "Fresh identity token for the active backend invocation; retains no observations.")
@@ -410,6 +420,11 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
      (let ((observation (observe-trial property arguments :context context)))
        (values observation (trial-observation-status observation))))
    :generated generated :domain-valid domain-valid))
+
+(defmethod observe-trial ((property t) arguments &key context)
+  "Refuse anything but a property, rather than fail with no applicable method."
+  (declare (ignore arguments context))
+  (check-argument property 'property 'observe-trial :property))
 
 (defmethod observe-trial ((property property) arguments &key context)
   "Evaluate generated objects once, snapshot evidence and record invocation provenance.

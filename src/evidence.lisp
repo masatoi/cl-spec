@@ -233,7 +233,13 @@ with INVALID-ARGUMENT."
 (defun assess-evidence (result policy)
   "Assess explicit version-one POLICY against saved evidence, independently of status."
   (let ((policy (validate-evidence-policy policy))
-         (summary (evidence-summary result))
+         (summary (progn
+                    (unless (evidence-result-p result)
+                      (error 'invalid-argument :datum result
+                                               :expected-type '(satisfies evidence-result-p)
+                                               :operator 'assess-evidence :argument :result
+                                               :reason "no EVIDENCE-FACTS method applies to it"))
+                    (evidence-summary result)))
          (checks nil) (gaps nil) (unknowns nil))
     (dolist (requirement (getf policy :requirements))
       (multiple-value-bind (check new-gaps new-unknowns)

@@ -33,7 +33,13 @@
                 #:generator-unavailable-argument)
   (:import-from #:cl-spec/src/property-runner
                 #:run-property
-                #:property-result-condition))
+                #:property-result-condition)
+  (:import-from #:cl-spec/src/coverage)
+  (:import-from #:cl-spec/src/execution)
+  (:import-from #:cl-spec/src/introspection)
+  (:import-from #:cl-spec/src/evidence)
+  (:import-from #:cl-spec/src/function-spec)
+  (:import-from #:cl-spec/src/counterexample))
 
 (in-package #:cl-spec/tests/conditions-test)
 
@@ -196,6 +202,82 @@
                (ok (typep condition 'cl-spec-error))
                (ok (eq argument (refused-argument condition))
                    (format nil "~S refused ~S" (type-of condition) argument))))))
+
+(declaim (notinline bogus-keyword-arguments))
+
+(defun bogus-keyword-arguments ()
+  "Return a keyword tail no entry point accepts, built at run time.
+
+A literal list passed to APPLY is checked by the compiler, which would refuse to
+compile this file rather than let the call reach the entry point."
+  (list :bogus 1))
+
+(defun remaining-bad-argument-cases ()
+  "Return (ARGUMENT OPERATOR THUNK) triples for entry points #79 left unchecked."
+  (let ((policy '(:policy-version 1
+                  :requirements ((:kind :min-checked-trials :count 1)))))
+    (list (list :result 'cl-spec/src/function-spec:fixture-check-data
+                (lambda () (cl-spec/src/function-spec:fixture-check-data 3)))
+          (list :result 'cl-spec/src/coverage:coverage-data
+                (lambda () (cl-spec/src/coverage:coverage-data 3)))
+          (list :definition 'cl-spec/src/coverage:coverage-schema
+                (lambda () (cl-spec/src/coverage:coverage-schema 3)))
+          (list :artifact 'cl-spec/src/counterexample:counterexample-artifact-data
+                (lambda () (cl-spec/src/counterexample:counterexample-artifact-data 3)))
+          (list :symbol 'cl-spec/src/introspection:semantic-data
+                (lambda () (cl-spec/src/introspection:semantic-data 3)))
+          (list :original 'cl-spec/src/execution:failure-identities-match-p
+                (lambda () (cl-spec/src/execution:failure-identities-match-p 1 '(:x))))
+          (list :candidate 'cl-spec/src/execution:failure-identities-match-p
+                (lambda () (cl-spec/src/execution:failure-identities-match-p '(:x) 2)))
+          (list :property 'cl-spec/src/execution:evaluate-trial
+                (lambda () (cl-spec/src/execution:evaluate-trial 42 nil)))
+          (list :property 'cl-spec/src/execution:observe-trial
+                (lambda () (cl-spec/src/execution:observe-trial 42 nil)))
+          (list :result 'cl-spec/src/evidence:assess-evidence
+                (lambda () (cl-spec/src/evidence:assess-evidence 5 policy)))
+          (list :registry 'cl-spec/src/function-spec:check-fixture
+                (lambda () (cl-spec/src/function-spec:check-fixture
+                            'argument-check-target 1 :registry 42)))
+          (list :registry 'cl-spec/src/introspection:function-spec-data
+                (lambda () (cl-spec/src/introspection:function-spec-data
+                            'argument-check-target :registry 42)))
+          (list :bogus 'cl-spec/src/function-spec:check-function
+                (lambda () (apply #'cl-spec/src/function-spec:check-function
+                                  'argument-check-target (bogus-keyword-arguments))))
+          (list :bogus 'cl-spec/src/function-spec:check-call
+                (lambda () (apply #'cl-spec/src/function-spec:check-call
+                                  'argument-check-target '(1) (bogus-keyword-arguments))))
+          (list :bogus 'cl-spec/src/function-spec:check-fixture
+                (lambda () (apply #'cl-spec/src/function-spec:check-fixture
+                                  'argument-check-target 1 (bogus-keyword-arguments))))
+          (list :bogus 'run-property
+                (lambda () (apply #'run-property 'argument-check-property
+                                  (bogus-keyword-arguments))))
+          (list :bogus 'cl-spec/src/property-runner:replay-property
+                (lambda () (apply #'cl-spec/src/property-runner:replay-property
+                                  'argument-check-property 1 (bogus-keyword-arguments))))
+          (list :bogus 'cl-spec/src/property-runner:run-properties
+                (lambda () (apply #'cl-spec/src/property-runner:run-properties
+                                  '(argument-check-property) (bogus-keyword-arguments)))))))
+
+(deftest remaining-public-entry-points-check-their-arguments
+  (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))
+    (eval '(cl-spec/src/dsl:defproperty argument-check-property ((value integer))
+            (integerp value)))
+    (eval '(cl-spec/src/dsl:defspec-function argument-check-target
+            (:args (value integer))
+            (:returns integer)))
+    (setf (symbol-function 'argument-check-target) #'identity)
+    (loop for (argument operator thunk) in (remaining-bad-argument-cases)
+          for condition = (refusal-of thunk)
+          do (testing (format nil "~S refuses a bad ~S as an INVALID-ARGUMENT" operator argument)
+               (ok (typep condition 'cl-spec-error)
+                   (format nil "~S signalled ~S" operator (type-of condition)))
+               (ok (eq argument (refused-argument condition)))
+               (ok (and (typep condition 'cl-spec/src/conditions:invalid-argument)
+                        (eq operator (cl-spec/src/conditions:invalid-argument-operator
+                                      condition))))))))
 
 (deftest recheck-refuses-its-own-bad-arguments-before-running
   (let ((cl-spec/src/registry:*registry* (cl-spec/src/registry:make-hash-table-registry)))

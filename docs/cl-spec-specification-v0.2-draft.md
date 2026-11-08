@@ -750,6 +750,21 @@ propertyを通る値や要素specに違反する値をcounterexampleへ混入さ
 その型として読むため、登録したspecを参照できないからである。違反は
 マクロ展開時の`invalid-spec-form`になる。
 
+正規化は複合フォームの入れ子を1000段までに限る。それより深いフォームと、子として
+自分自身を含むフォーム（CARを通る循環）は`invalid-spec-form`で拒否する。2つの枝が
+同じ子フォームを共有するだけなら循環ではなく、受け付ける。
+
+検証は、値の中で入れ子になった参照の検査を`*reference-depth-limit*`段（既定1000）までに
+限る。参照を1段たどるたびに制御スタックを使うため、これより深い値は
+`validation-depth-exceeded`（`cl-spec-error`）を通知する。述語が始めた入れ子の検査で
+通知された場合も、外側の値を拒否せずにそのまま伝える。このとき値を受理も拒否もしない。`validp`がNILを返すと、検査していない値を
+不正と呼ぶことになるからである。`explain-data`の誤りは入れ子の各datumが根からの`:path`を
+持つので、深さdで失敗した値の説明はO(d²)の大きさになる。この上限がdを1000までに抑える。
+
+`function-spec`、`property`、`custom-generator`を低レベルのregistry関数で書き込むときも、
+名前はNIL・keyword以外のsymbolに限り、違反は`invalid-argument`（引数`:name`）で拒否する。
+registryプロトコルは渡された値をそのまま保存し、種類の違う値は読み出し時に拒否する。
+
 可能な限りCommon Lispの型specifierに近い記法を採用する。
 
 ただしCommon Lisp type languageと完全互換にすることは目標としない。
@@ -2556,6 +2571,19 @@ specはregistered nameかDSL formで表示する。
 循環値や非常に深い値でも、表示は有限時間で終わる。値を文の途中に表示するreportは
 `*print-pretty*`をNILにして1行で表示する（`unknown-spec`・`unknown-property`・
 `unknown-function-spec`の名前、`invalid-argument`の期待する型を含む）。
+
+`*print-length*`と`*print-level*`は、文字列、bit vector、シンボル名、数の桁の大きさを
+制限しない。そのため、reportと`explain`が値を表示するときは、表示される範囲にある
+次のものを、大きさを示す要約（`#<STRING of N characters starting "...">`、
+`#<INTEGER of N bits>`など）に置き換える。
+
+- 1000文字を超える文字列、bit vector、シンボル名
+- 4096ビットを超える整数
+- 分子・分母・複素数の部分のいずれかが4096ビットを超える数
+
+共有構造と循環は保ったままにする。捕まえたconditionのreport（試行の観測、結果、
+成果物の`:condition-report`を含む）は10000文字で切る。
+`explain-data`と`spec-violation-value`は値そのものを持ち、要約しない。
 
 ---
 

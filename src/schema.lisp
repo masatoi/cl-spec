@@ -73,42 +73,45 @@ the record keys.  An :UNAVAILABLE record's :TYPE is ordinary data:
 :CAPTURE-VALUE-TYPE-FORMS names its forms -- :NAMED is a named type symbol,
 :ANONYMOUS-CLASS is (:kind :anonymous-class :metaclass NAME) for a class with no
 name, and :UNKNOWN is the symbol fallback for a type specifier this projection
-cannot name -- so a live class object never enters the record."
-  (list :schema-version 1 :format :lisp-plist :unknown-keys :ignore
-        :required-metadata
-        '(:schema-version :record-kind :entity-kind :definition-digest
-          :definition-digest-complete :definition-digest-covers :capabilities)
-        :optional-metadata '(:digest-omissions :digest-exclusions)
-        :digest-omission-kinds '(:unresolved-reference :opaque-definition :missing-source
-                                 :opaque-value :uninterned-symbol :resource-limit)
-        :entity-kinds '(:spec :property :function-spec)
-        :record-kinds '(:definition :result)
-        :coverage-protocol
-        '(:schema-version 1 :provider-version :plist-v1
-          :record-kinds (:coverage-schema :coverage-report)
-          :modes (:observe :exercise)
-          :stages (:generated :domain-valid :pre-admitted :target-observed :checked)
-          :availability-states (:collected :not-collected :not-applicable)
-          :dimension-kinds (:field-presence :extra-key-presence :numeric-boundary)
-          :discovery-states (:complete :partial :unsupported))
-        :evidence-protocol
-        '(:schema-version 1 :policy-version 1
-          :record-kinds (:evidence-summary :evidence-assessment)
-          :assessments (:satisfied :insufficient :unknown :not-assessed)
-          :availability-states (:collected :not-collected :not-applicable)
-          :requirement-kinds (:min-checked-trials :all-declared-cases
-                              :requested-trials-completed))
-        :fixture-protocol
-        '(:result-schema-version 2 :artifact-version 2
-          :record-kinds (:result :fixture-check) :input-kind :fixture-recipe
-          :isolations (:fresh) :lifecycle-states (:not-acquired :released :unknown))
-        :capture-value-states '(:collected :unavailable)
-        :capture-value-keys '(:name :availability :value :reason :type)
-        :capture-value-type-forms '(:named :anonymous-class :unknown)
-        :digest-algorithm :fnv1a64-v1
-        :digest-covers :declaration-and-registered-dependencies
-        :digest-excludes (digest-exclusions)
-        :capability-states '(:available :unavailable :unknown :none)))
+cannot name -- so a live class object never enters the record.
+
+Every call returns a fresh copy, so a caller may change what it is given."
+  (copy-tree
+   (list :schema-version 1 :format :lisp-plist :unknown-keys :ignore
+         :required-metadata
+         '(:schema-version :record-kind :entity-kind :definition-digest
+           :definition-digest-complete :definition-digest-covers :capabilities)
+         :optional-metadata '(:digest-omissions :digest-exclusions)
+         :digest-omission-kinds '(:unresolved-reference :opaque-definition :missing-source
+                                  :opaque-value :uninterned-symbol :resource-limit)
+         :entity-kinds '(:spec :property :function-spec)
+         :record-kinds '(:definition :result)
+         :coverage-protocol
+         '(:schema-version 1 :provider-version :plist-v1
+           :record-kinds (:coverage-schema :coverage-report)
+           :modes (:observe :exercise)
+           :stages (:generated :domain-valid :pre-admitted :target-observed :checked)
+           :availability-states (:collected :not-collected :not-applicable)
+           :dimension-kinds (:field-presence :extra-key-presence :numeric-boundary)
+           :discovery-states (:complete :partial :unsupported))
+         :evidence-protocol
+         '(:schema-version 1 :policy-version 1
+           :record-kinds (:evidence-summary :evidence-assessment)
+           :assessments (:satisfied :insufficient :unknown :not-assessed)
+           :availability-states (:collected :not-collected :not-applicable)
+           :requirement-kinds (:min-checked-trials :all-declared-cases
+                               :requested-trials-completed))
+         :fixture-protocol
+         '(:result-schema-version 2 :artifact-version 2
+           :record-kinds (:result :fixture-check) :input-kind :fixture-recipe
+           :isolations (:fresh) :lifecycle-states (:not-acquired :released :unknown))
+         :capture-value-states '(:collected :unavailable)
+         :capture-value-keys '(:name :availability :value :reason :type)
+         :capture-value-type-forms '(:named :anonymous-class :unknown)
+         :digest-algorithm :fnv1a64-v1
+         :digest-covers :declaration-and-registered-dependencies
+         :digest-excludes (digest-exclusions)
+         :capability-states '(:available :unavailable :unknown :none))))
 
 (defgeneric resolve-definition (designator entity-kind registry)
   (:documentation "Resolve a named definition in its explicit entity namespace."))

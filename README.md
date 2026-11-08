@@ -778,9 +778,12 @@ keeps that generator instead of the keyword shortcut. Every pair —
 declared or control — is drawn through the backend's one generator protocol, so a
 keyword whose value spec compiles to a constant receives that constant: `null`,
 `(member nil)` and a reference to either generate `NIL`, never `T`.
-Other rest specs use their own generator and try up to
-100 candidate calls against the complete argument schema; exhaustion signals
-`generator-unavailable`. Custom generator annotations do not bypass this check.
+Other rest specs use their own generator and check each candidate call against
+the complete argument schema. Each candidate is reserved from the run's
+generation budget and each refusal is counted in the generation report, as a
+bounded `and` filter's are; exhausting the budget ends the run with status
+`:error` and the report's `:termination :budget-exhausted`, which is not a claim
+that no valid call exists. Custom generator annotations do not bypass this check.
 Rejected generated candidates never reach the target. Shrinking also checks both
 constraints before execution, and removes a keyword pair — including the
 `:allow-other-keys` control pair — only while the call still satisfies the whole
@@ -1034,12 +1037,18 @@ explain:
 - `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
   refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
   have no generator; `sample`/`generator-for` signal `generator-unavailable`.
-  Validation and `explain` still work on these, with two limits. A spec that
+  Validation and `explain` still work on these, with three limits. A spec that
   reaches itself again on the same value without descending into it (two aliases
   naming each other, or `(and integer self)`) signals `invalid-spec-form` when
   checked. A value that contains itself is not admitted by a recursive spec; it is
   reported as a `:cyclic-value` error instead of being followed, and a `not`
   does not turn that refusal into an admission, so an alias and its target agree.
+  A value nested more than `*reference-depth-limit*` (default 1000) references
+  deep — a linked structure validated through a recursive spec — signals
+  `validation-depth-exceeded` instead of exhausting the control stack; it is
+  neither admitted nor refused. Bind the limit higher for a larger control stack. Explaining a
+  refusal d levels deep costs O(d²), because every nested error carries its
+  path from the root.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as
   `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
   `generator-unavailable` with kind `:range-too-wide`.
@@ -1068,6 +1077,15 @@ explain:
 - A counterexample over `(range real ...)`, or any other real valued
   argument, does not shrink: check-it's shrinker treats reals as a
   non-discrete search space and returns them unchanged.
+- `member` compares with `eql`, so a value generated from it is one of the
+  literal objects written in the spec: for a string, list or array literal there
+  is no other object that satisfies the spec. Two consequences follow. A target
+  that destructively modifies such a value modifies the registered spec, whose
+  source form and digest then change. And a generated value holding the same
+  literal twice, such as `("a" "a")` from `(list-of (member "a" "b"))`, shares
+  structure, which a counterexample artifact refuses as `:sharing-or-cycle`. A
+  saved string would not be `eql` to the literal anyway, so such an artifact could
+  not recheck. Prefer symbols, numbers or characters in a `member` spec.
 - Replaying a property run from an integer seed requires SBCL; other
   implementations signal `unsupported-seed`.
 

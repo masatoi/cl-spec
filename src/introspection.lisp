@@ -22,14 +22,17 @@
   (:import-from #:cl-spec/src/map-spec
                 #:map-of-spec #:map-spec-key-test #:map-count-constraint-plist)
   (:import-from #:cl-spec/src/schema #:definition-metadata)
+  (:import-from #:cl-spec/src/execution #:snapshot-value)
   (:import-from #:cl-spec/src/conditions
                 #:not-implemented)
   (:import-from #:cl-spec/src/registry
                 #:*registry*
+                #:check-registry
                 #:find-spec
                 #:find-function-spec
                 #:find-property
                 #:properties-for)
+  (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/ir
                 #:spec
                 #:spec-name
@@ -195,6 +198,14 @@ CALL-NEXT-METHOD now, but a definition-level key still belongs on this side."
             (when children
               (list :children (mapcar (lambda (child) (spec->data child registry)) children))))))
 
+(defun copied-append (&rest lists)
+  "Return (APPEND LISTS...) copied with SNAPSHOT-VALUE.
+
+A projection is built from the definition's own stored forms and tables; handing
+those out would let a caller who edits the data rewrite the registered
+definition without its compiled functions, digest or trial budget following."
+  (snapshot-value (apply #'append lists)))
+
 (defun spec-data (spec-designator &key (registry *registry*))
   "Return a plist describing the registered spec named by SPEC-DESIGNATOR.
 
@@ -208,8 +219,11 @@ VECTOR-OF adds :MIN-LENGTH, :MAX-LENGTH and :UNIQUE for the constraints it
 declares; an unconstrained collection carries none of them. The root additionally
 has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES (see
-SCHEMA-INFO, specification §38.1). Children are plain IR projections."
-  (spec->data (resolve-spec spec-designator registry) registry t))
+SCHEMA-INFO, specification §38.1). Children are plain IR projections.
+
+The plist is a fresh copy: changing it does not change the registered spec."
+  (check-registry registry 'spec-data)
+  (snapshot-value (spec->data (resolve-spec spec-designator registry) registry t)))
 
 (defun property-data (property-designator &key (registry *registry*))
   "Return a plist describing the registered property named by PROPERTY-DESIGNATOR.
@@ -226,22 +240,27 @@ SCHEMA-INFO: :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES.
 Nested specs are plain IR projections. :TRIALS is a profile table in this
 definition record; result records carry executed counts under that key.
-The body is the author's source rather than the compiled function (§39)."
+The body is the author's source rather than the compiled function (§39).
+
+The plist is a fresh copy: changing it, its trial table or its forms does not
+change the registered property."
+  (check-registry registry 'property-data)
   (let ((property (resolve-property property-designator registry)))
-    (append (definition-metadata property :registry registry)
-            (list :name (property-name property)
-                  :kind (property-kind property)
-                  :targets (property-targets property)
-                  :tags (property-tags property)
-                  :documentation (property-documentation property)
-                  :trials (property-trials property)
-                  :arguments
-                  (loop for (variable spec) in (property-arguments property)
-                        collect (list :variable variable :spec (spec->data spec registry)))
-                  :body (property-body property)
-                  :source-form (property-source-form property)
-                  :source-location (source-location->data (property-source-location property))
-                  :metadata (property-metadata property)))))
+    (snapshot-value
+     (append (definition-metadata property :registry registry)
+             (list :name (property-name property)
+                   :kind (property-kind property)
+                   :targets (property-targets property)
+                   :tags (property-tags property)
+                   :documentation (property-documentation property)
+                   :trials (property-trials property)
+                   :arguments
+                   (loop for (variable spec) in (property-arguments property)
+                         collect (list :variable variable :spec (spec->data spec registry)))
+                   :body (property-body property)
+                   :source-form (property-source-form property)
+                   :source-location (source-location->data (property-source-location property))
+                   :metadata (property-metadata property))))))
 
 (defun function-spec-data (function-spec-designator &key (registry *registry*))
   "Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
@@ -289,9 +308,13 @@ The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
 :CAPABILITIES (SCHEMA-INFO, §38.1). These envelope keys are always present.
 Argument, return, signals and argument-schema nodes are plain IR projections.
 Fixed return declarations use :KIND :VALUES with ordered children. Explicit
-:POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key."
+:POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key.
+
+The plist is a fresh copy: changing it or its forms does not change the
+registered contract, whose compiled functions could not follow the change."
+  (check-registry registry 'function-spec-data)
   (let ((contract (resolve-function-spec function-spec-designator registry)))
-    (append (let ((metadata (definition-metadata contract :registry registry)))
+    (copied-append (let ((metadata (definition-metadata contract :registry registry)))
               (remf metadata :fixture)
               metadata)
             (when (function-spec-fixture contract)
@@ -398,12 +421,14 @@ registered, so signalling would force every caller to handle a condition for
 what is the common case.
 
 That guarantee covers an unknown symbol, not an unknown value: SYMBOL must be
-a symbol, and passing anything else signals a TYPE-ERROR from SYMBOL-PACKAGE
+a symbol, and passing anything else signals INVALID-ARGUMENT, a TYPE-ERROR,
 before any lookup runs. A caller that takes a name from outside the image --
 from JSON, say -- resolves it to a symbol first. Every key listed above is
 always present, whatever its value: a key that appears and disappears with its
 value would break JSON consumers, matching the rule SPEC-DATA already
 follows."
+  (check-argument symbol 'symbol 'semantic-data :symbol)
+  (check-registry registry 'semantic-data)
   (list :symbol symbol
         :package (let ((package (symbol-package symbol)))
                    (when package (package-name package)))

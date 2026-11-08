@@ -21,6 +21,9 @@
   (:import-from #:cl-spec/src/resolve #:resolve-spec #:context-registry)
   (:import-from #:cl-spec/src/validator #:compile-validator)
   (:import-from #:cl-spec/src/conditions #:generator-unavailable)
+  (:import-from #:cl-spec/src/generation-request
+                #:*generation-request* #:make-generation-request
+                #:reserve-generation-candidate #:record-generation-rejection)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:call-arguments-generator #:call-generator-children #:call-generator-removable-p
            #:call-generator-rest-driven-p))
@@ -35,6 +38,8 @@
                 :documentation "Length bounds of a universal constrained rest tail that
 the keyword generator fills, or NIL.")
    (validator :initarg :validator :reader call-generator-validator)
+   (path :initarg :path :initform '(:args) :reader call-generator-path
+         :documentation "Declaration path reported when a refused call exhausts the budget.")
    (spec :initarg :spec :reader call-generator-spec))
   (:documentation "Generate raw calls and shrink their positional, rest, or keyword values."))
 
@@ -138,42 +143,61 @@ layout with no declared keywords falls back to the :ALLOW-OTHER-KEYS control pai
       (loop for (keyword . child) in (nreverse chosen)
             append (list keyword (generate child))))))
 
-(defmethod generate ((generator call-arguments-generator))
+(defun draw-call (generator)
+  "Draw one raw call from GENERATOR, without checking it against the schema."
   (let* ((layout (call-generator-layout generator))
          (children (call-generator-children generator))
          (bindings (call-layout-bindings layout))
          (required (call-layout-required-count layout))
          (positional (call-layout-positional-count layout))
-         (rest-driven (call-generator-rest-driven-p generator))
-         (rest-length (call-generator-rest-length generator)))
-    (loop repeat 100
-          for tail = (cond (rest-driven (generate (nth positional children)))
-                           (rest-length (generate-keyword-tail bindings children rest-length
-                                                               (call-generator-spec generator)))
-                           (t (loop for binding in bindings for child in children
-                                    when (and (eq :key (argument-binding-kind binding))
-                                              (zerop (random 2)))
-                                      append (list (argument-binding-keyword binding)
-                                                   (generate child)))))
-          for proper-tail = (if (finite-list-p tail) tail
-                                (error 'generator-unavailable
-                                       :spec (call-generator-spec generator)
-                                       :kind :rejected-draws
-                                       :reason "rest generator must produce a finite proper list"))
-          for count = (if tail positional
-                          (+ required (random (1+ (- positional required)))))
-          for arguments = (append (loop for child in children for index from 0 below count
-                                        collect (generate child))
-                                  proper-tail)
-          ;; Rest-driven and length-targeted draws are filtered here; an
-          ;; unconstrained keyword draw is left to the backend's initial
-          ;; argument validation, which refuses invalid custom output.
-          when (or (not (or rest-driven rest-length))
-                   (funcall (call-generator-validator generator) arguments))
-            do (return-from generate (setf (cached-value generator) arguments)))
-    (error 'generator-unavailable :spec (call-generator-spec generator)
-           :kind :rejected-draws
-           :reason "rest and keyword constraints rejected 100 generated calls")))
+         (rest-length (call-generator-rest-length generator))
+         (tail (cond ((call-generator-rest-driven-p generator)
+                      (generate (nth positional children)))
+                     (rest-length (generate-keyword-tail bindings children rest-length
+                                                         (call-generator-spec generator)))
+                     (t (loop for binding in bindings for child in children
+                              when (and (eq :key (argument-binding-kind binding))
+                                        (zerop (random 2)))
+                                append (list (argument-binding-keyword binding)
+                                             (generate child))))))
+         (count (if tail positional
+                    (+ required (random (1+ (- positional required)))))))
+    (unless (finite-list-p tail)
+      (error 'generator-unavailable
+             :spec (call-generator-spec generator)
+             :kind :rejected-draws
+             :reason "rest generator must produce a finite proper list"))
+    (append (loop for child in children for index from 0 below count
+                  collect (generate child))
+            tail)))
+
+(defmethod generate ((generator call-arguments-generator))
+  "Draw a raw call; a rest-driven or length-targeted call must also satisfy the schema.
+
+A drawn rest tail and the declared keywords can disagree, so such a call is
+checked against the whole argument schema and redrawn when refused.  Every draw
+reserves one candidate from the active generation request and every refusal is
+recorded as a rejection, exactly as a bounded AND filter does, so the report
+counts them and an exhausted budget ends the run as a generation error rather
+than a condition thrown out of it.  An unconstrained keyword draw is left to the
+backend's initial argument validation, which refuses invalid custom output."
+  (if (not (or (call-generator-rest-driven-p generator)
+               (call-generator-rest-length generator)))
+      (setf (cached-value generator) (draw-call generator))
+      (flet ((draw ()
+               (loop
+                 (reserve-generation-candidate (call-generator-path generator)
+                                               (call-generator-spec generator))
+                 (let ((arguments (draw-call generator)))
+                   (if (funcall (call-generator-validator generator) arguments)
+                       (return (setf (cached-value generator) arguments))
+                       (record-generation-rejection))))))
+        (if *generation-request*
+            (draw)
+            ;; A bare draw outside every public boundary still gets a finite
+            ;; request, as a bounded filter's does.
+            (let ((*generation-request* (make-generation-request :planned 1)))
+              (draw))))))
 
 (defun remove-call-key (arguments positional key)
   "Return a copied call and true when its keyword pair was removed."
@@ -292,6 +316,7 @@ keyword pairs can promise, so that combination keeps the rest-driven path."
     (make-instance 'call-arguments-generator
                    :layout layout :spec spec :rest-driven-p rest-driven
                    :rest-length keyword-length
+                   :path (if rest (list :args (argument-binding-name rest)) '(:args))
                    :validator (compile-validator spec :context context)
                    :children
                    (mapcar (lambda (binding)

@@ -1,8 +1,8 @@
 ;;;; src/coverage.lisp
 (defpackage #:cl-spec/src/coverage
   (:use #:cl)
-  (:import-from #:cl-spec/src/conditions #:cl-spec-error)
-  (:import-from #:cl-spec/src/registry #:*registry*)
+  (:import-from #:cl-spec/src/conditions #:cl-spec-error #:invalid-argument)
+  (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema #:observe-dimension)
   (:export #:definition-coverage-schema #:observe-coverage-dimension
            #:coverage-schema #:coverage-data #:coverage-identity #:coverage-identity-from-metadata
@@ -90,6 +90,21 @@
 (defgeneric coverage-data (result)
   (:documentation "Return copied saved coverage facts without executing or resolving definitions."))
 
+(defun coverage-result-p (object)
+  "Return true when a COVERAGE-DATA method other than the refusing one applies to OBJECT."
+  (let ((refusal (find-method #'coverage-data '() (list (find-class t)) nil)))
+    (and (remove refusal (compute-applicable-methods #'coverage-data (list object))) t)))
+
+(defmethod coverage-data ((result t))
+  "Refuse an object no result method covers, rather than fail with no applicable method."
+  (error 'invalid-argument :operator 'coverage-data :argument :result :datum result
+                           :expected-type '(satisfies coverage-result-p)
+                           :reason "it is not a result COVERAGE-DATA can read"))
+
+(defun coverage-definition-p (object)
+  "Return true when OBJECT is a definition COVERAGE-SCHEMA can describe."
+  (and (compute-applicable-methods #'coverage-inputs (list object)) t))
+
 (defgeneric backend-coverage-protocol (backend)
   (:documentation "Return :COVERAGE-V1 when ordinary generation is explicitly instrumented.")
   (:method ((backend t)) nil))
@@ -117,7 +132,15 @@
         :unknown)))
 
 (defun coverage-schema (definition &key (registry *registry*))
-  "Describe statically observable input dimensions of a property or function spec."
+  "Describe statically observable input dimensions of a property or function spec.
+
+DEFINITION is the property or function spec object; anything else is refused
+with INVALID-ARGUMENT."
+  (unless (coverage-definition-p definition)
+    (error 'invalid-argument :operator 'coverage-schema :argument :definition
+                             :datum definition :expected-type '(satisfies coverage-definition-p)
+                             :reason "it is not a property or function spec"))
+  (check-registry registry 'coverage-schema)
   (let ((schema (definition-coverage-schema definition registry nil)))
     (setf (getf schema :subject) (coverage-identity definition registry))
     (copy-coverage-data schema)))

@@ -488,13 +488,18 @@ clamps nor collapses the interval, and the draw never converts *SIZE* to a
 single-float -- which overflowed once *SIZE* passed about 3.4e38 (issue #76).
 
 SCALE is a non-negative real, or a function of no arguments called at each draw
-so that it can follow CHECK-IT:*SIZE*.  It is limited so that |ORIGIN| + SCALE
-stays within double-float range.  Converting ORIGIN or the product to a float
+so that it can follow CHECK-IT:*SIZE*.  When the step moves away from zero it is
+limited so that |ORIGIN| + SCALE stays within double-float range; a step towards
+zero cannot overflow, since a caller never asks for one wider than
+MOST-POSITIVE-DOUBLE-FLOAT, and is not limited -- limiting it too kept a range
+starting near -1.8e308 from ever reaching zero.  Converting ORIGIN or the product to a float
 rounds, so the result is clamped into [MINIMUM, MAXIMUM] where those are given: a
 draw never leaves its declared range.  Shrinking U towards zero moves the value
 towards ORIGIN."
   (let* ((origin (float-operand origin))
-         (headroom (- most-positive-double-float (abs origin))))
+         (headroom (if (or symmetric-p (>= (* direction (signum origin)) 0))
+                       (- most-positive-double-float (abs origin))
+                       most-positive-double-float)))
     (make-instance 'mapped-generator
                    :mapping
                    (lambda (unit)

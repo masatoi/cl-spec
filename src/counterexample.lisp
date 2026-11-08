@@ -189,7 +189,7 @@ never reached the target -- and is refused before this point."
 
 (defun counterexample-artifact-data (artifact)
   "Return fresh data, marking digest details absent in older artifacts as not collected."
-  (check-type artifact counterexample-artifact)
+  (check-argument artifact 'counterexample-artifact 'counterexample-artifact-data :artifact)
   (let ((data (checked-codec #'deserialize-artifact-value
                              (counterexample-artifact-payload artifact))))
     (dolist (field '(:digest-omissions :digest-exclusions :shrink-report))

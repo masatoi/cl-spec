@@ -46,6 +46,9 @@
                 #:spec-violation-value
                 #:spec-violation-path
                 #:spec-violation-errors
+                #:validation-depth-exceeded
+                #:validation-depth-exceeded-spec
+                #:validation-depth-exceeded-limit
                 #:unknown-spec
                 #:unknown-spec-name
                 #:unknown-property
@@ -170,7 +173,8 @@
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer
                 #:explain-data
-                #:explain)
+                #:explain
+                #:*reference-depth-limit*)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:current-generator-backend
@@ -310,6 +314,9 @@
            #:spec-violation-value
            #:spec-violation-path
            #:spec-violation-errors
+           #:validation-depth-exceeded
+           #:validation-depth-exceeded-spec
+           #:validation-depth-exceeded-limit
            #:unknown-spec
            #:unknown-spec-name
            #:unknown-property
@@ -435,6 +442,7 @@
            #:compile-explainer
            #:explain-data
            #:explain
+           #:*reference-depth-limit*
            ;; Generators
            #:*generator-backend*
            #:current-generator-backend

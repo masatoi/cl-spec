@@ -334,6 +334,22 @@ malformed declaration is refused before an IR object exists."
            :key-test key-test :min-count min-count :max-count max-count
            (spec-initargs form name source-location generator))))
 
+(defconstant +spec-form-depth-limit+ 1000
+  "How deeply spec forms may nest inside one another before one is refused.
+
+Normalization, and every consumer of the IR after it, recurses once per level, so
+an unbounded depth would exhaust the control stack -- or, past what the guard
+page catches, end the process -- on a form an agent built programmatically.")
+
+(defvar *forms-in-progress* '()
+  "The compound forms whose normalization encloses the current one, innermost first.
+
+A form that reaches itself through its own children would otherwise be followed
+for ever; a child shared by two siblings is not in this list and is accepted.")
+
+(defvar *form-depth* 0
+  "How many compound forms enclose the one being normalized.")
+
 (defun normalize-compound (form name source-location generator)
   "Normalize a cons whose head names a spec primitive."
   (unless (finite-list-p form)
@@ -469,7 +485,19 @@ The returned spec keeps FORM verbatim in its SPEC-SOURCE-FORM slot."
               :reason "a spec object takes no :generator; name it where the spec is defined"))
      form)
     ((symbolp form) (normalize-symbol form name source-location generator))
-    ((consp form) (normalize-compound form name source-location generator))
+    ((consp form)
+     (when (member form *forms-in-progress* :test #'eq)
+       (error 'invalid-spec-form
+              :form form
+              :reason "the spec form contains itself as one of its own children"))
+     (when (>= *form-depth* +spec-form-depth-limit+)
+       (error 'invalid-spec-form
+              :form form
+              :reason (format nil "the spec form is nested deeper than ~D levels"
+                              +spec-form-depth-limit+)))
+     (let ((*forms-in-progress* (cons form *forms-in-progress*))
+           (*form-depth* (1+ *form-depth*)))
+       (normalize-compound form name source-location generator)))
     (t (error 'invalid-spec-form
               :form form
               :reason "a spec form is a symbol, a list or a spec object"))))

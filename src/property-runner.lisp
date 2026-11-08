@@ -33,7 +33,8 @@
                 #:invalid-backend-result
                 #:invalid-argument
                 #:unsupported-stateful-operation)
-  (:import-from #:cl-spec/src/utils/arguments #:check-argument #:check-run-options)
+  (:import-from #:cl-spec/src/utils/arguments
+                #:check-argument #:check-keyword-arguments #:check-run-options)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-outcome #:snapshot-value #:trial-observation-condition-report #:trial-observation-value
@@ -196,7 +197,8 @@ and the shrunk counterexample are what make a failure actionable."))
 ;; The designator is declared T and checked in the body, so a bad one is refused
 ;; as an INVALID-ARGUMENT rather than by the compiler's own type check (#79).
 (declaim (ftype (function (t
-                           &key (:profile t) (:seed t) (:options t) (:registry t))
+                           &key (:profile t) (:seed t) (:options t) (:registry t)
+                           &allow-other-keys)
                           (values property-result &optional))
                 run-property))
 
@@ -487,7 +489,8 @@ bindings are those enclosing the run, not the run's completed coverage context."
       (run-property property-designator :profile profile :seed seed :options options
                     :registry registry))))
 
-(defun run-property (property-designator &key profile seed options (registry *registry*))
+(defun run-property (property-designator &rest keyword-arguments
+                     &key profile seed options (registry *registry*) &allow-other-keys)
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
@@ -502,6 +505,8 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   ;; Guarded here rather than left to SEED->RANDOM-STATE, which answered an
   ;; unusable seed with a condition naming an internal symbol.  A result stands
   ;; in for its seed, as REPLAY-PROPERTY and CHECK-FUNCTION both allow.
+  (check-keyword-arguments keyword-arguments '(:profile :seed :options :registry)
+                           'run-property)
   (check-argument property-designator '(or symbol property) 'run-property
                   :property-designator)
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
@@ -641,12 +646,14 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                    (selected-evidence-explanation selected))
           (apply #'make-instance 'property-result initargs)))))
 
-(defun run-properties (property-designators &key profile options (registry *registry*))
+(defun run-properties (property-designators &rest keyword-arguments
+                       &key profile options (registry *registry*) &allow-other-keys)
   "Run each property in PROPERTY-DESIGNATORS and return the results in order.
 
 Each run draws its own seed, so one failure can be replayed without re-running
 the others.  PROFILE must be NIL or one of +TRIAL-PROFILES+; any other value
 signals INVALID-ARGUMENT before the first property runs."
+  (check-keyword-arguments keyword-arguments '(:profile :options :registry) 'run-properties)
   (check-argument property-designators '(satisfies finite-list-p) 'run-properties
                   :property-designators)
   (check-profile profile 'run-properties)
@@ -655,7 +662,8 @@ signals INVALID-ARGUMENT before the first property runs."
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
 
-(defun replay-property (property-designator seed &key profile options (registry *registry*))
+(defun replay-property (property-designator seed &rest keyword-arguments
+                        &key profile options (registry *registry*) &allow-other-keys)
   "Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
 SEED is either the integer seed of an earlier run or the PROPERTY-RESULT that
@@ -680,6 +688,7 @@ Passing a PROPERTY-RESULT asks to re-apply that past run.  A property whose
 definition declares state constraints without a fixture refuses that, before the seed is
 extracted, with UNSUPPORTED-STATEFUL-OPERATION: nothing restores its state.  An
 integer SEED starts a new run and stays allowed."
+  (check-keyword-arguments keyword-arguments '(:profile :options :registry) 'replay-property)
   (check-argument seed '(or property-result (integer 0 *)) 'replay-property :seed)
   (check-profile profile 'replay-property)
   (check-run-options options 'replay-property)
