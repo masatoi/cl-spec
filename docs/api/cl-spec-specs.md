@@ -26,7 +26,10 @@ TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative
 integers, so a true answer always rests on executed checks.  TRIALS must be at
 least the largest number of cases a conformance contract declares, since
 EVIDENCE-POLICY requires a verdict in every declared case; a smaller budget is
-refused with a TYPE-ERROR before CONSTRUCTOR is called.  The bundle is registered
+refused with a TYPE-ERROR before CONSTRUCTOR is called.  The first trials of the
+registration contract draw each scenario kind once, in the order that reaches
+every case, so that minimum is enough under any seed; later trials draw at
+random.  The bundle is registered
 in a private registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract
 runs TRIALS trials and every law its declared :NORMAL budget, once per seed in
 SEEDS.
