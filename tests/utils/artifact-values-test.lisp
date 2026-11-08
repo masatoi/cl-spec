@@ -28,9 +28,9 @@
   ;; A package-local nickname of *PACKAGE* that spells a global package name
   ;; used to redirect the decoded symbols, so one artifact named different
   ;; definitions depending on the caller's package.
-  (let* ((host (make-package (symbol-name (gensym "AV-HOST")) :use '()))
-         (view (make-package (symbol-name (gensym "AV-VIEW")) :use '()))
-         (wire (serialize-artifact-value 'cl-user::av-probe)))
+  (let ((host (make-package (symbol-name (gensym "AV-HOST")) :use '()))
+        (view (make-package (symbol-name (gensym "AV-VIEW")) :use '()))
+        (wire (serialize-artifact-value 'cl-user::av-probe)))
     (unwind-protect
          (progn
            (intern "AV-PROBE" host)
