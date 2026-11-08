@@ -307,41 +307,46 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
                                                                          (t :unchecked))))
                             :errors child-errors))))))
 
+(defun reverse-datum-paths (errors)
+  "Return a copy of ERRORS with every :PATH reversed, nested :ERRORS and :BRANCHES included.
+
+Turns errors collected for admission alone (innermost-first paths) into rendered
+ones (root-first), and back: reversing is its own inverse.  Memoized results make
+the datum tree a graph whose subtrees are shared, so each list is copied once and
+shared again in the copy, and ERRORS itself is never changed."
+  (let ((copied (make-hash-table :test #'eq)))
+    (labels ((copy-errors (list)
+               (or (gethash list copied)
+                   (setf (gethash list copied)
+                         (mapcar #'copy-datum list))))
+             (copy-datum (datum)
+               (or (gethash datum copied)
+                   (setf (gethash datum copied)
+                         (loop for (key item) on datum by #'cddr
+                               append (list key
+                                            (case key
+                                              (:path (reverse item))
+                                              (:errors (copy-errors item))
+                                              (:branches
+                                               (loop for branch in item
+                                                     collect (loop for (bkey bitem) on branch
+                                                                     by #'cddr
+                                                                   append
+                                                                   (list bkey
+                                                                         (if (eq bkey :errors)
+                                                                             (copy-errors bitem)
+                                                                             bitem)))))
+                                              (otherwise item))))))))
+      (copy-errors errors))))
+
 (defun render-unread-paths (errors)
   "Return ERRORS, collected for admission alone, with every :PATH rendered root first.
 
-Outside a check that needs only admission this copies the datums, nested :ERRORS
-and :BRANCHES included, reversing each innermost-first :PATH, so they read as if
-the check had rendered them; within one, ERRORS are returned as they are.
-Memoized results make the datum tree a graph whose subtrees are shared, so each
-list is rendered once and shared again in the copy, and the stored errors are
-never changed."
+Outside a check that needs only admission this is REVERSE-DATUM-PATHS; within
+one, ERRORS are returned as they are."
   (if *validity-only*
       errors
-      (let ((rendered (make-hash-table :test #'eq)))
-        (labels ((render-errors (list)
-                   (or (gethash list rendered)
-                       (setf (gethash list rendered)
-                             (mapcar #'render-datum list))))
-                 (render-datum (datum)
-                   (or (gethash datum rendered)
-                       (setf (gethash datum rendered)
-                             (loop for (key item) on datum by #'cddr
-                                   append (list key
-                                                (case key
-                                                  (:path (reverse item))
-                                                  (:errors (render-errors item))
-                                                  (:branches
-                                                   (loop for branch in item
-                                                         collect (loop for (bkey bitem) on branch
-                                                                         by #'cddr
-                                                                       append
-                                                                       (list bkey
-                                                                             (if (eq bkey :errors)
-                                                                                 (render-errors bitem)
-                                                                                 bitem)))))
-                                                  (otherwise item))))))))
-          (render-errors errors)))))
+      (reverse-datum-paths errors)))
 
 (defmethod compile-node ((spec or-spec) context)
   (let* ((children (or-spec-children spec))
@@ -578,22 +583,30 @@ however deep they are."
 (defun known-result (value target node)
   "Return the errors memoized for VALUE against TARGET at NODE, and whether known.
 
-A check that renders errors can also use an admission the other mode found: an
-admitted value has no errors in either."
+Both modes read both memos.  A result the other mode stored is converted with
+REVERSE-DATUM-PATHS -- the two differ only in the direction of their paths -- and
+stored again in this mode, so it is converted once.  Sharing the memo is what
+keeps VALIDP and EXPLAIN-DATA on one traversal: a check that could not reuse a
+result the other mode found would check that value again, possibly deeper than
+*REFERENCE-DEPTH-LIMIT*, and the two would disagree."
   (flet ((lookup (entries)
            (loop for entry in entries
                  when (and (eq (first entry) value) (eq (second entry) target))
                    return (values (cddr entry) t)
                  finally (return (values nil nil)))))
-    (if *validity-only*
-        (lookup (path-node-admissions node))
-        (multiple-value-bind (errors known-p) (lookup (path-node-results node))
-          (cond (known-p (values errors t))
-                (t (multiple-value-bind (refusal admission-known-p)
-                       (lookup (path-node-admissions node))
-                     (if (and admission-known-p (null refusal))
-                         (values nil t)
-                         (values nil nil)))))))))
+    (multiple-value-bind (own other)
+        (if *validity-only*
+            (values (path-node-admissions node) (path-node-results node))
+            (values (path-node-results node) (path-node-admissions node)))
+      (multiple-value-bind (errors known-p) (lookup own)
+        (if known-p
+            (values errors t)
+            (multiple-value-bind (foreign foreign-known-p) (lookup other)
+              (cond ((not foreign-known-p) (values nil nil))
+                    ((null foreign) (values nil t))
+                    (t (let ((converted (reverse-datum-paths foreign)))
+                         (remember-result value target node converted)
+                         (values converted t))))))))))
 
 (defun remember-result (value target node errors)
   "Memoize ERRORS as the result of VALUE against TARGET at NODE, in this mode."
@@ -910,11 +923,14 @@ PRESENT-P is NIL and CONDITION is NIL when READER signals UNBOUND-SLOT, which is
 how an unbound CLOS slot announces itself; a bound slot holding NIL stays a
 present field.  Any other condition is returned as CONDITION for the caller to
 report, except UNDEFINED-FUNCTION and PROGRAM-ERROR, which describe a broken
-reader rather than a bad value and propagate to the author."
+reader rather than a bad value and propagate to the author, and
+VALIDATION-DEPTH-EXCEEDED from a check the reader itself started, which judges
+nothing about OBJECT."
   (handler-case
       (values t (funcall (reader-function reader) object) nil)
     (unbound-slot () (values nil nil nil))
-    ((and error (not (or undefined-function program-error))) (condition)
+    ((and error (not (or undefined-function program-error validation-depth-exceeded)))
+      (condition)
       (values nil nil condition))))
 
 (defmethod compile-node ((spec object-spec) context)
@@ -956,10 +972,12 @@ reader rather than a bad value and propagate to the author."
 
 OK is NIL when the reader signalled; CONDITION then describes it.  A tag that
 cannot be read is a fact about the value, so it is reported as :READER-ERRORED
-rather than treated as an absent tag."
+rather than treated as an absent tag.  VALIDATION-DEPTH-EXCEEDED from a check the
+reader itself started propagates, as it does from a predicate."
   (handler-case
       (values t (read-tag-value value designator) nil)
-    ((and error (not (or undefined-function program-error))) (condition)
+    ((and error (not (or undefined-function program-error validation-depth-exceeded)))
+      (condition)
       (values nil nil condition))))
 
 (defun branch-errors (errors name)

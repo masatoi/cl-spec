@@ -70,6 +70,17 @@
       (let ((or-errors (getf (explain-data disjunction value) :errors)))
         (ok (eq :no-branch-matched (getf (first or-errors) :kind)))))))
 
+(deftest tagged-by-ignores-a-branch-the-tag-does-not-name
+  ;; Every other test repeats the tag inside each branch, so a union that
+  ;; admitted a value whenever any branch did was never observed.
+  (let ((union (normalize-spec-form '(tagged-by :kind
+                                       (:a (plist (:required (:n integer))))
+                                       (:b (plist (:required (:s string))))))))
+    (ok (validp union '(:kind :b :s "x")))
+    (ok (not (validp union '(:kind :a :s "x"))))
+    (ok (equal '(:a) (mapcar (lambda (datum) (getf datum :branch))
+                             (getf (explain-data union '(:kind :a :s "x")) :errors))))))
+
 (deftest tagged-by-no-branch-lists-known-tags
   (let* ((spec (normalize-spec-form (outcome-union-form)))
          (datum (first (getf (explain-data spec '(:kind :other :values (1 2))) :errors))))

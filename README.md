@@ -182,8 +182,12 @@ finite single/double floats, simple strings, cons trees and simple general
 vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
-nesting depth 128 and 1,000,000 wire characters, with additional scalar storage
-limits. A flat list consumes the node budget rather than one depth level per
+nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000
+bits as `integer-length` counts them (so -2^13000 is in range and 2^13000 is
+not) and a string to 1,000,000 characters. A symbol is written with its package's
+own name and decoded by that name alone: neither a global nickname nor a
+package-local nickname of the caller's `*package*` changes which symbol an
+artifact names. A flat list consumes the node budget rather than one depth level per
 cons cell; traversal and parsing use bounded iterative work lists.
 Nonfinite floats are refused through the same artifact condition as other
 unsupported evidence. Unsupported or excessive optional `:options`, `:provenance`
@@ -408,10 +412,19 @@ observation changed and that a declared relation failed, and it does not freeze,
 deep-copy, restore or prove anything stayed unchanged during the call.
 
 ```lisp
+(define-condition insufficient-funds (error) ())
 (defstruct (account (:constructor make-account (balance id))) balance id)
+(cl-spec:defspec positive-money (range integer 1 *))
+(cl-spec:defspec receipt-spec (plist (:required (:amount positive-money))))
+
+(defun withdraw! (account amount)
+  (when (> amount (account-balance account))
+    (error 'insufficient-funds))
+  (decf (account-balance account) amount)
+  (list :amount amount))
 
 (cl-spec:defspec-function withdraw!
-  (:args (account (satisfies account-p)) (amount (positive-money)))
+  (:args (account (satisfies account-p)) (amount positive-money))
   (:capture
     (balance-before (account-balance account))
     (id-before      (account-id account)))
@@ -1046,7 +1059,8 @@ explain:
   A value nested more than `*reference-depth-limit*` (default 1000) references
   deep — a linked structure validated through a recursive spec — signals
   `validation-depth-exceeded` instead of exhausting the control stack; it is
-  neither admitted nor refused. Bind the limit higher for a larger control stack. Explaining a
+  neither admitted nor refused, also when a predicate or a reader started the
+  nested check. Bind the limit higher for a larger control stack. Explaining a
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as

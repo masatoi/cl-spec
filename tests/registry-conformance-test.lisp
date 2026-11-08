@@ -230,6 +230,24 @@
 (defmethod registry-list-specs ((registry partial-registry))
   '())
 
+(defclass merged-index-registry (alist-registry) ()
+  (:documentation "A faulty alist registry: one index answers both target and tag queries."))
+
+(defun merged-index-names (registry key)
+  "Return every property name indexed under KEY as a target or as a tag."
+  (sorted-names (union (cdr (assoc key (alist-by-target registry)))
+                       (cdr (assoc key (alist-by-tag registry))))))
+
+(defmethod registry-properties-for ((registry merged-index-registry) target)
+  (merged-index-names registry target))
+
+(defmethod registry-properties-with-tag ((registry merged-index-registry) tag)
+  (merged-index-names registry tag))
+
+(defun make-merged-index-registry ()
+  "Return a fresh registry that does not keep its target and tag indexes apart."
+  (make-instance 'merged-index-registry))
+
 (defun failing-names (records)
   "Return the distinct names of RECORDS that did not pass with satisfied evidence."
   (remove-duplicates
@@ -314,6 +332,25 @@
     (ok (not conforming))
     (ok (member 'cl-spec/specs::registry-keys-are-symbols-not-names (failing-names records))
         (prin1-to-string (failing-names records)))))
+
+(deftest merged-index-registry-is-refused
+  ;; Every law used targets and tags drawn from disjoint symbols, so a registry
+  ;; answering both queries from one index was never observed.
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-merged-index-registry :seeds '(1))
+    (ok (not conforming))
+    (ok (member 'cl-spec/specs::registry-reverse-indexes-track-redefinition
+                (failing-names records))
+        (prin1-to-string (failing-names records)))))
+
+(deftest the-minimum-budget-reaches-every-declared-case
+  ;; The trials floor is the widest case list, which is only enough if the
+  ;; first draws reach every case; drawn at random, a correct registry missed a
+  ;; case at seeds 4, 5 and 6 and was reported nonconforming.
+  (multiple-value-bind (conforming records)
+      (check-registry-implementation #'make-hash-table-registry
+                                     :seeds '(1 2 3 4 5 6) :trials 3)
+    (ok conforming (prin1-to-string (failing-names records)))))
 
 (deftest non-registry-constructor-is-refused-before-any-check
   (ok (handler-case

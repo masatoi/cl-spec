@@ -228,6 +228,56 @@ than left to hang the suite."
       (let ((cl-spec/src/explain:*reference-depth-limit* 1200))
         (ok (validp 'chain (nested-chain 1100) :registry registry))))))
 
+(defun nested-singletons (depth)
+  "Return NIL wrapped in DEPTH one-element lists."
+  (let ((value nil))
+    (dotimes (i depth value)
+      (setf value (list value)))))
+
+(deftest every-entry-point-agrees-near-the-reference-limit
+  ;; The value is first checked in full through LINK, then again by an OR
+  ;; branch through three aliases of LINK.  A check that rendered errors and
+  ;; one that asked only for admission kept separate memos, so the OR branch
+  ;; of an explained check could not reuse the first result and checked the
+  ;; value again three references deeper, past the limit, while VALIDP reused
+  ;; it and admitted the value.
+  (let ((registry (registry-with '(link (nullable (tuple link)))
+                                 '(alias-3 link) '(alias-2 alias-3) '(alias-1 alias-2)
+                                 '(mixed (and (tuple link) (or string (tuple alias-1))))))
+        (value (list (nested-singletons 997))))
+    (flet ((outcome (thunk)
+             (handler-case (if (funcall thunk) :admitted :refused)
+               (cl-spec/src/conditions:validation-depth-exceeded () :too-deep))))
+      (let ((outcomes
+              (list (outcome (lambda () (validp 'mixed value :registry registry)))
+                    (outcome (lambda () (getf (explain-data 'mixed value :registry registry)
+                                              :valid)))
+                    (outcome (lambda () (cl-spec/src/validator:validate 'mixed value
+                                                                        :registry registry))))))
+        (ok (equal '(:admitted :admitted :admitted) outcomes) (prin1-to-string outcomes))))))
+
+(defun deep-tree-tag (value)
+  "Return :TREE when VALUE's :P is a valid TREE, which needs a check past the limit."
+  (if (validp 'tree (getf value :p)
+              :registry (registry-with '(tree (or integer (list-of tree)))))
+      :tree
+      :other))
+
+(defun deep-tree-field (value)
+  "Return VALUE's :P after validating it as a TREE, past the limit."
+  (cl-spec/src/validator:validate 'tree (getf value :p)
+                                  :registry (registry-with '(tree (or integer (list-of tree))))))
+
+(deftest a-reader-whose-own-check-hits-the-limit-does-not-refuse-the-value
+  ;; As for a predicate: the outer value was never judged, so answering
+  ;; "invalid" would be a verdict nothing supports.
+  (let ((value (list :p (let ((tree 0)) (dotimes (i 1200 tree) (setf tree (list tree)))))))
+    (dolist (form '((tagged-by deep-tree-tag (:tree t) (:other t))
+                    (object-of cons (:required (deep-tree-field t)))))
+      (testing (prin1-to-string (first form))
+        (ok (typep (refusal-of (lambda () (validp (normalize-spec-form form) value)))
+                   'cl-spec/src/conditions:validation-depth-exceeded))))))
+
 (defun deep-chain-valid-p (value)
   "Validate a chain past the reference limit, whatever VALUE is."
   (declare (ignore value))

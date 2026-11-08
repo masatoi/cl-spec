@@ -4,6 +4,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/utils/artifact-values
+                #:serialize-artifact-value #:deserialize-artifact-value)
   (:import-from #:cl-spec/main
                 #:compile-explainer
                 #:compile-validator
@@ -32,6 +34,8 @@
                 #:generation-exhaustion-observations)
   (:import-from #:cl-spec/self-spec-fixtures
                 #:*function-projection-expectations*
+                #:*registration-scenario-kinds*
+                #:*scripted-registration-scenarios*
                 #:*scripted-state-inputs*
                 #:*scripted-validate-inputs*
                 #:*state-projection-expectations*
@@ -110,6 +114,55 @@
   "Recognize exactly the finite DSL subset used by the normalization laws.
 Malformed lists must not enter a law that promises normalization succeeds."
   (not (null (member form *sampled-dsl-forms* :test #'equal))))
+
+(defun draw-artifact-leaf ()
+  "Draw one fresh scalar of a kind the AV1 artifact codec supports, signs included."
+  (let ((odd (1+ (* 2 (random 500)))))
+    (case (random 14)
+      (0 nil)
+      (1 t)
+      (2 (- (/ odd 2)))
+      (3 (/ odd 1024))
+      (4 (- (random (ash 1 200))))
+      ;; Both ends of the 13000-bit range: -2^13000 is in it, +2^13000 is not.
+      (5 (if (zerop (random 2))
+             (- (ash 1 13000))
+             (- (1- (ash 1 13000)) (random 1000))))
+      (6 -0.0d0)
+      (7 (- (random 1d6)))
+      (8 (- (random 1f3)))
+      (9 (code-char (random #xD800)))
+      (10 (copy-seq "say \"hi\""))
+      (11 (nth (random 3) '(car :keyword validp)))
+      (12 (- (random 100000)))
+      (t most-negative-double-float))))
+
+(defun draw-artifact-value (&optional (depth 3))
+  "Draw a fresh value the AV1 codec supports: scalars in lists, dotted pairs and vectors.
+
+Every cons, vector and string is new, so the value shares no structure."
+  (if (or (zerop depth) (zerop (random 3)))
+      (draw-artifact-leaf)
+      (case (random 3)
+        (0 (loop repeat (random 4) collect (draw-artifact-value (1- depth))))
+        (1 (cons (draw-artifact-value (1- depth)) (draw-artifact-value (1- depth))))
+        (t (coerce (loop repeat (random 4) collect (draw-artifact-value (1- depth)))
+                   'simple-vector)))))
+
+(defun same-artifact-value-p (expected actual)
+  "True when ACTUAL is EXPECTED rebuilt: same structure, and EQL scalars of the same type.
+
+This is the oracle the codec law compares against, written without the codec:
+EQL tells -0.0 from 0.0, a single from a double float, and -1/2 from 1/2."
+  (typecase expected
+    (cons (and (consp actual)
+               (same-artifact-value-p (car expected) (car actual))
+               (same-artifact-value-p (cdr expected) (cdr actual))))
+    (string (and (stringp actual) (string= expected actual)))
+    (simple-vector (and (simple-vector-p actual)
+                        (= (length expected) (length actual))
+                        (every #'same-artifact-value-p expected actual)))
+    (t (eql expected actual))))
 
 (defun draw-value ()
   "Draw heterogeneous finite values, including mismatches for generated specs."
@@ -292,6 +345,7 @@ allowed."
     failure-identities-match-reflexively counterexample-artifacts-round-trip
     collection-constraints-are-enforced
     generated-values-satisfy-their-specs retained-counterexamples-stay-valid
+    artifact-values-restore-exactly tagged-unions-check-only-the-tagged-branch
     sample-reports-its-generation-request
     structured-retained-counterexamples-stay-valid
     tagged-generation-reaches-each-declared-branch
@@ -375,7 +429,10 @@ TYPE-ERROR is signalled otherwise.  SEEDS must be a nonempty list of nonnegative
 integers, so a true answer always rests on executed checks.  TRIALS must be at
 least the largest number of cases a conformance contract declares, since
 EVIDENCE-POLICY requires a verdict in every declared case; a smaller budget is
-refused with a TYPE-ERROR before CONSTRUCTOR is called.  The bundle is registered
+refused with a TYPE-ERROR before CONSTRUCTOR is called.  The first trials of the
+registration contract draw each scenario kind once, in the order that reaches
+every case, so that minimum is enough under any seed; later trials draw at
+random.  The bundle is registered
 in a private registry, so CL-SPEC:*REGISTRY* is left untouched.  Every contract
 runs TRIALS trials and every law its declared :NORMAL budget, once per seed in
 SEEDS.
@@ -419,8 +476,12 @@ backend such as CL-SPEC/CHECK-IT to be loaded."
                    records)))
       (dolist (seed seeds)
         (dolist (name (getf names :contracts))
-          (record :contract name seed
-                  (cl-spec:check-function name :trials trials :seed seed) trials))
+          ;; The registration contract's cases are reached through its scenario
+          ;; kinds, which are drawn at random; drawing each kind once first is
+          ;; what lets the minimum TRIALS reach every case under every seed.
+          (let ((*scripted-registration-scenarios* (copy-list *registration-scenario-kinds*)))
+            (record :contract name seed
+                    (cl-spec:check-function name :trials trials :seed seed) trials)))
         (dolist (name (getf names :properties))
           (record :property name seed (cl-spec:run-property name :seed seed)
                   (getf (cl-spec:property-trials (cl-spec:find-property name)) :normal)))))
@@ -637,12 +698,23 @@ their finite input corpora, and the registry write contract names its scenarios.
     (:post (eql 1 (getf (find :checked-trials (getf result :dimensions)
                              :key (lambda (entry) (getf entry :kind))) :value))))
   (defgenerator evidence-policy-generator ()
-    (if (zerop (random 2)) nil
-        (list :policy-version 1 :requirements
-              (list (list :kind :min-checked-trials :count 1)))))
+    ;; NIL is malformed; a count of 1 is met by the one checked trial of a
+    ;; fresh fixture result and a count of 2 is not, so both verdicts are seen.
+    (let ((draw (random 3)))
+      (if (zerop draw)
+          nil
+          (list :policy-version 1 :requirements
+                (list (list :kind :min-checked-trials :count draw))))))
   (defspec evidence-policy-input list (:generator evidence-policy-generator))
+  (defspec short-evidence-gaps
+      (tuple (plist (:required (:kind (member :checked-trials-below-minimum))
+                               (:required (member 2))
+                               (:observed (member 1))))))
   (defspec-function cl-spec:assess-evidence
-    "An explicit threshold is assessed; malformed policy data is rejected."
+    "An explicit threshold is assessed against the saved facts; malformed policy data is rejected.
+
+The observation is one passed fixture check, which has exactly one checked trial,
+so a threshold of one is met and a threshold of two is a recorded shortfall."
     (:args (observation fresh-fixture-result) (policy evidence-policy-input))
     (:cases
      (:valid (:when (equal policy '(:policy-version 1 :requirements
@@ -650,7 +722,15 @@ their finite input corpora, and the registry write contract names its scenarios.
              (:returns (plist (:required (:schema-version (member 1))
                                          (:record-kind (member :evidence-assessment))
                                          (:assessment (member :satisfied))
-                                         (:execution-status (member :passed))))))
+                                         (:execution-status (member :passed))
+                                         (:gaps null)))))
+     (:short (:when (equal policy '(:policy-version 1 :requirements
+                                   ((:kind :min-checked-trials :count 2)))))
+             (:returns (plist (:required (:schema-version (member 1))
+                                         (:record-kind (member :evidence-assessment))
+                                         (:assessment (member :insufficient))
+                                         (:execution-status (member :passed))
+                                         (:gaps short-evidence-gaps)))))
      (:invalid (:when (null policy)) (:signals (type cl-spec:invalid-evidence-policy)))))
   (defproperty fixture-reconstruction-is-independent ((recipe (range integer 0 30)))
     "Repeating one recipe starts from the same value and does not overwrite past evidence."
@@ -1557,17 +1637,24 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                   :tags '(self-tag-b)
                                   :function (lambda (x) (declare (ignore x)) t))))
       (cl-spec:register-property first registry)
+      ;; The two indexes are separate (§8): a target is not a tag, so each query
+      ;; must miss the key the other one indexes.  A registry answering both
+      ;; from one index, or from their union, fails here.
       (let ((indexed (and (member 'self-property
                                   (cl-spec:properties-for 'self-target-a registry))
                           (member 'self-property
-                                  (cl-spec:properties-with-tag 'self-tag-a registry)))))
+                                  (cl-spec:properties-with-tag 'self-tag-a registry))
+                          (null (cl-spec:properties-for 'self-tag-a registry))
+                          (null (cl-spec:properties-with-tag 'self-target-a registry)))))
         (cl-spec:register-property second registry)
         (and indexed
              (null (cl-spec:properties-for 'self-target-a registry))
              (null (cl-spec:properties-with-tag 'self-tag-a registry))
              (member 'self-property (cl-spec:properties-for 'self-target-b registry))
              (member 'self-property
-                     (cl-spec:properties-with-tag 'self-tag-b registry))))))
+                     (cl-spec:properties-with-tag 'self-tag-b registry))
+             (null (cl-spec:properties-for 'self-tag-b registry))
+             (null (cl-spec:properties-with-tag 'self-target-b registry))))))
   (defproperty registry-clear-empties ((spec spec-object) (property generated-definition))
     "CLEAR-REGISTRY leaves every index and lookup empty (§8)."
     (:about cl-spec:clear-registry cl-spec:list-specs cl-spec:list-properties
@@ -1751,22 +1838,41 @@ reverse-index query must order them by name and then by home package name."
         (cl-spec:invalid-generator-form () (= index 2))
         (error () nil))))
   (defproperty run-property-is-reproducible-from-its-seed ((seed (range integer 0 100000)))
-    "A run records the seed and profile that replay it to the same status and trials (§15)."
+    "A run records the seed and profile that replay it to the same verdict and counterexample (§15).
+
+The target fails on some inputs only, so runs both pass and fail, and the run uses
+a profile other than the default, so a replay that ignored the recorded profile
+would run a different budget.  A failure's shrunk counterexample must still lie
+in the argument domain and still fail."
     (:about cl-spec:run-property cl-spec:replay-property)
     (:tags :cl-spec-self)
     (:trials (:smoke 5 :normal 50))
     (let* ((property (make-instance 'cl-spec:property :name 'self-replay-target
-                                    :arguments '((x integer))
-                                    :function (lambda (x) (declare (ignore x)) t)
-                                    :trials '(:normal 10)))
-           (first-run (cl-spec:run-property property :seed seed :profile :normal))
-           (replay (cl-spec:replay-property property first-run)))
-      (and (eq (cl-spec:property-result-status first-run)
-               (cl-spec:property-result-status replay))
+                                    :arguments '((x (range integer 0 1000)))
+                                    :function (lambda (x) (< x 990))
+                                    :trials '(:normal 10 :extended 40)))
+           (first-run (cl-spec:run-property property :seed seed :profile :extended))
+           (replay (cl-spec:replay-property property first-run))
+           (status (cl-spec:property-result-status first-run)))
+      (and (eq status (cl-spec:property-result-status replay))
+           (eq :extended (cl-spec:property-result-profile first-run))
+           (eq :extended (cl-spec:property-result-profile replay))
            (= (cl-spec:property-result-trials first-run)
               (cl-spec:property-result-trials replay))
            (eql (cl-spec:property-result-seed first-run)
-                (cl-spec:property-result-seed replay)))))
+                (cl-spec:property-result-seed replay))
+           (equal (cl-spec:property-result-counterexample first-run)
+                  (cl-spec:property-result-counterexample replay))
+           (equal (cl-spec:property-result-shrunk-counterexample first-run)
+                  (cl-spec:property-result-shrunk-counterexample replay))
+           (ecase status
+             (:passed (= 40 (cl-spec:property-result-trials first-run)))
+             ;; With no smaller failing input there is no shrunk counterexample.
+             (:failed (let ((kept (getf (or (cl-spec:property-result-shrunk-counterexample
+                                             first-run)
+                                            (cl-spec:property-result-counterexample first-run))
+                                        'x)))
+                        (and (integerp kept) (<= 990 kept 1000))))))))
   (defproperty failure-identities-match-reflexively ((observation observed-trial))
     "An observed failure identity matches itself (§14)."
     (:about cl-spec:failure-identities-match-p)
@@ -1775,6 +1881,41 @@ reverse-index query must order them by name and then by home package name."
     (let ((signature (cl-spec:trial-observation-signature observation)))
       (or (null signature)
           (cl-spec:failure-identities-match-p signature signature))))
+  (defgenerator artifact-value-sampler ()
+    (draw-artifact-value))
+  (defspec artifact-value-sample t (:generator artifact-value-sampler))
+  (defproperty artifact-values-restore-exactly ((value artifact-value-sample))
+    "A value written to the artifact wire format reads back as the same value (§73.4).
+
+Compared with the value itself, not with a second decode: a decoder fault that
+both reads agree on -- dropping a ratio's sign, say -- would make a saved failure
+recheck as passed."
+    (:about cl-spec:serialize-counterexample-artifact cl-spec:deserialize-counterexample-artifact)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 20 :normal 200))
+    (same-artifact-value-p value (deserialize-artifact-value (serialize-artifact-value value))))
+  (defproperty tagged-unions-check-only-the-tagged-branch ((n integer) (s string))
+    "A tagged union judges a value by the branch its tag names, and only that one (§9.5).
+
+The branches do not constrain the tag themselves, so a value carrying one tag and
+the shape of the other branch is admitted only if dispatch is wrong."
+    (:about validp explain-data)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 5 :normal 20))
+    (let ((union (normalize-spec-form '(tagged-by :kind
+                                         (:a (plist (:required (:n integer))))
+                                         (:b (plist (:required (:s string))))))))
+      (flet ((refused-by-branch-p (value branch)
+               (let ((data (explain-data union value)))
+                 (and (not (validp union value))
+                      (not (getf data :valid))
+                      (getf data :errors)
+                      (every (lambda (datum) (eq branch (getf datum :branch)))
+                             (getf data :errors))))))
+        (and (validp union (list :kind :a :n n))
+             (validp union (list :kind :b :s s))
+             (refused-by-branch-p (list :kind :a :s s) :a)
+             (refused-by-branch-p (list :kind :b :n n) :b)))))
   (defproperty counterexample-artifacts-round-trip ((seed (range integer 0 1000)))
     "A saved artifact serializes, deserializes and preserves its recorded evidence (§73.4)."
     (:about cl-spec:make-counterexample-artifact cl-spec:serialize-counterexample-artifact

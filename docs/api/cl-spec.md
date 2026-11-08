@@ -2,7 +2,7 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 288 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 292 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
@@ -12,15 +12,15 @@ System `cl-spec`, 288 exported symbols. Docstrings are reproduced from the sourc
 
 **Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`coverage-data`](#coverage-data) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`invalid-coverage-options-reason`](#invalid-coverage-options-reason) · [`invalid-evidence-policy-reason`](#invalid-evidence-policy-reason) · [`observe-trial`](#observe-trial) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`unsupported-coverage-operation-reason`](#unsupported-coverage-operation-reason) · [`validate-definition`](#validate-definition)
 
-**Accessors**: [`call-check-result-arguments`](#call-check-result-arguments) · [`call-check-result-definition`](#call-check-result-definition) · [`call-check-result-name`](#call-check-result-name) · [`call-check-result-observation`](#call-check-result-observation) · [`call-check-result-source-form`](#call-check-result-source-form) · [`capture-error-binding`](#capture-error-binding) · [`capture-error-captured`](#capture-error-captured) · [`capture-error-function`](#capture-error-function) · [`capture-error-index`](#capture-error-index) · [`capture-error-original-condition`](#capture-error-original-condition) · [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-fixture`](#function-spec-fixture) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-argument`](#generator-unavailable-argument) · [`generator-unavailable-kind`](#generator-unavailable-kind) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-argument-argument`](#invalid-argument-argument) · [`invalid-argument-operator`](#invalid-argument-operator) · [`invalid-argument-reason`](#invalid-argument-reason) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-call-arguments-arguments`](#invalid-call-arguments-arguments) · [`invalid-call-arguments-errors`](#invalid-call-arguments-errors) · [`invalid-call-arguments-function`](#invalid-call-arguments-function) · [`invalid-call-arguments-reason`](#invalid-call-arguments-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`state-post-error-case`](#state-post-error-case) · [`state-post-error-form`](#state-post-error-form) · [`state-post-error-function`](#state-post-error-function) · [`state-post-error-index`](#state-post-error-index) · [`state-post-error-original-condition`](#state-post-error-original-condition) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name) · [`unsupported-stateful-operation-function`](#unsupported-stateful-operation-function) · [`unsupported-stateful-operation-operation`](#unsupported-stateful-operation-operation) · [`unsupported-stateful-operation-reason`](#unsupported-stateful-operation-reason)
+**Accessors**: [`call-check-result-arguments`](#call-check-result-arguments) · [`call-check-result-definition`](#call-check-result-definition) · [`call-check-result-name`](#call-check-result-name) · [`call-check-result-observation`](#call-check-result-observation) · [`call-check-result-source-form`](#call-check-result-source-form) · [`capture-error-binding`](#capture-error-binding) · [`capture-error-captured`](#capture-error-captured) · [`capture-error-function`](#capture-error-function) · [`capture-error-index`](#capture-error-index) · [`capture-error-original-condition`](#capture-error-original-condition) · [`case-selection-error-case`](#case-selection-error-case) · [`case-selection-error-cases`](#case-selection-error-cases) · [`case-selection-error-function`](#case-selection-error-function) · [`case-selection-error-kind`](#case-selection-error-kind) · [`case-selection-error-original-condition`](#case-selection-error-original-condition) · [`custom-generator-documentation`](#custom-generator-documentation) · [`custom-generator-function`](#custom-generator-function) · [`custom-generator-name`](#custom-generator-name) · [`custom-generator-shrinker`](#custom-generator-shrinker) · [`custom-generator-source-form`](#custom-generator-source-form) · [`custom-generator-source-location`](#custom-generator-source-location) · [`function-check-result-case-report`](#function-check-result-case-report) · [`function-check-result-explanation`](#function-check-result-explanation) · [`function-check-result-failure-reason`](#function-check-result-failure-reason) · [`function-check-result-rejected`](#function-check-result-rejected) · [`function-check-result-shrunk-outcome`](#function-check-result-shrunk-outcome) · [`function-check-result-source-form`](#function-check-result-source-form) · [`function-spec-argument-generator`](#function-spec-argument-generator) · [`function-spec-argument-specs`](#function-spec-argument-specs) · [`function-spec-documentation`](#function-spec-documentation) · [`function-spec-fixture`](#function-spec-fixture) · [`function-spec-metadata`](#function-spec-metadata) · [`function-spec-name`](#function-spec-name) · [`function-spec-post-value-variables`](#function-spec-post-value-variables) · [`function-spec-postcondition-function`](#function-spec-postcondition-function) · [`function-spec-postconditions`](#function-spec-postconditions) · [`function-spec-precondition-function`](#function-spec-precondition-function) · [`function-spec-preconditions`](#function-spec-preconditions) · [`function-spec-return-spec`](#function-spec-return-spec) · [`function-spec-signal-spec`](#function-spec-signal-spec) · [`function-spec-source-form`](#function-spec-source-form) · [`function-spec-source-location`](#function-spec-source-location) · [`generation-budget-exhausted-report`](#generation-budget-exhausted-report) · [`generation-budget-exhausted-request`](#generation-budget-exhausted-request) · [`generator-unavailable-argument`](#generator-unavailable-argument) · [`generator-unavailable-kind`](#generator-unavailable-kind) · [`generator-unavailable-reason`](#generator-unavailable-reason) · [`generator-unavailable-spec`](#generator-unavailable-spec) · [`invalid-argument-argument`](#invalid-argument-argument) · [`invalid-argument-operator`](#invalid-argument-operator) · [`invalid-argument-reason`](#invalid-argument-reason) · [`invalid-backend-result-reason`](#invalid-backend-result-reason) · [`invalid-call-arguments-arguments`](#invalid-call-arguments-arguments) · [`invalid-call-arguments-errors`](#invalid-call-arguments-errors) · [`invalid-call-arguments-function`](#invalid-call-arguments-function) · [`invalid-call-arguments-reason`](#invalid-call-arguments-reason) · [`invalid-counterexample-artifact-reason`](#invalid-counterexample-artifact-reason) · [`invalid-function-spec-form-form`](#invalid-function-spec-form-form) · [`invalid-function-spec-form-reason`](#invalid-function-spec-form-reason) · [`invalid-generated-arguments-generator`](#invalid-generated-arguments-generator) · [`invalid-generated-arguments-reason`](#invalid-generated-arguments-reason) · [`invalid-generated-arguments-value`](#invalid-generated-arguments-value) · [`invalid-generator-form-form`](#invalid-generator-form-form) · [`invalid-generator-form-reason`](#invalid-generator-form-reason) · [`invalid-property-form-form`](#invalid-property-form-form) · [`invalid-property-form-reason`](#invalid-property-form-reason) · [`invalid-spec-form-form`](#invalid-spec-form-form) · [`invalid-spec-form-reason`](#invalid-spec-form-reason) · [`not-implemented-operator`](#not-implemented-operator) · [`property-arguments`](#property-arguments) · [`property-body`](#property-body) · [`property-documentation`](#property-documentation) · [`property-function`](#property-function) · [`property-kind`](#property-kind) · [`property-metadata`](#property-metadata) · [`property-name`](#property-name) · [`property-result-budget`](#property-result-budget) · [`property-result-condition`](#property-result-condition) · [`property-result-counterexample`](#property-result-counterexample) · [`property-result-elapsed`](#property-result-elapsed) · [`property-result-failure-evidence`](#property-result-failure-evidence) · [`property-result-failure-phase`](#property-result-failure-phase) · [`property-result-generation-report`](#property-result-generation-report) · [`property-result-options`](#property-result-options) · [`property-result-profile`](#property-result-profile) · [`property-result-property`](#property-result-property) · [`property-result-provenance`](#property-result-provenance) · [`property-result-rejected`](#property-result-rejected) · [`property-result-schema-metadata`](#property-result-schema-metadata) · [`property-result-seed`](#property-result-seed) · [`property-result-shrink-report`](#property-result-shrink-report) · [`property-result-shrunk-counterexample`](#property-result-shrunk-counterexample) · [`property-result-shrunk-evidence`](#property-result-shrunk-evidence) · [`property-result-shrunk-outcome`](#property-result-shrunk-outcome) · [`property-result-status`](#property-result-status) · [`property-result-trials`](#property-result-trials) · [`property-source-form`](#property-source-form) · [`property-source-location`](#property-source-location) · [`property-tags`](#property-tags) · [`property-targets`](#property-targets) · [`property-trials`](#property-trials) · [`spec-description`](#spec-description) · [`spec-generator-name`](#spec-generator-name) · [`spec-metadata`](#spec-metadata) · [`spec-name`](#spec-name) · [`spec-source-form`](#spec-source-form) · [`spec-source-location`](#spec-source-location) · [`spec-violation-errors`](#spec-violation-errors) · [`spec-violation-path`](#spec-violation-path) · [`spec-violation-spec`](#spec-violation-spec) · [`spec-violation-value`](#spec-violation-value) · [`state-post-error-case`](#state-post-error-case) · [`state-post-error-form`](#state-post-error-form) · [`state-post-error-function`](#state-post-error-function) · [`state-post-error-index`](#state-post-error-index) · [`state-post-error-original-condition`](#state-post-error-original-condition) · [`unknown-function-spec-name`](#unknown-function-spec-name) · [`unknown-property-name`](#unknown-property-name) · [`unknown-spec-name`](#unknown-spec-name) · [`unsupported-stateful-operation-function`](#unsupported-stateful-operation-function) · [`unsupported-stateful-operation-operation`](#unsupported-stateful-operation-operation) · [`unsupported-stateful-operation-reason`](#unsupported-stateful-operation-reason) · [`validation-depth-exceeded-limit`](#validation-depth-exceeded-limit) · [`validation-depth-exceeded-spec`](#validation-depth-exceeded-spec)
 
 **Classes**: [`call-check-result`](#call-check-result) · [`custom-generator`](#custom-generator) · [`fixture-check-result`](#fixture-check-result) · [`function-check-result`](#function-check-result) · [`function-spec`](#function-spec) · [`hash-table-registry`](#hash-table-registry) · [`property`](#property) · [`property-result`](#property-result) · [`spec`](#spec)
 
-**Conditions**: [`capture-error`](#capture-error) · [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-argument`](#invalid-argument) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-call-arguments`](#invalid-call-arguments) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-coverage-options`](#invalid-coverage-options) · [`invalid-evidence-policy`](#invalid-evidence-policy) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`state-post-error`](#state-post-error) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-coverage-operation`](#unsupported-coverage-operation) · [`unsupported-seed`](#unsupported-seed) · [`unsupported-stateful-operation`](#unsupported-stateful-operation)
+**Conditions**: [`capture-error`](#capture-error) · [`case-selection-error`](#case-selection-error) · [`cl-spec-error`](#cl-spec-error) · [`generation-budget-exhausted`](#generation-budget-exhausted) · [`generator-unavailable`](#generator-unavailable) · [`invalid-argument`](#invalid-argument) · [`invalid-backend-result`](#invalid-backend-result) · [`invalid-call-arguments`](#invalid-call-arguments) · [`invalid-counterexample-artifact`](#invalid-counterexample-artifact) · [`invalid-coverage-options`](#invalid-coverage-options) · [`invalid-evidence-policy`](#invalid-evidence-policy) · [`invalid-function-spec-form`](#invalid-function-spec-form) · [`invalid-generated-arguments`](#invalid-generated-arguments) · [`invalid-generator-form`](#invalid-generator-form) · [`invalid-property-form`](#invalid-property-form) · [`invalid-spec-form`](#invalid-spec-form) · [`no-generator-backend`](#no-generator-backend) · [`not-implemented`](#not-implemented) · [`spec-violation`](#spec-violation) · [`state-post-error`](#state-post-error) · [`unbound-target`](#unbound-target) · [`unknown-function-spec`](#unknown-function-spec) · [`unknown-property`](#unknown-property) · [`unknown-spec`](#unknown-spec) · [`unsupported-coverage-operation`](#unsupported-coverage-operation) · [`unsupported-seed`](#unsupported-seed) · [`unsupported-stateful-operation`](#unsupported-stateful-operation) · [`validation-depth-exceeded`](#validation-depth-exceeded)
 
 **Structures**: [`counterexample-artifact`](#counterexample-artifact) · [`trial-observation`](#trial-observation)
 
-**Variables**: [`*generator-backend*`](#generator-backend) · [`*registry*`](#registry) · [`*spec-primitives*`](#spec-primitives)
+**Variables**: [`*generator-backend*`](#generator-backend) · [`*reference-depth-limit*`](#reference-depth-limit) · [`*registry*`](#registry) · [`*spec-primitives*`](#spec-primitives)
 
 ## Macros
 
@@ -310,7 +310,7 @@ shape for every kind.
 <a name="check-call"></a>
 ### check-call
 
-*Function* · `(function-designator arguments &key coverage (registry *registry*))`
+*Function* · `(function-designator arguments &rest keyword-arguments &key coverage (registry *registry*) &allow-other-keys)`
 
 Check one caller-supplied invocation of a registered Function Spec.
 
@@ -355,14 +355,14 @@ or persistable, and it does not relax any existing stateful restriction.
 <a name="check-fixture"></a>
 ### check-fixture
 
-*Function* · `(function-designator recipe &key coverage (registry *registry*))`
+*Function* · `(function-designator recipe &rest keyword-arguments &key coverage (registry *registry*) &allow-other-keys)`
 
 Check RECIPE once using a fresh fixture, without generation, shrinking or replay.
 
 <a name="check-function"></a>
 ### check-function
 
-*Function* · `(function-designator &key trials seed options (registry *registry*))`
+*Function* · `(function-designator &rest keyword-arguments &key trials seed options (registry *registry*) &allow-other-keys)`
 
 Check a function contract using evidence captured during each invocation.
 
@@ -414,7 +414,7 @@ Remove every entry from REGISTRY and return REGISTRY.
 <a name="compile-explainer"></a>
 ### compile-explainer
 
-*Function* · `(spec &key context)`
+*Function* · `(spec &key context validity-only)`
 
 Compile SPEC into a function of (VALUE PATH) returning structured errors.
 
@@ -424,6 +424,9 @@ The returned function returns an empty list exactly when VALUE satisfies SPEC,
 which is what makes VALIDP and EXPLAIN-DATA incapable of disagreeing.  Each call
 is one check: the reference bookkeeping of a check never leaks into another, not
 even into a nested check a predicate starts.
+
+With VALIDITY-ONLY the caller needs only whether the list is empty: the errors
+are still returned, but their :PATH is not rendered and must not be read.
 ```
 
 <a name="compile-validator"></a>
@@ -452,6 +455,11 @@ Return fresh data, marking digest details absent in older artifacts as not colle
 *Function* · `(definition &key (registry *registry*))`
 
 Describe statically observable input dimensions of a property or function spec.
+
+```text
+DEFINITION is the property or function spec object; anything else is refused
+with INVALID-ARGUMENT.
+```
 
 <a name="current-generator-backend"></a>
 ### current-generator-backend
@@ -551,6 +559,9 @@ Return a plist describing whether VALUE satisfies SPEC-DESIGNATOR and why not.
 
 This is the primary representation; EXPLAIN, condition reports and any JSON or
 MCP projection are derived from it.
+
+A value nested more than *REFERENCE-DEPTH-LIMIT* references deep signals
+VALIDATION-DEPTH-EXCEEDED instead of an answer, as VALIDP and VALIDATE do.
 ```
 
 <a name="failure-identities-match-p"></a>
@@ -570,6 +581,8 @@ must be EQ and the inner comparison is exactly the one above, so the same
 violation in a different case is a different failure while the rules inside a
 case are unchanged.  A wrapped identity never matches an unwrapped one, so
 evidence that names no case cannot be adopted for a case-carrying failure.
+A signature is a list, or NIL for no failure; anything else is refused with
+INVALID-ARGUMENT.
 
 <a name="find-function-spec"></a>
 ### find-function-spec
@@ -605,6 +618,11 @@ Return the spec registered under NAME in REGISTRY, and a found-p second value.
 *Function* · `(result)`
 
 Return a version-two record for a one-shot fixture execution.
+
+```text
+RESULT is what CHECK-FIXTURE returned; anything else is refused with
+INVALID-ARGUMENT.
+```
 
 <a name="function-check-result-function"></a>
 ### function-check-result-function
@@ -679,6 +697,9 @@ The root additionally carries :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND,
 Argument, return, signals and argument-schema nodes are plain IR projections.
 Fixed return declarations use :KIND :VALUES with ordered children. Explicit
 :POST-VALUES adds :POST-VALUE-VARIABLES; ordinary :POST omits that key.
+
+The plist is a fresh copy: changing it or its forms does not change the
+registered contract, whose compiled functions could not follow the change.
 ```
 
 <a name="generation-budget-exhausted-attempts"></a>
@@ -869,6 +890,9 @@ SCHEMA-INFO: :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 Nested specs are plain IR projections. :TRIALS is a profile table in this
 definition record; result records carry executed counts under that key.
 The body is the author's source rather than the compiled function (§39).
+
+The plist is a fresh copy: changing it, its trial table or its forms does not
+change the registered property.
 ```
 
 <a name="property-result-explanation"></a>
@@ -916,6 +940,8 @@ other policy, including the one for the other artifact version, returns :STATUS
 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 Returns a :RECHECK record; never mutates the saved artifact or original result.
+In both versions an error the recheck itself meets, such as a target that is no
+longer defined, is recorded as :STATUS :CONTRACT-ERROR rather than signalled.
 A non-artifact, a non-registry or an unknown policy is the caller's mistake, not
 a finding about the definition, so it is refused with INVALID-ARGUMENT before
 anything runs rather than recorded as :CONTRACT-ERROR.
@@ -964,7 +990,7 @@ public entry point that keeps a non-spec out of the registry.
 <a name="replay-property"></a>
 ### replay-property
 
-*Function* · `(property-designator seed &key profile options (registry *registry*))`
+*Function* · `(property-designator seed &rest keyword-arguments &key profile options (registry *registry*) &allow-other-keys)`
 
 Re-run PROPERTY-DESIGNATOR from SEED and return a PROPERTY-RESULT.
 
@@ -1006,7 +1032,7 @@ results without captured metadata have an explicitly incomplete digest.
 <a name="run-properties"></a>
 ### run-properties
 
-*Function* · `(property-designators &key profile options (registry *registry*))`
+*Function* · `(property-designators &rest keyword-arguments &key profile options (registry *registry*) &allow-other-keys)`
 
 Run each property in PROPERTY-DESIGNATORS and return the results in order.
 
@@ -1019,7 +1045,7 @@ signals INVALID-ARGUMENT before the first property runs.
 <a name="run-property"></a>
 ### run-property
 
-*Function* · `(property-designator &key profile seed options (registry *registry*))`
+*Function* · `(property-designator &rest keyword-arguments &key profile seed options (registry *registry*) &allow-other-keys)`
 
 Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
@@ -1084,6 +1110,8 @@ the record keys.  An :UNAVAILABLE record's :TYPE is ordinary data:
 :ANONYMOUS-CLASS is (:kind :anonymous-class :metaclass NAME) for a class with no
 name, and :UNKNOWN is the symbol fallback for a type specifier this projection
 cannot name -- so a live class object never enters the record.
+
+Every call returns a fresh copy, so a caller may change what it is given.
 ```
 
 <a name="semantic-data"></a>
@@ -1126,7 +1154,7 @@ registered, so signalling would force every caller to handle a condition for
 what is the common case.
 
 That guarantee covers an unknown symbol, not an unknown value: SYMBOL must be
-a symbol, and passing anything else signals a TYPE-ERROR from SYMBOL-PACKAGE
+a symbol, and passing anything else signals INVALID-ARGUMENT, a TYPE-ERROR,
 before any lookup runs. A caller that takes a name from outside the image --
 from JSON, say -- resolves it to a symbol first. Every key listed above is
 always present, whatever its value: a key that appears and disappears with its
@@ -1176,6 +1204,8 @@ declares; an unconstrained collection carries none of them. The root additionall
 has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 :DEFINITION-DIGEST-COMPLETE, :DEFINITION-DIGEST-COVERS and :CAPABILITIES (see
 SCHEMA-INFO, specification §38.1). Children are plain IR projections.
+
+The plist is a fresh copy: changing it does not change the registered spec.
 ```
 
 <a name="state-post-error-data"></a>
@@ -1337,7 +1367,9 @@ Return VALUE when it satisfies SPEC-DESIGNATOR, otherwise signal SPEC-VIOLATION.
 
 ```text
 The signalled condition carries the structured error list produced by
-EXPLAIN-DATA so that callers do not have to re-run the check.
+EXPLAIN-DATA so that callers do not have to re-run the check.  A value nested
+more than *REFERENCE-DEPTH-LIMIT* references deep signals VALIDATION-DEPTH-EXCEEDED,
+which is neither an admission nor a SPEC-VIOLATION.
 ```
 
 <a name="validp"></a>
@@ -1349,7 +1381,9 @@ Return true when VALUE satisfies the spec named by SPEC-DESIGNATOR.
 
 ```text
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
-Signals UNKNOWN-SPEC when a symbol resolves to nothing.
+Signals UNKNOWN-SPEC when a symbol resolves to nothing, and
+VALIDATION-DEPTH-EXCEEDED, rather than answering, when VALUE is nested more than
+*REFERENCE-DEPTH-LIMIT* references deep.
 ```
 
 
@@ -2718,6 +2752,20 @@ The refused operation, such as :REPLAY.
 
 Machine-readable reason the operation is unsupported.
 
+<a name="validation-depth-exceeded-limit"></a>
+### validation-depth-exceeded-limit
+
+*Accessor* of `validation-depth-exceeded` · `(condition)`
+
+How many nested reference checks one check allows.
+
+<a name="validation-depth-exceeded-spec"></a>
+### validation-depth-exceeded-spec
+
+*Accessor* of `validation-depth-exceeded` · `(condition)`
+
+Name of the spec whose reference reached the limit.
+
 
 ## Classes
 
@@ -3114,6 +3162,21 @@ declaration or fixture changed or the saved run is not a fixture run,
 run with an integer seed is not this operation and is allowed.
 ```
 
+<a name="validation-depth-exceeded"></a>
+### validation-depth-exceeded
+
+*Condition* · extends cl-spec-error
+
+Signalled when a check descends through more nested references than it allows.
+
+```text
+Validating a recursive spec descends the control stack once per level of the
+value, so a value nested deep enough would exhaust it.  The check stops at the
+limit instead and makes no claim about the value: VALIDP, VALIDATE and
+EXPLAIN-DATA signal this rather than answer, because answering NIL would call a
+value invalid that nobody checked.
+```
+
 
 ## Structures
 
@@ -3152,6 +3215,24 @@ execution host, so a host that runs checks off the calling thread has to carry
 this value over itself -- PROGV, or an explicit argument.  Without that, a run
 started on another thread reads the global value, and if a backend is installed
 there it generates rather than reporting NO-GENERATOR-BACKEND.
+```
+
+<a name="reference-depth-limit"></a>
+### *reference-depth-limit*
+
+*Variable*
+
+How many reference checks may be nested in one check before it is refused.
+
+```text
+Each reference reached inside another descends the control stack -- about half a
+kilobyte per level for a plain recursive tuple, more when collections sit between
+the references -- so a linked structure tens of thousands deep exhausted the
+stack and, once the guard page had been spent, ended the process.  Past this many
+nested references a check signals VALIDATION-DEPTH-EXCEEDED instead.  The spec
+form itself is limited to +SPEC-FORM-DEPTH-LIMIT+ levels, so the value's depth
+through references is the only unbounded recursion left.  Bind it higher for a
+larger control stack, or lower for a smaller one.
 ```
 
 <a name="registry"></a>

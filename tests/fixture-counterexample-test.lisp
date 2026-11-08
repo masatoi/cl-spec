@@ -32,6 +32,23 @@
       (ok (eq :unsupported (getf (cl-spec:recheck-counterexample artifact) :status)))
       (ok (= 1 *setups*)))))
 
+(deftest fixture-artifact-recheck-records-a-missing-target
+  ;; A version 1 recheck records an error the run met as :CONTRACT-ERROR; the
+  ;; fixture recheck let UNBOUND-TARGET escape, so a batch of rechecks over
+  ;; saved fixture artifacts stopped at the first one whose target was gone.
+  (with-contract
+    (let* ((*mode* :missing-update)
+           (artifact (cl-spec:make-counterexample-artifact (fixture-check '(30 10))))
+           (target (fdefinition 'withdraw)))
+      (fmakunbound 'withdraw)
+      (let ((record (unwind-protect
+                         (handler-case
+                             (cl-spec:recheck-counterexample artifact :state-policy :fixture)
+                           (error (condition) (list :signalled (type-of condition))))
+                      (setf (fdefinition 'withdraw) target))))
+        (ok (eq :contract-error (getf record :status)) (prin1-to-string record))
+        (ok (= 2 (getf record :schema-version)))))))
+
 (deftest fixture-artifact-refuses-changed-definition
   (with-contract
     (let* ((*mode* :missing-update)

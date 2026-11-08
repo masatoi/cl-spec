@@ -24,14 +24,34 @@
   (when (> (integer-length value) 13000) (value-error :integer-limit))
   (format nil "~D" value))
 
+(defun parse-decimal-digits (text start end)
+  "Return the integer the decimal digits of TEXT between START and END denote.
+
+PARSE-INTEGER accumulates one digit at a time, which allocates a fresh bignum per
+digit -- quadratic in the length.  Splitting the digits in halves and combining
+them with one multiplication per level keeps the allocation near linear."
+  (if (<= (- end start) 18)
+      (parse-integer text :start start :end end :radix 10)
+      (let ((middle (+ start (floor (- end start) 2))))
+        (+ (* (parse-decimal-digits text start middle) (expt 10 (- end middle)))
+           (parse-decimal-digits text middle end)))))
+
 (defun text-integer (text)
-  (unless (and (stringp text) (<= 1 (length text) 4096)
+  "Return the integer TEXT spells in decimal, refusing what the encoder would not write.
+
+The encoder writes at most 13000 bits, which is 3914 decimal digits."
+  (unless (and (stringp text) (<= 1 (length text) 3915)
                (let ((start (if (char= (char text 0) #\-) 1 0)))
                  (and (< start (length text))
                       (loop for i from start below (length text)
                             always (digit-char-p (char text i) 10)))))
     (value-error :invalid-integer))
-  (parse-integer text :radix 10))
+  (let* ((negative (char= (char text 0) #\-))
+         (magnitude (parse-decimal-digits text (if negative 1 0) (length text)))
+         (value (if negative (- magnitude) magnitude)))
+    ;; Bound the signed value, as INTEGER-TEXT does: -2^13000 has 13000 bits.
+    (when (> (integer-length value) 13000) (value-error :integer-limit))
+    value))
 
 (defun encode-artifact-value (value &key (max-nodes 10000) (max-depth 128))
   "Encode VALUE into a bounded tagged tree; reject sharing and cycles.
@@ -107,6 +127,19 @@ limited to 13000 bits. Traversal uses bounded work lists rather than recursion."
                   (t (value-error :unsupported-value))))))
     (car result)))
 
+(defun canonical-package (name)
+  "Return the package whose name is exactly NAME, or reject the record.
+
+FIND-PACKAGE also honours global nicknames and the package-local nicknames of
+*PACKAGE*, so the same artifact would name different symbols depending on the
+caller's package.  The encoder writes a package's own name, so only that is
+accepted, looked up with no local nicknames in effect."
+  (let ((package (let ((*package* (find-package "KEYWORD")))
+                   (find-package name))))
+    (unless (and package (string= (package-name package) name))
+      (value-error :missing-package))
+    package))
+
 (defun decode-artifact-value (data &key (max-nodes 10000) (max-depth 128))
   "Restore a bounded tagged tree without interning symbols or invoking the reader.
 Depth counts nested elements; flat and dotted list spines do not consume depth."
@@ -142,8 +175,7 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
                              (1 t)
                              (2
                               (unless (every #'stringp args) (value-error :invalid-symbol))
-                              (let ((package (find-package (first args))))
-                                (unless package (value-error :missing-package))
+                              (let ((package (canonical-package (first args))))
                                 (multiple-value-bind (symbol status)
                                     (find-symbol (second args) package)
                                   (unless status (value-error :missing-symbol))

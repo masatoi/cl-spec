@@ -370,6 +370,91 @@ The head symbols are compared by name: the corpus lives in another package."
           (ok (equal '(:refused)
                      (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
+(defun status-against (stand-in name)
+  "Return the status of NAME's bundle contract run while NAME is STAND-IN.
+
+STAND-IN is a function of the original definition and the call's arguments."
+  (let ((original (fdefinition name)))
+    (unwind-protect
+         (progn
+           (setf (fdefinition name)
+                 (lambda (&rest arguments) (apply stand-in original arguments)))
+           (property-result-status (check-function name :trials 50 :seed 20261108)))
+      (setf (fdefinition name) original))))
+
+(deftest the-evidence-contract-refuses-an-assessment-that-ignores-a-shortfall
+  ;; The contract saw only policies the observed run satisfies, so an
+  ;; implementation answering :SATISFIED for everything passed it.
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (ok (eq :passed (status-against (lambda (original result policy)
+                                      (funcall original result policy))
+                                    'assess-evidence)))
+    (testing "an assessment that is always satisfied fails the contract"
+      (ok (eq :failed (status-against (lambda (original result policy)
+                                        (let ((assessment (funcall original result policy)))
+                                          (setf (getf assessment :assessment) :satisfied
+                                                (getf assessment :gaps) '())
+                                          assessment))
+                                      'assess-evidence))))))
+
+(defun law-status-while (name replacement law)
+  "Return the status of LAW run while the function NAME is REPLACEMENT.
+
+REPLACEMENT is a function of the original definition and the call's arguments."
+  (let ((original (fdefinition name)))
+    (unwind-protect
+         (progn
+           (setf (fdefinition name)
+                 (lambda (&rest arguments) (apply replacement original arguments)))
+           (property-result-status (cl-spec:run-property law :seed 20261108)))
+      (setf (fdefinition name) original))))
+
+(defun unsigned-ratios (value)
+  "Return VALUE with every ratio in it replaced by its absolute value."
+  (typecase value
+    (ratio (abs value))
+    (cons (cons (unsigned-ratios (car value)) (unsigned-ratios (cdr value))))
+    (simple-vector (map 'simple-vector #'unsigned-ratios value))
+    (t value)))
+
+(deftest the-codec-law-compares-against-the-saved-value
+  ;; The round-trip law compared two decodes of the same wire, so a decoder
+  ;; that lost a ratio's sign agreed with itself while a saved failure on -1/2
+  ;; rechecked as passed.
+  (let ((*registry* (make-hash-table-registry))
+        (law 'cl-spec/specs::artifact-values-restore-exactly))
+    (register-specifications)
+    (ok (eq :passed (law-status-while
+                     'cl-spec/src/utils/artifact-values:deserialize-artifact-value
+                     (lambda (original &rest arguments) (apply original arguments))
+                     law)))
+    (testing "a decoder that drops the sign of a ratio fails the law"
+      (ok (eq :failed (law-status-while
+                       'cl-spec/src/utils/artifact-values:deserialize-artifact-value
+                       (lambda (original &rest arguments)
+                         (unsigned-ratios (apply original arguments)))
+                       law))))))
+
+(deftest the-reproducibility-law-observes-the-recorded-profile
+  ;; The law ran an always-passing property under the default profile, so a
+  ;; replay that ignored the recorded profile ran the same budget and agreed.
+  (let ((*registry* (make-hash-table-registry))
+        (law 'cl-spec/specs::run-property-is-reproducible-from-its-seed))
+    (register-specifications)
+    (ok (eq :passed (law-status-while
+                     'cl-spec:replay-property
+                     (lambda (original &rest arguments) (apply original arguments))
+                     law)))
+    (testing "a replay under the default profile fails the law"
+      (ok (eq :failed (law-status-while
+                       'cl-spec:replay-property
+                       (lambda (original property result &rest options)
+                         (declare (ignore original options))
+                         (cl-spec:run-property property
+                                               :seed (cl-spec:property-result-seed result)))
+                       law))))))
+
 (deftest registry-registration-cases-cover-each-write
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
