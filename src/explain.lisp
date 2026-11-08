@@ -9,7 +9,7 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/numbers #:not-a-number-p)
   (:import-from #:cl-spec/src/utils/printing
-                #:with-bounded-printing #:condition-report-text)
+                #:with-bounded-printing #:abbreviate-for-print #:condition-report-text)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form)
   (:import-from #:cl-spec/src/ir
@@ -1001,14 +1001,16 @@ descriptor, which is why the common cases are unwrapped here."
                (:unknown-key "unknown key")
                (:wrong-key-test "wrong key test")
                (:unbound-slot "unbound field"))
-             (getf datum :path)
+             (abbreviate-for-print (getf datum :path))
              (format-expected (getf datum :expected))))
     (:no-branch
      (format stream "~vT✗ no branch for tag ~S; known tags ~S~%"
-             indent (getf datum :observed-tag) (getf datum :known-tags)))
+             indent (abbreviate-for-print (getf datum :observed-tag))
+             (getf datum :known-tags)))
     (:cyclic-value
      (format stream "~vT✗ value contains itself~@[ at ~S~]; expected ~A~%"
-             indent (getf datum :path) (format-expected (getf datum :expected))))
+             indent (abbreviate-for-print (getf datum :path))
+             (format-expected (getf datum :expected))))
     (:conjunct-failed
      (dolist (conjunct (getf datum :conjuncts))
        (format stream "~vT~A ~A~%"
@@ -1037,7 +1039,7 @@ descriptor, which is why the common cases are unwrapped here."
      (format stream "~vT✗ ~A~@[ at ~S~]~%"
              indent
              (format-expected (getf datum :expected))
-             (getf datum :path)))))
+             (abbreviate-for-print (getf datum :path))))))
 
 (defun explain (spec-designator value &key (stream *standard-output*) (registry *registry*))
   "Print a human readable rendering of (EXPLAIN-DATA SPEC-DESIGNATOR VALUE).
@@ -1052,9 +1054,10 @@ the complete value."
   (let ((data (explain-data spec-designator value :registry registry)))
     (with-bounded-printing ()
       (if (getf data :valid)
-          (format stream "~&~S satisfies ~S~%" value (getf data :spec))
+          (format stream "~&~S satisfies ~S~%" (abbreviate-for-print value) (getf data :spec))
           (progn
-            (format stream "~&~S does not satisfy ~S~%" value (getf data :spec))
+            (format stream "~&~S does not satisfy ~S~%"
+                    (abbreviate-for-print value) (getf data :spec))
             (dolist (datum (getf data :errors))
               (print-explain-error datum stream 2))))))
   nil)

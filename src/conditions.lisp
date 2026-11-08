@@ -7,7 +7,7 @@
 (defpackage #:cl-spec/src/conditions
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/printing
-                #:with-bounded-printing #:condition-report-text)
+                #:with-bounded-printing #:abbreviate-for-print #:condition-report-text)
   (:export #:invalid-backend-result
            #:invalid-backend-result-reason
            #:cl-spec-error
@@ -133,9 +133,9 @@
   (:report (lambda (condition stream)
              (with-bounded-printing (:one-line t)
                (format stream "~S does not satisfy ~S~@[ at path ~S~]."
-                       (spec-violation-value condition)
+                       (abbreviate-for-print (spec-violation-value condition))
                        (spec-violation-spec condition)
-                       (spec-violation-path condition)))))
+                       (abbreviate-for-print (spec-violation-path condition))))))
   (:documentation "Signalled when a value fails to satisfy a spec."))
 
 (define-condition unknown-spec (cl-spec-error)
@@ -213,7 +213,7 @@ or NIL."))
              (with-bounded-printing (:one-line t)
                (format stream "~S was given ~S as ~S, which is not of type ~S~@[: ~A~]."
                        (invalid-argument-operator condition)
-                       (type-error-datum condition)
+                       (abbreviate-for-print (type-error-datum condition))
                        (invalid-argument-argument condition)
                        (type-error-expected-type condition)
                        (invalid-argument-reason condition)))))
@@ -236,7 +236,7 @@ OPERATOR and ARGUMENT say which call and which parameter were refused."))
 (defun report-invalid-form (stream form description reason)
   "Print a malformed declaration without recursively expanding circular list structure."
   (with-bounded-printing (:one-line t)
-    (format stream "~S is not a valid ~A~@[: ~A~]." form description reason)))
+    (format stream "~S is not a valid ~A~@[: ~A~]." (abbreviate-for-print form) description reason)))
 
 (define-condition invalid-spec-form (cl-spec-error)
   ((form :initarg :form
@@ -348,7 +348,7 @@ produce values from a body called without the bindings its author wrote."))
   (:report (lambda (condition stream)
              (with-bounded-printing (:one-line t)
                (format stream "~S is not a valid call of ~S~@[: ~S~]."
-                       (invalid-call-arguments-arguments condition)
+                       (abbreviate-for-print (invalid-call-arguments-arguments condition))
                        (invalid-call-arguments-function condition)
                        (invalid-call-arguments-reason condition)))))
   (:documentation "Signalled by CHECK-CALL when caller-supplied arguments are inadmissible.

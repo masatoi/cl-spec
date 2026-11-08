@@ -57,6 +57,7 @@
   (:import-from #:cl-spec/tests/error-message-test)
   (:import-from #:cl-spec/tests/utils/source-location-test)
   (:import-from #:cl-spec/tests/utils/random-test)
+  (:import-from #:cl-spec/tests/utils/printing-test)
   (:import-from #:cl-spec/tests/ir-test)
   (:import-from #:cl-spec/tests/registry-test)
   (:import-from #:cl-spec/tests/resolve-test)
