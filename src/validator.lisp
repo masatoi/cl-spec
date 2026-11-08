@@ -40,7 +40,9 @@ disagree about whether a value is admissible."
   "Return true when VALUE satisfies the spec named by SPEC-DESIGNATOR.
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
-Signals UNKNOWN-SPEC when a symbol resolves to nothing."
+Signals UNKNOWN-SPEC when a symbol resolves to nothing, and
+VALIDATION-DEPTH-EXCEEDED, rather than answering, when VALUE is nested more than
+*REFERENCE-DEPTH-LIMIT* references deep."
   (check-registry registry 'validp)
   (let ((spec (resolve-spec spec-designator registry)))
     (null (funcall (compile-explainer spec :context (list :registry registry) :validity-only t)
@@ -50,7 +52,9 @@ Signals UNKNOWN-SPEC when a symbol resolves to nothing."
   "Return VALUE when it satisfies SPEC-DESIGNATOR, otherwise signal SPEC-VIOLATION.
 
 The signalled condition carries the structured error list produced by
-EXPLAIN-DATA so that callers do not have to re-run the check."
+EXPLAIN-DATA so that callers do not have to re-run the check.  A value nested
+more than *REFERENCE-DEPTH-LIMIT* references deep signals VALIDATION-DEPTH-EXCEEDED,
+which is neither an admission nor a SPEC-VIOLATION."
   (check-registry registry 'validate)
   (let* ((spec (resolve-spec spec-designator registry))
          (errors (funcall (compile-explainer spec :context (list :registry registry))

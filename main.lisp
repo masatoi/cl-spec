@@ -173,7 +173,8 @@
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer
                 #:explain-data
-                #:explain)
+                #:explain
+                #:*reference-depth-limit*)
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend*
                 #:current-generator-backend
@@ -441,6 +442,7 @@
            #:compile-explainer
            #:explain-data
            #:explain
+           #:*reference-depth-limit*
            ;; Generators
            #:*generator-backend*
            #:current-generator-backend

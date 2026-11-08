@@ -218,7 +218,21 @@ than left to hang the suite."
         (ok (and (typep outcome 'cl-spec/src/conditions:validation-depth-exceeded)
                  (eq 'chain (cl-spec/src/conditions:validation-depth-exceeded-spec outcome))))))
     (testing "a chain just inside the limit is still admitted"
-      (ok (validp 'chain (nested-chain 990) :registry registry)))))
+      (ok (validp 'chain (nested-chain 990) :registry registry)))
+    (testing "a predicate whose own check hits the limit does not refuse the outer value"
+      (let ((outer (registry-with '(chain (or null (tuple integer chain)))
+                                  '(outer (satisfies deep-chain-valid-p)))))
+        (ok (typep (refusal-of (lambda () (validp 'outer 1 :registry outer)))
+                   'cl-spec/src/conditions:validation-depth-exceeded))))
+    (testing "the limit can be raised for a larger control stack"
+      (let ((cl-spec/src/explain:*reference-depth-limit* 1200))
+        (ok (validp 'chain (nested-chain 1100) :registry registry))))))
+
+(defun deep-chain-valid-p (value)
+  "Validate a chain past the reference limit, whatever VALUE is."
+  (declare (ignore value))
+  (validp 'chain (nested-chain 20000)
+          :registry (registry-with '(chain (or null (tuple integer chain))))))
 
 (defvar *predicate-calls* 0
   "How many times COUNTED-ODD-P and COUNTED-POSITIVE-P were called.")

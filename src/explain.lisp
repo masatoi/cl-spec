@@ -70,6 +70,7 @@
                 #:context-registry
                 #:spec-display-name)
   (:export #:compile-explainer
+           #:*reference-depth-limit*
            #:explain-data
            #:explain
            #:compile-node
@@ -222,14 +223,17 @@ VALUE satisfies SPEC.  PATH is the accumulated position, innermost first."))
           (unless (funcall predicate value)
             (list (error-datum :predicate-failed path value
                                :predicate predicate :expected expected)))
-        ((and error (not (or undefined-function program-error))) (condition)
+        ((and error
+              (not (or undefined-function program-error validation-depth-exceeded)))
+         (condition)
           ;; A predicate applied to the wrong kind of value is a fact about the
           ;; value, not a bug in the caller: VALIDP must answer NIL rather than
           ;; unwind. UNDEFINED-FUNCTION (a typo'd predicate name) and
           ;; PROGRAM-ERROR (a predicate called with the wrong number of
           ;; arguments) are authoring bugs instead, and are left to propagate
           ;; so the reader is pointed at the broken spec rather than told the
-          ;; value is bad.
+          ;; value is bad.  VALIDATION-DEPTH-EXCEEDED from a check the predicate
+          ;; started made no claim about anything, so it is not a refusal either.
           (list (error-datum :predicate-errored path value
                              :predicate predicate :expected expected
                              :condition-type (type-of condition)
@@ -525,14 +529,17 @@ position, for a check that renders errors and one that only asks for admission."
                             (path-node-children node) table)))
                 child))))))
 
-(defconstant +reference-depth-limit+ 1000
+(defvar *reference-depth-limit* 1000
   "How many reference checks may be nested in one check before it is refused.
 
-Each reference reached inside another descends the control stack by a few frames
-per level of the value, so a linked structure tens of thousands deep exhausted
-the stack -- and, once the guard page had been spent, ended the process.  The
-spec form itself is limited to +SPEC-FORM-DEPTH-LIMIT+ levels, so the value's
-depth through references is the only unbounded recursion left.")
+Each reference reached inside another descends the control stack -- about half a
+kilobyte per level for a plain recursive tuple, more when collections sit between
+the references -- so a linked structure tens of thousands deep exhausted the
+stack and, once the guard page had been spent, ended the process.  Past this many
+nested references a check signals VALIDATION-DEPTH-EXCEEDED instead.  The spec
+form itself is limited to +SPEC-FORM-DEPTH-LIMIT+ levels, so the value's depth
+through references is the only unbounded recursion left.  Bind it higher for a
+larger control stack, or lower for a smaller one.")
 
 (defstruct (reference-visits (:constructor make-reference-visits ()))
   "What one check knows about the references it has reached.
@@ -632,7 +639,7 @@ per branch, which made recursive disjunctions exponential (issue #59).
 A position is interned as a PATH-NODE only when it is needed: to memoize a
 structured value's result, or to compare against an enclosing check of the same
 target on the same value.  An atom reached through a name costs nothing more.
-A value nested more than +REFERENCE-DEPTH-LIMIT+ references deep signals
+A value nested more than *REFERENCE-DEPTH-LIMIT* references deep signals
 VALIDATION-DEPTH-EXCEEDED rather than exhausting the control stack."
   (let ((active (reference-visits-active visits))
         (memoize-p (memoizable-value-p value))
@@ -654,8 +661,8 @@ VALIDATION-DEPTH-EXCEEDED rather than exhausting the control stack."
         (multiple-value-bind (errors known-p) (known-result value target (node))
           (when known-p
             (return-from check-reference errors))))
-      (when (>= (reference-visits-depth visits) +reference-depth-limit+)
-        (error 'validation-depth-exceeded :spec target :limit +reference-depth-limit+))
+      (when (>= (reference-visits-depth visits) *reference-depth-limit*)
+        (error 'validation-depth-exceeded :spec target :limit *reference-depth-limit*))
       (push (cons target path) (gethash value active))
       (incf (reference-visits-depth visits))
       (let ((errors (unwind-protect
@@ -1013,7 +1020,10 @@ are still returned, but their :PATH is not rendered and must not be read."
   (:valid <boolean> :spec <symbol> :value <value> :path () :errors (<plist> ...))
 
 This is the primary representation; EXPLAIN, condition reports and any JSON or
-MCP projection are derived from it."
+MCP projection are derived from it.
+
+A value nested more than *REFERENCE-DEPTH-LIMIT* references deep signals
+VALIDATION-DEPTH-EXCEEDED instead of an answer, as VALIDP and VALIDATE do."
   (check-registry registry 'explain-data)
   (let* ((spec (resolve-spec spec-designator registry))
          (errors (funcall (compile-explainer spec :context (list :registry registry))

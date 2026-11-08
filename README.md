@@ -1043,9 +1043,10 @@ explain:
   checked. A value that contains itself is not admitted by a recursive spec; it is
   reported as a `:cyclic-value` error instead of being followed, and a `not`
   does not turn that refusal into an admission, so an alias and its target agree.
-  A value nested more than 1000 references deep — a linked structure validated
-  through a recursive spec — signals `validation-depth-exceeded` instead of
-  exhausting the control stack; it is neither admitted nor refused. Explaining a
+  A value nested more than `*reference-depth-limit*` (default 1000) references
+  deep — a linked structure validated through a recursive spec — signals
+  `validation-depth-exceeded` instead of exhausting the control stack; it is
+  neither admitted nor refused. Bind the limit higher for a larger control stack. Explaining a
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
 - A `(range real ...)` whose width or bound is beyond double-float range, such as
