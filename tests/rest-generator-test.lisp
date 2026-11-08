@@ -119,6 +119,9 @@
         (ok (equal '(:limit 30) (cl-spec:trial-observation-arguments shrunk)))))))
 
 (deftest impossible-rest-key-intersection-stops-after-bounded-draws
+  ;; Each refused call draws from the generation request's budget, so an
+  ;; intersection nothing satisfies ends as a result with the request's report
+  ;; rather than a condition thrown out of a run that had already begun.
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (*seen* nil) (*draws* 0))
     (cl-spec:defgenerator impossible-tail-generator ()
       (incf *draws*)
@@ -129,12 +132,43 @@
     (cl-spec:defspec-function combined-rest
       (:args &rest (raw impossible-tail) &key ((:limit limit) (range integer 0 10)))
       (:returns integer))
-    (let ((condition (handler-case
-                         (progn (cl-spec:check-function 'combined-rest :trials 1 :seed 42) nil)
-                       (cl-spec:generator-unavailable (condition) condition))))
-      (ok condition)
-      (ok (= 100 *draws*))
+    (let* ((result (cl-spec:check-function 'combined-rest :trials 1 :seed 42))
+           (report (cl-spec:property-result-generation-report result)))
+      (ok (eq :error (cl-spec:property-result-status result)))
+      (ok (eq :budget-exhausted (getf report :termination)))
+      (testing "every draw was reserved and every refusal counted"
+        (ok (= *draws* (getf report :attempts)))
+        (ok (= *draws* (getf report :rejections)))
+        (ok (= *draws* (getf report :budget))))
       (ok (null *seen*)))))
+
+(defvar *mostly-refused-calls* 0
+  "Number of times MOSTLY-REFUSED-TARGET was called.")
+
+(defun mostly-refused-target (x &rest raw &key a &allow-other-keys)
+  "Count calls and add X to A."
+  (declare (ignore raw))
+  (incf *mostly-refused-calls*)
+  (+ x (or a 0)))
+
+(deftest refused-rest-key-draws-are-counted-in-the-generation-report
+  ;; A rest tail of two members, of which only those without :A make a valid
+  ;; call, is refused most of the time; those refusals were retried silently.
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*mostly-refused-calls* 0))
+    (cl-spec:defspec-function mostly-refused-target
+      (:args (x (range integer 0 10))
+             &rest (r (list-of (member :a 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
+                               :min-length 2 :max-length 2))
+             &key ((:a a) (range integer 0 5)))
+      (:returns integer))
+    (dolist (seed '(1 2 5 6))
+      (let* ((result (cl-spec:check-function 'mostly-refused-target :trials 30 :seed seed))
+             (report (cl-spec:property-result-generation-report result)))
+        (testing (format nil "seed ~D returns a result whose report counts the refusals" seed)
+          (ok (member (cl-spec:property-result-status result) '(:passed :failed :error)))
+          (ok (plusp (getf report :rejections)))
+          (ok (<= (getf report :rejections) (getf report :attempts))))))))
 
 (deftest shrinking-preserves-optional-prefix-before-constrained-rest-key-tail
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (*seen* nil))
