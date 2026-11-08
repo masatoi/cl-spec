@@ -411,10 +411,19 @@ observation changed and that a declared relation failed, and it does not freeze,
 deep-copy, restore or prove anything stayed unchanged during the call.
 
 ```lisp
+(define-condition insufficient-funds (error) ())
 (defstruct (account (:constructor make-account (balance id))) balance id)
+(cl-spec:defspec positive-money (range integer 1 *))
+(cl-spec:defspec receipt-spec (plist (:required (:amount positive-money))))
+
+(defun withdraw! (account amount)
+  (when (> amount (account-balance account))
+    (error 'insufficient-funds))
+  (decf (account-balance account) amount)
+  (list :amount amount))
 
 (cl-spec:defspec-function withdraw!
-  (:args (account (satisfies account-p)) (amount (positive-money)))
+  (:args (account (satisfies account-p)) (amount positive-money))
   (:capture
     (balance-before (account-balance account))
     (id-before      (account-id account)))
