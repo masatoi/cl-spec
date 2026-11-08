@@ -182,8 +182,11 @@ finite single/double floats, simple strings, cons trees and simple general
 vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
-nesting depth 128 and 1,000,000 wire characters, with additional scalar storage
-limits. A flat list consumes the node budget rather than one depth level per
+nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000
+bits and a string to 1,000,000 characters. A symbol is written with its package's
+own name and decoded by that name alone: neither a global nickname nor a
+package-local nickname of the caller's `*package*` changes which symbol an
+artifact names. A flat list consumes the node budget rather than one depth level per
 cons cell; traversal and parsing use bounded iterative work lists.
 Nonfinite floats are refused through the same artifact condition as other
 unsupported evidence. Unsupported or excessive optional `:options`, `:provenance`

@@ -1,7 +1,7 @@
 ;;;; tests/utils/artifact-values-test.lisp
 (defpackage #:cl-spec/tests/utils/artifact-values-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/src/utils/artifact-values
                 #:encode-artifact-value #:decode-artifact-value
                 #:serialize-artifact-value #:deserialize-artifact-value
@@ -17,6 +17,48 @@
       (when (floatp value)
         (ok (eq (type-of value) (type-of copy)))
         (ok (= (float-sign value) (float-sign copy)))))))
+
+(defun reason-of (thunk)
+  "Return the ARTIFACT-VALUE-ERROR reason THUNK signals, or (:RETURNED VALUE)."
+  (handler-case (list :returned (funcall thunk))
+    (artifact-value-error (condition)
+      (cl-spec/src/utils/artifact-values:artifact-value-error-reason condition))))
+
+(deftest symbols-decode-the-same-under-any-package
+  ;; A package-local nickname of *PACKAGE* that spells a global package name
+  ;; used to redirect the decoded symbols, so one artifact named different
+  ;; definitions depending on the caller's package.
+  (let* ((host (make-package (symbol-name (gensym "AV-HOST")) :use '()))
+         (view (make-package (symbol-name (gensym "AV-VIEW")) :use '()))
+         (wire (serialize-artifact-value 'cl-user::av-probe)))
+    (unwind-protect
+         (progn
+           (intern "AV-PROBE" host)
+           (sb-ext:add-package-local-nickname "COMMON-LISP-USER" host view)
+           (let ((*package* view))
+             (ok (eq 'cl-user::av-probe (deserialize-artifact-value wire)))))
+      (delete-package view)
+      (delete-package host)))
+  (testing "a nickname is not a package's name, so it does not decode"
+    (ok (eq :missing-package
+            (reason-of (lambda () (decode-artifact-value '(2 "CL" "CAR"))))))))
+
+(deftest integers-decode-in-bounded-space
+  (let* ((digits (make-string 3900 :initial-element #\9))
+         (before (sb-ext:get-bytes-consed))
+         (value (decode-artifact-value (list 4 digits)))
+         (allocated (- (sb-ext:get-bytes-consed) before)))
+    (ok (= value (parse-integer digits)))
+    ;; Digit-by-digit parsing allocated about 7 MB for 4096 digits.
+    (ok (< allocated (* 512 1024)) (format nil "~D bytes" allocated)))
+  (testing "the decoder accepts no integer the encoder would refuse"
+    (ok (eq :integer-limit
+            (reason-of (lambda ()
+                         (decode-artifact-value
+                          (list 4 (format nil "~D" (ash 1 13000)))))))))
+  (testing "negative values and the bound itself still round-trip"
+    (dolist (value (list (- (1- (ash 1 13000))) (1- (ash 1 13000)) -7 0 -1/3))
+      (ok (= value (deserialize-artifact-value (serialize-artifact-value value)))))))
 
 (deftest limits-total-string-storage
   (ok (rejected-p

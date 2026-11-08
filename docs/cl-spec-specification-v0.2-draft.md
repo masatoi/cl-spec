@@ -5267,7 +5267,11 @@ this first version's restoration model.
 AV1 is a manually parsed, bounded tagged tree, never a Lisp reader form. Only
 existing symbols and documented scalar/tree values are supported; aliasing,
 cycles and opaque values are rejected rather than silently copied with changed
-semantics. The public data reader and serializer return independent copies.
+semantics. A symbol's package is resolved by its exact package name, with no
+global or package-local nickname in effect, so decoding does not depend on the
+caller's `*package*`. Integers are limited to 13,000 bits on both sides, and
+decoding allocates close to linearly in the digits it reads. The public data
+reader and serializer return independent copies.
 Invalid version, duplicate/unknown record fields, malformed tags and excessive
 resources signal `invalid-counterexample-artifact`. See README for value types
 and limits. MCP serialization remains the adapter's responsibility.
