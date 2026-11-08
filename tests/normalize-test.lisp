@@ -26,6 +26,42 @@
           (invalid-spec-form () t)
           (type-error () nil)))))
 
+(defun refusal-reason (form)
+  "Return the reason INVALID-SPEC-FORM gives for FORM, :ACCEPTED, or the other condition."
+  (handler-case (progn (normalize-spec-form form) :accepted)
+    (invalid-spec-form (condition) (cl-spec/src/conditions:invalid-spec-form-reason condition))
+    (serious-condition (condition) (type-of condition))))
+
+(defun nested-form (head depth)
+  "Return (HEAD (HEAD ... INTEGER)) nested DEPTH times."
+  (let ((form 'integer))
+    (dotimes (index depth form)
+      (setf form (list head form)))))
+
+(deftest a-form-that-contains-itself-is-refused
+  (testing "a child that is the form itself is refused, not followed"
+    (let ((form (list 'or 'integer nil)))
+      (setf (third form) form)
+      (let ((reason (refusal-reason form)))
+        (ok (stringp reason))
+        (ok (and (stringp reason) (search "contains itself" reason))))))
+  (testing "a cycle through a deeper child is refused too"
+    (let* ((inner (list 'list-of nil))
+           (form (list 'and 'integer inner)))
+      (setf (second inner) form)
+      (ok (stringp (refusal-reason form)))))
+  (testing "a child shared by two branches is not a cycle"
+    (let ((shared (list 'range 'integer 0 9)))
+      (ok (eq :accepted (refusal-reason (list 'or shared (list 'list-of shared))))))))
+
+(deftest a-form-nested-past-the-depth-limit-is-refused
+  (testing "a form at the depth limit normalizes"
+    (ok (eq :accepted (refusal-reason (nested-form 'list-of 500)))))
+  (testing "a deeper form is refused with a reason naming the limit"
+    (let ((reason (refusal-reason (nested-form 'list-of 50000))))
+      (ok (stringp reason))
+      (ok (and (stringp reason) (search "deeper than" reason))))))
+
 (deftest mvp-primitives-are-declared
   (testing "*SPEC-PRIMITIVES* lists exactly the MVP spec head names"
     (ok (equal '("TYPE" "SATISFIES" "AND" "OR" "NOT" "MEMBER" "RANGE"
