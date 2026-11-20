@@ -20,7 +20,7 @@ set -u
 
 eval_dir=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$eval_dir/.." && pwd)
-snapshot=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-snapshot.XXXXXX")
+snapshot=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-snapshot.XXXXXX") || exit 2
 work_dirs=""
 failures=0
 PROCESS_TIMEOUT=${PROCESS_TIMEOUT:-900}
@@ -30,7 +30,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$eval_dir/make-snapshot.sh" "$snapshot" >/dev/null
+"$eval_dir/make-snapshot.sh" "$snapshot" >/dev/null || exit 2
 
 prepare() {
   # prepare TASK faulty|baseline -> sets PREPARED and records it for cleanup.
@@ -38,9 +38,9 @@ prepare() {
   # list survives to the cleanup trap.
   task=$1
   mode=$2
-  PREPARED=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-work.XXXXXX")
+  PREPARED=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-work.XXXXXX") || return 2
   work_dirs="$work_dirs $PREPARED"
-  cp -R "$snapshot"/. "$PREPARED"/
+  cp -R "$snapshot"/. "$PREPARED"/ || return 2
   if [ "$mode" = "faulty" ]; then
     timeout "$PROCESS_TIMEOUT" env \
       CL_SPEC_ROOT="$PREPARED" CL_SPEC_TASK_DIR="$eval_dir/tasks/$task" \
@@ -146,9 +146,11 @@ run_task() {
   fault_reason=$7
   fault_phase=$8
 
-  prepare "$task" baseline
-  baseline=$PREPARED
-  prepare "$task" faulty
+  if ! { prepare "$task" baseline && baseline=$PREPARED && prepare "$task" faulty; }; then
+    echo "BAD  $task $kind $name (could not prepare comparison)" >&2
+    failures=$((failures + 1))
+    return
+  fi
   faulty=$PREPARED
 
   echo "== $task (baseline $baseline) =="

@@ -13,11 +13,14 @@ src=$(cd "$(dirname "$0")/.." && pwd)
 dest=$1
 
 mkdir -p "$dest"
-(cd "$src" && tar cf - \
-    --exclude=.git \
-    --exclude=eval \
-    --exclude='*.fasl' \
-    --exclude='*.lx64fsl' \
-    .) | (cd "$dest" && tar xf -)
+archive=$(mktemp "${TMPDIR:-/tmp}/cl-spec-source.XXXXXX")
+trap 'rm -f "$archive"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# POSIX pipelines only report the extractor's status. Finish the archive before
+# extracting so a source read failure cannot deliver a partial snapshot.
+tar cf "$archive" --exclude=.git --exclude=eval --exclude='*.fasl' --exclude='*.lx64fsl' \
+    -C "$src" .
+tar xf "$archive" -C "$dest"
 
 echo "SNAPSHOT-CREATED $dest"

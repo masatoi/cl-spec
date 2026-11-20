@@ -26,7 +26,50 @@ if [ -e "$dest" ]; then
   exit 2
 fi
 
-"$eval_dir/make-snapshot.sh" "$dest" >/dev/null
+# Keep the pristine files available for provenance and both comparison
+# conditions. Only the faulted copy is handed to the repairer.
+checkout_revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)
+work=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-workcopy.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+pristine=$work/pristine
+reference=$work/reference
+mkdir -p "$reference"
+"$eval_dir/make-snapshot.sh" "$pristine" >/dev/null
+mkdir -p "$(dirname "$dest")"
+mkdir "$dest"
+cp -R "$pristine"/. "$dest"/
+# The evaluation assets belong to the evidence and stay outside the delivery.
+cp -R "$eval_dir" "$pristine/eval"
+eval_dir=$pristine/eval
+
+matches_pristine() {
+  for path do
+    git diff --no-index --no-ext-diff --quiet -- "$reference/$path" "$pristine/$path" ||
+      return 1
+  done
+}
+
+declared_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
+  "$eval_dir/tasks/$task/manifest.json")
+core_revision=unknown
+assets_revision=unknown
+if [ "$checkout_revision" != unknown ] &&
+   git -C "$root" archive --output="$work/reference.tar" "$checkout_revision" &&
+   tar xf "$work/reference.tar" -C "$reference"; then
+  if matches_pristine src main.lisp cl-spec.asd; then
+    core_revision=$checkout_revision
+    if git -C "$root" diff --quiet "$declared_revision" "$checkout_revision" \
+         -- src main.lisp cl-spec.asd 2>/dev/null; then
+      core_revision=$declared_revision
+    fi
+  fi
+  if matches_pristine eval specs.lisp api-docs.lisp self-spec-fixtures.lisp \
+       self-generation-fixtures.lisp tests.lisp tests; then
+    assets_revision=$checkout_revision
+  fi
+fi
+
 CL_SPEC_ROOT="$dest" CL_SPEC_TASK_DIR="$eval_dir/tasks/$task" \
   ros run -- --non-interactive --load "$eval_dir/apply-faults.lisp" >/dev/null
 
@@ -66,12 +109,8 @@ manifest="$dest.manifest.txt"
 {
   echo "task_id=$task"
   echo "condition=$condition"
-  # The core baseline and the self-spec/eval assets are different revisions: the
-  # task's manifest names the core commit the snapshot came from, while HEAD is
-  # the commit that carries the fixed self-specifications and this harness.
-  echo "core_baseline_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
-        "$eval_dir/tasks/$task/manifest.json")"
-  echo "assets_revision=$(cd "$root" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "core_baseline_revision=$core_revision"
+  echo "assets_revision=$assets_revision"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "work_copy=$dest"
   echo "fixed_files:"
@@ -81,12 +120,12 @@ manifest="$dest.manifest.txt"
            tests/instrument-status-integration-test.lisp \
            eval/acceptance-registry.lisp eval/acceptance-capture.lisp \
            eval/acceptance-state.lisp eval/tasks; do
-    if [ -d "$root/$f" ]; then
+    if [ -d "$pristine/$f" ]; then
       printf '  %s %s/\n' \
-        "$(find "$root/$f" -type f -exec sha256sum {} + | sort -k2 | sha256sum | cut -d' ' -f1)" \
+        "$(cd "$pristine" && find "$f" -type f -exec sha256sum {} + | LC_ALL=C sort -k2 | sha256sum | cut -d' ' -f1)" \
         "$f"
-    elif [ -f "$root/$f" ]; then
-      printf '  %s %s\n' "$(sha256sum "$root/$f" | cut -d' ' -f1)" "$f"
+    elif [ -f "$pristine/$f" ]; then
+      printf '  %s %s\n' "$(sha256sum "$pristine/$f" | cut -d' ' -f1)" "$f"
     fi
   done
   # The allowed-change set, copied from the task manifest for the record.
