@@ -62,16 +62,27 @@ if [ "$condition" = "B" ]; then
     tests/instrument-status-integration-test.lisp"
 fi
 
+# The task pins the core at which its fault was verified. Later checkouts can
+# carry additional core changes alongside the same evaluation assets.
+declared_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
+  "$eval_dir/tasks/$task/manifest.json")
+assets_revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)
+core_revision=unknown
+if [ "$assets_revision" != unknown ] &&
+   changes=$(git -C "$root" status --porcelain --untracked-files=all -- src main.lisp cl-spec.asd) &&
+   [ -z "$changes" ]; then
+  core_revision=$assets_revision
+  if git -C "$root" diff --quiet "$declared_revision" "$assets_revision" -- src main.lisp cl-spec.asd 2>/dev/null; then
+    core_revision=$declared_revision
+  fi
+fi
+
 manifest="$dest.manifest.txt"
 {
   echo "task_id=$task"
   echo "condition=$condition"
-  # The core baseline and the self-spec/eval assets are different revisions: the
-  # task's manifest names the core commit the snapshot came from, while HEAD is
-  # the commit that carries the fixed self-specifications and this harness.
-  echo "core_baseline_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
-        "$eval_dir/tasks/$task/manifest.json")"
-  echo "assets_revision=$(cd "$root" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "core_baseline_revision=$core_revision"
+  echo "assets_revision=$assets_revision"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "work_copy=$dest"
   echo "fixed_files:"

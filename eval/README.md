@@ -125,9 +125,11 @@ search and repository access allowed to both conditions before comparing them.
 Copy `record-template.json` for each run and read `record-template.md` for the
 field meanings and the rules. Record the core baseline revision and the revision
 that carries the self-specifications and this harness separately: the task
-manifest's `core_baseline_commit` is the core commit the snapshot came from,
-while `assets_revision` is the checkout's `HEAD`, which is what
-`make-workcopy.sh` writes into the manifest next to each work copy. The
+manifest's `core_baseline_commit` identifies the core where its fault was verified.
+`make-workcopy.sh` records it when `src/`, `main.lisp` and `cl-spec.asd` match.
+For later core changes it records the checkout commit. Local core modifications
+or unavailable Git history yield `unknown`. The separate `assets_revision` records
+the checkout's `HEAD`. The
 comparison between conditions A and B is **prepared but not run**: no model was
 invoked for this work, and `comparison_status` stays `not-run` until the same
 task, fault, model, settings and budget have actually been run under both

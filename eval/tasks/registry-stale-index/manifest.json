@@ -1,7 +1,7 @@
 {
   "task_id": "registry-stale-index",
   "summary": "Re-registering a property leaves the previous definition's target and tag index entries behind.",
-  "core_baseline_commit": "5ced4dff716d250167c6c983dfd9d4bb2b4d7024",
+  "core_baseline_commit": "ebd303f65f9743d89f388847b541b40993953317",
   "assets_revision": "recorded by eval/make-workcopy.sh from the checkout's HEAD",
   "faulty_edit": "faults.sexp",
   "self_spec_targets": [
