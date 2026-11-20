@@ -245,10 +245,11 @@ The head symbols are compared by name: the corpus lives in another package."
     (let ((before (list-properties))
           (generators (cl-spec:list-generators)))
       (dolist (budget '(0 1 5))
-        (let ((reports (generation-exhaustion-observations budget)))
-          (ok (= 3 (length reports)))
+        (let ((reports (generation-exhaustion-observations budget))
+              (paths '((:value :and 0) (:value :and 0) (:value :map-key) (:value :map-key))))
+          (ok (= (length paths) (length reports)))
           (loop for report in reports
-                for path in '((:value :and 0) (:value :map-key) (:value :map-key))
+                for path in paths
                 do (ok (eq :budget-exhausted (getf report :termination)))
                    (ok (eq :generation (getf report :exhaustion-phase)))
                    (ok (equal path (getf report :exhausted-at)))

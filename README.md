@@ -1071,14 +1071,23 @@ explain:
   nested check. Bind the limit higher for a larger control stack. Explaining a
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
-- A `(range real ...)` whose width or bound is beyond double-float range, such as
-  `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
-  `generator-unavailable` with kind `:range-too-wide`.
+- Real-range generation widens to double-float when a width or draw could
+  overflow a single-float. If a finite width or endpoint exceeds double-float
+  range, as in `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`,
+  generation signals `generator-unavailable` with kind `:range-too-wide`.
+- An infinite lower bound of −∞ or upper bound of +∞ allows finite draws on that
+  side. A lower bound of +∞ or upper bound of −∞ admits no integer. When a real
+  interval admits only that infinity, its generator returns the endpoint.
+  A reversed interval signals `generator-unavailable` with kind `:empty-domain`.
+  UNIQUE treats an empty integer interval as an empty element domain. Real
+  ranges, including those limited to an infinity, have no UNIQUE enumeration.
 - `(and ...)` generates from one source chosen by a fixed policy: the AND's own
   `(:generator NAME)`, else a unique conjunct carrying a custom generator, else
   the folded `(type ...)`/`(range ...)` base, else the first conjunct whose
   ordinary construction succeeds. An `and` of predicates alone (e.g.
   `(and (satisfies oddp) (satisfies plusp))`) signals `generator-unavailable`.
+  Folding treats `(range * *)` as a real constraint and `(type nil)` as an
+  empty type, including inside nested or named conjuncts.
 - A conjunct the source cannot discharge is enforced by a bounded filter that
   re-checks the whole `and`. One generation request shares a budget of
   `1000 × N` candidate reservations (`N` is the requested value or trial count;

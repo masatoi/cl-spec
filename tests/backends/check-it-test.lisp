@@ -229,6 +229,30 @@
            (values (outcome-of (lambda () (sample spec :count 20 :seed 1)))))
       (ok (and (listp values) (every (lambda (value) (validp spec value)) values))))))
 
+(deftest large-single-float-ranges-use-enough-precision
+  (dolist (form '((range real 2.0f38 *) (range real * -2.0f38)
+                  (range real -2.0f38 2.0f38) (and real (range -2.0f38 2.0f38))))
+    (let* ((spec (normalize-spec-form form))
+           (values (outcome-of (lambda () (sample spec :count 64 :seed 1)))))
+      (ok (and (listp values) (= 64 (length values))
+               (every (lambda (x) (validp spec x)) values)
+               (rest (remove-duplicates values :test #'=))))))
+  (let ((values (outcome-of
+                 (lambda () (sample (normalize-spec-form '(range real -2.0f38 2.0f38))
+                                    :count 64 :seed 1)))))
+    (ok (and (listp values) (some #'minusp values) (some #'plusp values)))))
+
+(deftest short-float-endpoints-can-span-more-than-a-short-float
+  (let* ((upper most-positive-short-float)
+         ;; Limit the short step even on implementations with disjoint exponent ranges.
+         (step (min (rational upper) (- (rational most-positive-single-float)
+                                        (rational upper))))
+         (lower (- (float step 0s0)))
+         (form `(range real ,lower ,upper))
+         (values (outcome-of (lambda () (draws-for form :count 16)))))
+    (ok (and (listp values) (= 16 (length values))
+             (every (lambda (x) (<= lower x upper)) values)))))
+
 (deftest real-ranges-near-the-double-float-limit-cover-their-domain
   ;; The overflow guard limited every step to MOST-POSITIVE-DOUBLE-FLOAT - |ORIGIN|,
   ;; even a step towards zero that cannot overflow, so a range starting near
@@ -325,6 +349,34 @@
   "Return the GENERATOR-UNAVAILABLE THUNK signals, or NIL when it returns."
   (handler-case (progn (funcall thunk) nil)
     (generator-unavailable (condition) condition)))
+
+(deftest inward-infinite-range-bounds-preserve-admission
+  (dolist (bound (list sb-ext:single-float-positive-infinity
+                       sb-ext:double-float-negative-infinity))
+    (let* ((positive (plusp bound))
+           (ends (if positive (list bound '*) (list '* bound)))
+           (integer-range `(range integer ,@ends))
+           (real-range `(range real ,@ends)))
+      (dolist (form (list integer-range
+                          `(range integer ,bound ,bound)
+                          `(and integer ,real-range)
+                          `(range real ,@(if positive (list bound 0) (list 0 bound)))
+                          `(list-of ,integer-range :unique t :min-length 1)))
+        (let ((condition (generation-refusal
+                          (lambda () (sample (normalize-spec-form form) :count 1)))))
+          (ok (and condition (eq :empty-domain (generator-unavailable-kind condition))))))
+      (dolist (form (list real-range `(range real ,bound ,bound) `(and real ,real-range)))
+        (let* ((spec (normalize-spec-form form))
+               (values (sample spec :count 8 :seed 1)))
+          (ok (every (lambda (value) (and (= value bound) (validp spec value))) values))))
+      (let ((condition
+              (generation-refusal
+               (lambda () (sample (normalize-spec-form `(list-of ,real-range :unique t))
+                                  :count 1)))))
+        (ok (and condition (eq :unique-domain (generator-unavailable-kind condition)))))
+      (ok (equal '(nil nil)
+                 (sample (normalize-spec-form `(list-of ,integer-range :unique t))
+                         :count 2 :seed 1))))))
 
 (deftest generation-refusals-name-the-spec-the-argument-and-a-remedy
   (let ((cl-spec/src/registry:*registry* (make-hash-table-registry)))
