@@ -107,7 +107,11 @@ limited to 13000 bits. Traversal uses bounded work lists rather than recursion."
                            (integer-text sign))))
                   (simple-string
                    (when (> (length object) 1000000) (value-error :string-limit))
-                   (list 7 (copy-seq object)))
+                   (list (typecase object
+                           ((simple-array character (*)) 7)
+                           (simple-base-string 10)
+                           (t (value-error :unsupported-string)))
+                         (copy-seq object)))
                   (cons
                    (when (> 2 (- max-nodes nodes queued)) (value-error :structure-limit))
                    (incf queued 2)
@@ -140,6 +144,21 @@ accepted, looked up with no local nicknames in effect."
       (value-error :missing-package))
     package))
 
+(defparameter *record-arities* #(0 0 2 1 1 2 4 1 2 nil 1)
+  "Number of fields for each AV1 tag. Tag 9 is a variable-length vector.")
+
+(defun record-tag-p (tag)
+  (and (typep tag 'unsigned-byte) (< tag (length *record-arities*))))
+
+(defun restore-string (text tag)
+  (unless (and (typep text 'simple-string) (<= (length text) 1000000))
+    (value-error :invalid-string))
+  ;; The wire's own array element type is independent of the recorded value.
+  (when (and (= tag 10) (not (every (lambda (char) (typep char 'base-char)) text)))
+    (value-error :invalid-string))
+  (make-array (length text) :element-type (if (= tag 7) 'character 'base-char)
+                            :initial-contents text))
+
 (defun decode-artifact-value (data &key (max-nodes 10000) (max-depth 128))
   "Restore a bounded tagged tree without interning symbols or invoking the reader.
 Depth counts nested elements; flat and dotted list spines do not consume depth."
@@ -162,9 +181,9 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
                    (value-error :structure-limit))
                  (let* ((fields (record-fields record)) (tag (first fields))
                         (args (rest fields)) (arity (length args)))
-                   (unless (and (typep tag '(integer 0 9))
+                   (unless (and (record-tag-p tag)
                                 (or (= tag 9)
-                                    (= arity (nth tag '(0 0 2 1 1 2 4 1 2)))))
+                                    (= arity (aref *record-arities* tag))))
                      (value-error :invalid-record))
                    (dolist (argument args)
                      (when (stringp argument) (incf text-size (length argument))))
@@ -215,12 +234,7 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
                                                  (= sign sign-value))
                                       (value-error :invalid-float)))
                                   number)))
-                             (7
-                              (let ((string (first args)))
-                                (unless (and (typep string 'simple-string)
-                                             (<= (length string) 1000000))
-                                  (value-error :invalid-string))
-                                (copy-seq string)))
+                             ((7 10) (restore-string (first args) tag))
                              (8
                               (when (> 2 (- max-nodes nodes queued))
                                 (value-error :structure-limit))
@@ -301,15 +315,15 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
                           (tag (aref frame 3)))
                      (cond
                        ((zerop count)
-                        (unless (and (not record-p) (typep item '(integer 0 9)))
+                        (unless (and (not record-p) (record-tag-p item))
                           (value-error :invalid-record))
                         (setf (aref frame 3) item))
                        (record-p
                         (unless (or (eql tag 9) (and (eql tag 8) (<= count 2)))
                           (value-error :invalid-record)))
                        (t
-                        (unless (and (<= 2 tag 7)
-                                     (<= count (nth tag '(0 0 2 1 1 2 4 1 2))))
+                        (unless (and (not (member tag '(8 9)))
+                                     (<= count (aref *record-arities* tag)))
                           (value-error :invalid-record))))
                      (push item (aref frame 1))
                      (incf (aref frame 2)))
@@ -351,7 +365,7 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
            (let* ((frame (pop frames)) (count (aref frame 2)) (tag (aref frame 3)))
              (unless (and (plusp count)
                           (or (eql tag 9)
-                              (= count (1+ (nth tag '(0 0 2 1 1 2 4 1 2))))))
+                              (= count (1+ (aref *record-arities* tag)))))
                (value-error :invalid-record))
              (incf position)
              (add-item (nreverse (aref frame 1)) t)))

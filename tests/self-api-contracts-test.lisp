@@ -434,7 +434,18 @@ REPLACEMENT is a function of the original definition and the call's arguments."
                        'cl-spec/src/utils/artifact-values:deserialize-artifact-value
                        (lambda (original &rest arguments)
                          (unsigned-ratios (apply original arguments)))
-                       law))))))
+                       law))))
+    (unless (typep (make-string 0 :element-type 'character) 'simple-base-string)
+      (testing "a decoder that widens simple base strings fails the law"
+        (ok (eq :failed (law-status-while
+                         'cl-spec/src/utils/artifact-values:deserialize-artifact-value
+                         (lambda (original &rest arguments)
+                           (let ((value (apply original arguments)))
+                             (if (typep value 'simple-base-string)
+                                 (make-array (length value) :element-type 'character
+                                                            :initial-contents value)
+                                 value)))
+                         law)))))))
 
 (deftest the-reproducibility-law-observes-the-recorded-profile
   ;; The law ran an always-passing property under the default profile, so a

@@ -5267,7 +5267,12 @@ this first version's restoration model.
 AV1 is a manually parsed, bounded tagged tree, never a Lisp reader form. Only
 existing symbols and documented scalar/tree values are supported; aliasing,
 cycles and opaque values are rejected rather than silently copied with changed
-semantics. A symbol's package is resolved by its exact package name, with no
+semantics. Tag 7 reconstructs a simple array of `character`. Tag 10 reconstructs
+a simple array of `base-char` and requires every character to belong to that
+type. The tag determines the element type even for empty strings and ASCII-only
+contents. Older writers used tag 7 for both types, so a legacy record contains
+no evidence that its string was specialized. A symbol's package is resolved
+by its exact package name, with no
 global or package-local nickname in effect, so decoding does not depend on the
 caller's `*package*`. Integers are limited to 13,000 bits as `integer-length`
 counts them, the same bound on both sides, and decoding allocates close to linearly in the digits it reads. The public data
