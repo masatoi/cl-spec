@@ -206,6 +206,28 @@
           (ok (= (property-result-trials normal-run)
                  (property-result-trials replayed))))))))
 
+(deftest result-replay-distinguishes-omitted-and-empty-settings
+  (with-fresh-registry
+    (cl-spec/src/dsl:defproperty replay-settings ((x (and integer (satisfies integerp))))
+      (:trials (:normal 3 :smoke 1)) (integerp x))
+    (let* ((name 'replay-settings)
+           (old (run-property name :profile :smoke :seed 13 :options '(:generation-budget 0))))
+      (dolist (run (list (lambda (&rest keys) (apply #'run-property name :seed old keys))
+                         (lambda (&rest keys) (apply #'replay-property name old keys))))
+        (let ((inherited (funcall run))
+              (empty-options (funcall run :options nil))
+              (default-profile (funcall run :profile nil))
+              (overridden (funcall run :profile :normal :options '(:generation-budget 3))))
+          (ok (eq :error (property-result-status inherited)))
+          (ok (eq :smoke (property-result-profile inherited)))
+          (ok (eq :passed (property-result-status empty-options)))
+          (ok (eq :smoke (property-result-profile empty-options)))
+          (ok (null (cl-spec:property-result-options empty-options)))
+          (ok (eq :normal (property-result-profile default-profile)))
+          (ok (eq :error (property-result-status default-profile)))
+          (ok (= 3 (property-result-trials overridden)))
+          (ok (eq :passed (property-result-status overridden))))))))
+
 (deftest replay-from-a-result-uses-its-recorded-profile
   ;; This is the regression test for the round-trip defect recorded as D5 Form A in
   ;; docs/cl-spec-defect-corpus.md: REPLAY-PROPERTY's docstring recommends passing the

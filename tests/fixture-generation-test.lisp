@@ -62,6 +62,26 @@
             (cl-spec:unsupported-stateful-operation () t)))
       (ok (= before *setups*)))))
 
+(deftest fixture-replay-compares-the-supplied-options-before-setup
+  (with-contract
+    (let* ((options (list :probe (vector 1 2)))
+           (old (cl-spec:check-function 'withdraw :trials 1 :seed 41 :options options)))
+      (flet ((attempt (&rest keys)
+               (let ((before *setups*))
+                 (list
+                  (handler-case
+                      (cl-spec:property-result-status
+                       (apply #'cl-spec:check-function 'withdraw :seed old keys))
+                    (cl-spec:unsupported-stateful-operation (condition)
+                      (cl-spec:unsupported-stateful-operation-reason condition)))
+                  (- *setups* before)))))
+        (ok (equal '(:passed 1) (attempt)))
+        (ok (equal '(:run-options-mismatch 0) (attempt :options nil)))
+        (ok (equal '(:passed 1) (attempt :options options)))
+        (setf (aref (getf options :probe) 1) 3)
+        (ok (equal '(:run-options-mismatch 0) (attempt :options options)))
+        (ok (equal '(:passed 1) (attempt)))))))
+
 (deftest fixture-custom-recipe-shrinking
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (calls 0) (cleanups 0) (seen nil))
