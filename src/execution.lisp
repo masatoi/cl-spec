@@ -203,6 +203,7 @@ Other objects retain identity; arbitrary application state is not checkpointed."
                ((and (arrayp a) (arrayp b)
                      (equal (array-dimensions a) (array-dimensions b))
                      (equal (array-element-type a) (array-element-type b))
+                     (eq (not (adjustable-array-p a)) (not (adjustable-array-p b)))
                      (eql (array-has-fill-pointer-p a) (array-has-fill-pointer-p b))
                      (or (not (array-has-fill-pointer-p a))
                          (= (fill-pointer a) (fill-pointer b))))

@@ -362,7 +362,7 @@ Check RECIPE once using a fresh fixture, without generation, shrinking or replay
 <a name="check-function"></a>
 ### check-function
 
-*Function* · `(function-designator &rest keyword-arguments &key trials seed options (registry *registry*) &allow-other-keys)`
+*Function* · `(function-designator &rest keyword-arguments &key trials seed (options nil options-p) (registry *registry*) &allow-other-keys)`
 
 Check a function contract using evidence captured during each invocation.
 
@@ -1048,7 +1048,7 @@ signals INVALID-ARGUMENT before the first property runs.
 <a name="run-property"></a>
 ### run-property
 
-*Function* · `(property-designator &rest keyword-arguments &key profile seed options (registry *registry*) &allow-other-keys)`
+*Function* · `(property-designator &rest keyword-arguments &key (profile nil profile-p) seed (options nil options-p) (registry *registry*) &allow-other-keys)`
 
 Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
@@ -1056,7 +1056,8 @@ Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend.
+backend. With a result as SEED, omitted PROFILE and OPTIONS inherit their saved
+values. An explicit NIL selects profile :NORMAL or the empty option list.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
 whose definition declares state constraints without a fixture refuses that with
