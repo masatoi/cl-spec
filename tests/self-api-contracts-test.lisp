@@ -388,6 +388,26 @@ The head symbols are compared by name: the corpus lives in another package."
           (ok (equal '(:refused)
                      (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
+(deftest summary-contract-accepts-each-fixture-verdict
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (cl-spec:defspec-function identity
+      (:args (x integer))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context)) (list recipe))
+                (:cleanup (context)
+                  (declare (ignore context))
+                  (when (= recipe -2) (error "cleanup failed"))))
+      (:pre (/= x -1))
+      (:returns (range integer 1 *)))
+    (loop for recipe in '(1 0 -1 -2)
+          for expected in '(:passed :failed :rejected :error)
+          for result = (cl-spec:check-fixture 'identity recipe)
+          do (ok (eq expected (getf (cl-spec:evidence-summary result) :execution-status)))
+             (ok (eq :passed
+                     (cl-spec:call-check-result-status
+                      (cl-spec:check-call 'cl-spec:format-check-summary (list result))))))))
+
 (defun status-against (stand-in name)
   "Return the status of NAME's bundle contract run while NAME is STAND-IN.
 

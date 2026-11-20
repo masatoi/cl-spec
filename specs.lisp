@@ -745,8 +745,9 @@ their finite input corpora, and the registry write contract names its scenarios.
     "A direct fixture check produces one line with its execution verdict and assessment."
     (:args (observation fresh-fixture-result))
     (:returns string)
-    (:post (and (search "passed | evidence not-assessed" result)
-                (not (find #\Newline result)))))
+    (:post (let ((status (getf (cl-spec:evidence-summary observation) :execution-status)))
+             (and (search (format nil "~A | evidence not-assessed" (string-downcase status)) result)
+                  (not (find #\Newline result))))))
   (defspec-function cl-spec:evidence-summary
     "A saved direct observation is summarized without an implicit policy."
     (:args (observation fresh-fixture-result))
