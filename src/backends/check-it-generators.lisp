@@ -477,6 +477,18 @@ operand above half that range before adding a scaled unit draw to the origin."
       (float number 1d0)
       number))
 
+(defun range-float-operation (operation left right)
+  "Apply OPERATION in the wider precision when LEFT and RIGHT are mixed floats.
+
+CLISP's default arithmetic rounds mixed floats to the narrower format. Promote
+the narrower operand before computing a range bound or a scaled draw."
+  (when (and (floatp left) (floatp right))
+    (let ((left-digits (float-digits left))
+          (right-digits (float-digits right)))
+      (cond ((< left-digits right-digits) (setf left (float left right)))
+            ((> left-digits right-digits) (setf right (float right left))))))
+  (funcall operation left right))
+
 (defun scaled-real-generator (origin scale &key (direction 1) symmetric-p minimum maximum)
   "Return a generator for ORIGIN + DIRECTION * U * SCALE.
 
@@ -496,15 +508,15 @@ draw never leaves its declared range.  Shrinking U towards zero moves the value
 towards ORIGIN."
   (let* ((origin (float-operand origin))
          (headroom (if (or symmetric-p (>= (* direction (signum origin)) 0))
-                       (- most-positive-double-float (abs origin))
+                       (range-float-operation #'- most-positive-double-float (abs origin))
                        most-positive-double-float)))
     (make-instance 'mapped-generator
                    :mapping
                    (lambda (unit)
                      (let* ((wanted (if (functionp scale) (funcall scale) scale))
-                            (value (+ origin
-                                      (* direction unit
-                                         (float-operand (min wanted headroom))))))
+                            (factor (float-operand (min wanted headroom)))
+                            (step (range-float-operation #'* (* direction unit) factor))
+                            (value (range-float-operation #'+ origin step)))
                        (cond ((and minimum (< value minimum)) minimum)
                              ((and maximum (> value maximum)) maximum)
                              (t value))))
