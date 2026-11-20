@@ -69,6 +69,21 @@
 
 (in-package #:cl-spec/tests/self-api-contracts-test)
 
+(deftest registry-self-contracts-accept-the-public-default
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (flet ((verdict (name arguments)
+             (handler-case (cl-spec:call-check-result-status (cl-spec:check-call name arguments))
+               (cl-spec:invalid-call-arguments () :invalid-arguments))))
+      (let* ((name 'cl-spec/specs::registry-object)
+             (spec (find-spec name))
+             (other (make-hash-table-registry)))
+        (ok (eq spec (find-spec name nil)))
+        (dolist (arguments (list (list name) (list name nil) (list name other)))
+          (ok (eq :passed (verdict 'cl-spec:find-spec arguments))))
+        (dolist (arguments (list (list spec) (list spec :registry nil) (list spec :registry other)))
+          (ok (eq :passed (verdict 'cl-spec:definition-digest arguments))))))))
+
 (defun map-form-kind (form)
   "Return :ALIST or :HASH-TABLE for a map specification FORM, otherwise NIL.
 The head symbols are compared by name: the corpus lives in another package."
