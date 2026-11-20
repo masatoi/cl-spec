@@ -57,8 +57,10 @@ Coverage never adds validation/predicate calls. Where domain validation is not
 performed, its stage is `:not-collected`, not a numeric zero. Stage records with
 `:collected` distinguish `:observed-trials`, `:unknown-trials`,
 `:not-applicable-trials` and bucket counts. Buckets need not be mutually exclusive.
-Shrink candidates do not contribute. Values are classified before target code can
-mutate them; the collector keeps counters and bucket names, not input graphs.
+Shrink candidates do not contribute. Coverage checks each distinct plist's
+structure once while classifying an input, sharing its field index across
+dimensions. The indexes expire before the target runs. The report retains
+bucket names and counters, so later mutation leaves those observations intact.
 
 `check-call` and `check-fixture` accept `:coverage '(:mode :observe)` directly and
 report `:single-call` scope. Exercise is refused because these APIs do not generate.

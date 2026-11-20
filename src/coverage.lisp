@@ -3,8 +3,9 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions #:cl-spec-error #:invalid-argument)
   (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
-  (:import-from #:cl-spec/src/coverage-plist #:plist-coverage-schema #:observe-dimension)
-  (:export #:definition-coverage-schema #:observe-coverage-dimension
+  (:import-from #:cl-spec/src/coverage-plist
+                #:plist-coverage-schema #:observe-dimension #:*plist-observation-indexes*)
+  (:export #:definition-coverage-schema #:observe-coverage-dimension #:observe-coverage-input
            #:coverage-schema #:coverage-data #:coverage-identity #:coverage-identity-from-metadata
            #:coverage-inputs #:coverage-bindings
            #:normalize-coverage-options #:copy-coverage-data
@@ -130,6 +131,13 @@
     (if (member kind '(:field-presence :extra-key-presence :numeric-boundary))
         (observe-dimension dimension bindings)
         :unknown)))
+
+(defun observe-coverage-input (dimensions bindings)
+  "Project all DIMENSIONS before the trial runs, sharing plist indexes for this input."
+  (when dimensions
+    (let ((*plist-observation-indexes* (make-hash-table :test #'eq)))
+      (loop for dimension in dimensions
+            collect (observe-coverage-dimension (getf dimension :kind) dimension bindings)))))
 
 (defun coverage-schema (definition &key (registry *registry*))
   "Describe statically observable input dimensions of a property or function spec.

@@ -10,7 +10,7 @@
                 #:field-key #:field-value-spec #:field-required-p #:plist-structure-error)
   (:import-from #:cl-spec/src/utils/numbers #:finite-real-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
-  (:export #:plist-coverage-schema #:observe-dimension))
+  (:export #:plist-coverage-schema #:observe-dimension #:*plist-observation-indexes*))
 (in-package #:cl-spec/src/coverage-plist)
 
 (defun integer-boundaries (range)
@@ -82,13 +82,18 @@
           :discovery (if unexpanded :partial :complete)
           :dimensions (nreverse dimensions) :unexpanded (nreverse unexpanded))))
 
-(defun coverage-field (record key)
-  "Return a field and presence, or :UNKNOWN for a structurally invalid plist."
-  (if (plist-structure-error record)
-      (values nil :unknown)
-      (loop for (name value) on record by #'cddr
-            when (eq name key) do (return (values value t))
-            finally (return (values nil nil)))))
+(defvar *plist-observation-indexes* nil
+  "When bound, an EQ table of checked indexes for the duration of one input capture.
+A present NIL entry records a malformed plist.")
+
+(defun observation-index (record)
+  "Return the checked field index of RECORD, or NIL for a malformed plist."
+  (if *plist-observation-indexes*
+      (multiple-value-bind (index found) (gethash record *plist-observation-indexes*)
+        (if found index
+            (setf (gethash record *plist-observation-indexes*)
+                  (nth-value 2 (plist-structure-error record)))))
+      (nth-value 2 (plist-structure-error record))))
 
 (defun observe-dimension (dimension bindings)
   "Return hit bucket names, :UNKNOWN, or :NOT-APPLICABLE for saved input bindings."
@@ -101,18 +106,22 @@
     (loop for tail on path
           for key = (car tail)
           for last = (null (cdr tail))
-          do (multiple-value-bind (child present) (coverage-field value key)
-               (when (eq present :unknown) (return-from observe-dimension :unknown))
+          for index = (observation-index value)
+          unless index do (return-from observe-dimension :unknown)
+          do (multiple-value-bind (child present) (gethash key index)
                (when (and last (eq kind :field-presence))
                  (return-from observe-dimension (list (if present :present :absent))))
                (unless present (return-from observe-dimension :not-applicable))
                (setf value child)))
     (case kind
       (:extra-key-presence
-       (if (plist-structure-error value) :unknown
-           (list (if (loop for key in value by #'cddr
-                           thereis (not (member key (getf dimension :declared-keys))))
-                     :present :absent))))
+       (let ((index (observation-index value)))
+         (if index
+             (let ((declared-present
+                     (loop for key in (getf dimension :declared-keys)
+                           count (nth-value 1 (gethash key index)))))
+               (list (if (> (hash-table-count index) declared-present) :present :absent)))
+             :unknown)))
       (:numeric-boundary
        (let ((lo (getf dimension :minimum)) (hi (getf dimension :maximum)))
          (if (not (integerp value)) :unknown
