@@ -2,15 +2,24 @@
 (defpackage #:cl-spec/src/coverage-plist
   (:use #:cl)
   (:import-from #:cl-spec/src/ir
-                #:spec-children #:spec-generator-name
+                #:spec-children #:spec-generator-name #:and-spec #:or-spec #:collection-spec
                 #:reference-spec #:reference-spec-target
                 #:range-spec #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:field-spec-fields #:field-spec-closed-p
+                #:field-spec #:plist-spec #:field-spec-fields #:field-spec-closed-p
                 #:field-key #:field-value-spec #:field-required-p #:plist-structure-error)
+  (:import-from #:cl-spec/src/utils/numbers #:finite-real-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
   (:export #:plist-coverage-schema #:observe-dimension))
 (in-package #:cl-spec/src/coverage-plist)
+
+(defun integer-boundaries (range)
+  "Return the inward-rounded endpoints of a finite integer range."
+  (let ((minimum (range-spec-minimum range))
+        (maximum (range-spec-maximum range)))
+    (when (and (eq 'integer (range-spec-base-type range))
+               (finite-real-p minimum) (finite-real-p maximum))
+      (values (ceiling minimum) (floor maximum)))))
 
 (defun plist-coverage-schema (roots registry dimension-limit depth-limit)
   "Describe statically accessible plist dimensions without invoking readers or predicates."
@@ -40,12 +49,8 @@
                         (cons node ancestors) (1+ depth)
                         (and targetable (null (spec-generator-name node)))))
                  ((and path (typep node 'range-spec))
-                  (let ((lo (and (realp (range-spec-minimum node))
-                                 (ceiling (range-spec-minimum node))))
-                        (hi (and (realp (range-spec-maximum node))
-                                 (floor (range-spec-maximum node)))))
-                    (if (and (eq 'integer (range-spec-base-type node))
-                             (integerp lo) (integerp hi) (<= lo hi))
+                  (multiple-value-bind (lo hi) (integer-boundaries node)
+                    (if (and lo (<= lo hi))
                         (add name path :numeric-boundary '(:lower :upper :interior)
                              (list :minimum lo :maximum hi
                                    :inapplicable-buckets
@@ -68,7 +73,9 @@
                                (list :targetable targetable)))
                         (walk child name child-path (cons node ancestors) (1+ depth)
                               targetable)))))
-                 ((spec-children node) (omit (cons name path) :unsupported-composite)))))
+                 ((or (typep node '(or field-spec collection-spec and-spec or-spec))
+                      (spec-children node))
+                  (omit (cons name path) :unsupported-composite)))))
       (catch 'discovery-limit
         (dolist (root roots) (walk (second root) (first root) nil nil 0 t))))
     (list :schema-version 1 :record-kind :coverage-schema :provider-version :plist-v1

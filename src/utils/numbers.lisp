@@ -4,7 +4,7 @@
 
 (defpackage #:cl-spec/src/utils/numbers
   (:use #:cl)
-  (:export #:not-a-number-p))
+  (:export #:not-a-number-p #:finite-real-p))
 
 (in-package #:cl-spec/src/utils/numbers)
 
@@ -17,3 +17,10 @@ against a bound has to recognise NaN first."
   (and (floatp value)
        #+sbcl (sb-ext:float-nan-p value)
        #-sbcl (/= value value)))
+
+(defun finite-real-p (value)
+  "Return true for rational numbers and finite floating-point numbers."
+  (or (rationalp value)
+      (and (floatp value)
+           (not (not-a-number-p value))
+           (<= most-negative-long-float value most-positive-long-float))))

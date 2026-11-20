@@ -137,6 +137,33 @@
         (ok (= 10 (+ (count-bucket report :field-presence :checked :present)
                      (count-bucket report :field-presence :checked :absent))))))))
 
+#+sbcl
+(deftest infinite-field-boundaries-preserve-seeded-observation
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
+    (cl-spec:defproperty infinite-fields
+        ((payload (plist
+                   (:required (:negative (range integer #.sb-ext:double-float-negative-infinity 4))
+                              (:positive (range integer -4 #.sb-ext:double-float-positive-infinity))
+                              (:finite (range integer 1/2 5/2)))
+                   (:closed t))))
+      (:trials (:normal 4)) (push payload seen))
+    (let ((baseline (cl-spec:run-property 'infinite-fields :seed 1))
+          (inputs seen))
+      (setf seen nil)
+      (let* ((schema (cl-spec:coverage-schema (cl-spec:find-property 'infinite-fields)))
+             (result (cl-spec:run-property 'infinite-fields :seed 1
+                      :options '(:coverage (:mode :observe))))
+             (report (coverage-data result)))
+        (ok (eq :passed (cl-spec:property-result-status baseline)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (equal inputs seen))
+        (ok (eq :partial (getf schema :discovery)))
+        (ok (equal '((:path (payload :negative) :reason :unsupported-boundary)
+                     (:path (payload :positive) :reason :unsupported-boundary))
+                   (getf schema :unexpanded)))
+        (ok (= 4 (+ (count-bucket report :numeric-boundary :checked :lower)
+                    (count-bucket report :numeric-boundary :checked :upper))))))))
+
 (defvar *coverage-predicate-calls* 0)
 
 (defun counted-integer-p (value)
