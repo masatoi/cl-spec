@@ -82,6 +82,14 @@
             (property-result-status
              (run-property 'cl-spec/specs::fixture-reconstruction-is-independent :seed 42))))))
 
+(deftest command-sequence-checker-has-an-executable-contract
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:check-state-machine))
+    (when (find-function-spec 'cl-spec:check-state-machine)
+      (ok (eq :passed (property-result-status
+                       (check-function 'cl-spec:check-state-machine :trials 20 :seed 2)))))))
+
 (deftest rest-projection-has-an-executable-law
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

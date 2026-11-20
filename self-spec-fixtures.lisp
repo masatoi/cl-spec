@@ -19,7 +19,7 @@
                 #:registry-properties-for
                 #:registry-properties-with-tag
                 #:registry-register-property)
-  (:export #:fresh-fixture-contract
+  (:export #:fresh-counter-machine #:fresh-fixture-contract
    #:*function-projection-expectations*
    #:next-registration-scenario-kind
    #:*registry-constructor*
@@ -84,6 +84,18 @@
       (:returns integer)
       (:state-post (= (car cell) (1+ before))))
     (cl-spec:find-function-spec 'self-fresh-increment)))
+
+(defun fresh-counter-machine ()
+  "Build a small independent checker fixture. The target drops every :DROP increment."
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (cl-spec:defstate-machine self-counter (commands (member :tick :drop))
+      :model 0 :target 0
+      :model-step (lambda (model command)
+                    (declare (ignore command))
+                    (values (1+ model) (1+ model)))
+      :target-step (lambda (target command)
+                     (let ((next (if (eq :tick command) (1+ target) target)))
+                       (values next next))))))
 
 (defun self-registration-name (key)
   "Return the fixed registration symbol named by KEY.

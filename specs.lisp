@@ -317,7 +317,7 @@ allowed."
 
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
-  '(cl-spec:coverage-schema cl-spec:coverage-data cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
+  '(cl-spec:check-state-machine cl-spec:coverage-schema cl-spec:coverage-data cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
@@ -657,6 +657,22 @@ CLEAR-REGISTRY or with a freshly bound registry. It does not instrument function
 Generators exercise finite subsets. Most API contracts accept broader domains;
 the malformed-normalization contract and the validate cases explicitly name
 their finite input corpora, and the registry write contract names its scenarios."
+  (defgenerator counter-machine-generator ()
+    (cl-spec/self-spec-fixtures:fresh-counter-machine))
+  (defspec counter-machine-input (instance-of cl-spec:property)
+    (:generator counter-machine-generator))
+  (defspec-function cl-spec:check-state-machine
+    "The direct checker identifies the first increment its counter target drops."
+    (:args (machine counter-machine-input) (commands (list-of (member :tick :drop) :max-length 6)))
+    (:returns (instance-of cl-spec:trial-observation))
+    (:post (let ((index (position :drop commands)))
+             (if index
+                 (and (eq :failed (cl-spec:trial-observation-status result))
+                      (equal '(:state-machine :observation-mismatch :drop)
+                             (cl-spec:trial-observation-signature result))
+                      (equal (list :index index :command :drop :expected (1+ index) :actual index)
+                             (cl-spec:trial-observation-explanation result)))
+                 (eq :passed (cl-spec:trial-observation-status result))))))
   (defgenerator fresh-fixture-contract-generator ()
     (cl-spec/self-spec-fixtures:fresh-fixture-contract))
   (defspec fresh-fixture-contract-input (instance-of cl-spec:function-spec)
