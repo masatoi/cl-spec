@@ -95,7 +95,7 @@
            #:bounded-generator-element-probe
            #:map-value-generator #:map-generator-min-count #:map-generator-max-count
            #:map-generator-domain-size #:map-generator-key-probe #:map-generator-value-probe
-           #:compile-spec-generator
+           #:compile-spec-generator #:effective-generator-name
            #:*declaration-path* #:*argument-names* #:with-declaration-steps))
 
 (in-package #:cl-spec/src/backends/check-it-generators)
@@ -1030,9 +1030,9 @@ range's width).  Elements are drawn with *LIST-SIZE* decayed by
             ((and (> (length (items)) minimum) (remove-wise)) (shrink generator test))
             (t (element-wise))))))
 
-(defun effective-generator-name (spec context)
+(defun effective-generator-name (spec context &key (include-composites t))
   "Return the custom generator SPEC names, following references and enumerable
-composites, or NIL.
+composites, or NIL. With INCLUDE-COMPOSITES false, follow only aliases.
 
 A custom generator owns how its values are drawn, so UNIQUE refuses a domain
 whose values it would otherwise have to enumerate instead.  The traversal mirrors
@@ -1046,12 +1046,14 @@ domain would silently replace it."
            (unless (member target *reference-trail*)
              (let ((*reference-trail* (cons target *reference-trail*)))
                (effective-generator-name (resolve-spec target (context-registry context))
-                                         context)))))
+                                         context :include-composites include-composites)))))
         (nullable-spec
-         (effective-generator-name (nullable-spec-inner-spec spec) context))
+         (when include-composites
+           (effective-generator-name (nullable-spec-inner-spec spec) context)))
         (or-spec
-         (some (lambda (child) (effective-generator-name child context))
-               (or-spec-children spec))))))
+         (when include-composites
+           (some (lambda (child) (effective-generator-name child context))
+                 (or-spec-children spec)))))))
 
 (defun compile-collection-generator (spec context vector-p)
   "Compile a generator for the bounded collection SPEC."

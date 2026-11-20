@@ -16,7 +16,7 @@
   (:import-from #:cl-spec/src/execution #:observe-coverage-trial)
   (:import-from #:cl-spec/src/generator #:backend-trial-reporting)
   (:import-from #:cl-spec/src/trial-report #:end-trial-report)
-  (:import-from #:cl-spec/src/ir #:spec-metadata)
+  (:import-from #:cl-spec/src/ir #:spec-metadata #:tuple-spec-element-specs)
   (:import-from #:cl-spec/src/function-spec #:fixture-check-property)
   (:import-from #:cl-spec/src/generator #:backend-trial-lifecycle)
   (:import-from #:cl-spec/src/execution
@@ -39,7 +39,7 @@
                 #:sub-generators #:sub-generator)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:compile-spec-generator #:custom-value-generator #:custom-value-generator-shrinker
-                #:*declaration-path* #:*argument-names*
+                #:*declaration-path* #:*argument-names* #:effective-generator-name
                 #:bounded-filter-generator #:bounded-filter-sub-generator
                 #:plist-value-generator #:plist-generator-fields #:plist-generator-children
                 #:keyed-value-generator #:keyed-generator-fields #:keyed-generator-children
@@ -263,11 +263,18 @@ unvisited contents may collide, but equivalent snapshots always share a bucket."
                  (custom-value-generator-shrinker child))
         child))))
 
-(defun input-custom-generator (schema generator)
+(defun input-custom-generator (schema generator context)
   "Find the custom generator that can propose every input to one trial."
   (cond ((typep generator 'custom-value-generator) generator)
-        ((or (typep schema 'property-arguments-spec) (getf (spec-metadata schema) :fixture-recipe))
-         (sole-custom-argument generator))))
+        ((getf (spec-metadata schema) :fixture-recipe) (sole-custom-argument generator))
+        ((typep schema 'property-arguments-spec)
+         ;; A single-branch OR or tagged union compiles to its child, but the
+         ;; child's annotation still belongs to that branch, not the binding.
+         (let ((custom (sole-custom-argument generator)))
+           (when (and custom
+                      (effective-generator-name (first (tuple-spec-element-specs schema))
+                                                context :include-composites nil))
+             custom)))))
 
 (defun shrink-custom-arguments (generator property original validator context budget
                                 &key single-value-p)
@@ -376,7 +383,7 @@ target never produced is not a reduction of it."
          (whole-validator (compile-validator schema :context context))
          (compiled (compile-argument-generator backend property schema context))
          (generator (compiled-generator-generator compiled))
-         (custom (input-custom-generator schema generator))
+         (custom (input-custom-generator schema generator context))
          (capabilities (compiled-capabilities generator custom shrink-p))
          (rejected 0)
          (coverage-targets (prepare-coverage-plan property)))
@@ -599,9 +606,10 @@ Lists can shrink in length even when their element generator cannot shrink."
 (defmethod backend-capabilities ((backend check-it-backend) spec &key registry)
   "Probe the compiled root without drawing or invoking a shrinker."
   (handler-case
-      (let* ((compiled (compile-generator backend spec :context (list :registry registry)))
+      (let* ((context (list :registry registry))
+             (compiled (compile-generator backend spec :context context))
              (generator (compiled-generator-generator compiled)))
-        (compiled-capabilities generator (input-custom-generator spec generator) t))
+        (compiled-capabilities generator (input-custom-generator spec generator context) t))
     (error () (list :generation :unavailable :shrinking :unavailable))))
 
 (defmethod backend-trial-lifecycle ((backend check-it-backend)) :fixture-v1)

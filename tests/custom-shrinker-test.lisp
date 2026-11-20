@@ -263,6 +263,32 @@
         (ok (null (getf data :shrunk-counterexample)))))
     (ok (zerop shrinks))))
 
+(deftest a-single-branch-composite-keeps-its-custom-child-nested
+  (let ((cl-spec:*registry* (make-hash-table-registry)) (shrinks 0))
+    (cl-spec:defgenerator event-generator ()
+      (:shrink (value)
+        (incf shrinks)
+        (when (> (getf value :n) 1) (list (list :kind :event :n 1))))
+      (list :kind :event :n 10))
+    (cl-spec:defspec event-data (plist (:required (:kind (member :event)) (:n integer)))
+      (:generator event-generator))
+    (cl-spec:defspec tagged-event (tagged-by :kind (:event event-data)))
+    (cl-spec:defproperty inside-or ((value (or event-data))) (null value))
+    (cl-spec:defproperty inside-tag ((value tagged-event)) (null value))
+    (dolist (name '(inside-or inside-tag))
+      (let ((data (cl-spec:result-data (cl-spec:run-property name :seed 42))))
+        (ok (eq :none (getf (getf (cl-spec:property-data name) :capabilities) :shrinking)))
+        (ok (eq :none (getf (getf data :capabilities) :shrinking)))
+        (ok (null (getf data :shrunk-counterexample)))))
+    (ok (zerop shrinks))
+    (cl-spec:defspec direct-tag (tagged-by :kind (:event event-data))
+      (:generator event-generator))
+    (cl-spec:defspec alias direct-tag)
+    (cl-spec:defproperty root-custom ((value alias)) (null value))
+    (ok (equal '(value (:kind :event :n 1))
+               (cl-spec:property-result-shrunk-counterexample
+                (cl-spec:run-property 'root-custom :seed 42))))))
+
 (deftest candidate-buckets-preserve-graph-equality
   (let* ((cycle (list 1))
          (shared (list 2))
