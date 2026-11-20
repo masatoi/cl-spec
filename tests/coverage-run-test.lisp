@@ -278,6 +278,28 @@
                  (coverage-data (cl-spec:run-property 'two-records :seed result))))
       (ok (equal draws (reverse seen))))))
 
+(deftest nested-fixture-recipes-have-their-own-generation-environment
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (recipes nil) (statuses nil) (draws nil))
+    (cl-spec:defspec-function identity
+      (:args (x t)) (:returns t)
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (payload (plist (:closed t))))
+                (:setup (ctx) (declare (ignore ctx)) (push payload recipes) (list payload))
+                (:cleanup (ctx) (declare (ignore ctx)) nil)))
+    (cl-spec:defgenerator run-inner-fixture ()
+      (let ((result (cl-spec:check-function 'identity :seed 7 :trials 1)))
+        (push (cl-spec:property-result-status result) statuses))
+      1)
+    (cl-spec:defspec trigger integer (:generator run-inner-fixture))
+    (cl-spec:defproperty outer-records ((payload (plist)) (x trigger))
+      (:trials (:normal 2)) (push payload draws) (integerp x))
+    (let ((result (cl-spec:run-property 'outer-records :seed 1
+                                       :options '(:coverage (:mode :exercise)))))
+      (ok (eq :passed (cl-spec:property-result-status result)))
+      (ok (equal '((:coverage-extra nil) nil) (reverse draws)))
+      (ok (equal '(:passed :passed) statuses))
+      (ok (equal '(nil nil) recipes)))))
+
 (deftest exercise-reaches-nested-optional-field
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defproperty nested

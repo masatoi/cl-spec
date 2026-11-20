@@ -148,7 +148,8 @@ so one seed produced different arguments in a differently tuned image; and
 GENERATE-VALUE read *SIZE* ambiently rather than from the generator it was given,
 so SAMPLE could show a distribution no run draws (§73.4 #6, #7).  One place binds
 them all, which is what keeps the two from drifting apart again."
-  `(let ((*size* ,size)
+  `(let ((*coverage-target* nil) ; Each root draw or run owns its targeting plan.
+         (*size* ,size)
          (*list-size* *base-list-size*)
          (*list-size-decay* *base-list-size-decay*)
          (*bias-sensitivity* *base-bias-sensitivity*)
