@@ -11,6 +11,7 @@
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
   (:import-from #:cl-spec/src/fixture #:trial-fixture)
+  (:import-from #:cl-spec/src/guard-references #:guard-return-reference)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
@@ -718,21 +719,18 @@ Each is called once per trial and its primary value is the capture."
                    (declare (ignorable ,@variables ,@previous))
                    ,(second binding))))
 
-(defun expand-guard-check (when-form variables)
-  "Refuse a case :WHEN that refers to the return value, then return WHEN-FORM.
-
-:WHEN runs before the call, exactly as :PRE does, so the return value does not
-exist yet.  Only when RESULT is not itself a parameter: a guard about a parameter
-the contract named RESULT is an ordinary guard."
-  (let* ((candidate (return-value-symbol variables))
-         (parameterp (and candidate (member candidate variables) t)))
-    (when (and candidate (symbol-occurs-p candidate when-form) (not parameterp))
+(defun expand-guard-check (when-form variables captures post-values environment)
+  "Refuse visible references to this case's return bindings before registration."
+  (let ((name (guard-return-reference when-form (return-value-symbol variables)
+                                      (unless (eq post-values :primary) post-values)
+                                      environment (append variables captures))))
+    (when name
       (function-spec-error
-       (cons :when when-form)
-       (format nil ":when runs before the call, so it cannot refer to ~S" candidate)))
-    when-form))
+       (list :when when-form)
+       (format nil ":when runs before the call, so it cannot refer to ~S" name))))
+  when-form)
 
-(defun expand-function-case (case variables captures)
+(defun expand-function-case (case variables captures environment)
   "Return the MAKE-INSTANCE form that builds one FUNCTION-CASE.
 
 CASE is the plist PARSE-FUNCTION-CASE returned.  The guard, the case
@@ -745,7 +743,8 @@ and the state-post may all read."
          (returns (getf case :returns))
          (signals (getf case :signals))
          (state-post (getf case :state-post))
-         (when-form (expand-guard-check (getf case :when) variables))
+         (when-form (expand-guard-check (getf case :when) variables captures
+                                        post-values environment))
          (result (post-result-symbol post variables)))
     `(make-instance 'function-case
                     :name ,(getf case :name)
@@ -766,7 +765,7 @@ and the state-post may all read."
                                                     state-post variables captures)
                     :source-form ',(getf case :source-form))))
 
-(defun expand-function-spec-definition (whole name clauses source-location)
+(defun expand-function-spec-definition (whole name clauses source-location environment)
   "Return the form DEFSPEC-FUNCTION expands into.
 
 Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE,
@@ -824,13 +823,14 @@ read but never checked."
                        ,(expand-state-post-function state-post variables capture-names)
                        :cases (list
                                ,@(mapcar (lambda (case)
-                                           (expand-function-case case variables capture-names))
+                                           (expand-function-case case variables capture-names
+                                                                 environment))
                                          cases))
                        :documentation ,documentation
                        :source-form ',whole
                        :source-location ',source-location)))))
 
-(defmacro defspec-function (&whole whole name &body clauses)
+(defmacro defspec-function (&whole whole name &body clauses &environment environment)
   "Attach a contract to the existing function NAME without redefining it.
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
@@ -932,7 +932,7 @@ observed in the trials that ran, not that every case ran
       (:insufficient-funds
         (:when (> amount balance))
         (:signals (type insufficient-funds)))))"
-  (expand-function-spec-definition whole name clauses (current-source-location)))
+  (expand-function-spec-definition whole name clauses (current-source-location) environment))
 
 (defparameter *property-option-keywords* '(:about :kind :tags :trials :shrink)
   "Keywords that may head an option clause in a DEFPROPERTY body.")

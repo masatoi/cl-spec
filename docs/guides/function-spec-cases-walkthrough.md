@@ -67,6 +67,23 @@ not stop at the first true guard, because a later guard error would then be
 hidden. `:when t` is an ordinary always-true form, not an implicit `:else`, and
 `:when nil` is an ordinary never-true one.
 
+A guard runs before the target returns. A visible reference to `RESULT` or to
+one of that case's `:post-values` names is a declaration error. An input named
+`RESULT` remains available. A guard can also introduce its own variable of the
+same name, for example `(let ((result amount)) (plusp result))`. Quoted data,
+function names and names from another case's postcondition remain independent.
+
+The check follows variable positions in ordinary calls and special operators,
+including local bindings and lambda parameter defaults. It follows a symbol
+macro's replacement where the guard uses it. It also understands `lambda`,
+`and`, `or`, `when`, `unless`, `cond`, the `case` and `typecase` families,
+`multiple-value-bind`, `dolist`, `dotimes`, `return`, `prog1`, `prog2`,
+`multiple-value-list`, `nth-value` and `ignore-errors`. Other operator macros,
+including local `macrolet` macros and `loop`, own their operand syntax. The
+check does not expand them or inspect their operands. References introduced
+by such macros and dynamic lookup through `symbol-value` can escape this
+declaration-time check.
+
 Zero matches, several matches, and a guard that signals are contract-side
 **case-selection errors**. The target is not called at all, and the result is
 `:ERROR` / `:CONTRACT-ERROR` with `:FAILURE-PHASE :CASE-SELECTION` and a
