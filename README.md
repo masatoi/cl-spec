@@ -164,6 +164,12 @@ Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
 `:definition-missing`, `:definition-mismatch`, `:incomparable-definition`,
 `:input-invalid`, `:precondition-rejected`, `:unsupported` and `:contract-error`.
 
+Generated checks, direct checks and artifact rechecks use the supplied
+`:registry` to resolve the contract and its declared specs. User code runs with
+the caller's dynamic `cl-spec:*registry*`. For example, a postcondition that
+calls `validp` without `:registry` uses that dynamic registry. A recheck inside
+a property body leaves coverage counting to the enclosing property trial.
+
 `:state-policy :stateless` asserts that external state needs no restoration;
 without it execution is refused. Recorded or newly detected input mutation is
 unsupported. Arbitrary external state is neither detected nor restored.
