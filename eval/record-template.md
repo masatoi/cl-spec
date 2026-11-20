@@ -25,7 +25,7 @@ to get wrong.
 | Field | Meaning |
 |---|---|
 | `task_id` | Task directory name. |
-| `core_baseline_revision` | Core commit the snapshot was taken from (the task manifest's `core_baseline_commit`). |
+| `core_baseline_revision` | Core commit matching the snapshot, as reported by `make-workcopy.sh`. Use null if the manifest reports `unknown`. |
 | `assets_revision` | Commit carrying the fixed self-specifications and this harness (the checkout's `HEAD`). |
 | `faulty_revision` | Revision/hash of the faulty copy handed to the agent. |
 | `condition` | `A` (docs plus conventional tests) or `B` (A plus the fixed self-specs). |

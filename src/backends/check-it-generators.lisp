@@ -477,6 +477,21 @@ operand above half that range before adding a scaled unit draw to the origin."
       (float number 1d0)
       number))
 
+(defun range-float-operation (operation left right)
+  "Apply OPERATION in the wider precision when LEFT and RIGHT are mixed floats.
+
+CLISP's default arithmetic rounds mixed floats to the narrower format. Promote
+the narrower operand before computing a range bound or a scaled draw."
+  (when (and (floatp left) (floatp right))
+    (let ((left-digits (float-digits left))
+          (right-digits (float-digits right)))
+      (cond ((< left-digits right-digits) (setf left (float left right)))
+            ((> left-digits right-digits) (setf right (float right left))))))
+  (handler-case (funcall operation left right)
+    ;; With no subnormals, even a unit draw times the smallest normal can
+    ;; signal. A REAL range also admits the exact intermediate result.
+    (floating-point-underflow () (funcall operation (rational left) (rational right)))))
+
 (defun scaled-real-generator (origin scale &key (direction 1) symmetric-p minimum maximum)
   "Return a generator for ORIGIN + DIRECTION * U * SCALE.
 
@@ -496,15 +511,15 @@ draw never leaves its declared range.  Shrinking U towards zero moves the value
 towards ORIGIN."
   (let* ((origin (float-operand origin))
          (headroom (if (or symmetric-p (>= (* direction (signum origin)) 0))
-                       (- most-positive-double-float (abs origin))
+                       (range-float-operation #'- most-positive-double-float (abs origin))
                        most-positive-double-float)))
     (make-instance 'mapped-generator
                    :mapping
                    (lambda (unit)
                      (let* ((wanted (if (functionp scale) (funcall scale) scale))
-                            (value (+ origin
-                                      (* direction unit
-                                         (float-operand (min wanted headroom))))))
+                            (factor (float-operand (min wanted headroom)))
+                            (step (range-float-operation #'* (* direction unit) factor))
+                            (value (range-float-operation #'+ origin step)))
                        (cond ((and minimum (< value minimum)) minimum)
                              ((and maximum (> value maximum)) maximum)
                              (t value))))
@@ -552,13 +567,17 @@ value towards OFFSET."
              :reason "the range is too wide to sample: its width exceeds double-float range"))
     ;; Distinct SHORT-FLOAT formats can have less range than SINGLE-FLOAT.
     ;; Match the wider floating endpoint, with SINGLE as the minimum format.
-    (cond ((or (typep minimum 'long-float) (typep maximum 'long-float))
-           (float width 1l0))
-          ((or (> width most-positive-single-float)
-               (typep minimum 'double-float) (typep maximum 'double-float))
-           (float width 1d0))
-          ((or (floatp minimum) (floatp maximum)) (float width 1f0))
-          (t width))))
+    (handler-case
+        (cond ((or (typep minimum 'long-float) (typep maximum 'long-float))
+               (float width 1l0))
+              ((or (> width most-positive-single-float)
+                   (typep minimum 'double-float) (typep maximum 'double-float))
+               (float width 1d0))
+              ((or (floatp minimum) (floatp maximum)) (float width 1f0))
+              (t width))
+      ;; Adjacent floating endpoints can differ by less than the smallest
+      ;; positive float. Keep their exact width for scaling in that case.
+      (floating-point-underflow () width))))
 
 (defun real-range-generator (lower upper spec)
   "Return a generator producing reals in [LOWER, UPPER], where either bound may
