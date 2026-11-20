@@ -2,95 +2,147 @@
 
 (defpackage #:cl-spec/src/guard-references
   (:use #:cl)
-  (:export #:guard-return-reference))
+  (:export #:guard-return-reference #:guard-free-variables #:return-value-symbol))
 
 (in-package #:cl-spec/src/guard-references)
 
-(defun guard-return-reference (form primary post-values environment parameters)
-  "Return the first visible reference to a return binding outside a local binding.
-PRIMARY is the inferred RESULT symbol, if the input parameters identify its
-package. POST-VALUES lists this case's explicit return bindings. Examine forms
-and symbol-macro replacements without invoking an operator macro."
-  ;; SCOPE pairs separate function and variable environments. A variable entry
-  ;; (NAME) shadows outer bindings. (NAME EXPANSION) is a symbol macro.
-  (labels
-      ((bind-name (name scope)
-         (cons (car scope) (cons (list name) (cdr scope))))
-       (bind-names (names scope)
-         (reduce #'bind-name names :initial-value scope :from-end t))
-       (walk-forms (forms scope)
-         (dolist (item forms) (walk item scope)))
-       (walk-let (bindings body sequential-p scope)
-         (let ((inner scope))
-           (dolist (binding bindings)
-             (when (consp binding) (walk (second binding) (if sequential-p inner scope)))
-             (setf inner (bind-name (if (consp binding) (first binding) binding) inner)))
-           (walk-forms body inner)))
-       (walk-lambda (parameters body scope)
-         ;; An optional/key/aux init form sees just the preceding parameters.
-         (dolist (parameter parameters)
-           (unless (member parameter lambda-list-keywords)
-             (if (consp parameter)
-                 (let ((name (first parameter)))
-                   (walk (second parameter) scope)
-                   (setf scope (bind-name (if (consp name) (second name) name) scope))
-                   (when (third parameter) (setf scope (bind-name (third parameter) scope))))
-                 (setf scope (bind-name parameter scope)))))
-         (walk-forms body scope))
-       (walk-local-definitions (operator definitions body scope)
-         (let* ((names (loop for def in definitions collect (cons (first def) operator)))
-                (inner (cons (append names (car scope)) (cdr scope))))
-           (unless (eq 'macrolet operator)
-             (dolist (def definitions)
-               (walk-lambda (second def) (cddr def) (if (eq 'labels operator) inner scope))))
-           (walk-forms body inner)))
-       (walk-variable (name scope)
-         (let ((entry (assoc name (cdr scope))))
-           (cond (entry (when (cdr entry) (walk (second entry) (bind-name name scope))))
-                 ((or (member name post-values)
-                      (if primary (eq name primary)
-                          (and (string= (symbol-name name) "RESULT") (not (constantp name)))))
-                  (return-from guard-return-reference name))
-                 (t (multiple-value-bind (replacement expanded-p) (macroexpand-1 name environment)
-                      (when expanded-p (walk replacement (bind-name name scope))))))))
-       (walk (expression scope)
-         (when (atom expression)
-           (return-from walk (when (symbolp expression) (walk-variable expression scope))))
-         (let* ((operator (first expression)) (args (rest expression))
-                (local (assoc operator (car scope))))
-           (cond
-             (local (unless (eq (cdr local) 'macrolet) (walk-forms args scope)))
-             ((consp operator) (walk operator scope) (walk-forms args scope))
-             ((member operator '(quote declare go)))
-             ((eq operator 'function)
-              (when (and (consp (first args)) (eq 'lambda (caar args))) (walk (first args) scope)))
-             ((eq operator 'lambda) (walk-lambda (first args) (rest args) scope))
-             ((member operator '(let let*))
-              (walk-let (first args) (rest args) (eq operator 'let*) scope))
-             ((member operator '(flet labels macrolet))
-              (walk-local-definitions operator (first args) (rest args) scope))
-             ((eq operator 'symbol-macrolet)
-              (walk-forms (rest args) (cons (car scope) (append (first args) (cdr scope)))))
-             ((member operator '(block return-from the eval-when)) (walk-forms (rest args) scope))
-             ((eq operator 'tagbody) (dolist (item args) (when (consp item) (walk item scope))))
-             ((eq operator 'load-time-value) (walk (first args) scope))
-             ((eq operator 'multiple-value-bind)
-              (walk (second args) scope)
-              (walk-forms (cddr args) (bind-names (first args) scope)))
-             ((member operator '(dolist dotimes))
-              (destructuring-bind (name sequence &optional result) (first args)
-                (let ((inner (bind-name name scope)))
-                  (walk sequence scope)
-                  (walk result inner)
-                  (walk (cons 'tagbody (rest args)) inner))))
-             ((member operator '(case ecase ccase typecase etypecase ctypecase))
-              (walk (first args) scope)
-              (dolist (clause (rest args)) (walk-forms (rest clause) scope)))
-             ((eq operator 'cond) (dolist (clause args) (walk-forms clause scope)))
-             ((or (member operator '(and or when unless return prog1 prog2
-                                     multiple-value-list nth-value ignore-errors))
-                  (special-operator-p operator)
-                  (not (macro-function operator environment)))
-              (walk-forms args scope))))))
-    (walk form (bind-names parameters nil))
-    nil))
+(defun return-value-symbol (variables)
+  "Return the symbol RESULT denotes for a contract over VARIABLES, or NIL.
+
+§17 writes the return value as an unqualified RESULT, so the symbol meant is
+whichever one that name resolves to in the package the contract's own text was
+read in -- FIND-SYMBOL, never INTERN, which §60 forbids.
+
+The parameters locate that package, rather than *PACKAGE* at macroexpansion
+time.  They come from the same form as the :POST body, so they follow it; the
+expansion-time package does not.  A DEFSPEC-FUNCTION generated by another macro
+expands wherever that macro is used, so keying on *PACKAGE* compiled one source
+into two different contracts -- in the second the binding was a gensym and the
+author's RESULT was a free variable, registered on a compiler warning.
+
+Comparing SYMBOL-NAME across the whole form, which came before either, took any
+symbol so named wherever it came from: a postcondition reading another package's
+variable had that variable bound as the return value, so a claim false for every
+input compiled into a tautology."
+  (let ((home (if variables
+                  (symbol-package (first variables))
+                  *package*)))
+    (and home (find-symbol "RESULT" home))))
+
+(defun guard-return-reference (variables parameters post-values &key check-primary)
+  "Return a name this guard reads before the target has supplied its return values."
+  (let ((primary (when check-primary (return-value-symbol parameters))))
+    (find-if (lambda (name)
+               (and (not (member name parameters))
+                    (or (member name post-values)
+                        (and check-primary
+                             (if primary (eq name primary)
+                                 (string= "RESULT" (symbol-name name)))))))
+             variables)))
+
+(defun system-macro-p (name)
+  "Recognize Common Lisp macros and implementation macros emitted by their expanders."
+  (let ((package (symbol-package name)))
+    (or (eq package (find-package :cl))
+        #+sbcl (and package (eql 0 (search "SB-" (package-name package)))
+                    (sb-ext:package-locked-p package))
+        #+ccl (member package (list (find-package :ccl) (find-package :ansi-loop))))))
+
+(defun expand-system-guard-form (form environment)
+  "Inspect a system form while leaving application macros opaque, including nested expansion."
+  (let ((hook *macroexpand-hook*))
+    (let ((*macroexpand-hook*
+            (lambda (expander expression env)
+              (when (or (symbolp expression) (system-macro-p (first expression)))
+                (funcall hook expander expression env)))))
+      (macroexpand-1 form environment))))
+
+(defun guard-free-variables (form environment parameters &key expanded-p (expand-symbols t))
+  "Collect variable names in executable positions without evaluating a guard.
+PARAMETERS shadow enclosing symbol macros but are retained as input references so
+the case can later be validated against the bindings of its owning contract."
+  (let ((references nil))
+    (labels
+        ((bind-name (name scope)
+           (cons (car scope) (cons (list name) (cdr scope))))
+         (bind-names (names scope)
+           (reduce #'bind-name names :initial-value scope :from-end t))
+         (walk-forms (forms scope)
+           (dolist (item forms) (walk item scope)))
+         (walk-let (bindings body sequential-p scope)
+           (let ((inner scope))
+             (dolist (binding bindings)
+               (when (consp binding) (walk (second binding) (if sequential-p inner scope)))
+               (setf inner (bind-name (if (consp binding) (first binding) binding) inner)))
+             (walk-forms body inner)))
+         (walk-lambda (parameters body scope)
+           (dolist (parameter parameters)
+             (unless (member parameter lambda-list-keywords)
+               (if (consp parameter)
+                   (let ((name (first parameter)))
+                     (walk (second parameter) scope)
+                     (setf scope (bind-name (if (consp name) (second name) name) scope))
+                     (when (third parameter) (setf scope (bind-name (third parameter) scope))))
+                   (setf scope (bind-name parameter scope)))))
+           (walk-forms body scope))
+         (walk-local-definitions (operator definitions body scope)
+           (let* ((names (loop for def in definitions collect (cons (first def) operator)))
+                  (inner (cons (append names (car scope)) (cdr scope))))
+             (unless (eq 'macrolet operator)
+               (dolist (def definitions)
+                 (walk-lambda (second def) (cddr def) (if (eq 'labels operator) inner scope))))
+             (walk-forms body inner)))
+         (walk-variable (name scope)
+           (let ((entry (assoc name (cdr scope))))
+             (cond (entry (when (cdr entry) (walk (second entry) (bind-name name scope))))
+                   ((or expanded-p (not expand-symbols) (member name parameters))
+                    (unless (constantp name) (pushnew name references)))
+                   (t (multiple-value-bind (replacement expanded-p) (macroexpand-1 name environment)
+                        (cond (expanded-p (walk replacement (bind-name name scope)))
+                              ((not (constantp name)) (pushnew name references))))))))
+         (walk (expression scope)
+           (when (atom expression)
+             (return-from walk (when (symbolp expression) (walk-variable expression scope))))
+           (let* ((operator (first expression)) (args (rest expression))
+                  (local (assoc operator (car scope))))
+             (cond
+               (local (unless (eq (cdr local) 'macrolet) (walk-forms args scope)))
+               ((consp operator) (walk operator scope) (walk-forms args scope))
+               ((member operator '(quote declare go)))
+               ((eq operator 'function)
+                (when (and (consp (first args)) (eq 'lambda (caar args)))
+                  (walk (first args) scope)))
+               ((eq operator 'lambda) (walk-lambda (first args) (rest args) scope))
+               ((member operator '(let let*))
+                (walk-let (first args) (rest args) (eq operator 'let*) scope))
+               ((member operator '(flet labels macrolet))
+                (walk-local-definitions operator (first args) (rest args) scope))
+               ((eq operator 'symbol-macrolet)
+                (walk-forms (rest args) (cons (car scope) (append (first args) (cdr scope)))))
+               ((member operator '(block return-from the eval-when #+sbcl sb-kernel:the*))
+                (walk-forms (rest args) scope))
+               ((eq operator 'tagbody) (dolist (item args) (when (consp item) (walk item scope))))
+               ((eq operator 'load-time-value) (walk (first args) scope))
+               ((eq operator 'multiple-value-bind)
+                (walk (second args) scope)
+                (walk-forms (cddr args) (bind-names (first args) scope)))
+               ((member operator '(case ecase ccase typecase etypecase ctypecase))
+                (walk (first args) scope)
+                (dolist (clause (rest args)) (walk-forms (rest clause) scope)))
+               ((eq operator 'cond) (dolist (clause args) (walk-forms clause scope)))
+               ;; These places and values are expressions. Inspect the syntax
+               ;; directly, without invoking an application SETF expander.
+               ((member operator '(setf psetf incf decf push pushnew pop shiftf rotatef remf))
+                (walk-forms args scope))
+               ((eq operator 'check-type) (walk (first args) scope))
+               ((eq operator 'assert)
+                (walk (first args) scope) (walk-forms (second args) scope)
+                (walk-forms (cddr args) scope))
+               ((or expanded-p (special-operator-p operator)
+                    (not (macro-function operator environment)))
+                (walk-forms args scope))
+               ((and (system-macro-p operator)
+                     (eq (macro-function operator environment) (macro-function operator)))
+                (walk (expand-system-guard-form expression environment) scope))))))
+      (walk form nil)
+      references)))

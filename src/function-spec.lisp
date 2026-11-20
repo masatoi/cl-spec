@@ -19,6 +19,8 @@
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
                 #:single-observation-report)
+  (:import-from #:cl-spec/src/guard-references #:guard-free-variables #:guard-return-reference)
+  (:export #:make-function-case-with-guard)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
                 #:fixture-data #:snapshot-fixture #:fixture-error)
@@ -170,8 +172,19 @@ Bound only while a FUNCTION-SPEC validates its cases, so a case can check its
 back-pointer that would make the declaration graph cyclic.  A case built on its
 own validates its return arity only.")
 
+(defvar *case-guard-analysis* nil
+  "The DSL guard's source, predicate and variable references in its lexical environment.")
+
+(defun make-function-case-with-guard (form predicate references &rest initargs)
+  "Construct a DSL case with the guard references observed in its macroexpansion environment."
+  (let ((*case-guard-analysis* (list (copy-tree form) predicate references)))
+    (apply #'make-instance 'function-case :when-forms (list form) :when-function predicate
+           initargs)))
+
 (defclass function-case ()
-  ((name :initarg :name
+  ((guard-analysis :initform *case-guard-analysis* :reader case-guard-analysis
+                   :documentation "Lexical references, original source and compiled guard.")
+   (name :initarg :name
          :initform nil
          :reader function-case-name
          :documentation "Keyword naming this case, unique within its contract.
@@ -290,6 +303,30 @@ new post forms and a new compiled predicate as well."
   (declare (ignore slot-names))
   (validate-definition case))
 
+(defun validate-case-guard (case)
+  "Check this case's visible guard references against its output and current input bindings."
+  (let ((form (first (function-case-when-forms case)))
+         (post-values (function-case-post-value-variables case))
+         (parameters (when *case-owner*
+                       (append (call-declaration-variables
+                                (function-spec-argument-specs *case-owner*))
+                               (mapcar #'first (function-spec-capture-bindings *case-owner*)))))
+         (analysis (case-guard-analysis case)))
+    ;; Before ownership is known, RESULT could be an ordinary input parameter.
+    (when (or *case-owner* (consp post-values))
+      (let* ((references
+               (if (and analysis (eq (second analysis) (function-case-when-function case))
+                        (equal (first analysis) form))
+                   (third analysis)
+                   (guard-free-variables form nil parameters :expand-symbols *case-owner*)))
+             (name (guard-return-reference references parameters
+                                           (unless (eq post-values :primary) post-values)
+                                           :check-primary *case-owner*)))
+        (when name
+          (error 'invalid-function-spec-form :form (list :when form)
+                 :reason (format nil ":when runs before the call, so it cannot refer to ~S"
+                                 name)))))))
+
 (defmethod validate-definition ((case function-case))
   "Refuse a case the checker could not honour, and normalize what can be.
 
@@ -360,6 +397,7 @@ predicate without its form would run while introspection reported no such clause
        (length (tuple-spec-element-specs (function-case-outcome-spec case)))
        (when *case-owner*
          (call-declaration-variables (function-spec-argument-specs *case-owner*))))))
+  (validate-case-guard case)
   case)
 
 (defun function-case-select (cases bindings function &optional captures)

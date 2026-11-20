@@ -73,16 +73,19 @@ one of that case's `:post-values` names is a declaration error. An input named
 same name, for example `(let ((result amount)) (plusp result))`. Quoted data,
 function names and names from another case's postcondition remain independent.
 
-The check follows variable positions in ordinary calls and special operators,
-including local bindings and lambda parameter defaults. It follows a symbol
-macro's replacement where the guard uses it. It also understands `lambda`,
-`and`, `or`, `when`, `unless`, `cond`, the `case` and `typecase` families,
-`multiple-value-bind`, `dolist`, `dotimes`, `return`, `prog1`, `prog2`,
-`multiple-value-list`, `nth-value` and `ignore-errors`. Other operator macros,
-including local `macrolet` macros and `loop`, own their operand syntax. The
-check does not expand them or inspect their operands. References introduced
-by such macros and dynamic lookup through `symbol-value` can escape this
-declaration-time check.
+On SBCL and CCL, the DSL expands the guard in the declaration's lexical
+environment and compiles that expansion as its predicate. A reference in a
+`handler-case` handler, a `loop` clause, a place, or the expansion of a local
+macro is checked with the bindings visible at that position. Introspection
+and the definition digest retain the author's original guard.
+
+Programmatic cases supply guard source alongside a compiled function.
+Construction and registration check references visible in that source against
+the owning contract's inputs and the case's outputs. Supply ordinary Common
+Lisp source for expressions whose meaning depends on application macros:
+programmatic validation has no access to the lexical environment in which a
+separately supplied function was compiled. Source checking cannot establish
+what that function actually does or which name a dynamic lookup computes.
 
 Zero matches, several matches, and a guard that signals are contract-side
 **case-selection errors**. The target is not called at all, and the result is
