@@ -25,6 +25,35 @@
               (getf (cl-spec:recheck-counterexample restored :state-policy :fixture) :status)))
       (ok (= 3 *setups* *cleanups* *calls*)))))
 
+(deftest base-string-fixture-recipe-survives-setup-and-recheck
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*setups* 0) (*cleanups* 0))
+    (cl-spec:defspec-function length
+      (:args (value string))
+      (:fixture (:isolation :fresh) (:version 1)
+                (:recipe (recipe simple-base-string))
+                (:setup (context)
+                  (declare (ignore context))
+                  (incf *setups*)
+                  (list recipe))
+                (:cleanup (context)
+                  (declare (ignore recipe context))
+                  (incf *cleanups*)))
+      (:returns string))
+    (let* ((recipe (make-array 3 :element-type 'base-char :initial-contents "abc"))
+           (result (cl-spec:check-fixture 'length recipe))
+           (status (getf (cl-spec:fixture-check-data result) :status)))
+      ;; LENGTH returns an integer, so reaching the target produces a return failure.
+      (ok (eq :failed status))
+      (ok (= 1 *setups* *cleanups*))
+      (when (eq :failed status)
+        (let* ((wire (cl-spec:serialize-counterexample-artifact
+                      (cl-spec:make-counterexample-artifact result)))
+               (restored (cl-spec:deserialize-counterexample-artifact wire)))
+          (ok (eq :same-failure (getf (cl-spec:recheck-counterexample
+                                       restored :state-policy :fixture) :status)))
+          (ok (= 2 *setups* *cleanups*)))))))
+
 (deftest fixture-artifact-requires-explicit-state-policy
   (with-contract
     (let* ((*mode* :missing-update)

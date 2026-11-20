@@ -178,8 +178,10 @@ label, independent of the declaration digest. A recheck accepts its own optional
 
 Artifact version 1 uses a bounded `AV1` format without the Lisp reader or symbol
 interning. It supports existing package symbols, characters, integers, ratios,
-finite single/double floats, simple strings, cons trees and simple general
-vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
+finite single/double floats, simple strings with element type `character` or
+`base-char`, cons trees and simple general vectors. Float type, signed zero and
+string element type are preserved. Older AV1 strings used a single tag and
+decode as simple `character` arrays. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
 nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000

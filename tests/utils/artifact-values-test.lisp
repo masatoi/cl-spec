@@ -24,6 +24,45 @@
     (artifact-value-error (condition)
       (cl-spec/src/utils/artifact-values:artifact-value-error-reason condition))))
 
+(deftest string-records-preserve-element-type
+  (dolist (element-type '(character base-char))
+    (dolist (text '("" "abc"))
+      (let* ((value (make-array (length text) :element-type element-type :initial-contents text))
+             (wire (serialize-artifact-value value)))
+        ;; Even an ASCII-only wire can arrive in either kind of string.
+        (dolist (wire-element-type '(character base-char))
+          (let ((copy (deserialize-artifact-value
+                       (make-array (length wire) :element-type wire-element-type
+                                   :initial-contents wire))))
+            (ok (equal (array-element-type value) (array-element-type copy)))
+            (ok (typep copy 'simple-string))
+            (ok (string= value copy))))
+        (let ((copy (decode-artifact-value (encode-artifact-value value))))
+          (ok (equal (array-element-type value) (array-element-type copy)))
+          (ok (not (eq copy value)))))))
+  (testing "legacy tag 7 always constructs a general character string"
+    (dolist (element-type '(character base-char))
+      (let* ((wire (make-array 13 :element-type element-type :initial-contents "AV1 (7 3:abc)"))
+             (copy (deserialize-artifact-value wire)))
+        (ok (typep copy '(simple-array character (*))))
+        (ok (string= copy "abc"))))))
+
+(deftest base-string-records-check-contents-and-bounds
+  (let ((non-base (code-char #x3BB)))
+    (when (and non-base (not (typep non-base 'base-char)))
+      (let ((text (string non-base)))
+        (ok (string= text (deserialize-artifact-value (serialize-artifact-value text))))
+        (ok (eq :invalid-string
+                (reason-of (lambda () (decode-artifact-value (list 10 text))))))
+        (let ((wire (format nil "AV1 (10 1:~C)" non-base)))
+          (ok (eq :invalid-string (reason-of (lambda () (deserialize-artifact-value wire)))))))))
+  (dolist (wire '("AV1 (10)" "AV1 (10 0: 0:)" "AV1 (10 (0))" "AV1 (10 1)"))
+    (ok (rejected-p (lambda () (deserialize-artifact-value wire)))))
+  (let ((text (make-string 600000 :element-type 'base-char :initial-element #\x)))
+    (ok (eq :text-limit
+            (reason-of (lambda () (decode-artifact-value (list 9 (list 10 text)
+                                                                 (list 10 text)))))))))
+
 (deftest symbols-decode-the-same-under-any-package
   ;; A package-local nickname of *PACKAGE* that spells a global package name
   ;; used to redirect the decoded symbols, so one artifact named different
