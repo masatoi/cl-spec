@@ -550,12 +550,14 @@ value towards OFFSET."
       (error 'generator-unavailable
              :spec spec :kind :range-too-wide
              :reason "the range is too wide to sample: its width exceeds double-float range"))
-    (cond ((> width most-positive-single-float) (float width 1d0))
-          ;; Keep the wider endpoint's float format for ordinary intervals.
-          ((and (floatp minimum) (floatp maximum))
-           (float width (+ (float 0 minimum) (float 0 maximum))))
-          ((floatp minimum) (float width minimum))
-          ((floatp maximum) (float width maximum))
+    ;; Distinct SHORT-FLOAT formats can have less range than SINGLE-FLOAT.
+    ;; Match the wider floating endpoint, with SINGLE as the minimum format.
+    (cond ((or (typep minimum 'long-float) (typep maximum 'long-float))
+           (float width 1l0))
+          ((or (> width most-positive-single-float)
+               (typep minimum 'double-float) (typep maximum 'double-float))
+           (float width 1d0))
+          ((or (floatp minimum) (floatp maximum)) (float width 1f0))
           (t width))))
 
 (defun real-range-generator (lower upper spec)
