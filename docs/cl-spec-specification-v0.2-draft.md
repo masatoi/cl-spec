@@ -598,6 +598,12 @@ registryを単一のglobal hash-tableとして固定しない。
 (properties-for 'transfer)
 ```
 
+公開の入口で registry に NIL を渡すと、その時点の動的な `*registry*` を使う。
+低レベルの `registry-*` 総称関数は、第1引数に明示された registry に dispatch する。
+一覧と逆引きの結果は symbol 名の辞書順に並べ、同名なら home package 名で比較する。
+`registry-register-property` は登録時の targets/tags を逆引きキーとして保持する。
+呼び出し側が登録後にキーのリストを書き換えても、再登録で撤回するのは元のキーである。
+
 registry protocolは渡された値をそのまま保存し、値の種類を検査しない。名前の規則は
 protocolが課す。`registry-register-spec`は、NIL・keyword・Common Lispの型名を
 `invalid-spec-form`で拒否する（DSLはその記号を常に型として読むため、登録しても名前で

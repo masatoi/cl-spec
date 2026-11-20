@@ -2164,7 +2164,7 @@ INVALID-ARGUMENT."
                       &key coverage (registry *registry*) &allow-other-keys)
   "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-fixture)
-  (check-registry registry 'check-fixture)
+  (setf registry (check-registry registry 'check-fixture))
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))
@@ -2226,7 +2226,7 @@ contract failure. Fixture results and artifacts use version 2."
   (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
   (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
   (check-run-options options 'check-function)
-  (check-registry registry 'check-function)
+  (setf registry (check-registry registry 'check-function))
   (let* ((seed-result (and (typep seed 'property-result) seed))
          (budget (or trials
                      (when (typep seed-result 'function-check-result)
@@ -2428,7 +2428,7 @@ A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-call)
-  (check-registry registry 'check-call)
+  (setf registry (check-registry registry 'check-call))
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))

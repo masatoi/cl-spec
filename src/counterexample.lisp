@@ -521,7 +521,7 @@ A non-artifact, a non-registry or an unknown policy is the caller's mistake, not
 a finding about the definition, so it is refused with INVALID-ARGUMENT before
 anything runs rather than recorded as :CONTRACT-ERROR."
   (check-argument artifact 'counterexample-artifact 'recheck-counterexample :artifact)
-  (check-registry registry 'recheck-counterexample)
+  (setf registry (check-registry registry 'recheck-counterexample))
   (check-argument state-policy '(member :unconfirmed :stateless :fixture)
                   'recheck-counterexample :state-policy)
   (let* ((data (counterexample-artifact-data artifact))

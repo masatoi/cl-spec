@@ -222,7 +222,7 @@ has :SCHEMA-VERSION, :RECORD-KIND, :ENTITY-KIND, :DEFINITION-DIGEST,
 SCHEMA-INFO, specification §38.1). Children are plain IR projections.
 
 The plist is a fresh copy: changing it does not change the registered spec."
-  (check-registry registry 'spec-data)
+  (setf registry (check-registry registry 'spec-data))
   (snapshot-value (spec->data (resolve-spec spec-designator registry) registry t)))
 
 (defun property-data (property-designator &key (registry *registry*))
@@ -244,7 +244,7 @@ The body is the author's source rather than the compiled function (§39).
 
 The plist is a fresh copy: changing it, its trial table or its forms does not
 change the registered property."
-  (check-registry registry 'property-data)
+  (setf registry (check-registry registry 'property-data))
   (let ((property (resolve-property property-designator registry)))
     (snapshot-value
      (append (definition-metadata property :registry registry)
@@ -312,7 +312,7 @@ Fixed return declarations use :KIND :VALUES with ordered children. Explicit
 
 The plist is a fresh copy: changing it or its forms does not change the
 registered contract, whose compiled functions could not follow the change."
-  (check-registry registry 'function-spec-data)
+  (setf registry (check-registry registry 'function-spec-data))
   (let ((contract (resolve-function-spec function-spec-designator registry)))
     (copied-append (let ((metadata (definition-metadata contract :registry registry)))
               (remf metadata :fixture)
@@ -428,7 +428,7 @@ always present, whatever its value: a key that appears and disappears with its
 value would break JSON consumers, matching the rule SPEC-DATA already
 follows."
   (check-argument symbol 'symbol 'semantic-data :symbol)
-  (check-registry registry 'semantic-data)
+  (setf registry (check-registry registry 'semantic-data))
   (list :symbol symbol
         :package (let ((package (symbol-package symbol)))
                    (when package (package-name package)))

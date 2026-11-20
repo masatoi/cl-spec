@@ -140,7 +140,7 @@ with INVALID-ARGUMENT."
     (error 'invalid-argument :operator 'coverage-schema :argument :definition
                              :datum definition :expected-type '(satisfies coverage-definition-p)
                              :reason "it is not a property or function spec"))
-  (check-registry registry 'coverage-schema)
+  (setf registry (check-registry registry 'coverage-schema))
   (let ((schema (definition-coverage-schema definition registry nil)))
     (setf (getf schema :subject) (coverage-identity definition registry))
     (copy-coverage-data schema)))

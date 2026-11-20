@@ -60,7 +60,7 @@
 (deftest fixture-direct-fresh-state
   (with-contract
     (let ((first (fixture-data (fixture-check '(30 10))))
-          (second (fixture-data (fixture-check '(30 10)))))
+          (second (fixture-data (cl-spec:check-fixture 'withdraw '(30 10) :registry nil))))
       (ok (eq :passed (getf first :status)))
       (ok (eq :passed (getf second :status)))
       (ok (= 2 (getf first :schema-version)))

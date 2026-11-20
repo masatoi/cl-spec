@@ -512,7 +512,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
   (check-profile profile 'run-property)
   (check-run-options options 'run-property)
-  (check-registry registry 'run-property)
+  (setf registry (check-registry registry 'run-property))
   (let* ((result-constructor
            (when (and *pending-result-constructor*
                       (eq property-designator (car *pending-result-constructor*)))
@@ -658,6 +658,7 @@ signals INVALID-ARGUMENT before the first property runs."
                   :property-designators)
   (check-profile profile 'run-properties)
   (check-run-options options 'run-properties)
+  (setf registry (check-registry registry 'run-properties))
   (mapcar (lambda (designator)
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
@@ -694,6 +695,7 @@ integer SEED starts a new run and stays allowed."
   (check-run-options options 'replay-property)
   ;; Preserve the result through RUN-PROPERTY so fixture identity and run
   ;; parameters are validated before any hooks execute.
+  (setf registry (check-registry registry 'replay-property))
   (refuse-stateful-replay (resolve-property property-designator registry)
                           (and (typep seed 'property-result) seed))
   (run-property property-designator

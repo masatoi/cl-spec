@@ -152,7 +152,8 @@ Returns two values: the property (NIL when absent) and a found-p boolean."))
   (:documentation "Register PROPERTY in REGISTRY under NAME.
 
 TARGETS is a list of symbols the property is about; TAGS is a list of tag
-designators.  Both are indexed for reverse lookup.  Re-registering a name
+designators.  Reverse lookup uses their keys at the time of registration,
+including when the caller later reuses either list.  Re-registering a name
 replaces the previous definition and drops its stale index entries.
 Returns PROPERTY."))
 
@@ -246,21 +247,6 @@ of every protocol function."
              (compute-applicable-methods #'registry-find-spec (list object nil)))
        t))
 
-(defun check-registry (registry operator)
-  "Return REGISTRY, or signal INVALID-ARGUMENT naming :REGISTRY for OPERATOR.
-
-Public entry points call it first: one handed a spec object may never consult the
-registry and would otherwise accept any value, and RECHECK-COUNTEREXAMPLE would
-record the failure as a contract error.  The built-in registry is recognized by
-type, so the common call costs no method lookup.  NIL is let through: internal
-callers pass it for a spec with no references, which never consults a registry,
-and a lookup through NIL is still refused by the protocol's methods on T."
-  (if (or (null registry)
-          (typep registry 'hash-table-registry)
-          (registry-object-p registry))
-      registry
-      (refuse-registry registry operator)))
-
 (defstruct (property-entry (:constructor make-property-entry (property targets tags)))
   "A property together with the index keys it was registered under, so that
 re-registration can retract the previous keys."
@@ -347,19 +333,25 @@ takes.  Without that, a run started on another thread resolves names in the
 global registry: if the same name is registered in both, it checks a different
 definition and reports a verdict for it, with nothing on the result to say so.")
 
-(defun symbol-sort-key (symbol)
-  "Return a string that orders SYMBOL deterministically across packages."
-  (let ((package (symbol-package symbol)))
-    (concatenate 'string
-                 (symbol-name symbol)
-                 "|"
-                 (if package (package-name package) ""))))
+(defun check-registry (registry operator)
+  "Return the effective public registry, or signal INVALID-ARGUMENT for OPERATOR.
+A NIL designator selects the current dynamic value of *REGISTRY* (§21)."
+  (let ((effective (or registry *registry*)))
+    (if (or (typep effective 'hash-table-registry) (registry-object-p effective))
+        effective
+        (refuse-registry effective operator))))
 
 (defun sorted-symbols (symbols)
-  "Return SYMBOLS sorted by name and then by home package name."
-  (sort (copy-list symbols)
-        #'string<
-        :key #'symbol-sort-key))
+  "Return a fresh list sorted by symbol name, then by home package name."
+  (flet ((package-key (symbol)
+           (let ((package (symbol-package symbol)))
+             (if package (package-name package) ""))))
+    (stable-sort (copy-list symbols)
+                 (lambda (left right)
+                   (let ((left-name (symbol-name left)) (right-name (symbol-name right)))
+                     (if (string= left-name right-name)
+                         (string< (package-key left) (package-key right))
+                         (string< left-name right-name)))))))
 
 (defun hash-table-keys-sorted (table)
   "Return the keys of TABLE as a sorted list of symbols."
@@ -433,16 +425,17 @@ Index keys that end up empty are dropped so that lookups return NIL."
 
 (defmethod registry-register-property ((registry hash-table-registry) name property
                                        &key targets tags)
-  (with-registry-lock (registry)
-    (let ((previous (gethash name (registry-properties registry))))
-      (when previous
-        (unindex-property registry name
-                          (property-entry-targets previous)
-                          (property-entry-tags previous))))
-    (setf (gethash name (registry-properties registry))
-          (make-property-entry property targets tags))
-    (index-property registry name targets tags)
-    property))
+  (let ((targets (copy-list targets)) (tags (copy-list tags)))
+    (with-registry-lock (registry)
+      (let ((previous (gethash name (registry-properties registry))))
+        (when previous
+          (unindex-property registry name
+                            (property-entry-targets previous)
+                            (property-entry-tags previous))))
+      (setf (gethash name (registry-properties registry))
+            (make-property-entry property targets tags))
+      (index-property registry name targets tags)
+      property)))
 
 (defmethod registry-list-properties ((registry hash-table-registry))
   (with-registry-lock (registry)
@@ -468,11 +461,11 @@ Index keys that end up empty are dropped so that lookups return NIL."
 
 (defun find-spec (name &optional (registry *registry*))
   "Return the spec registered under NAME in REGISTRY, and a found-p second value."
-  (registry-find-spec registry name))
+  (registry-find-spec (or registry *registry*) name))
 
 (defun list-specs (&optional (registry *registry*))
   "Return the names of every spec in REGISTRY, sorted."
-  (registry-list-specs registry))
+  (registry-list-specs (or registry *registry*)))
 
 (defun register-spec (name spec &optional (registry *registry*))
   "Register SPEC under NAME in REGISTRY and return SPEC.
@@ -487,40 +480,40 @@ public entry point that keeps a non-spec out of the registry."
            :reason (format nil "only a spec object can be registered as ~S; ~
                                 normalize a DSL form with NORMALIZE-SPEC-FORM first"
                            name)))
-  (registry-register-spec registry name spec))
+  (registry-register-spec (or registry *registry*) name spec))
 
 (defun find-function-spec (name &optional (registry *registry*))
   "Return the function spec registered under NAME in REGISTRY, and found-p."
-  (registry-find-function-spec registry name))
+  (registry-find-function-spec (or registry *registry*) name))
 
 (defun list-function-specs (&optional (registry *registry*))
   "Return the names of every function spec in REGISTRY, sorted."
-  (registry-list-function-specs registry))
+  (registry-list-function-specs (or registry *registry*)))
 
 (defun find-generator (name &optional (registry *registry*))
   "Return the custom generator registered under NAME, and a found-p second value."
-  (registry-find-generator registry name))
+  (registry-find-generator (or registry *registry*) name))
 
 (defun list-generators (&optional (registry *registry*))
   "Return the names of every custom generator in REGISTRY, sorted."
-  (registry-list-generators registry))
+  (registry-list-generators (or registry *registry*)))
 
 (defun find-property (name &optional (registry *registry*))
   "Return the property registered under NAME in REGISTRY, and found-p."
-  (registry-find-property registry name))
+  (registry-find-property (or registry *registry*) name))
 
 (defun list-properties (&optional (registry *registry*))
   "Return the names of every property in REGISTRY, sorted."
-  (registry-list-properties registry))
+  (registry-list-properties (or registry *registry*)))
 
 (defun properties-for (target &optional (registry *registry*))
   "Return the names of properties registered against TARGET in REGISTRY, sorted."
-  (registry-properties-for registry target))
+  (registry-properties-for (or registry *registry*) target))
 
 (defun properties-with-tag (tag &optional (registry *registry*))
   "Return the names of properties carrying TAG in REGISTRY, sorted."
-  (registry-properties-with-tag registry tag))
+  (registry-properties-with-tag (or registry *registry*) tag))
 
 (defun clear-registry (&optional (registry *registry*))
   "Remove every entry from REGISTRY and return REGISTRY."
-  (registry-clear registry))
+  (registry-clear (or registry *registry*)))

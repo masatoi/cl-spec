@@ -1627,8 +1627,8 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
            (first (make-instance 'cl-spec:property
                                  :name 'self-property
                                  :arguments '((x integer))
-                                 :targets '(self-target-a)
-                                 :tags '(self-tag-a)
+                                 :targets (list 'self-target-a)
+                                 :tags (list 'self-tag-a)
                                  :function (lambda (x) (declare (ignore x)) t)))
            (second (make-instance 'cl-spec:property
                                   :name 'self-property
@@ -1646,6 +1646,9 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                   (cl-spec:properties-with-tag 'self-tag-a registry))
                           (null (cl-spec:properties-for 'self-tag-a registry))
                           (null (cl-spec:properties-with-tag 'self-target-a registry)))))
+        ;; Clients can reuse the lists exposed by the registered property's readers.
+        (setf (car (cl-spec:property-targets first)) 'self-target-b
+              (car (cl-spec:property-tags first)) 'self-tag-b)
         (cl-spec:register-property second registry)
         (and indexed
              (null (cl-spec:properties-for 'self-target-a registry))
@@ -1691,7 +1694,7 @@ expected order is by symbol name alone and is computed here, not by the registry
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
     (let* ((registry (make-registry-under-test))
-           (names '(self-sort-c self-sort-a self-sort-b))
+           (names '(self-sort-b self-sort self-sort-a))
            (expected (sort (copy-list names) #'string< :key #'symbol-name)))
       (dolist (name names)
         (cl-spec:registry-register-spec registry name (normalize-spec-form 'integer))
