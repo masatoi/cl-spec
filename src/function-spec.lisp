@@ -19,6 +19,8 @@
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
                 #:single-observation-report)
+  (:import-from #:cl-spec/src/guard-references #:guard-free-variables #:guard-return-reference)
+  (:export #:make-function-case-with-guard)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
                 #:fixture-data #:snapshot-fixture #:fixture-error)
@@ -163,15 +165,27 @@
 (in-package #:cl-spec/src/function-spec)
 
 (defvar *case-owner* nil
-  "The contract a case under construction belongs to, or NIL.
+  "Contract whose input and capture bindings apply during validation of one of its cases.")
 
-Bound only while a FUNCTION-SPEC validates its cases, so a case can check its
-:post-values names against the contract's argument bindings without holding a
-back-pointer that would make the declaration graph cyclic.  A case built on its
-own validates its return arity only.")
+(defvar *case-guard-analysis* nil
+  "The DSL guard's source, predicate and variable references in its lexical environment.")
+
+(defun make-function-case-with-guard (form predicate references &rest initargs)
+  "Construct a DSL case with the guard references observed in its macroexpansion environment."
+  (let ((*case-guard-analysis* (list (copy-tree form) predicate references)))
+    (apply #'make-instance 'function-case :when-forms (list form) :when-function predicate
+           initargs)))
 
 (defclass function-case ()
-  ((name :initarg :name
+  ((owners :initform (make-hash-table :test #'eq :size 1
+                                      #+(or sbcl ecl abcl clasp) :weakness
+                                      #+(or ccl clisp) :weak
+                                      #+(or sbcl ecl abcl clasp ccl clisp) :key)
+            :reader case-owners
+            :documentation "Contracts whose variable bindings constrain edits to this case.")
+   (guard-analysis :initform *case-guard-analysis* :reader case-guard-analysis
+                   :documentation "Lexical references, original source and compiled guard.")
+   (name :initarg :name
          :initform nil
          :reader function-case-name
          :documentation "Keyword naming this case, unique within its contract.
@@ -288,7 +302,45 @@ new post forms and a new compiled predicate as well."
 
 (defmethod shared-initialize :after ((case function-case) slot-names &key)
   (declare (ignore slot-names))
-  (validate-definition case))
+  (validate-definition case)
+  (let ((owners (case-owners case)) (attached nil) (detached-p nil))
+    (maphash (lambda (owner present)
+               (declare (ignore present))
+               (if (and owner (member case (function-spec-cases owner)))
+                   (let ((*case-owner* owner))
+                     (validate-case-guard case)
+                     (push owner attached))
+                   (setf detached-p t)))
+             owners)
+    ;; ECL 24.5.10 REMHASH can leave a surviving weak key unwrapped.
+    ;; Rebuild membership after the traversal and successful validation.
+    (when detached-p
+      (clrhash owners)
+      (dolist (owner attached) (setf (gethash owner owners) t)))))
+
+(defun validate-case-guard (case)
+  "Check this case's visible guard references against its output and current input bindings."
+  (let ((form (first (function-case-when-forms case)))
+         (post-values (function-case-post-value-variables case))
+         (parameters (when *case-owner*
+                       (append (call-declaration-variables
+                                (function-spec-argument-specs *case-owner*))
+                               (mapcar #'first (function-spec-capture-bindings *case-owner*)))))
+         (analysis (case-guard-analysis case)))
+    ;; Before ownership is known, RESULT could be an ordinary input parameter.
+    (when (or *case-owner* (consp post-values))
+      (let* ((references
+               (if (and analysis (eq (second analysis) (function-case-when-function case))
+                        (equal (first analysis) form))
+                   (third analysis)
+                   (guard-free-variables form nil parameters :expand-symbols *case-owner*)))
+             (name (guard-return-reference references parameters
+                                           (unless (eq post-values :primary) post-values)
+                                           :check-primary *case-owner*)))
+        (when name
+          (error 'invalid-function-spec-form :form (list :when form)
+                 :reason (format nil ":when runs before the call, so it cannot refer to ~S"
+                                 name)))))))
 
 (defmethod validate-definition ((case function-case))
   "Refuse a case the checker could not honour, and normalize what can be.
@@ -360,6 +412,7 @@ predicate without its form would run while introspection reported no such clause
        (length (tuple-spec-element-specs (function-case-outcome-spec case)))
        (when *case-owner*
          (call-declaration-variables (function-spec-argument-specs *case-owner*))))))
+  (validate-case-guard case)
   case)
 
 (defun function-case-select (cases bindings function &optional captures)
@@ -1162,6 +1215,8 @@ would run while introspection reported no such clause"
   (setf (slot-value contract 'call-layout-cache) nil
         (slot-value contract 'call-layout-declarations) nil
         (slot-value contract 'call-layout-bindings-snapshot) nil)
+  (dolist (case (function-spec-cases contract))
+    (setf (gethash contract (case-owners case)) t))
   contract)
 
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)

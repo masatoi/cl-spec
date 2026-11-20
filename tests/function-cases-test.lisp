@@ -356,6 +356,171 @@ decides whether they pass."
                     (:args (x integer))
                     (:cases (:a (:when result) (:returns integer)))))))))
 
+(deftest case-guards-reject-their-own-return-bindings
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (let ((original (find-function-spec 'identity)))
+      (dolist (guard '(eventual (plusp eventual) (let ((eventual eventual)) eventual)
+                       (funcall (lambda (&optional (x eventual)) x))
+                       (multiple-value-bind (temp) eventual (plusp temp))
+                       (symbol-macrolet ((alias eventual)) (plusp alias))
+                       (block eventual (return-from eventual (when x eventual)))))
+        (dolist (guard-first '(t nil))
+          (let* ((when-clause (list :when guard))
+                 (outcome '((:returns (values integer)) (:post-values (eventual) t)))
+                 (clauses (if guard-first (cons when-clause outcome)
+                              (append outcome (list when-clause))))
+                 (form `(defspec-function identity (:args (x integer)) (:cases (:one ,@clauses)))))
+            (ok (refuses (macroexpand-1 form)))
+            (ok (refuses (funcall (compile nil `(lambda () ,(macroexpand-1 form))))))
+            (ok (eq original (find-function-spec 'identity)))))))))
+
+(deftest loop-and-prog-guards-use-their-own-bindings
+  (with-fresh-registry
+    (dolist (guard '((do ((result 1)) (t (plusp result)))
+                     (do* ((eventual 1) (n eventual)) (t (plusp n)))
+                     (prog ((result 1)) (return (plusp result)))
+                     (prog* ((eventual 1) (n eventual)) (return (plusp n)))
+                     (dotimes (result 1 t) (plusp result))
+                     (dolist (eventual '(1) t) (plusp eventual))))
+      (let* ((case (make-instance 'function-case :name :one :when-forms (list guard)
+                                  :when-function (constantly t) :outcome-kind :returns
+                                  :outcome-spec '(values integer) :post-value-variables '(eventual)
+                                  :postconditions '(t) :postcondition-function (constantly t)))
+             (owner (make-instance 'function-spec :name 'identity
+                                   :argument-specs '((x integer)) :cases (list case))))
+        (ok (eq owner (cl-spec:register-function-spec owner)))))
+    (dolist (guard '((do ((result result)) (t result))
+                     (do* ((n eventual) (eventual 1)) (t n))
+                     (prog ((eventual eventual)) (return eventual))
+                     (prog* ((n result) (result 1)) (return n))
+                     (dotimes (n result t))
+                     (dolist (n eventual t))))
+      (ok (refuses
+           (macroexpand-1 `(defspec-function identity (:args (x integer))
+                            (:cases (:one (:when ,guard) (:returns (values integer))
+                                          (:post-values (eventual) t))))))))))
+
+(deftest standard-guard-macros-respect-return-scope
+  (dolist (name '(eventual result))
+    (dolist (guard `((handler-case (plusp ,name) (error () nil))
+                     (handler-bind ((error (lambda (c) (declare (ignore c)) (print ,name)))) t)
+                     (restart-case (plusp ,name) (again () t))
+                     (loop repeat 1 collect ,name)
+                     (loop repeat 1 always (plusp ,name))
+                     (loop repeat 1 always (plusp guard-output-alias))
+                     (do ((n ,name)) (t n))
+                     (prog ((n ,name)) (return n))
+                     (let ((n 0)) (setf n ,name) (plusp n))))
+      (ok (refuses
+           (macroexpand-1 `(defspec-function identity (:args (x integer))
+                            (:cases (:one (:when ,guard) (:returns (values integer))
+                                          (:post-values (eventual) t)))))))))
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity
+      (:args (x integer))
+      (:cases
+       (:one (:when (and (handler-case t (error (eventual) eventual))
+                         (restart-case t (retry (eventual) eventual))
+                         (loop for eventual in (list x) always (plusp eventual))
+                         (do ((eventual x)) (t (plusp eventual)))
+                         (prog ((result x)) (return (plusp result)))))
+             (:returns (values integer)) (:post-values (eventual) t))))
+    (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))))
+
+(deftest guard-local-bindings-and-data-are-independent-of-the-outcome
+  (let ((cl-spec:*registry* (make-hash-table-registry)) (other-case-value 1))
+    (defspec-function identity
+      (:args (result integer))
+      (:cases
+       (:one (:when (and (plusp result) (plusp other-case-value)
+                         (let* ((eventual result) (again eventual)) (= result again))
+                         (flet ((eventual (x) (plusp x)))
+                           (and (eventual result) (funcall #'eventual result)))
+                         (eq 'eventual (quote eventual))
+                         (block eventual (return-from eventual t))
+                         (case 'eventual (eventual t))
+                         (symbol-macrolet ((alias eventual))
+                           (let ((alias result)) (plusp alias)))
+                         (symbol-macrolet ((alias eventual))
+                           (let ((eventual result)) (and (plusp eventual) (plusp alias))))
+                         (funcall (lambda (eventual) (plusp eventual)) result)))
+             (:returns (values integer)) (:post-values (eventual) t))
+       (:two (:when (minusp result)) (:returns (values integer))
+             (:post-values (other-case-value) t))))
+    (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))
+    (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(-1)))))))
+
+(deftest a-local-result-is-available-in-a-case-guard
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity
+      (:args (x integer))
+      (:cases (:one (:when (let ((result x)) (plusp result))) (:returns integer))))
+    (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))))
+
+(deftest common-lisp-argument-names-do-not-hide-the-return-value
+  (ok (refuses
+       (macroexpand-1 '(defspec-function identity
+                        (:args (count integer))
+                        (:cases (:one (:when (plusp result)) (:returns integer))))))))
+
+(deftest guard-check-respects-local-macro-syntax
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (macrolet ((literal-name (name) `',name))
+      (defspec-function identity
+        (:args (x integer))
+        (:cases (:one (:when (eq (literal-name eventual)
+                                 (macrolet ((literal (value) `',value)) (literal eventual))))
+                      (:returns (values integer)) (:post-values (eventual) t)))))
+    (let* ((case (first (function-spec-cases (find-function-spec 'identity))))
+           (source (first (function-case-when-forms case))))
+      (ok (equal '(literal-name eventual) (second source)))
+      (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1))))))))
+
+(defvar *guard-macro-expansions* 0)
+
+#+(or sbcl ccl ecl abcl clisp)
+(deftest guard-macros-expand-once-and-cannot-introduce-output-references
+  (macrolet ((hidden () 'eventual)
+             (rejected-in-context-p (definition &environment environment)
+               (handler-case (progn (macroexpand-1 definition environment) nil)
+                 (invalid-function-spec-form () t))))
+    (ok (rejected-in-context-p
+         (defspec-function identity
+           (:args (x integer))
+           (:cases (:one (:when (handler-case (plusp (hidden)) (error () nil)))
+                         (:returns (values integer)) (:post-values (eventual) t)))))))
+  (let ((cl-spec:*registry* (make-hash-table-registry)) (*guard-macro-expansions* 0))
+    (funcall
+     (compile nil
+              '(lambda ()
+                 (macrolet ((guard-positive (n) (incf *guard-macro-expansions*) `(plusp ,n)))
+                   (defspec-function identity
+                     (:args (x integer))
+                     (:cases (:one (:when (handler-case (guard-positive x) (error () nil)))
+                                   (:returns integer))))))))
+    (ok (= 1 *guard-macro-expansions*))
+    (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(7)))))))
+
+(define-symbol-macro guard-output-alias eventual)
+
+(deftest case-guard-check-sees-enclosing-symbol-macros
+  (macrolet ((refused-in-context-p (form &environment environment)
+               (handler-case (progn (macroexpand-1 form environment) nil)
+                 (invalid-function-spec-form () t))))
+    (symbol-macrolet ((alias eventual) (x eventual))
+      (ok (refused-in-context-p
+           (defspec-function identity
+             (:args (x integer))
+             (:cases (:one (:when (plusp alias)) (:returns (values integer))
+                           (:post-values (eventual) t))))))
+      (let ((cl-spec:*registry* (make-hash-table-registry)))
+        (defspec-function identity
+          (:args (x integer))
+          (:cases (:one (:when (plusp x)) (:returns (values integer))
+                        (:post-values (eventual) t))))
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))))))
+
 (defun guarded-case (outcome &key (name :a) (when-forms '(t)) (when-function (lambda (x)
                                                                                (declare (ignore x))
                                                                                t)))
@@ -406,6 +571,94 @@ decides whether they pass."
                                                   t)
                         :source-form '(:a (:when t) (:returns (values integer integer))
                                        (:post-values (x) t)))))))
+
+(deftest owning-contract-validates-programmatic-guard-references
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity (:args (x integer)) (:returns integer))
+    (let ((original (find-function-spec 'identity)))
+      (let ((eventual 1))
+        (ok (refuses
+             (make-instance 'function-case :name :one :when-forms '((plusp eventual))
+                            :when-function (lambda (x) (declare (ignore x)) (plusp eventual))
+                            :outcome-kind :returns :outcome-spec '(values integer)
+                            :post-value-variables '(eventual) :postconditions '(t)
+                            :postcondition-function (constantly t)))))
+      (let* ((case (make-instance 'function-case :name :one :when-forms '((plusp result))
+                                  :when-function #'plusp :outcome-kind :returns
+                                  :outcome-spec 'integer))
+             (contract (make-instance 'function-spec :name 'identity
+                                      :argument-specs '((result integer)) :cases (list case))))
+        (ok (eq contract (cl-spec:register-function-spec contract)))
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))
+        (cl-spec:register-function-spec original))
+      (dolist (name '(eventual result))
+        (let ((case (make-instance 'function-case :name :one :when-forms '(t)
+                                   :when-function (constantly t)
+                                   :outcome-kind :returns :outcome-spec '(values integer)
+                                   :post-value-variables '(eventual) :postconditions '(t)
+                                   :postcondition-function (constantly t))))
+          (let ((contract (make-instance 'function-spec :name 'identity
+                                         :argument-specs '((x integer)) :cases (list case))))
+            (setf (slot-value case 'cl-spec/src/function-spec::when-forms)
+                  (list `(handler-case (plusp ,name) (error () nil))))
+            (ok (refuses (make-instance 'function-spec :name 'identity
+                                        :argument-specs '((x integer)) :cases (list case))))
+            (ok (refuses (cl-spec:register-function-spec contract)))
+            (ok (eq original (find-function-spec 'identity)))))))))
+
+(deftest registration-keeps-lexical-guard-analysis-until-the-guard-changes
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (macrolet ((guard-literal (symbol) `',symbol))
+      (defspec-function identity
+        (:args (x integer))
+        (:cases (:one (:when (eq (guard-literal eventual) 'eventual))
+                      (:returns (values integer)) (:post-values (eventual) t)))))
+    (let* ((contract (find-function-spec 'identity))
+           (case (first (function-spec-cases contract)))
+           (source (copy-tree (function-case-when-forms case))))
+      (ok (eq contract (cl-spec:register-function-spec contract)))
+      (ok (refuses (reinitialize-instance case :when-forms '((plusp eventual))
+                                          :when-function #'plusp)))
+      (ok (equal source (function-case-when-forms case)))
+      (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1))))))))
+
+(deftest attached-case-edits-respect-each-current-owner
+  (with-fresh-registry
+    (defspec-function identity
+      (:args (x integer)) (:cases (:one (:when t) (:returns integer))))
+    (let* ((owner (find-function-spec 'identity))
+           (case (first (function-spec-cases owner)))
+           (before (definition-digest owner))
+           (result -1)
+           (other (make-instance 'function-spec :name 'guarded
+                                 :argument-specs '((result integer)) :cases (list case))))
+      (flet ((replace-guard (callback)
+               (reinitialize-instance case :when-forms '((plusp result))
+                                      :when-function callback)))
+        (ok (refuses (replace-guard (lambda (x) (declare (ignore x)) (plusp result)))))
+        (ok (equal before (definition-digest owner)))
+        (ok (equal '(t) (function-case-when-forms case)))
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'identity '(1)))))
+        (ok (refuses (reinitialize-instance owner :cases (list case case))))
+        (ok (refuses (replace-guard #'plusp)))
+        ;; The second owner permits RESULT. Removing the first owner releases its constraint.
+        (reinitialize-instance owner :cases nil :return-spec 'integer)
+        (ok (eq case (replace-guard #'plusp)))
+        (cl-spec:register-function-spec other)
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'guarded '(1)))))
+        (ok (refuses (reinitialize-instance other :argument-specs '((x integer)))))
+        (reinitialize-instance case :when-forms '(t) :when-function (constantly t))
+        (reinitialize-instance other :argument-specs '((x integer)))
+        (ok (refuses (replace-guard #'plusp)))
+        ;; A detached case can receive a guard before its next owner supplies its inputs.
+        (reinitialize-instance other :cases nil :return-spec 'integer)
+        (ok (eq case (replace-guard #'plusp)))
+        (ok (refuses (reinitialize-instance owner :return-spec nil :cases (list case))))
+        (ok (null (function-spec-cases owner)))
+        (reinitialize-instance other :argument-specs '((result integer))
+                               :return-spec nil :cases (list case))
+        (ok (eq case (first (function-spec-cases other))))
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'guarded '(1)))))))))
 
 (deftest a-refused-case-edit-keeps-the-registered-contract
   (with-fresh-registry

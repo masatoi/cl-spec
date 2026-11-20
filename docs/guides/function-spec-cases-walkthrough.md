@@ -67,6 +67,31 @@ not stop at the first true guard, because a later guard error would then be
 hidden. `:when t` is an ordinary always-true form, not an implicit `:else`, and
 `:when nil` is an ordinary never-true one.
 
+A guard runs before the target returns. A visible reference to `RESULT` or to
+one of that case's `:post-values` names is a declaration error. An input named
+`RESULT` remains available. A guard can also introduce its own variable of the
+same name, for example `(let ((result amount)) (plusp result))`. Quoted data,
+function names and names from another case's postcondition remain independent.
+
+On SBCL, CCL, ECL, ABCL and CLISP, the DSL expands the guard in the declaration's lexical
+environment and compiles that expansion as its predicate. A reference in a
+`handler-case` handler, a `loop` clause, a place, or the expansion of a local
+macro is checked with the bindings visible at that position. Introspection
+and the definition digest retain the author's original guard.
+
+Programmatic cases supply guard source alongside a compiled function.
+Construction and registration check references visible in that source against
+the owning contract's inputs and the case's outputs. Supply ordinary Common
+Lisp source for expressions whose meaning depends on application macros:
+programmatic validation has no access to the lexical environment in which a
+separately supplied function was compiled. Source checking cannot establish
+what that function actually does or which name a dynamic lookup computes.
+
+Editing an attached case checks its guard against every contract that still
+uses it. A refused edit preserves the earlier predicate, guard form and digest.
+A detached case may use `result` as a prospective input. Attaching it to a
+contract then checks that name against the contract's actual inputs.
+
 Zero matches, several matches, and a guard that signals are contract-side
 **case-selection errors**. The target is not called at all, and the result is
 `:ERROR` / `:CONTRACT-ERROR` with `:FAILURE-PHASE :CASE-SELECTION` and a
