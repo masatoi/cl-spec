@@ -83,6 +83,30 @@ jobs:
           run_ranges default
           run_ranges ansi -ansi
 
+      - name: Run the function case guard regressions on ECL
+        run: |
+          sudo apt-get install -y ecl
+          ql_dir="$HOME/.roswell/lisp/quicklisp"
+          export CL_SOURCE_REGISTRY="$GITHUB_WORKSPACE//:$HOME/.roswell/local-projects//:$ql_dir/dists/quicklisp/software//:"
+          ecl -norc -eval '(require :asdf)' \
+              -eval '(asdf:load-system "cl-spec/tests/function-cases-test")' \
+              -eval '(in-package :cl-spec/tests/function-cases-test)' \
+              -eval '(uiop:quit
+                       (if (rove:run-tests
+                            (quote (case-guards-reject-their-own-return-bindings
+                                    loop-and-prog-guards-use-their-own-bindings
+                                    standard-guard-macros-respect-return-scope
+                                    guard-local-bindings-and-data-are-independent-of-the-outcome
+                                    a-local-result-is-available-in-a-case-guard
+                                    common-lisp-argument-names-do-not-hide-the-return-value
+                                    guard-check-respects-local-macro-syntax
+                                    guard-macros-expand-once-and-cannot-introduce-output-references
+                                    case-guard-check-sees-enclosing-symbol-macros
+                                    owning-contract-validates-programmatic-guard-references
+                                    registration-keeps-lexical-guard-analysis-until-the-guard-changes
+                                    attached-case-edits-respect-each-current-owner))
+                            :style :dot) 0 1))'
+
   ccl-core:
     runs-on: ubuntu-latest
     steps:
