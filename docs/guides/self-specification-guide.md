@@ -77,6 +77,13 @@ corresponding registry listing (`cl-spec:list-function-specs`,
 `cl-spec:list-properties`), with no duplicates; the order may differ, so
 compare them as sets rather than with `equal`.
 
+The `check-state-machine` self-contract covers machine objects and command lists
+accepted by that machine's declared sequence spec. Its postcondition checks the
+saved input and the observation's verdict and failure signature. The property
+`counter-machine-reports-first-dropped-increment` checks a particular faulty
+counter against an independent expectation. For `(:tick :drop :drop)` the
+first discrepancy occurs at index 1, with expected count 2 and actual count 1.
+
 ## 4. Run one check or all of them
 
 Individual contract (generated trials):

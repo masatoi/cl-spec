@@ -4633,7 +4633,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `deserialize-counterexample-artifact` | 不正な保存artifactをreader評価なしで拒否する |
 | `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
 | `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
-| `check-state-machine` | 与えたコマンド列の最初の増分取りこぼしを、位置・期待値・観測値を含めて報告する（§41） |
+| `check-state-machine` | 状態機械オブジェクトと、その機械のSpecが許すコマンド列について、入力の記録と判定・失敗種別の整合を検査する。専用カウンタの意味論はProperty `counter-machine-reports-first-dropped-increment` が最初の取りこぼしの位置・期待値・観測値を照合する（§41） |
 | `format-check-summary` | 保存したfixture検査の実行結果と評価を一行の文字列で返す |
 | `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |

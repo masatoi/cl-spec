@@ -19,7 +19,7 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/source-location #:current-source-location)
   (:import-from #:cl-spec/src/validator #:validate)
-  (:export #:defstate-machine #:check-state-machine))
+  (:export #:defstate-machine #:check-state-machine #:state-machine-property #:command-trace-p))
 
 (in-package #:cl-spec/src/state-machine)
 

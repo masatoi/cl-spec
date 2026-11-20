@@ -4,6 +4,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
+  (:import-from #:cl-spec/src/state-machine #:state-machine-property #:command-trace-p)
+  (:import-from #:cl-spec/src/execution #:same-value-p)
   (:import-from #:cl-spec/src/utils/artifact-values
                 #:serialize-artifact-value #:deserialize-artifact-value)
   (:import-from #:cl-spec/main
@@ -361,7 +363,8 @@ allowed."
     result-projection-retains-state-evidence
     one-shot-check-reuses-the-single-trial-classifier
     one-shot-check-observes-a-named-case-and-state-once
-    fixture-reconstruction-is-independent))
+    fixture-reconstruction-is-independent
+    counter-machine-reports-first-dropped-increment))
 
 (defun evidence-policy (trials)
   "Return the evidence policy a run of this bundle is held to for a TRIALS budget.
@@ -661,20 +664,47 @@ the malformed-normalization contract and the validate cases explicitly name
 their finite input corpora, and the registry write contract names its scenarios."
   (defgenerator counter-machine-generator ()
     (cl-spec/self-spec-fixtures:fresh-counter-machine))
-  (defspec counter-machine-input (instance-of cl-spec:property)
+  (defspec counter-machine-input (instance-of state-machine-property)
     (:generator counter-machine-generator))
+  (defgenerator counter-command-trace-generator ()
+    (loop repeat (random 7) collect (if (zerop (random 2)) :tick :drop)))
+  (defspec machine-command-trace (satisfies command-trace-p)
+    (:generator counter-command-trace-generator))
   (defspec-function cl-spec:check-state-machine
-    "The direct checker identifies the first increment its counter target drops."
-    (:args (machine counter-machine-input) (commands (list-of (member :tick :drop) :max-length 6)))
+    "Checking a machine object on an admitted trace records its input and classified outcome."
+    (:args (machine counter-machine-input) (commands machine-command-trace))
+    (:pre (validp (second (first (cl-spec:property-arguments machine))) commands))
     (:returns (instance-of cl-spec:trial-observation))
-    (:post (let ((index (position :drop commands)))
-             (if index
-                 (and (eq :failed (cl-spec:trial-observation-status result))
-                      (equal '(:state-machine :observation-mismatch :drop)
-                             (cl-spec:trial-observation-signature result))
-                      (equal (list :index index :command :drop :expected (1+ index) :actual index)
-                             (cl-spec:trial-observation-explanation result)))
-                 (eq :passed (cl-spec:trial-observation-status result))))))
+    (:post (let ((reason (cl-spec:trial-observation-reason result))
+                 (signature (cl-spec:trial-observation-signature result)))
+             (and (eql (cl-spec:trial-observation-arguments-mutated-p result)
+                       (not (same-value-p (list commands)
+                                          (cl-spec:trial-observation-arguments result))))
+                  (case (cl-spec:trial-observation-status result)
+                    ((:passed :rejected) (not (or reason signature)))
+                    (:failed (and (member reason '(:observation-mismatch :invariant-violation))
+                                  (eq :state-machine (first signature))
+                                  (eq reason (second signature))))
+                    (:error (and (eq reason :machine-error)
+                                 (eq :state-machine (first signature))
+                                 (eq reason (second signature))
+                                 (typep (cl-spec:trial-observation-condition result) 'error))))))))
+  (defproperty counter-machine-reports-first-dropped-increment
+      ((commands (list-of (member :tick :drop) :max-length 6)))
+    "The counter fixture misses its first :DROP increment at that command's index."
+    (:about cl-spec:check-state-machine)
+    (:tags :cl-spec-self)
+    (:trials (:smoke 5 :normal 20))
+    (let* ((machine (cl-spec/self-spec-fixtures:fresh-counter-machine))
+           (result (cl-spec:check-state-machine machine commands))
+           (index (position :drop commands)))
+      (if index
+          (and (eq :failed (cl-spec:trial-observation-status result))
+               (equal '(:state-machine :observation-mismatch :drop)
+                      (cl-spec:trial-observation-signature result))
+               (equal (list :index index :command :drop :expected (1+ index) :actual index)
+                      (cl-spec:trial-observation-explanation result)))
+          (eq :passed (cl-spec:trial-observation-status result)))))
   (defgenerator fresh-fixture-contract-generator ()
     (cl-spec/self-spec-fixtures:fresh-fixture-contract))
   (defspec fresh-fixture-contract-input (instance-of cl-spec:function-spec)
