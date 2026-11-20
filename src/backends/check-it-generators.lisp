@@ -468,14 +468,12 @@ so FLOAT and RATIONAL are absent rather than silently wrong."
                               type-specifier)))))
 
 (defun float-operand (number)
-  "Return NUMBER ready for arithmetic against a single-float draw.
+  "Prepare NUMBER for addition or subtraction with another single-float operand.
 
-Float contagion converts a rational to a single-float when it meets one, which
-overflows once the rational is beyond single-float range, so such a rational is
-converted to a double-float instead.  A float, or a rational a single-float can
-hold, is returned unchanged, so a small range still yields the single-floats
-check-it's own REAL-GENERATOR yields."
-  (if (and (rationalp number) (> (abs number) most-positive-single-float))
+Two finite single-floats can have a sum outside single-float range. Widen an
+operand above half that range before adding a scaled unit draw to the origin."
+  (if (and (typep number '(or rational short-float single-float))
+           (> (abs number) (/ most-positive-single-float 2)))
       (float number 1d0)
       number))
 
@@ -546,19 +544,19 @@ value towards OFFSET."
                                                       :upper-limit upper-limit))))
 
 (defun range-width (minimum maximum spec)
-  "Return MAXIMUM - MINIMUM, or signal GENERATOR-UNAVAILABLE when it is not finite.
-
-Two finite double-float bounds can be further apart than any double-float, as in
-(range real -1d308 1d308); the subtraction then overflows, or yields infinity
-when float traps are masked, and no shifted draw can cover the interval."
-  (let ((width (handler-case (- maximum minimum)
-                 (floating-point-overflow () nil))))
-    (when (or (null width)
-              (and (floatp width) (> (abs width) most-positive-long-float)))
+  "Return the finite width of the interval in a format that can represent it."
+  (let ((width (- (rational maximum) (rational minimum))))
+    (when (> width most-positive-double-float)
       (error 'generator-unavailable
              :spec spec :kind :range-too-wide
-             :reason "the range is too wide to sample: its width overflows a float"))
-    width))
+             :reason "the range is too wide to sample: its width exceeds double-float range"))
+    (cond ((> width most-positive-single-float) (float width 1d0))
+          ;; Keep the wider endpoint's float format for ordinary intervals.
+          ((and (floatp minimum) (floatp maximum))
+           (float width (+ (float 0 minimum) (float 0 maximum))))
+          ((floatp minimum) (float width minimum))
+          ((floatp maximum) (float width maximum))
+          (t width))))
 
 (defun real-range-generator (lower upper spec)
   "Return a generator producing reals in [LOWER, UPPER], where either bound may
@@ -594,10 +592,7 @@ drawn near and is refused as :RANGE-TOO-WIDE."
       ((= lower upper)
        lower)
       (t
-       (let ((width (range-width lower upper spec)))
-         (when (> width most-positive-double-float)
-           (too-wide "the range is too wide to sample: its width overflows a float"))
-         (scaled-real-generator lower width :minimum lower :maximum upper))))))
+       (scaled-real-generator lower (range-width lower upper spec) :minimum lower :maximum upper)))))
 
 (defmethod spec-generator ((spec type-spec) context)
   (declare (ignore context))
@@ -607,69 +602,52 @@ drawn near and is refused as :RANGE-TOO-WIDE."
   "Return true when BOUND is an infinite float."
   (and (floatp bound) (> (abs bound) most-positive-long-float)))
 
-(defun open-if-infinite (bound)
-  "Return :UNBOUNDED for an infinite float BOUND, else BOUND itself.
+(defun inward-infinite-bound (minimum maximum)
+  "Return a positive infinite lower bound or a negative infinite upper bound."
+  (cond ((and (infinite-bound-p minimum) (plusp minimum)) minimum)
+        ((and (infinite-bound-p maximum) (minusp maximum)) maximum)))
 
-A range bounded by an infinity admits every finite number on that side, which is
-what an open bound says, and generation can only produce finite numbers anyway.
-Rounding or shifting by an infinity instead signalled a raw error (issue #86)."
-  (if (infinite-bound-p bound) :unbounded bound))
-
-(defun integer-interval (minimum maximum)
-  "Return (VALUES LOW HIGH): MINIMUM rounded up and MAXIMUM rounded down.
-
-An INTEGER range admits the integers between its endpoints, so a fractional
-finite endpoint is rounded inward.  :UNBOUNDED is returned unchanged.  LOW above
-HIGH means no integer lies in the interval."
-  (values (if (eq minimum :unbounded) minimum (ceiling minimum))
-          (if (eq maximum :unbounded) maximum (floor maximum))))
+(defun generation-interval (base-type minimum maximum)
+  "Return the inclusive generation bounds and a third value true for an empty interval."
+  (let ((inward (inward-infinite-bound minimum maximum)))
+    (cond
+      ((and (realp minimum) (realp maximum) (> minimum maximum))
+       (values nil nil t))
+      (inward
+       (if (eq base-type 'integer)
+           (values nil nil t)
+           (values inward inward)))
+      (t
+       (flet ((endpoint (bound round)
+                (cond ((or (eq bound :unbounded) (infinite-bound-p bound)) :unbounded)
+                      ((eq base-type 'integer) (funcall round bound))
+                      (t bound))))
+         (let ((low (endpoint minimum #'ceiling))
+               (high (endpoint maximum #'floor)))
+           (values low high (and (realp low) (realp high) (> low high)))))))))
 
 (defun bounded-generator (base-type minimum maximum spec)
-  "Return a numeric generator for BASE-TYPE limited by MINIMUM and MAXIMUM.
-
-:UNBOUNDED is written back as check-it's own open bound marker, *.  A REAL range
-is drawn by REAL-RANGE-GENERATOR, which does not depend on CHECK-IT:*SIZE*'s
-clamp.  An INTEGER range with both bounds finite is handed to check-it's integer
-generator, which clamps each limit to *SIZE*, so each bound raises
-*REQUIRED-SIZE* to its magnitude; without that check-it clamps the bound away and
-generates outside the range.  A one-sided INTEGER range is drawn from
-[0, max(|bound|, *SIZE*)] shifted by its bound (SHIFTED-INTEGER-GENERATOR), so it
-raises nothing: raising *SIZE* to the bound is what collapsed it to the bound
-alone (issue #77).
-
-An infinite float bound is read as an open one (OPEN-IF-INFINITE).  An INTEGER
-range's bounds are then rounded inward by INTEGER-INTERVAL, as
-validation reads them; check-it's integer generator would otherwise draw the
-bound's own fraction.  An interval that admits nothing -- no integer in it, or a
-minimum above the maximum -- is refused rather than handed to check-it."
-  (multiple-value-bind (minimum maximum)
-      (let ((minimum (open-if-infinite minimum))
-            (maximum (open-if-infinite maximum)))
-        (if (eq base-type 'integer)
-            (integer-interval minimum maximum)
-            (values minimum maximum)))
-    (let ((finite-p (and (not (eq minimum :unbounded)) (not (eq maximum :unbounded)))))
-      (when (and finite-p (> minimum maximum))
-        (error 'generator-unavailable
-               :spec spec :kind :empty-domain
-               :reason (if (eq base-type 'integer)
-                           "no integer lies between the range's endpoints"
-                           "the range's minimum is above its maximum")))
-      (when (and finite-p (eq base-type 'integer))
-        (dolist (bound (list minimum maximum))
-          (setf *required-size* (max *required-size* (abs bound))))))
-    (let ((lower (if (eq minimum :unbounded) '* minimum))
-          (upper (if (eq maximum :unbounded) '* maximum)))
+  "Return a generator for BASE-TYPE within the inclusive interval MINIMUM to MAXIMUM."
+  (multiple-value-bind (low high empty-p) (generation-interval base-type minimum maximum)
+    (when empty-p
+      (error 'generator-unavailable :spec spec :kind :empty-domain
+             :reason "no value of the base type lies between the range's endpoints"))
+    (let ((lower (if (eq low :unbounded) '* low))
+          (upper (if (eq high :unbounded) '* high)))
       (case base-type
-        ((integer)
-         (cond ((and (eq lower '*) (eq upper '*))
-                (make-instance 'int-generator :lower-limit '* :upper-limit '*))
+        (integer
+         (cond ((and (eq lower '*) (eq upper '*)) (make-instance 'int-generator))
                ((eq upper '*) (shifted-integer-generator lower 0 '*))
                ((eq lower '*) (shifted-integer-generator upper '* 0))
-               (t (make-instance 'int-generator :lower-limit lower :upper-limit upper))))
-        ((real) (real-range-generator lower upper spec))
-        (t (error 'generator-unavailable
-                  :spec spec :kind :unsupported-type
+               (t
+                ;; Check-it clamps both finite bounds to *SIZE*.
+                (setf *required-size* (max *required-size* (abs lower) (abs upper)))
+                (make-instance 'int-generator :lower-limit lower :upper-limit upper))))
+        (real
+         (if (infinite-bound-p lower)
+             lower
+             (real-range-generator lower upper spec)))
+        (t (error 'generator-unavailable :spec spec :kind :unsupported-type
                   :reason (format nil "~S cannot carry a numeric range" base-type)))))))
 
 (defmethod spec-generator ((spec range-spec) context)
@@ -740,26 +718,12 @@ minimum above the maximum -- is refused rather than handed to check-it."
   "Largest finite element domain ENUMERABLE-VALUES materializes for UNIQUE.")
 
 (defun integer-range-bounds (spec)
-  "Return (VALUES MINIMUM MAXIMUM) for an integer RANGE-SPEC, or NIL.
-
-Fractional finite endpoints are read the way validation reads them: the admitted
-values are the integers between the endpoints, so the minimum rounds up and the
-maximum rounds down (INTEGER-INTERVAL).  A missing result means either that no
-integer lies in the interval (MINIMUM above MAXIMUM) or that a bound is not a
-finite number, which is why INTEGER-RANGE-P tells the two apart."
-  (let ((minimum (range-spec-minimum spec))
-        (maximum (range-spec-maximum spec)))
-    (when (integer-range-p spec)
-      (multiple-value-bind (low high) (integer-interval minimum maximum)
-        (when (<= low high)
-          (values low high))))))
-
-(defun integer-range-p (spec)
-  "Return true when SPEC is an integer range with finite real endpoints."
-  (flet ((finite-p (bound) (and (realp bound) (not (infinite-bound-p bound)))))
-    (and (eq (range-spec-base-type spec) 'integer)
-         (finite-p (range-spec-minimum spec))
-         (finite-p (range-spec-maximum spec)))))
+  "Return LOW, HIGH and FINITE-P for an integer range. NIL bounds denote an empty domain."
+  (when (eq (range-spec-base-type spec) 'integer)
+    (multiple-value-bind (low high empty-p)
+        (generation-interval 'integer (range-spec-minimum spec) (range-spec-maximum spec))
+      (cond (empty-p (values nil nil t))
+            ((and (integerp low) (integerp high)) (values low high t))))))
 
 (defgeneric enumerable-values (spec context)
   (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
@@ -798,15 +762,12 @@ check-it's guard generator, which recurses with no depth limit.")
 
 (defmethod enumerable-values ((spec range-spec) context)
   (declare (ignore context))
-  (when (integer-range-p spec)
-    (multiple-value-bind (low high) (integer-range-bounds spec)
-      (cond
-        ;; Fractions such as (range integer 0.5 0.9) admit no integer: that is an
-        ;; empty domain, not a domain that cannot be enumerated.
-        ((null low) (values nil t))
-        ((<= (- high low) *enumeration-limit*)
-         (values (loop for value from low to high collect value) t))
-        (t (values nil nil))))))
+  (multiple-value-bind (low high finite-p) (integer-range-bounds spec)
+    (cond ((not finite-p) (values nil nil))
+          ((null low) (values nil t))
+          ((<= (- high low) *enumeration-limit*)
+           (values (loop for value from low to high collect value) t))
+          (t (values nil nil)))))
 
 (defmethod enumerable-values ((spec or-spec) context)
   (let ((values nil))
@@ -1534,10 +1495,11 @@ unrelated or merely overlapping types collapse to the sticky :NO-BASE state, so 
 later conjunct cannot restart a fresh fold and hide the earlier conflict.  An AND
 whose fold is :NO-BASE is left to declaration-order source selection and the
 whole-AND filter."
-  (declare (ignore spec))
-  (cond ((eq current :no-base) :no-base)
+  (cond ((null new)
+         (error 'generator-unavailable :spec spec :kind :empty-domain
+                :reason "a conjunct requires the empty type NIL"))
+        ((eq current :no-base) :no-base)
         ((null current) new)
-        ((null new) current)
         ((eq current new) current)
         ((and (member current '(integer real)) (member new '(integer real))) 'integer)
         ((subtypep current new) current)
@@ -1664,7 +1626,7 @@ distribution. Anything else is collected into LEFTOVERS."
       (type-spec
        (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
       (range-spec
-       (setf base-type (merge-base-type base-type (range-spec-base-type child) spec)
+       (setf base-type (merge-base-type base-type (or (range-spec-base-type child) 'real) spec)
              minimum (tighter-minimum minimum (range-spec-minimum child))
              maximum (tighter-maximum maximum (range-spec-maximum child))))
       (and-spec

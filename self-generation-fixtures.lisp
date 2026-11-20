@@ -115,7 +115,7 @@ permits an unchanged accepted candidate: a generated input can already be minima
           (if shrunk (list original shrunk) (list original))))))
 
 (defun generation-exhaustion-observations (budget)
-  "Return saved exhaustion reports for a refusing filter and colliding map keys.
+  "Return saved exhaustion reports for refusing filters and colliding map keys.
 Each request owns BUDGET reservations. A private registry keeps the constant key
 generator independent of the caller's definitions. NIL means an unexpected success."
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
@@ -131,5 +131,6 @@ generator independent of the caller's definitions. NIL means an unexpected succe
          (cl-spec:generation-budget-exhausted (condition)
            (cl-spec:generation-budget-exhausted-report condition))))
      '((and (member 0) (satisfies plusp))
+       (and string (range * *))
        (alist-of collision-key null :min-count 2 :max-count 2)
        (hash-table-of collision-key null :min-count 2 :max-count 2)))))

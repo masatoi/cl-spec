@@ -605,6 +605,8 @@ system itself, so every instrumentation symbol is resolved here by name."
   (mapcar #'cl-spec:normalize-spec-form
           (append '(integer string (range integer -5 5) (member 1 2 3) (member nil)
                     (nullable integer) (or integer string)
+                    (and integer (range * *))
+                    (range real 2.0e38 *) (range real -2.0e38 2.0e38)
                     (list-of integer :min-length 1 :max-length 3)
                     (vector-of (member 1 2 3) :min-length 1 :max-length 2 :unique t)
                     (tuple integer string)
