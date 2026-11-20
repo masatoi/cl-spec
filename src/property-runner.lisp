@@ -507,6 +507,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   (check-argument property-designator '(or symbol property) 'run-property
                   :property-designator)
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
+  ;; Resolve omissions before validating the effective settings, including saved data.
+  (when (typep seed 'property-result)
+    (unless profile-p (setf profile (property-result-profile seed)))
+    (unless options-p (setf options (property-result-options seed))))
   (check-profile profile 'run-property)
   (check-run-options options 'run-property)
   (setf registry (check-registry registry 'run-property))
@@ -517,17 +521,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
              (prog1 (cdr *pending-result-constructor*)
                (setf *pending-result-constructor* nil))))
          (seed-result (and (typep seed 'property-result) seed))
-         (profile (if (and seed-result (not profile-p))
-                      (property-result-profile seed-result)
-                      profile))
          (seed (if seed-result (property-result-seed seed-result) seed))
-         ;; A result also carries the options its run was given, so an explicit
-         ;; :GENERATION-BUDGET is reused when the caller omits options.  Otherwise
-         ;; a run that exhausted a small budget would pass on replay under the
-         ;; default budget, contradicting the result it was handed.
-         (options (if (and seed-result (not options-p))
-                      (property-result-options seed-result)
-                      options))
          (property (let ((resolved (prepare-property-run
                                     (resolve-property property-designator registry))))
                      ;; A run made through CHECK-FUNCTION checks its own result's name and kind.

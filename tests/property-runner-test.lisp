@@ -228,6 +228,22 @@
           (ok (= 3 (property-result-trials overridden)))
           (ok (eq :passed (property-result-status overridden))))))))
 
+(deftest inherited-replay-settings-are-validated-before-running
+  (with-fresh-registry
+    (let ((calls 0))
+      (cl-spec/src/dsl:defproperty counted-replay () (:trials (:normal 1)) (incf calls))
+      (dolist (setting '((:profile :bogus :profile)
+                         (:options (:trials 999) :options)
+                         (:options (:generation-budget -1) :generation-budget)))
+        (destructuring-bind (key value expected) setting
+          (let ((saved (make-instance 'property-result :property 'counted-replay
+                                      :trials 1 :seed 41 key value)))
+            (dolist (run (list (lambda () (run-property 'counted-replay :seed saved))
+                               (lambda () (replay-property 'counted-replay saved))))
+              (ok (eq expected (handler-case (progn (funcall run) nil)
+                                 (invalid-argument (c) (invalid-argument-argument c)))))))))
+      (ok (zerop calls)))))
+
 (deftest replay-from-a-result-uses-its-recorded-profile
   ;; This is the regression test for the round-trip defect recorded as D5 Form A in
   ;; docs/cl-spec-defect-corpus.md: REPLAY-PROPERTY's docstring recommends passing the
