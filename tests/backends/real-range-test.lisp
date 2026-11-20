@@ -2,57 +2,20 @@
 
 (defpackage #:cl-spec/tests/backends/real-range-test
   (:use #:cl)
-  (:import-from #:rove #:deftest #:ok #:testing)
-  (:import-from #:cl-spec/main #:sample #:normalize-spec-form #:validp)
-  (:import-from #:cl-spec/src/backends/check-it)
-  (:import-from #:cl-spec/src/backends/check-it-generators #:compile-spec-generator)
-  (:import-from #:check-it #:generate #:shrink))
+  (:import-from #:rove #:deftest #:ok)
+  (:import-from #:cl-spec/tests/backends/real-range-checks
+                #:check-draw-formats #:check-smallest-double #:check-tiny-intervals))
 
 (in-package #:cl-spec/tests/backends/real-range-test)
 
+(defun report-range-check (form requirement passed)
+  (ok passed (format nil "~S meets the ~S check" form requirement)))
+
 (deftest draw-format-follows-the-range-operands
-  (dolist (case '(((range real -2.0f38 2.0f38) double-float)
-                  ((range real -1d200 1d200) double-float)
-                  ((range real -1l250 1l250) long-float)
-                  ((range real -2.0f0 1d200) double-float)
-                  ((range real 0 1d-200) double-float)
-                  ((range real 2.0f38 *) double-float)
-                  ((range real * -1d200) double-float)
-                  ((range real 1.0f0 *) single-float)
-                  ((range real 1/4 3/4) single-float)
-                  ((range real 1d0 2d0) double-float)))
-    (destructuring-bind (form type) case
-      (testing (format nil "~S produces admitted ~S draws" form type)
-        (let* ((spec (normalize-spec-form form))
-               (values (sample spec :count 32)))
-          (ok (= 32 (length values)))
-          (ok (every (lambda (value) (and (typep value type) (validp spec value))) values)))))))
+  (check-draw-formats #'report-range-check))
 
 (deftest draws-near-the-smallest-double
-  ;; CLISP has no subnormals. On implementations with gradual underflow the
-  ;; nondegenerate interval also exercises rounding and the endpoint clamp.
-  (let* ((low least-positive-double-float)
-         (high (if (< low least-positive-normalized-double-float) (* 32 low) low))
-         (spec (normalize-spec-form (list 'range 'real low high)))
-         (values (sample spec :count 32)))
-    (ok (= 32 (length values)))
-    (ok (every (lambda (value) (and (typep value 'double-float) (validp spec value))) values))))
+  (check-smallest-double #'report-range-check))
 
 (deftest tiny-signed-intervals-generate-and-shrink
-  (dolist (tiny (list least-positive-single-float least-positive-double-float))
-    (let* ((one (float 1 tiny))
-           (normal (if (typep tiny 'single-float)
-                       least-positive-normalized-single-float
-                       least-positive-normalized-double-float))
-           (next (* normal (+ one (scale-float one (- 1 (float-digits one)))))))
-      (dolist (bounds (list (list 0 tiny) (list (- tiny) 0) (list (- tiny) tiny)
-                            (list tiny (* 2 tiny)) (list (* -2 tiny) (- tiny))
-                            (list normal next) (list (- next) (- normal))))
-        (testing (format nil "Tiny interval ~S" bounds)
-          (let* ((spec (normalize-spec-form (list* 'range 'real bounds)))
-                 (values (sample spec :count 32))
-                 (generator (compile-spec-generator spec nil)))
-            (ok (= 32 (length values)))
-            (ok (every (lambda (value) (validp spec value)) values))
-            (ok (validp spec (generate generator)))
-            (ok (validp spec (shrink generator (lambda (value) (validp spec value)))))))))))
+  (check-tiny-intervals #'report-range-check))
