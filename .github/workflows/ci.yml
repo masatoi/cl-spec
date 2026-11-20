@@ -52,3 +52,33 @@ jobs:
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: rove cl-spec.asd
+
+      - name: Check ASDF propagates a failed test
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: |
+          ros run --eval '(ql:quickload :cl-spec/tests :silent t)' \
+                  --eval '(asdf:test-system :cl-spec)' \
+                  --load ci/asdf-test-failure.lisp \
+                  --eval '(uiop:quit 0)'
+
+  ccl-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clozure CL 1.12.2
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 -o ccl.tar.gz \
+            https://github.com/Clozure/ccl/releases/download/v1.12.2/ccl-1.12.2-linuxx86.tar.gz
+          echo "a94fda3daf26ce8c3d08e0db0e6e9907995acc10e0f8aad2125790b93eaa1556  ccl.tar.gz" | sha256sum -c -
+          tar -xzf ccl.tar.gz
+
+      - name: Load the core and exercise a range and a multiple-value contract
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: |
+          "$RUNNER_TEMP/ccl/lx86cl64" --image-name "$RUNNER_TEMP/ccl/lx86cl64.image" \
+            --no-init --batch --eval '(require :asdf)' --eval '(asdf:load-system "cl-spec")' \
+            --load ci/core-smoke.lisp
