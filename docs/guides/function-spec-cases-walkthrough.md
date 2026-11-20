@@ -219,7 +219,9 @@ twelve generated trials. Inspect its counts and row evidence directly.
 
 Each row runs once through `check-call`. Calling the equality row
 `:insufficient-funds` would give that row `:status :failed` and
-`:reason :case-mismatch` even though its direct `:call` passed.
+`:reason :case-mismatch` even though its direct `:call` passed. A target outcome with
+no selected case also reports a mismatch. Any failure of the target itself
+remains available in the direct result.
 `call-check-data` on the saved `:call` exposes the input, outcome and selected
 case. An error that escapes `check-call`, including `invalid-call-arguments`,
 is retained under `:condition` with `:reason :call-error`. Malformed table

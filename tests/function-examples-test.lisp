@@ -87,7 +87,8 @@
 (defun remove-target-cases (step)
   (when (zerop step)
     (reinitialize-instance (find-function-spec 'remove-target-cases)
-                           :cases nil :return-spec 'integer))
+                           :cases nil :return-spec '(member 0 1)))
+  (when (= step 3) (error 'program-error))
   step)
 
 (deftest a-passing-call-must-still-select-its-expected-case
@@ -104,6 +105,24 @@
       (ok (eq :failed (getf row :status)))
       (ok (eq :case-mismatch (getf row :reason)))
       (ok (eq :failed (getf report :status))))))
+
+(deftest missing-case-after-a-target-outcome-retains-both-failures
+  (let ((*registry* (make-hash-table-registry)))
+    (defspec-function remove-target-cases
+      (:args (step (range integer 0 9)))
+      (:cases (:declared (:when t) (:returns integer))))
+    (let* ((report (check-function-with-examples 'remove-target-cases
+                                                 '((:declared (0)) (:declared (2)) (:declared (3)))
+                                                 :trials 0))
+           (rows (rest (getf report :examples))))
+      (dolist (row rows)
+        (let ((observation (call-check-result-observation (getf row :call))))
+          (ok (consp (trial-observation-outcome observation)))
+          (ok (trial-observation-reason observation))
+          (ok (null (getf row :actual-case)))
+          (ok (eq :case-mismatch (getf row :reason)))))
+      (ok (eq :return-spec (trial-observation-reason
+                           (call-check-result-observation (getf (first rows) :call))))))))
 
 (deftest fixed-calls-do-not-consume-the-generated-runs-implicit-seed
   (let ((*registry* (make-hash-table-registry))

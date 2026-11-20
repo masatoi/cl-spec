@@ -2,7 +2,8 @@
 
 (defpackage #:cl-spec/src/function-examples
   (:use #:cl)
-  (:import-from #:cl-spec/src/execution #:trial-observation-case #:trial-observation-reason)
+  (:import-from #:cl-spec/src/execution
+                #:trial-observation-case #:trial-observation-reason #:trial-observation-outcome)
   (:import-from #:cl-spec/src/function-spec
                 #:check-call #:check-function #:call-check-result-observation
                 #:call-check-result-status #:resolve-function-spec #:function-spec-cases
@@ -38,7 +39,8 @@
         (let* ((observation (call-check-result-observation call))
                (actual (trial-observation-case observation))
                (status (call-check-result-status call))
-               (mismatch (and (or actual (eq status :passed)) (not (eq expected actual)))))
+               (mismatch (and (not (eq expected actual))
+                              (or actual (consp (trial-observation-outcome observation))))))
           (list :expected-case expected :actual-case actual
                 :status (if (and mismatch (eq :passed status)) :failed status)
                 :reason (if mismatch :case-mismatch (trial-observation-reason observation))
@@ -64,8 +66,9 @@ table runs generation alone. FUNCTION-DESIGNATOR and the generation keywords
 :TRIALS, :SEED, :OPTIONS and :REGISTRY follow CHECK-FUNCTION.
 
 Each row calls CHECK-CALL once in table order. Its :CALL holds the direct result.
-:ACTUAL-CASE comes from the recorded observation. A different selected case
-sets :REASON to :CASE-MISMATCH and fails even an otherwise passing row. If
+:ACTUAL-CASE comes from the recorded observation. A different case, or a target
+outcome with no case, sets :REASON to :CASE-MISMATCH. :CALL retains the target
+outcome even when the function also violated its return or error contract. If
 CHECK-CALL signals an error, the row records :STATUS :ERROR, :REASON :CALL-ERROR
 and :CONDITION. Subsequent rows and the generated phase still run.
 
