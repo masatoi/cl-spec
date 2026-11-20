@@ -32,8 +32,8 @@ Integer endpoints are rounded inward. Singleton ranges hit both lower and upper;
 ranges with no interior integers declare the interior bucket inapplicable.
 Nested plists and finite references are followed. Absent parents and omitted
 arguments are inapplicable, distinct from a present key whose value is NIL.
-Unsupported composites, including empty alist, hash-table and object field specs
-(`:unsupported-composite`), field ranges with an open or infinite endpoint,
+Unsupported composites, including empty alist, hash-table, object and call-argument
+schemas (`:unsupported-composite`), field ranges with an open or infinite endpoint,
 a non-integer base type or no admissible integer (`:unsupported-boundary`),
 recursive references (`:recursive-reference`) and discovery limits
 (`:depth-limit`, `:dimension-limit`) are reported under `:unexpanded`; discovery

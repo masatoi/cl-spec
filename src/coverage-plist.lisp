@@ -5,6 +5,7 @@
                 #:spec-children #:spec-generator-name #:and-spec #:or-spec #:collection-spec
                 #:reference-spec #:reference-spec-target
                 #:range-spec #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum)
+  (:import-from #:cl-spec/src/call-schema #:call-arguments-spec)
   (:import-from #:cl-spec/src/field-spec
                 #:field-spec #:plist-spec #:field-spec-fields #:field-spec-closed-p
                 #:field-key #:field-value-spec #:field-required-p #:plist-structure-error)
@@ -73,7 +74,8 @@
                                (list :targetable targetable)))
                         (walk child name child-path (cons node ancestors) (1+ depth)
                               targetable)))))
-                 ((or (typep node '(or field-spec collection-spec and-spec or-spec))
+                 ((or (typep node '(or field-spec collection-spec and-spec or-spec
+                                       call-arguments-spec))
                       (spec-children node))
                   (omit (cons name path) :unsupported-composite)))))
       (catch 'discovery-limit
