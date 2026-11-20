@@ -262,7 +262,7 @@ lead back to OBJECT, so it has no components here."
     ((consp object) (list (car object) (cdr object)))
     ((not (eq test :equalp)) nil)
     ((and (arrayp object) (eq t (array-element-type object)))
-     (loop for index from 0 below (array-total-size object)
+     (loop for index from 0 below (if (vectorp object) (length object) (array-total-size object))
            collect (row-major-aref object index)))
     ((hash-table-p object)
      (let ((items '()))

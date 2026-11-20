@@ -198,6 +198,28 @@
   (ok (validp (normalize-spec-form '(alist-of integer integer))
               (loop for key from 0 below 20000 collect (cons key key)))))
 
+(deftest equalp-map-keys-follow-the-active-vector-length
+  (let* ((key (make-array 2 :fill-pointer 1 :initial-element :x))
+         (entry (list (cons key 3)))
+         (form '(alist-of vector integer :test equalp)))
+    (setf (aref key 1) key)
+    (let ((equal-active-part (equalp key #(:x)))
+          (accepted (validp (normalize-spec-form form) entry))
+          (duplicate (getf (first (errors-of form (acons #(:x) 5 entry))) :kind)))
+      (ok equal-active-part)
+      (ok accepted)
+      (ok (eq :duplicate-key duplicate)))
+    (setf (fill-pointer key) 2)
+    (let ((kind (getf (first (errors-of form entry)) :kind))
+          (eql-accepted (validp (normalize-spec-form '(alist-of vector integer :test eql)) entry)))
+      (ok (eq :cyclic-value kind))
+      (ok eql-accepted)))
+  (let ((matrix (make-array '(1 2) :initial-element nil)))
+    (setf (row-major-aref matrix 1) matrix)
+    (let ((kind (getf (first (errors-of '(alist-of array integer :test equalp)
+                                        (list (cons matrix 3)))) :kind)))
+      (ok (eq :cyclic-value kind)))))
+
 (deftest map-introspection-projects-both-children
   (let* ((form '(alist-of keyword integer :test eq :max-count 8))
          (data (spec-data (normalize-spec-form form))))
