@@ -14,6 +14,8 @@
   (:export #:coverage-schema #:coverage-data #:invalid-coverage-options
            #:invalid-coverage-options-reason #:unsupported-coverage-operation
            #:unsupported-coverage-operation-reason)
+  (:import-from #:cl-spec/src/check-summary #:format-check-summary)
+  (:export #:format-check-summary)
   (:import-from #:cl-spec/src/evidence
                 #:evidence-summary #:assess-evidence
                 #:invalid-evidence-policy #:invalid-evidence-policy-reason)
