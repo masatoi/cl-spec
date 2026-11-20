@@ -48,7 +48,7 @@
         (ok (string= copy "abc"))))))
 
 (deftest base-string-records-check-contents-and-bounds
-  (let ((non-base (code-char #x3BB)))
+  (let ((non-base (and (< #x3BB char-code-limit) (code-char #x3BB))))
     (when (and non-base (not (typep non-base 'base-char)))
       (let ((text (string non-base)))
         (ok (string= text (deserialize-artifact-value (serialize-artifact-value text))))
