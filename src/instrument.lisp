@@ -25,7 +25,7 @@
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing)
   (:import-from #:cl-spec/src/ir #:predicate-spec)
-  (:import-from #:cl-spec/src/registry #:*registry* #:registry-find-function-spec)
+  (:import-from #:cl-spec/src/registry #:*registry* #:check-registry #:registry-find-function-spec)
   (:import-from #:cl-spec/src/explain
                 #:compile-explainer #:error-datum #:expected-descriptor #:proper-list-p)
   (:import-from #:cl-spec/src/schema
@@ -305,7 +305,7 @@ OPERATOR names the public function a refusal is reported against."
   ;; function, so a refusal names the one called rather than this internal helper.
   (check-argument name 'symbol operator :name)
   (check-argument scopes '(satisfies valid-scopes-p) operator :scopes)
-  (let* ((registry (or registry *registry*))
+  (let* ((registry (check-registry registry operator))
          (contract (or (registry-find-function-spec registry name)
                        (error 'unknown-function-spec :name name)))
          (reason (unsupported-contract-reason name contract)))
@@ -341,6 +341,7 @@ Installed omissions and digest exclusions are installation-time snapshots.
 Current omissions are freshly collected; :NOT-COLLECTED distinguishes absent
 inspection from a known empty omission list."
   (check-argument name 'symbol 'instrumentation-status :name)
+  (setf registry (check-registry registry 'instrumentation-status))
   (let ((entry (gethash name *instrumented-functions*))
         (reasons nil) (stale nil) (current-digest nil) (current-complete nil)
         (local-available nil) (current-omissions :not-collected))

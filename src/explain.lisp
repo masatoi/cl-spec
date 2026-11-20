@@ -1042,7 +1042,7 @@ MCP projection are derived from it.
 
 A value nested more than *REFERENCE-DEPTH-LIMIT* references deep signals
 VALIDATION-DEPTH-EXCEEDED instead of an answer, as VALIDP and VALIDATE do."
-  (check-registry registry 'explain-data)
+  (setf registry (check-registry registry 'explain-data))
   (let* ((spec (resolve-spec spec-designator registry))
          (errors (funcall (compile-explainer spec :context (list :registry registry))
                           value nil)))

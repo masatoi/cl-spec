@@ -860,20 +860,21 @@ so a threshold of one is met and a threshold of two is a recorded shortfall."
     (:generator registry-generator))
   (defspec-function cl-spec:definition-digest
     "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
-    (:args (definition digest-definition) &key ((:registry registry) registry-object supplied))
+    (:args (definition digest-definition)
+           &key ((:registry registry) (nullable registry-object) supplied))
     (:returns (values (nullable string) boolean (list-of digest-omission-data)))
     (:post-values (digest complete omissions)
       (if complete
           (and (stringp digest) (null omissions))
           (and (null digest) (consp omissions)))))
   (defspec-function cl-spec:find-spec
-    "Omitted registry uses the current registry; supplied registry is used explicitly."
-    (:args (name arbitrary-symbol) &optional (registry registry-object supplied))
+    "An omitted or NIL registry uses the current registry. A registry object selects that registry."
+    (:args (name arbitrary-symbol) &optional (registry (nullable registry-object) supplied))
     (:returns (values (nullable (instance-of spec)) boolean))
     (:post-values (found-spec found-p)
       (multiple-value-bind (expected present)
           (registry-find-spec
-           (if supplied registry cl-spec:*registry*) name)
+           (if (and supplied registry) registry cl-spec:*registry*) name)
         (and (eq found-spec expected) (eq found-p present)))))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
@@ -1632,8 +1633,8 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
            (first (make-instance 'cl-spec:property
                                  :name 'self-property
                                  :arguments '((x integer))
-                                 :targets '(self-target-a)
-                                 :tags '(self-tag-a)
+                                 :targets (list 'self-target-a)
+                                 :tags (list 'self-tag-a)
                                  :function (lambda (x) (declare (ignore x)) t)))
            (second (make-instance 'cl-spec:property
                                   :name 'self-property
@@ -1651,6 +1652,9 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                   (cl-spec:properties-with-tag 'self-tag-a registry))
                           (null (cl-spec:properties-for 'self-tag-a registry))
                           (null (cl-spec:properties-with-tag 'self-target-a registry)))))
+        ;; Clients can reuse the lists exposed by the registered property's readers.
+        (setf (car (cl-spec:property-targets first)) 'self-target-b
+              (car (cl-spec:property-tags first)) 'self-tag-b)
         (cl-spec:register-property second registry)
         (and indexed
              (null (cl-spec:properties-for 'self-target-a registry))
@@ -1696,7 +1700,7 @@ expected order is by symbol name alone and is computed here, not by the registry
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
     (let* ((registry (make-registry-under-test))
-           (names '(self-sort-c self-sort-a self-sort-b))
+           (names '(self-sort-b self-sort self-sort-a))
            (expected (sort (copy-list names) #'string< :key #'symbol-name)))
       (dolist (name names)
         (cl-spec:registry-register-spec registry name (normalize-spec-form 'integer))

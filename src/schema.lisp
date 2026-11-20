@@ -18,7 +18,8 @@
   (:import-from #:cl-spec/src/map-spec
                 #:map-of-spec #:hash-table-of-spec #:alist-of-spec
                 #:map-spec-key-test #:map-count-constraint-plist)
-  (:import-from #:cl-spec/src/registry #:*registry* #:find-spec #:find-property #:find-generator)
+  (:import-from #:cl-spec/src/registry
+                #:*registry* #:check-registry #:find-spec #:find-property #:find-generator)
   (:import-from #:cl-spec/src/ir
                 #:spec #:spec-name #:spec-description #:spec-kind #:spec-source-form #:spec-metadata
                 #:spec-children #:spec-generator-name
@@ -543,6 +544,7 @@ Extension programming errors propagate rather than becoming incompleteness."
              :reason (format nil "a symbol designator such as ~S needs :ENTITY-KIND ~
                                   to say which definition it names"
                              designator))))
+  (setf registry (check-registry registry 'definition-digest))
   (let ((root (resolve-definition designator entity-kind registry)))
     (unless root
       (return-from definition-digest
@@ -579,6 +581,7 @@ Other objects, including custom-generator dependencies, signal TYPE-ERROR.
 CAPABILITIES, when supplied, replaces the backend probe; execution uses this
 to avoid compiling a disposable generator before constructing the actual one."
   (check-type definition (satisfies metadata-definition-p))
+  (setf registry (check-registry registry 'definition-metadata))
   (multiple-value-bind (digest complete omissions) (definition-digest definition :registry registry)
     (let ((capabilities
             (copy-list (if capabilities-p capabilities
