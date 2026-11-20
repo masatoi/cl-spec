@@ -107,6 +107,10 @@
 
 (in-package #:cl-spec/tests)
 
+(define-condition test-suite-failure (error)
+  ()
+  (:report "One or more cl-spec test suites failed."))
+
 (defmethod asdf:perform :after ((op asdf:test-op)
                                 (system (eql (asdf:find-system :cl-spec/tests))))
   (let ((test-packages (remove-if-not
@@ -114,4 +118,5 @@
                           (and (stringp dependency)
                                (uiop:string-prefix-p "cl-spec/tests/" dependency)))
                         (asdf:system-depends-on system))))
-    (rove:run test-packages)))
+    (unless (rove:run test-packages)
+      (error 'test-suite-failure))))
