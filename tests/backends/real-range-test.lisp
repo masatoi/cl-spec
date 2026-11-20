@@ -4,7 +4,9 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/main #:sample #:normalize-spec-form #:validp)
-  (:import-from #:cl-spec/src/backends/check-it))
+  (:import-from #:cl-spec/src/backends/check-it)
+  (:import-from #:cl-spec/src/backends/check-it-generators #:compile-spec-generator)
+  (:import-from #:check-it #:generate #:shrink))
 
 (in-package #:cl-spec/tests/backends/real-range-test)
 
@@ -35,3 +37,22 @@
          (values (sample spec :count 32)))
     (ok (= 32 (length values)))
     (ok (every (lambda (value) (and (typep value 'double-float) (validp spec value))) values))))
+
+(deftest tiny-signed-intervals-generate-and-shrink
+  (dolist (tiny (list least-positive-single-float least-positive-double-float))
+    (let* ((one (float 1 tiny))
+           (normal (if (typep tiny 'single-float)
+                       least-positive-normalized-single-float
+                       least-positive-normalized-double-float))
+           (next (* normal (+ one (scale-float one (- 1 (float-digits one)))))))
+      (dolist (bounds (list (list 0 tiny) (list (- tiny) 0) (list (- tiny) tiny)
+                            (list tiny (* 2 tiny)) (list (* -2 tiny) (- tiny))
+                            (list normal next) (list (- next) (- normal))))
+        (testing (format nil "Tiny interval ~S" bounds)
+          (let* ((spec (normalize-spec-form (list* 'range 'real bounds)))
+                 (values (sample spec :count 32))
+                 (generator (compile-spec-generator spec nil)))
+            (ok (= 32 (length values)))
+            (ok (every (lambda (value) (validp spec value)) values))
+            (ok (validp spec (generate generator)))
+            (ok (validp spec (shrink generator (lambda (value) (validp spec value)))))))))))
