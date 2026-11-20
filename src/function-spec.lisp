@@ -103,6 +103,7 @@
   (:import-from #:cl-spec/src/explain
                 #:explain-data #:expected-descriptor)
   (:export #:make-function-check-property #:precondition-refuses-p
+           #:resolve-function-spec #:check-function-arguments
            #:function-spec
            #:function-spec-name
            #:function-spec-argument-specs
@@ -2235,6 +2236,14 @@ INVALID-ARGUMENT."
                                                         :context (list :registry registry))
                    :coverage (coverage-report-data *coverage-context*))))
 
+(defun check-function-arguments (operator keyword-arguments trials seed options registry)
+  "Validate the generated-check parameters for OPERATOR and return the effective registry."
+  (check-keyword-arguments keyword-arguments '(:trials :seed :options :registry) operator)
+  (check-argument trials '(or null (integer 0 *)) operator :trials)
+  (check-argument seed '(or null property-result (integer 0 *)) operator :seed)
+  (check-run-options options operator)
+  (check-registry registry operator))
+
 (defun check-function (function-designator &rest keyword-arguments
                        &key trials seed (options nil options-p) (registry *registry*)
                          &allow-other-keys)
@@ -2275,12 +2284,8 @@ trial and shrink candidate. A result supplied as :SEED requires matching complet
 declaration identity, options, profile and budget. Cleanup failures stop the run
 with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
 contract failure. Fixture results and artifacts use version 2."
-  (check-keyword-arguments keyword-arguments '(:trials :seed :options :registry)
-                           'check-function)
-  (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
-  (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
-  (check-run-options options 'check-function)
-  (setf registry (check-registry registry 'check-function))
+  (setf registry (check-function-arguments 'check-function keyword-arguments
+                                           trials seed options registry))
   (let* ((seed-result (and (typep seed 'property-result) seed))
          (budget (or trials
                      (when (typep seed-result 'function-check-result)

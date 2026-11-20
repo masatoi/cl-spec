@@ -30,6 +30,9 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 A `:passed` execution may have `:insufficient` evidence, and missing measurements
 remain `:unknown` rather than zero. Both APIs work in the core system.
 
+`format-check-summary` renders the saved verdict and evidence gaps on one line
+for the REPL or a CI stream.
+
 See the [evidence sufficiency guide](docs/guides/evidence-sufficiency.md) for
 policies, direct checks and backend participation.
 
@@ -116,9 +119,9 @@ all four key tests, tagged unions and numeric/bounded-filter AND composition.
 Structured shrinking laws directly recheck saved inputs (including hash tables);
 separate laws exercise explicit branch targeting and generation exhaustion.
 This is not exhaustive API coverage; identity-sensitive string MEMBER domains
-are covered for generation, not successful snapshot rechecks. Custom generators
-preserve original counterexamples; whole-argument generators can supply a
-shrinker. See
+are covered for generation, not successful snapshot rechecks. Custom shrinkers
+can reduce a property's sole argument, a function's whole argument list, or a
+fixture recipe. See
 [the self-specification guide](docs/guides/self-specification-guide.md) for how
 to isolate the bundle's registry, find a symbol's contract and laws, read
 `:case-report`/`:capture`/`:state-post` evidence, and run the fault-injection
@@ -284,6 +287,23 @@ case conditions select the required behaviour inside it.
 
 (cl-spec:check-function 'remaining-balance :trials 100 :seed 42)
 ```
+
+Keep known boundaries in the test suite with `check-function-with-examples`.
+Each row names the expected case and supplies one raw argument list. The runner
+checks all rows in order and then runs the ordinary generator with the given seed.
+
+```lisp
+(let ((report (cl-spec:check-function-with-examples
+               'remaining-balance
+               '((:sufficient-funds (100 100)) (:insufficient-funds (100 101)))
+               :trials 100 :seed 42)))
+  (list (getf report :status) (getf report :example-count) (getf report :generated-trials)))
+;; => (:PASSED 2 100)
+```
+
+A fixed row must select its expected case and satisfy that case's outcome.
+`:examples` retains each row's verdict and direct evidence. `:generated` holds
+the ordinary function-check result with its own case counts and replay seed.
 
 Each case is a unique keyword name, an optional docstring, exactly one
 `(:when FORM)` and exactly one of `(:returns SPEC)` or `(:signals SPEC)`; a
@@ -848,9 +868,26 @@ target. It accepts only a changed input with the original failure identity and
 restarts from that input. It does not independently shrink fields. Visited inputs
 are skipped, and the original observation is retained throughout.
 
-For custom whole-argument shrinking, `check-function` and `run-property` accept
-`:options '(:shrink-budget 100)`; the
-default is 100 and the supported range is 0–100000. Candidate batches must be
+For an ordinary property with one binding, the argument spec's own generator
+can supply a shrinker over individual values.
+
+```lisp
+(cl-spec:defgenerator halves ()
+  (:shrink (n) (list (floor n 2)))
+  200)
+(cl-spec:defspec big-integer integer (:generator halves))
+(cl-spec:defproperty small-integer ((n big-integer)) (< n 50))
+(cl-spec:property-result-shrunk-counterexample
+ (cl-spec:run-property 'small-integer :seed 42))  ; => (N 50)
+```
+
+The property fails on 200, 100 and 50, then passes on 25. Each candidate must
+satisfy the argument spec and produce the original failure to be accepted.
+The runner copies conses and arrays before calling the shrinker. Other objects
+retain their identity, so a shrinker for a CLOS instance should construct its
+candidates without modifying the instance.
+Both forms of custom shrinking accept `:options '(:shrink-budget 100)` on the run.
+The default is 100 and the supported range is 0–100000. Candidate batches must be
 finite proper lists within the remaining budget. An oversized batch stops the
 search before invoking its candidates. Duplicates and rejected candidates consume
 budget. `property-result-shrink-report` and `result-data` expose `:candidates`,
@@ -864,8 +901,9 @@ cl-spec does not interrupt arbitrary code or restore external state. Determinist
 candidate order is needed for replay, and the result is not a global minimum.
 The CLOS equivalent is `:shrinker`, read by `custom-generator-shrinker`; changing
 it on a source-backed generator requires matching source and draw-function updates.
-The source declaration participates in the definition digest. Nested custom value
-generators currently retain their no-op shrink behavior.
+The source declaration participates in the definition digest. A custom value in
+a multi-argument property, an individual function-spec `:args` binding, a field,
+a collection element or an AND conjunct is held fixed during shrinking.
 
 ## Runtime instrumentation
 
@@ -1022,7 +1060,10 @@ first occurrence; independent omissions are collected within the traversal limit
 `:digest-exclusions` lists the intentional scope exclusions above and does not make
 an otherwise complete digest incomplete.
 
-Capabilities describe the currently installed backend: generator construction
+`backend-capabilities` takes a spec object (for a registered name, use
+`find-spec`) and describes that spec as the root. `property-data` describes
+the property's input schema, and `result-data` records the capabilities used
+by the run. With the currently installed backend, generator construction
 may be `:available`, `:unavailable` or `:unknown`; shrinking can additionally be
 `:none` when disabled, when the root custom generator has no shrinker, or when
 all tuple elements lack a shrink strategy. Empty plists and plists containing only

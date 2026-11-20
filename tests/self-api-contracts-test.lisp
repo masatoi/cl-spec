@@ -348,6 +348,8 @@ The head symbols are compared by name: the corpus lives in another package."
 (deftest validate-cases-cover-admitted-and-refused-inputs
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
+    (ok (member 'cl-spec/specs::validate-cases-classify-admitted-and-refused
+                (properties-for 'cl-spec:check-function-with-examples)))
     ;; The sequence is explicit, so both named cases are reached by the input
     ;; list itself rather than by what a seed happens to draw.
     (let ((*scripted-validate-inputs*

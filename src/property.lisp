@@ -22,7 +22,7 @@
   (:export #:validate-property-executable
            #:property
            #:property-name
-           #:property-arguments #:property-argument-schema
+           #:property-arguments #:property-argument-schema #:property-arguments-spec
            #:property-call-arguments-p #:property-named-arguments
            #:property-targets
            #:property-kind
@@ -205,12 +205,16 @@ introspection can show the author's source.")
   (declare (ignore slot-names))
   (validate-definition object))
 
+(defclass property-arguments-spec (tuple-spec) ()
+  (:documentation "The positional argument tuple derived from ordinary property bindings."))
+
 (defgeneric property-argument-schema (property)
   (:documentation "Return the whole positional argument tuple spec compiled by a backend."))
 
 (defmethod property-argument-schema ((property property))
   "Derive an independent tuple generator from the ordinary property bindings."
-  (make-instance 'tuple-spec :element-specs (mapcar #'second (property-arguments property))))
+  (make-instance 'property-arguments-spec
+                 :element-specs (mapcar #'second (property-arguments property))))
 
 (defun register-property (property &optional (registry *registry*))
   "Register PROPERTY in REGISTRY under its own name and return PROPERTY.

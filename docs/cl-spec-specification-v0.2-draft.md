@@ -1013,13 +1013,14 @@ readerは観測だけを行い、instanceの構築方法は持たない。した
 `(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
 constructorとinitargを知るのは著者だけだからである。
 
-`defgenerator`の`:shrink`節が使われるのは、そのgeneratorがrunの入力全体を供給する場合
-（`defspec-function`の`:args-generator`と`:fixture`のrecipe）に限る。property引数・
-`:args`引数・field・ANDの連言の位置にある`(:generator NAME)`は値を生成するが、その値は
-縮小中も変化せず、同じ入力の他の値だけが縮小される。縮小できる値が他に無いときは元の反例を
-保持し、結果のcapabilityは`:shrinking :none`となる。`backend-capabilities`はspecを
-単独で（`sample`のrootとして）使った場合の能力を答えるため、この位置の差を反映しない
-（issue #45）。
+`defproperty` の引数が一つで、その引数specに `(:generator NAME)` を指定すると、
+`defgenerator` の `:shrink` 節が引数値を受け取り、候補値を優先順に返す。
+`defspec-function` の `:args-generator` は全引数リストを、`:fixture` の recipe は
+recipe 値を縮小できる。複数引数の property、個別の `:args` 引数、field、collection の要素、
+AND の連言に置いた custom generator の値は縮小中も固定される。
+`backend-capabilities` は spec オブジェクトを単独の root とした場合の能力を返す。
+property の引数構成に対応する能力は `property-data`、実行時の能力は `result-data` の
+`:capabilities` で確認できる。
 
 ---
 
@@ -1722,6 +1723,14 @@ OUTCOME   := (:returns SPEC) [(:post FORM ...) | (:post-values (NAME ...) FORM .
   共通outcomeの継承・上書きは導入しない。
 - 未知の節、重複節、重複名、不正な形は登録前に`invalid-function-spec-form`で拒否する。
 
+テスト側の固定例は `(check-function-with-examples designator examples &key trials seed options registry)`
+で実行する。各行は `(宣言済みケース名 生の引数リスト)`。表を検査した後、各行を順に一度ずつ
+`check-call` で判定する。指定されたケースを選択し、その outcome が通った場合に行は合格する。
+ケース違いは `:case-mismatch` として失敗し、後続の行と通常の `check-function` 生成試行も実行する。
+結果の `:examples` と `:example-count` は固定例、`:generated` と `:generated-trials` は
+通常の検査結果と実際の生成試行数を表す。fixture のある契約でも固定例は呼出側の生の引数を使い、
+生成側が recipe と hook を扱う。
+
 選択は**exclusive**（ちょうど一つ一致）であり、先頭一致ではない。通常の一試行は
 引数束縛 → 共通`:pre` → ケース条件（宣言順に全て評価。最初の真で打ち切らない）→
 一致件数の確定 → 対象の一度だけの呼び出し → 確定ケースのoutcomeでの判定、の順に進む。
@@ -2411,7 +2420,11 @@ artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠�
 
 候補列の不正、shrinker error、検出したcons/配列変更は探索を停止し、元の証拠とそれ以前の採用証拠を
 保持する。任意のユーザーコード自体の停止・外部状態復元・大域的最小性は保証しない。
-再現には決定的候補順序が必要。nested custom value generatorの縮小は従来のno-opを維持する。
+再現には決定的候補順序が必要。通常の property に引数が一つだけあり、その引数specの
+generator に `:shrink` 節がある場合も、同じ候補予算と失敗署名で探索する。
+shrinker は引数値を受け取り、各候補値をその引数に束縛して検証する（§9.4）。
+実行器は cons と配列をコピーする。それ以外のオブジェクトは同じ個体を渡すため、
+shrinker は入力を変更せずに候補を作る。
 
 上記3変数の比較テスト（100生成、seed 42）では、独立生成は80棄却・20回の関数検査、
 全引数generatorは0棄却・100回の関数検査となった。これはこの生成分布での実測であり、
@@ -4621,6 +4634,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
 | `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
 | `check-state-machine` | 与えたコマンド列の最初の増分取りこぼしを、位置・期待値・観測値を含めて報告する（§41） |
+| `format-check-summary` | 保存したfixture検査の実行結果と評価を一行の文字列で返す |
 | `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
@@ -5853,6 +5867,11 @@ non-participating backend answers `:not-collected`.
 ## Evidence sufficiency implementation addendum (2026-09-26)
 
 Execution status and sufficiency of evidence are separate core protocols.
+`format-check-summary` renders saved execution status and evidence on one line.
+Omit the policy to display observed gaps, or supply an explicit policy to display
+its assessment, measured shortfalls and missing measurements. The default returns
+a string; an output stream receives the line with a newline.
+
 `evidence-summary` projects saved facts without an implicit policy;
 `assess-evidence` accepts a closed version-one policy with
 `:min-checked-trials`, `:all-declared-cases`, and
