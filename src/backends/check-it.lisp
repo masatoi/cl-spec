@@ -359,7 +359,7 @@ target never produced is not a reduction of it."
          (capabilities (compiled-capabilities compiled shrink-p))
          (generator (compiled-generator-generator compiled))
          (rejected 0)
-         (coverage-targets (prepare-coverage-plan property (getf options :registry))))
+         (coverage-targets (prepare-coverage-plan property)))
     (check-argument shrink-budget '(integer 0 100000) 'run-generated-test :shrink-budget)
     ;; Report that this run is being measured before the first draw, so a run
     ;; that produces no observation -- zero trials, or a first draw that
@@ -681,7 +681,7 @@ Lists can shrink in length even when their element generator cannot shrink."
     (check-argument shrink-budget '(integer 0 100000) 'run-generated-test :shrink-budget)
     (begin-trial-report property)
     (begin-coverage-report property)
-    (prepare-coverage-plan property (getf options :registry))
+    (prepare-coverage-plan property)
     (labels ((finish (trials &key original accepted different report abort)
                (append
                 (list :status (cond (abort :error)

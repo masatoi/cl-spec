@@ -197,7 +197,7 @@ where it can validate and observe the complete correlated candidate."
   (cached-value generator))
 
 (defclass plist-value-generator (generator)
-  ((source :initarg :source :reader plist-generator-source)
+  ((path :initarg :path :reader plist-generator-path)
    (fields :initarg :fields :reader plist-generator-fields)
    (children :initarg :children :reader plist-generator-children)
    (validators :initarg :validators :reader plist-generator-validators))
@@ -205,10 +205,10 @@ where it can validate and observe the complete correlated candidate."
 
 (defmethod generate ((generator plist-value-generator))
   "Generate declared fields, applying only an explicitly planned built-in field choice."
-  (let ((source (plist-generator-source generator)) (value nil))
+  (let ((path (plist-generator-path generator)) (value nil))
     (loop for field in (plist-generator-fields generator)
           for child in (plist-generator-children generator)
-          do (multiple-value-bind (directive forced) (planned-field source (field-key field))
+          do (multiple-value-bind (directive forced) (planned-field path (field-key field))
                (when (or (field-required-p field)
                          (eq directive :present) (eq directive :value)
                          (and (not (eq directive :absent)) (zerop (random 2))))
@@ -217,7 +217,7 @@ where it can validate and observe the complete correlated candidate."
                                            (if (eq directive :value)
                                                (setf (cached-value child) forced)
                                                (generate child))))))))
-    (let ((key (planned-extra-key source)))
+    (let ((key (planned-extra-key path)))
       (when key (setf value (append value (list key nil)))))
     (setf (cached-value generator) value)))
 
@@ -252,7 +252,7 @@ where it can validate and observe the complete correlated candidate."
 (defmethod spec-generator ((spec plist-spec) context)
   (let ((fields (field-spec-fields spec)))
     (make-instance 'plist-value-generator
-                   :source spec :fields fields
+                   :path *declaration-path* :fields fields
                    :children (mapcar (lambda (field)
                                        (with-declaration-steps ((field-key field))
                                          (spec-generator (field-value-spec field) context)))

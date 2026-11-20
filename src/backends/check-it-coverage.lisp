@@ -1,14 +1,10 @@
 ;;;; src/backends/check-it-coverage.lisp
 (defpackage #:cl-spec/src/backends/check-it-coverage
   (:use #:cl)
-  (:import-from #:cl-spec/src/coverage #:coverage-inputs)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-context* #:coverage-context-schema #:coverage-context-options
                 #:coverage-context-plan #:coverage-fixture-p)
-  (:import-from #:cl-spec/src/ir #:reference-spec #:reference-spec-target #:spec-generator-name)
-  (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:field-spec-fields #:field-key #:field-value-spec)
-  (:import-from #:cl-spec/src/resolve #:resolve-spec)
+  (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/property #:property-argument-schema)
   (:export #:check-it-coverage-capabilities #:prepare-coverage-plan #:next-coverage-target
            #:*coverage-target* #:planned-field #:planned-extra-key))
@@ -46,30 +42,17 @@
                                                 ((and extra (not keys)) :extra-key-pool-exhausted)
                                                 (t nil)))))))
 
-(defun resolved-node (node registry)
-  "Follow finite references already bounded by schema discovery."
-  (let ((seen nil))
-    (loop while (typep node 'reference-spec)
-          do (when (member node seen) (return-from resolved-node nil))
-             (push node seen)
-             (setf node (resolve-spec (reference-spec-target node) registry))))
-  node)
-
-(defun target-route (definition dimension registry)
-  "Return plist node/path pairs; never retain generated application values."
-  (let ((node (second (assoc (getf dimension :argument) (coverage-inputs definition))))
-        (path (getf dimension :field-path))
+(defun target-route (dimension)
+  "Pair each enclosing plist's reversed declaration path with its remaining field keys."
+  (let ((location (list (getf dimension :argument) :args))
+        (fields (getf dimension :field-path))
         (route nil))
     (loop
-      (setf node (resolved-node node registry))
-      (unless (typep node 'plist-spec) (return (nreverse route)))
-      (push (list node path) route)
-      (unless path (return (nreverse route)))
-      (let ((field (find (car path) (field-spec-fields node) :key #'field-key)))
-        (unless field (return nil))
-        (setf node (field-value-spec field) path (cdr path))))))
+      (push (cons location fields) route)
+      (unless fields (return route))
+      (push (pop fields) location))))
 
-(defun prepare-coverage-plan (definition registry)
+(defun prepare-coverage-plan (definition)
   "Save a bounded one-pass plan; whole custom generators and fixture recipes are not targeted."
   (when (and *coverage-context*
              (eq :exercise (getf (coverage-context-options *coverage-context*) :mode)))
@@ -80,7 +63,7 @@
            (entries nil) (targets nil))
       (dolist (dimension (getf schema :dimensions))
         (let ((route (and safe (getf dimension :targetable)
-                          (target-route definition dimension registry))))
+                          (target-route dimension))))
           (dolist (bucket (getf dimension :buckets))
             (let* ((extra (and (eq (getf dimension :kind) :extra-key-presence)
                                (eq bucket :present)))
@@ -106,14 +89,14 @@
     (when target (setf (getf (getf target :entry) :status) :attempted))
     target))
 
-(defun planned-field (spec key)
+(defun planned-field (location key)
   "Return :PRESENT/:ABSENT/:VALUE and optional value for one field, or NIL."
   (when *coverage-target*
-    (let* ((route (assoc spec (getf *coverage-target* :route)))
-           (path (second route))
+    (let* ((route (assoc location (getf *coverage-target* :route) :test #'equal))
+           (path (cdr route))
            (dimension (getf *coverage-target* :dimension))
            (bucket (getf *coverage-target* :bucket)))
-      (when (and route path (eq key (car path)))
+      (when (and path (eq key (car path)))
         (cond
           ((cdr path) (values :present nil))
           ((eq (getf dimension :kind) :field-presence)
@@ -125,11 +108,11 @@
                                 (:interior (1+ (getf dimension :minimum))))))
           (t (values :present nil)))))))
 
-(defun planned-extra-key (spec)
-  "Return one collision-free planned extra key for SPEC, or NIL."
+(defun planned-extra-key (location)
+  "Return one collision-free planned extra key for the plist at LOCATION, or NIL."
   (when *coverage-target*
-    (let ((route (assoc spec (getf *coverage-target* :route))))
-      (when (and route (null (second route))
+    (let ((route (assoc location (getf *coverage-target* :route) :test #'equal)))
+      (when (and route (null (cdr route))
                  (eq :extra-key-presence (getf (getf *coverage-target* :dimension) :kind))
                  (eq :present (getf *coverage-target* :bucket)))
         (getf *coverage-target* :extra-key)))))

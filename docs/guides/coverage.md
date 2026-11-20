@@ -20,6 +20,8 @@ It is opt-in and does not change `:passed` or evidence policy version 1.
 Use `(:mode :observe)` to retain the ordinary generator's seeded input stream.
 Use `(:mode :exercise)` to attempt supported buckets once in schema order, then
 resume ordinary generation. This is a bounded plan, not a combinatorial solver.
+Each attempt targets one argument and field path. Two arguments or sibling fields
+can use the same named plist spec and receive independent draws.
 The trial budget remains authoritative; unattempted entries stay `:pending`.
 An `:attempted` entry does not claim that its bucket reached the target.
 

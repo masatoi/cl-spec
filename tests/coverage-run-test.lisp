@@ -259,6 +259,25 @@
       (ok (getf report :plan))
       (ok (equal report (coverage-data (cl-spec:run-property 'planned :seed result)))))))
 
+(deftest exercise-adds-an-extra-key-only-to-the-planned-argument
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
+    (cl-spec:defspec open-record (plist))
+    (cl-spec:defspec record-alias open-record)
+    (cl-spec:defproperty two-records ((left record-alias) (right open-record))
+      (:trials (:normal 4))
+      (push (list left right) seen)
+      t)
+    (let* ((options '(:coverage (:mode :exercise)))
+           (result (cl-spec:run-property 'two-records :seed 1 :options options))
+           (draws (reverse seen)))
+      (ok (equal '(((:coverage-extra nil) nil) (nil nil)
+                   (nil (:coverage-extra nil)) (nil nil))
+                 draws))
+      (setf seen nil)
+      (ok (equal (coverage-data result)
+                 (coverage-data (cl-spec:run-property 'two-records :seed result))))
+      (ok (equal draws (reverse seen))))))
+
 (deftest exercise-reaches-nested-optional-field
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defproperty nested
@@ -272,6 +291,27 @@
       (ok (eq :passed (cl-spec:property-result-status result)))
       (dolist (bucket '(:lower :upper :interior))
         (ok (plusp (count-bucket report :numeric-boundary :checked bucket)))))))
+
+(deftest shared-and-inline-sibling-fields-exercise-the-same-inputs
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
+    (cl-spec:defspec leaf (plist (:optional (:n (range integer 1 5))) (:closed t)))
+    (cl-spec:defproperty named-siblings
+        ((p (plist (:required (:left leaf) (:right leaf)) (:closed t))))
+      (:trials (:normal 10)) (push p seen) t)
+    (cl-spec:defproperty inline-siblings
+        ((p (plist (:required (:left (plist (:optional (:n (range integer 1 5))) (:closed t)))
+                              (:right (plist (:optional (:n (range integer 1 5))) (:closed t))))
+                   (:closed t))))
+      (:trials (:normal 10)) (push p seen) t)
+    (flet ((draws (name mode seed)
+             (setf seen nil)
+             (cl-spec:run-property name :seed seed :options (list :coverage (list :mode mode)))
+             (reverse seen)))
+      (dolist (mode '(:observe :exercise))
+        (dolist (seed '(1 7))
+          (let ((inline (draws 'inline-siblings mode seed)))
+            (ok (= 10 (length inline)))
+            (ok (equal inline (draws 'named-siblings mode seed)))))))))
 
 (deftest exercise-resolves-named-field-boundaries
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
