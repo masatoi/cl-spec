@@ -52,7 +52,6 @@
                 #:capture-error-data
                 #:state-post-error
                 #:state-post-error-data
-                #:unsupported-stateful-operation
                 #:spec-violation)
   (:import-from #:cl-spec/src/utils/arguments
                 #:check-argument #:check-keyword-arguments #:check-run-options)
@@ -89,8 +88,7 @@
                 #:prepare-property-run #:run-property-with-result-constructor
                 #:property-result #:property-result-case-report #:property-result-entity-kind
                 #:check-replayed-result
-                #:property-result-budget #:property-result-options #:property-result-property
-                #:property-result-seed #:observation-data)
+                #:property-result-budget #:property-result-property #:observation-data)
   (:import-from #:cl-spec/src/generator
                 #:current-generator-backend
                 #:backend-default-trials)
@@ -2232,7 +2230,6 @@ contract failure. Fixture results and artifacts use version 2."
                      (when (typep seed-result 'function-check-result)
                        (function-check-result-budget seed-result))
                      (backend-default-trials (current-generator-backend))))
-         (seed (if seed-result (property-result-seed seed-result) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          (property (if (function-spec-fixture contract)
@@ -2242,10 +2239,6 @@ contract failure. Fixture results and artifacts use version 2."
          (case-run (make-case-run contract)))
     ;; A result replays only the contract run it came from (#84).
     (check-replayed-result seed-result :function-spec name 'check-function)
-    ;; Replaying a state-observing contract requires explicit reconstruction.
-    (when (and seed-result (state-observing-contract-p contract)
-               (not (function-spec-fixture contract)))
-      (error 'unsupported-stateful-operation :operation :replay :function name))
     (let ((enclosing-case-run *case-run*)
           (*case-run* case-run))
       (run-property-with-result-constructor
@@ -2262,8 +2255,7 @@ contract failure. Fixture results and artifacts use version 2."
                  (validate-case-trial-report (getf initargs :trial-report)
                                              (case-run-report case-run)))
            (apply #'make-instance 'function-check-result initargs)))
-       :seed (if (and seed-result (function-spec-fixture contract)) seed-result seed)
-       :options (or options (and seed-result (property-result-options seed-result)))
+       :seed seed :options options
        :registry registry))))
 
 ;;; One concrete caller-supplied invocation (no generation).

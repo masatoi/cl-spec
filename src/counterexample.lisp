@@ -3,6 +3,7 @@
 (defpackage #:cl-spec/src/counterexample
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions #:cl-spec-error)
+  (:import-from #:cl-spec/src/coverage-report #:*coverage-context* #:*coverage-trial*)
   (:import-from #:cl-spec/src/function-spec
                 #:fixture-check-result #:fixture-check-result-observation
                 #:fixture-check-result-definition #:fixture-check-result-name
@@ -514,6 +515,9 @@ other policy, including the one for the other artifact version, returns :STATUS
 :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
+REGISTRY resolves the definition and its declared specs. User callbacks retain the
+caller's dynamic *REGISTRY*, as in generated and direct checks. Rechecking inside
+an observed trial contributes no stages or counts to that trial's coverage.
 Returns a :RECHECK record; never mutates the saved artifact or original result.
 In both versions an error the recheck itself meets, such as a target that is no
 longer defined, is recorded as :STATUS :CONTRACT-ERROR rather than signalled.
@@ -524,7 +528,9 @@ anything runs rather than recorded as :CONTRACT-ERROR."
   (setf registry (check-registry registry 'recheck-counterexample))
   (check-argument state-policy '(member :unconfirmed :stateless :fixture)
                   'recheck-counterexample :state-policy)
-  (let* ((data (counterexample-artifact-data artifact))
+  (let* ((*coverage-trial* nil)
+         (*coverage-context* nil)
+         (data (counterexample-artifact-data artifact))
          (kind (getf data :entity-kind))
          (saved (getf data (getf data :selection))))
     (when (eql 2 (getf data :artifact-version))
@@ -556,8 +562,7 @@ anything runs rather than recorded as :CONTRACT-ERROR."
               (return-from recheck-counterexample (outcome :unsupported :state-unconfirmed)))
             (when (getf saved :mutated-p)
               (return-from recheck-counterexample (outcome :unsupported :recorded-input-mutation)))
-            (let* ((*registry* registry)
-                   (arguments (getf saved :arguments))
+            (let* ((arguments (getf saved :arguments))
                    (before-validation (snapshot-value arguments))
                    (property (if (eq kind :property) definition
                                  (make-function-check-property definition)))

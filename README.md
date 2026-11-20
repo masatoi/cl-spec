@@ -164,6 +164,12 @@ Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
 `:definition-missing`, `:definition-mismatch`, `:incomparable-definition`,
 `:input-invalid`, `:precondition-rejected`, `:unsupported` and `:contract-error`.
 
+Generated checks, direct checks and artifact rechecks use the supplied
+`:registry` to resolve the contract and its declared specs. User code runs with
+the caller's dynamic `cl-spec:*registry*`. For example, a postcondition that
+calls `validp` without `:registry` uses that dynamic registry. A recheck inside
+a property body leaves coverage counting to the enclosing property trial.
+
 `:state-policy :stateless` asserts that external state needs no restoration;
 without it execution is refused. Recorded or newly detected input mutation is
 unsupported. Arbitrary external state is neither detected nor restored.
@@ -178,8 +184,10 @@ label, independent of the declaration digest. A recheck accepts its own optional
 
 Artifact version 1 uses a bounded `AV1` format without the Lisp reader or symbol
 interning. It supports existing package symbols, characters, integers, ratios,
-finite single/double floats, simple strings, cons trees and simple general
-vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
+finite single/double floats, simple strings with element type `character` or
+`base-char`, cons trees and simple general vectors. Float type, signed zero and
+string element type are preserved. Older AV1 strings used a single tag and
+decode as simple `character` arrays. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
 nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000
