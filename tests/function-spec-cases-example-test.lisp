@@ -13,7 +13,7 @@
   (:import-from #:cl-spec/examples/function-spec-cases
                 #:make-example-registry #:register-example!
                 #:demo-both-outcomes #:demo-wrong-implementation
-                #:demo-selection-errors #:demo-unchecked-cases))
+                #:demo-selection-errors #:demo-unchecked-cases #:demo-boundary-examples))
 
 (in-package #:cl-spec/tests/function-spec-cases-example-test)
 
@@ -85,3 +85,11 @@
     (testing "but the case no trial reached is reported"
       (ok (= 0 (getf (demo-case summary :insufficient-funds) :called)))
       (ok (equal '(:insufficient-funds) (getf summary :never-called))))))
+
+(deftest example-runs-the-withdrawal-boundaries-before-random-trials
+  (let ((report (demo-boundary-examples)))
+    (ok (eq :passed (getf report :status)))
+    (ok (= 2 (getf report :example-count)))
+    (ok (equal '(:sufficient-funds :insufficient-funds)
+               (loop for row in (getf report :examples) collect (getf row :actual-case))))
+    (ok (= 12 (getf report :generated-trials)))))

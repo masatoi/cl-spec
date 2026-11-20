@@ -2062,16 +2062,24 @@ the shape of the other branch is admitted only if dispatch is wrong."
              '(self-collection-counterexample-target
                self-keyword-counterexample-target))))
   (defproperty validate-cases-classify-admitted-and-refused ()
-    "The named cases run an explicit admitted/refused sequence through VALIDATE."
-    (:about validate)
+    "Fixed examples of VALIDATE and the generated trials each classify admitted and refused input."
+    (:about validate cl-spec:check-function-with-examples)
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
     (let ((*scripted-validate-inputs*
             '((integer 0) (integer "refused") (string "ok") (string 3)
               (integer 1) (integer :refused) (boolean t) (boolean 42))))
-      (let* ((result (cl-spec:check-function 'validate :trials 4 :seed 1))
+      (let* ((integers (normalize-spec-form 'integer))
+             (examples (list (list :conforming (list integers 0))
+                             (list :refused (list integers "x"))))
+             (combined (cl-spec:check-function-with-examples 'validate examples :trials 4 :seed 1))
+             (result (getf combined :generated))
              (report (cl-spec:function-check-result-case-report result)))
-        (and (eq :passed (cl-spec:property-result-status result))
+        (and (eq :passed (getf combined :status))
+             (= 2 (getf combined :example-count))
+             (equal '(:conforming :refused)
+                    (loop for row in (getf combined :examples) collect (getf row :actual-case)))
+             (eq :passed (cl-spec:property-result-status result))
              (= 4 (cl-spec:property-result-trials result))
              (zerop (cl-spec:property-result-rejected result))
              (equal '(:conforming :refused) (getf report :declared-cases))
