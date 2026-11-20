@@ -26,30 +26,47 @@ if [ -e "$dest" ]; then
   exit 2
 fi
 
-# Compare the actual pre-fault files, including ignored local sources, to an
-# immutable Git revision. The live checkout can advance during fault injection.
-snapshot_matches_revision() (
-  reference=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-reference.XXXXXX") || exit 1
-  trap 'rm -rf "$reference"' EXIT
-  trap 'exit 1' HUP INT TERM
-  git -C "$root" archive --output="$reference/core.tar" "$1" -- src main.lisp cl-spec.asd ||
-    exit 1
-  tar xf "$reference/core.tar" -C "$reference" || exit 1
-  for path in src main.lisp cl-spec.asd; do
-    git diff --no-index --quiet -- "$reference/$path" "$dest/$path" || exit 1
-  done
-)
-
+# Keep the pristine files available for provenance and both comparison
+# conditions. Only the faulted copy is handed to the repairer.
 checkout_revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)
+work=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-workcopy.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+pristine=$work/pristine
+reference=$work/reference
+mkdir -p "$reference"
+"$eval_dir/make-snapshot.sh" "$pristine" >/dev/null
+mkdir -p "$(dirname "$dest")"
+mkdir "$dest"
+cp -R "$pristine"/. "$dest"/
+# The evaluation assets belong to the evidence and stay outside the delivery.
+cp -R "$eval_dir" "$pristine/eval"
+eval_dir=$pristine/eval
+
+matches_pristine() {
+  for path do
+    git diff --no-index --no-ext-diff --quiet -- "$reference/$path" "$pristine/$path" ||
+      return 1
+  done
+}
+
 declared_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
   "$eval_dir/tasks/$task/manifest.json")
-"$eval_dir/make-snapshot.sh" "$dest" >/dev/null
 core_revision=unknown
-if [ "$checkout_revision" != unknown ] && snapshot_matches_revision "$checkout_revision"; then
-  core_revision=$checkout_revision
-  if git -C "$root" diff --quiet "$declared_revision" "$checkout_revision" \
-       -- src main.lisp cl-spec.asd 2>/dev/null; then
-    core_revision=$declared_revision
+assets_revision=unknown
+if [ "$checkout_revision" != unknown ] &&
+   git -C "$root" archive --output="$work/reference.tar" "$checkout_revision" &&
+   tar xf "$work/reference.tar" -C "$reference"; then
+  if matches_pristine src main.lisp cl-spec.asd; then
+    core_revision=$checkout_revision
+    if git -C "$root" diff --quiet "$declared_revision" "$checkout_revision" \
+         -- src main.lisp cl-spec.asd 2>/dev/null; then
+      core_revision=$declared_revision
+    fi
+  fi
+  if matches_pristine eval specs.lisp api-docs.lisp self-spec-fixtures.lisp \
+       self-generation-fixtures.lisp tests.lisp tests; then
+    assets_revision=$checkout_revision
   fi
 fi
 
@@ -88,14 +105,6 @@ if [ "$condition" = "B" ]; then
     tests/instrument-status-integration-test.lisp"
 fi
 
-# Assets are read from the checkout across preparation. A concurrent change of
-# checkout makes their revision ambiguous, independently of the captured core.
-if [ "$checkout_revision" = "$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)" ]; then
-  assets_revision=$checkout_revision
-else
-  assets_revision=unknown
-fi
-
 manifest="$dest.manifest.txt"
 {
   echo "task_id=$task"
@@ -111,12 +120,12 @@ manifest="$dest.manifest.txt"
            tests/instrument-status-integration-test.lisp \
            eval/acceptance-registry.lisp eval/acceptance-capture.lisp \
            eval/acceptance-state.lisp eval/tasks; do
-    if [ -d "$root/$f" ]; then
+    if [ -d "$pristine/$f" ]; then
       printf '  %s %s/\n' \
-        "$(find "$root/$f" -type f -exec sha256sum {} + | sort -k2 | sha256sum | cut -d' ' -f1)" \
+        "$(cd "$pristine" && find "$f" -type f -exec sha256sum {} + | LC_ALL=C sort -k2 | sha256sum | cut -d' ' -f1)" \
         "$f"
-    elif [ -f "$root/$f" ]; then
-      printf '  %s %s\n' "$(sha256sum "$root/$f" | cut -d' ' -f1)" "$f"
+    elif [ -f "$pristine/$f" ]; then
+      printf '  %s %s\n' "$(sha256sum "$pristine/$f" | cut -d' ' -f1)" "$f"
     fi
   done
   # The allowed-change set, copied from the task manifest for the record.

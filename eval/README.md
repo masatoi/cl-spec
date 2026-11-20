@@ -130,8 +130,9 @@ manifest's `core_baseline_commit` identifies the core where its fault was verifi
 `cl-spec.asd` to the commit at snapshot start. It records the task's pinned
 commit when the core matches, or the checkout commit for later core changes.
 Unmatched snapshot content or unavailable Git history yields `unknown`.
-The separate `assets_revision` records the checkout's `HEAD` when it stays
-fixed across preparation. The
+The separate `assets_revision` records that starting commit when its harness,
+self-specifications and tests match the captured files. Fixed-file digests use
+the same pristine copy for both conditions. The
 comparison between conditions A and B is **prepared but not run**: no model was
 invoked for this work, and `comparison_status` stays `not-run` until the same
 task, fault, model, settings and budget have actually been run under both
