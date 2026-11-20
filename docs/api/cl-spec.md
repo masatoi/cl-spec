@@ -419,8 +419,9 @@ table runs generation alone. FUNCTION-DESIGNATOR and the generation keywords
 :TRIALS, :SEED, :OPTIONS and :REGISTRY follow CHECK-FUNCTION.
 
 Each row calls CHECK-CALL once in table order. Its :CALL holds the direct result.
-:ACTUAL-CASE comes from the recorded observation. A different selected case
-sets :REASON to :CASE-MISMATCH and fails even an otherwise passing row. If
+:ACTUAL-CASE comes from the recorded observation. A different case, or a target
+outcome with no case, sets :REASON to :CASE-MISMATCH. :CALL retains the target
+outcome even when the function also violated its return or error contract. If
 CHECK-CALL signals an error, the row records :STATUS :ERROR, :REASON :CALL-ERROR
 and :CONDITION. Subsequent rows and the generated phase still run.
 
@@ -1445,7 +1446,10 @@ VALIDATION-DEPTH-EXCEEDED, rather than answering, when VALUE is nested more than
 
 *Generic function* · `(backend spec &key registry)`
 
-Describe generation and shrinking without drawing or invoking user predicates.
+Describe generation and shrinking with the spec object SPEC as the root.
+Resolve a registered spec name with FIND-SPEC. For an enclosing property's input
+schema, consult PROPERTY-DATA or the run's RESULT-DATA. Probing capabilities
+does not draw values or run user predicates.
 
 <a name="backend-default-trials"></a>
 ### backend-default-trials

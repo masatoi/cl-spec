@@ -347,7 +347,10 @@ the trial and precondition counts it collected; this boundary never fabricates
        property budget))))
 
 (defgeneric backend-capabilities (backend spec &key registry)
-  (:documentation "Describe generation and shrinking without drawing or invoking user predicates."))
+  (:documentation "Describe generation and shrinking with the spec object SPEC as the root.
+Resolve a registered spec name with FIND-SPEC. For an enclosing property's input
+schema, consult PROPERTY-DATA or the run's RESULT-DATA. Probing capabilities
+does not draw values or run user predicates."))
 
 (defmethod backend-capabilities ((backend t) spec &key registry)
   "Unknown backends must opt in to capability reporting."
