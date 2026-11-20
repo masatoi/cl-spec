@@ -303,12 +303,20 @@ new post forms and a new compiled predicate as well."
 (defmethod shared-initialize :after ((case function-case) slot-names &key)
   (declare (ignore slot-names))
   (validate-definition case)
-  (maphash (lambda (owner present)
-             (declare (ignore present))
-             (if (member case (function-spec-cases owner))
-                 (let ((*case-owner* owner)) (validate-case-guard case))
-                 (remhash owner (case-owners case))))
-           (case-owners case)))
+  (let ((owners (case-owners case)) (attached nil) (detached-p nil))
+    (maphash (lambda (owner present)
+               (declare (ignore present))
+               (if (and owner (member case (function-spec-cases owner)))
+                   (let ((*case-owner* owner))
+                     (validate-case-guard case)
+                     (push owner attached))
+                   (setf detached-p t)))
+             owners)
+    ;; ECL 24.5.10 REMHASH can leave a surviving weak key unwrapped.
+    ;; Rebuild membership after the traversal and successful validation.
+    (when detached-p
+      (clrhash owners)
+      (dolist (owner attached) (setf (gethash owner owners) t)))))
 
 (defun validate-case-guard (case)
   "Check this case's visible guard references against its output and current input bindings."

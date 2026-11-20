@@ -626,7 +626,13 @@ decides whether they pass."
         (ok (refuses (replace-guard #'plusp)))
         ;; A detached case can receive a guard before its next owner supplies its inputs.
         (reinitialize-instance other :cases nil :return-spec 'integer)
-        (ok (eq case (replace-guard #'plusp)))))))
+        (ok (eq case (replace-guard #'plusp)))
+        (ok (refuses (reinitialize-instance owner :return-spec nil :cases (list case))))
+        (ok (null (function-spec-cases owner)))
+        (reinitialize-instance other :argument-specs '((result integer))
+                               :return-spec nil :cases (list case))
+        (ok (eq case (first (function-spec-cases other))))
+        (ok (eq :passed (cl-spec:call-check-result-status (cl-spec:check-call 'guarded '(1)))))))))
 
 (deftest a-refused-case-edit-keeps-the-registered-contract
   (with-fresh-registry
