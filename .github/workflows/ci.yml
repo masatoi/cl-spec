@@ -30,7 +30,8 @@ jobs:
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
-          ros run --eval '(ql:quickload :cl-spec :silent t)' \
+          ros run --eval '(sb-ext:disable-debugger)' \
+                  --eval '(ql:quickload :cl-spec :silent t)' \
                   --eval '(uiop:quit (if (find-package "CHECK-IT") 1 0))'
 
       - name: Compile from a cold cache with warnings visible
@@ -45,7 +46,8 @@ jobs:
           # REDEFINITION-WITH-DEFGENERIC/DEFMETHOD ones. ASDF resolves
           # cl-spec through CL_SOURCE_REGISTRY on its own, so compile-system
           # here compiles straight into a fresh, cold fasl cache.
-          ros run --eval '(asdf:compile-system :cl-spec :force :all)' \
+          ros run --eval '(sb-ext:disable-debugger)' \
+                  --eval '(asdf:compile-system :cl-spec :force :all)' \
                   --eval '(uiop:quit 0)'
 
       - name: Run tests
@@ -57,7 +59,8 @@ jobs:
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
-          ros run --eval '(ql:quickload :cl-spec/tests :silent t)' \
+          ros run --eval '(sb-ext:disable-debugger)' \
+                  --eval '(ql:quickload :cl-spec/tests :silent t)' \
                   --eval '(asdf:test-system :cl-spec)' \
                   --load ci/asdf-test-failure.lisp \
                   --eval '(uiop:quit 0)'
