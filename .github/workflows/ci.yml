@@ -65,6 +65,25 @@ jobs:
                   --load ci/asdf-test-failure.lisp \
                   --eval '(uiop:quit 0)'
 
+      - name: Run the real-range tests on CLISP
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clisp
+          ql_dir="$HOME/.roswell/lisp/quicklisp"
+          rove_dir="$HOME/.roswell/local-projects/fukamachi/rove"
+          export CL_SOURCE_REGISTRY="$GITHUB_WORKSPACE//:$ql_dir/dists/quicklisp/software//:$rove_dir/:"
+          run_ranges() {
+            mode="$1"
+            shift
+            XDG_CACHE_HOME="$RUNNER_TEMP/clisp-$mode" clisp "$@" -norc -q \
+              -i "$ql_dir/asdf.lisp" \
+              -x '(setf *load-verbose* nil *compile-verbose* nil)' \
+              -x '(asdf:load-system "cl-spec/tests/backends/real-range-test")' \
+              -x '(unless (rove:run :cl-spec/tests/backends/real-range-test :style :dot) (uiop:quit 1))'
+          }
+          run_ranges default
+          run_ranges ansi -ansi
+
   ccl-core:
     runs-on: ubuntu-latest
     steps:
