@@ -159,6 +159,45 @@
                      nil)
             (invalid-property-form () t))))))
 
+(deftest invalid-machine-reinitialization-restores-executable-definition
+  (let* ((registry (make-hash-table-registry)) (machine (register-meter registry))
+         (bindings (cl-spec:property-arguments machine)))
+    (dolist (initargs (list '(:arguments nil)
+                            '(:arguments ((first (list-of meter-command))
+                                          (second (list-of meter-command))))
+                            '(:arguments ((commands meter-command)))
+                            (list :arguments (list (list 'commands
+                                                        (make-instance 'cl-spec/src/ir:list-of-spec))))
+                            '(:kind :invariant) '(:kind nil)))
+      (ok (handler-case
+              (progn (apply #'reinitialize-instance machine :documentation "uncommitted" initargs)
+                     nil)
+            (invalid-property-form () t)))
+      (ok (eq bindings (cl-spec:property-arguments machine)))
+      (ok (eq :state-machine (cl-spec:property-kind machine)))
+      (ok (null (cl-spec:property-documentation machine))))
+    (ok (eq machine (cl-spec:validate-definition machine)))
+    (ok (eq :passed (trial-observation-status
+                     (check-state-machine machine '((:add 3) :reset) :registry registry))))
+    (ok (eq :passed (property-result-status
+                     (run-property machine :registry registry :profile :smoke :seed 2))))))
+
+(deftest corrupt-machine-replacement-is-refused-before-registry-or-index-writes
+  (let* ((registry (make-hash-table-registry)) (original (register-meter registry))
+         (replacement (register-meter (make-hash-table-registry))))
+    (setf (slot-value replacement 'cl-spec/src/property::arguments) nil)
+    (ok (handler-case (progn (cl-spec:validate-definition replacement) nil)
+          (invalid-property-form () t)))
+    (ok (handler-case
+            (progn (cl-spec:registry-register-property registry 'meter replacement
+                                                       :targets '(wrong-target) :tags '(:wrong))
+                   nil)
+          (invalid-property-form () t)))
+    (ok (eq original (cl-spec:find-property 'meter registry)))
+    (ok (equal '(meter) (cl-spec:properties-for 'target-meter registry)))
+    (ok (null (cl-spec:properties-for 'wrong-target registry)))
+    (ok (null (cl-spec:properties-with-tag :wrong registry)))))
+
 (deftest artifacts-recheck-agreement-violation-and-error-without-generation
   (let ((registry (make-hash-table-registry)))
     (dolist (callback (list (list :compare (constantly nil))

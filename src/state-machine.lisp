@@ -6,10 +6,11 @@
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-trial* #:*coverage-context*
                 #:coverage-precondition-observed-p #:coverage-mark-stage)
-  (:import-from #:cl-spec/src/definition-validation #:definition-keyword-plist-p)
+  (:import-from #:cl-spec/src/definition-validation #:validate-definition #:definition-keyword-plist-p)
+  (:import-from #:cl-spec/src/ir #:spec #:list-of-spec #:collection-spec-element-spec)
   (:import-from #:cl-spec/src/execution #:evaluate-trial #:observe-trial)
   (:import-from #:cl-spec/src/property
-                #:property #:property-function #:property-arguments #:property-source-form
+                #:property #:property-function #:property-arguments #:property-kind #:property-source-form
                 #:register-property)
   (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve #:resolve-property)
@@ -24,6 +25,20 @@
 
 (defclass state-machine-property (property) ()
   (:documentation "One property binding holds the entire command sequence."))
+
+(defmethod validate-definition :after ((machine state-machine-property))
+  "Check the machine's kind and single trace binding after ordinary property normalization."
+  (unless (eq :state-machine (property-kind machine))
+    (error 'invalid-property-form :form (property-kind machine)
+                                  :reason "a state machine requires :kind :state-machine"))
+  (let* ((bindings (property-arguments machine))
+         (sequence-spec (second (first bindings))))
+    (unless (and (= 1 (length bindings))
+                 (typep sequence-spec 'list-of-spec)
+                 (typep (collection-spec-element-spec sequence-spec) 'spec))
+      (error 'invalid-property-form :form bindings
+                                    :reason "a state machine requires one list-of command binding"))
+    (validate-definition sequence-spec)))
 
 (defmethod definition-description-complete-p ((machine state-machine-property))
   (and (eq (class-name (class-of machine)) 'state-machine-property)
