@@ -4618,6 +4618,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `deserialize-counterexample-artifact` | 不正な保存artifactをreader評価なしで拒否する |
 | `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
 | `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
+| `format-check-summary` | 保存したfixture検査の実行結果と評価を一行の文字列で返す |
 | `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
@@ -5850,6 +5851,11 @@ non-participating backend answers `:not-collected`.
 ## Evidence sufficiency implementation addendum (2026-09-26)
 
 Execution status and sufficiency of evidence are separate core protocols.
+`format-check-summary` renders saved execution status and evidence on one line.
+Omit the policy to display observed gaps, or supply an explicit policy to display
+its assessment, measured shortfalls and missing measurements. The default returns
+a string; an output stream receives the line with a newline.
+
 `evidence-summary` projects saved facts without an implicit policy;
 `assess-evidence` accepts a closed version-one policy with
 `:min-checked-trials`, `:all-declared-cases`, and

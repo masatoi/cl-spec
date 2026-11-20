@@ -30,6 +30,9 @@ The `describe-*` printers remain stubs. The cl-mcp adapter lives in cl-mcp, not 
 A `:passed` execution may have `:insufficient` evidence, and missing measurements
 remain `:unknown` rather than zero. Both APIs work in the core system.
 
+`format-check-summary` renders the saved verdict and evidence gaps on one line
+for the REPL or a CI stream.
+
 See the [evidence sufficiency guide](docs/guides/evidence-sufficiency.md) for
 policies, direct checks and backend participation.
 

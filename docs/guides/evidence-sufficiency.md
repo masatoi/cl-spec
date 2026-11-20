@@ -46,6 +46,29 @@ Declaring two cases does not imply that a single call exercised both.
 Their names are captured before execution; redefining the contract later does
 not change this result's evidence.
 
+## A single line for the REPL or CI
+
+Pass the saved result and the same explicit policy to `format-check-summary`.
+For the `identity` check above the result is this string:
+
+```text
+IDENTITY passed | evidence insufficient | case NEGATIVE checked 0 of 1
+```
+
+```lisp
+(cl-spec:format-check-summary
+ result :policy '(:policy-version 1
+                  :requirements ((:kind :all-declared-cases :min-checked 1)))
+ :stream *standard-output*)
+```
+
+The default returns a string. An output stream (or T for standard output)
+receives one newline-terminated line. Omitting the policy shows unassessed
+observations, including never-called cases. Missing measurements appear as
+`unknown`. Names containing line breaks display on one line. The formatter
+uses the same saved facts as the evidence APIs for property runs, function
+runs, direct calls and fixture checks.
+
 ## Policies
 
 Version 1 accepts a nonempty list of these requirements, at most one of each:
