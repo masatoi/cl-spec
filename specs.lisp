@@ -992,23 +992,15 @@ validity predicate, so the contract itself is not limited to the corpus."
     (:generator function-spec-definition-generator))
 
   (defgenerator registered-function-spec-generator ()
-    (let ((name (gensym "SELF-FUNCTION-SPEC")))
-      (cl-spec:register-function-spec
-       (make-instance 'cl-spec:function-spec :name name
-                      :argument-specs '((x integer))
-                      :return-spec 'integer))
-      name))
+    (let ((names (contract-names)))
+      (nth (random (length names)) names)))
 
   (defspec registered-function-spec (satisfies registered-function-spec-p)
     (:generator registered-function-spec-generator))
 
   (defgenerator registered-property-generator ()
-    (let ((name (gensym "SELF-PROPERTY")))
-      (cl-spec:register-property
-       (make-instance 'cl-spec:property :name name
-                      :arguments '((x integer))
-                      :function (lambda (x) (declare (ignore x)) t)))
-      name))
+    (let ((names (property-names)))
+      (nth (random (length names)) names)))
 
   (defspec registered-property (satisfies registered-property-p)
     (:generator registered-property-generator))
@@ -1033,12 +1025,10 @@ validity predicate, so the contract itself is not limited to the corpus."
                     :trials '(:normal 5))
      :seed (random 1000000) :profile :normal))
 
-  (defun self-failing-result ()
-    "Register and run a source-backed property whose body always fails.
-
-The body and source form keep the declaration digest complete, which is what
-lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
-    (let ((property (make-instance 'cl-spec:property
+  (defun self-failing-result (&optional (seed (random 1000000)))
+    "Return a source-backed failing result and the private registry that can recheck it."
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (property (make-instance 'cl-spec:property
                                    :name 'self-failing-target
                                    :arguments '((x integer))
                                    :targets '(self-target)
@@ -1049,11 +1039,13 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
                                                    ((x integer)) nil)
                                    :trials '(:normal 5))))
       (cl-spec:register-property property)
-      (cl-spec:run-property property :seed (random 1000000) :profile :normal)))
+      (values (cl-spec:run-property property :seed seed :profile :normal)
+              cl-spec:*registry*)))
 
   (defun self-failing-artifact ()
-    "Freeze a throwaway failing run into a saved counterexample artifact."
-    (cl-spec:make-counterexample-artifact (self-failing-result)))
+    "Return a saved failure and the private registry that can recheck it."
+    (multiple-value-bind (result registry) (self-failing-result)
+      (values (cl-spec:make-counterexample-artifact result) registry)))
 
   (defgenerator passing-result-generator ()
     (self-run-result (lambda (x) (declare (ignore x)) t)))
@@ -1074,7 +1066,8 @@ lets RECHECK-COUNTEREXAMPLE resolve the saved name and execute the input."
     (:generator counterexample-artifact-generator))
 
   (defgenerator recheck-arguments-generator ()
-    (list (self-failing-artifact) :state-policy :stateless))
+    (multiple-value-bind (artifact registry) (self-failing-artifact)
+      (list artifact :state-policy :stateless :registry registry)))
 
   (defspec definition-envelope
     (and
@@ -1508,13 +1501,17 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
     (:returns (instance-of cl-spec:counterexample-artifact)))
 
   (defspec-function cl-spec:recheck-counterexample
-    "A saved artifact rechecks into a v1 recheck record."
+    "A stateless recheck identifies the saved definition and selected counterexample."
     (:args (artifact counterexample-artifact-object)
-           &key ((:state-policy policy) (member :stateless)))
+           &key ((:state-policy policy) (member :stateless))
+                ((:registry registry) (nullable registry-object)))
     (:args-generator recheck-arguments-generator)
+    (:pre (eql 1 (getf (cl-spec:counterexample-artifact-data artifact) :artifact-version)))
     (:returns recheck-record-data)
-    (:post (eq :stateless policy)
-           (eq :same-failure (getf result :status))))
+    (:post (let ((saved (cl-spec:counterexample-artifact-data artifact)))
+             (and (eq (getf result :name) (getf saved :name))
+                  (eq (getf result :entity-kind) (getf saved :entity-kind))
+                  (eq (getf result :selection) (getf saved :selection))))))
 
   (defproperty normalization-is-idempotent ((form generated-form))
     "Normalizing an existing IR object preserves its identity (§9)."
@@ -1981,21 +1978,22 @@ the shape of the other branch is admitted only if dispatch is wrong."
              (refused-by-branch-p (list :kind :a :s s) :a)
              (refused-by-branch-p (list :kind :b :n n) :b)))))
   (defproperty counterexample-artifacts-round-trip ((seed (range integer 0 1000)))
-    "A saved artifact serializes, deserializes and preserves its recorded evidence (§73.4)."
+    "A restored artifact retains its evidence and reproduces the saved failure (§73.4)."
     (:about cl-spec:make-counterexample-artifact cl-spec:serialize-counterexample-artifact
-            cl-spec:deserialize-counterexample-artifact cl-spec:counterexample-artifact-data)
+            cl-spec:deserialize-counterexample-artifact cl-spec:counterexample-artifact-data
+            cl-spec:recheck-counterexample)
     (:tags :cl-spec-self)
     (:trials (:smoke 5 :normal 50))
-    (let* ((property (make-instance 'cl-spec:property :name 'self-failing-target
-                                    :arguments '((x integer))
-                                    :function (lambda (x) (declare (ignore x)) nil)
-                                    :trials '(:normal 5)))
-           (result (cl-spec:run-property property :seed seed :profile :normal))
-           (artifact (cl-spec:make-counterexample-artifact result))
-           (wire (cl-spec:serialize-counterexample-artifact artifact))
-           (restored (cl-spec:deserialize-counterexample-artifact wire)))
-      (equal (cl-spec:counterexample-artifact-data artifact)
-             (cl-spec:counterexample-artifact-data restored))))
+    (multiple-value-bind (result registry) (self-failing-result seed)
+      (let* ((artifact (cl-spec:make-counterexample-artifact result))
+             (wire (cl-spec:serialize-counterexample-artifact artifact))
+             (restored (cl-spec:deserialize-counterexample-artifact wire)))
+        (and (equal (cl-spec:counterexample-artifact-data artifact)
+                    (cl-spec:counterexample-artifact-data restored))
+             (eq :same-failure
+                 (getf (cl-spec:recheck-counterexample restored :registry registry
+                                                       :state-policy :stateless)
+                       :status))))))
   (defproperty collection-constraints-are-enforced ()
     "LIST-OF length and uniqueness constraints are enforced as declared (§9)."
     (:about validp explain-data)

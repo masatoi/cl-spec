@@ -44,6 +44,11 @@ there, and pass the registry under test explicitly where the API takes one:
   (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42))
 ```
 
+The projection checks draw names already registered by the bundle. Artifact
+checks create their failing property in a private registry. The round-trip law
+rechecks the deserialized artifact against that registry and requires
+`:same-failure`. A recheck against an empty registry returns `:definition-missing`.
+
 `cl-spec:registry-register-property`'s self-contract goes one step further: it
 declares a `:fresh` fixture whose recipe is a scenario keyword (`:new`,
 `:replace`, `:refused-targets` or `:refused-tags`). Setup builds a fresh target

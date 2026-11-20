@@ -84,6 +84,45 @@
         (dolist (arguments (list (list spec) (list spec :registry nil) (list spec :registry other)))
           (ok (eq :passed (verdict 'cl-spec:definition-digest arguments))))))))
 
+(deftest generated-self-checks-preserve-the-callers-registry
+  (let* ((*registry* (make-hash-table-registry))
+         (name 'cl-spec/specs::self-failing-target)
+         (sentinel (make-instance 'cl-spec:property :name name :arguments nil
+                                  :function (constantly t) :targets '(caller-target)
+                                  :tags '(:caller))))
+    (register-specifications)
+    (cl-spec:register-property sentinel)
+    (let ((contracts (list-function-specs))
+          (properties (list-properties)))
+      (dolist (api '(cl-spec:function-spec-data cl-spec:property-data
+                     cl-spec:make-counterexample-artifact cl-spec:recheck-counterexample))
+        (testing (symbol-name api)
+          (let ((result (check-function api :trials 5 :seed 42)))
+            (ok (eq :passed (property-result-status result))))
+          (ok (equal contracts (list-function-specs)))
+          (ok (equal properties (list-properties)))
+          (ok (eq sentinel (find-property name)))
+          (ok (equal (list name) (properties-for 'caller-target)))
+          (ok (equal (list name) (properties-with-tag :caller))))))))
+
+(deftest stateless-rechecks-use-the-selected-registry
+  (let* ((*registry* (make-hash-table-registry))
+         (owner (make-hash-table-registry))
+         (artifact (let ((*registry* owner))
+                     (defproperty failing-in-owner ((x integer)) (not (integerp x)))
+                     (make-counterexample-artifact (run-property 'failing-in-owner :seed 42)))))
+    (register-specifications)
+    (dolist (entry (list (list (list :registry owner) :same-failure)
+                         (list (list :registry *registry*) :definition-missing)
+                         (list '(:registry nil) :definition-missing)
+                         (list nil :definition-missing)))
+      (destructuring-bind (options expected) entry
+        (let* ((arguments (list* artifact :state-policy :stateless options))
+               (check (cl-spec:check-call 'cl-spec:recheck-counterexample arguments))
+               (observation (cl-spec:call-check-result-observation check)))
+          (ok (eq :passed (cl-spec:call-check-result-status check)))
+          (ok (eq expected (getf (cl-spec:trial-observation-value observation) :status))))))))
+
 (defun map-form-kind (form)
   "Return :ALIST or :HASH-TABLE for a map specification FORM, otherwise NIL.
 The head symbols are compared by name: the corpus lives in another package."
