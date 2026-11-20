@@ -88,9 +88,10 @@
 | 人間向けdescribeプリンター | 未実装 | `describe-spec`、`describe-property`はstub |
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post`。`instrumentation-status`で導入状態と宣言の鮮度を、`refresh-instrumentation`で再構築を扱う（Instrumentation freshness addendum） |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
-| 状態隔離 | 一部実装 | `:fixture`の`:isolation :fresh`による試行ごとの新しい状態だけ。それ以外の隔離は保証しない |
+| 状態隔離 | 一部実装 | `:fixture`の`:isolation :fresh`と§41の状態機械は、試行ごとに定義者が新しいメモリ内状態を用意する |
 | timeout・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
-| state-machine PBT・mutation・Coalton | 将来構想 | §41、§43、§53〜55 |
+| 状態機械Property | 実装済み（逐次実行、メモリ内の新しい状態） | `defstate-machine`、`run-property`、`check-state-machine`。コマンド列の生成・縮小・直接再現（§41） |
+| mutation・Coalton | 将来構想 | §43、§53〜55 |
 
 現在のstubは `not-implemented` を通知する。LLMはこれを対象関数の契約違反や、
 Propertyの反例として扱ってはならない。
@@ -3481,38 +3482,38 @@ compiled functionだけではpropertyの意味を読むことができないた�
 
 # 41. Stateful property testing
 
-> **位置付け:** 将来構想。MVP対象外。
-
-将来的にはstate-machine testingを追加する。
-
-概念：
+逐次実行する状態機械を `defstate-machine` で `:kind :state-machine` のPropertyとして
+登録できる。最初の束縛は `(変数 コマンドのSpec list-ofのオプション...)` で、
+一試行に一つのコマンド列を生成する。コマンドはkeywordまたはkeywordで始まる
+proper listであり、後者では引数を `tuple` などのSpecで制約できる。
 
 ```lisp
-(defstate-machine bank-account
-  (:state account-model)
-
-  (:command deposit ...)
-  (:command withdraw ...)
-  (:command freeze ...)
-
-  (:invariant non-negative-balance ...))
-
+(defstate-machine withdrawal-history
+    (commands (member :withdraw :cancel :balance) :max-length 12)
+  :model :new :target (make-account)
+  :model-step #'step-model :target-step #'apply-command
+  :invariant (lambda (status account) (eq status (account-status account))))
 ```
 
-モデル：
+各試行、縮小候補、直接再検査の開始時に `:model` と `:target` を評価する。両者が
+独立した初期状態を用意する責任は定義者が持つ。それぞれのstepに現在の状態と同じ
+コマンドを渡し、次の状態と観測値をちょうど2値で受け取る。観測値が `:compare`
+（省略時は `equal`）で一致した後、更新した状態に `:invariant` を検査する。
+この不変条件は初期化直後にも検査する。`:enabled` が現在のモデルとコマンドを
+拒否するとその列は `:rejected` となり、そのコマンドのstepを実行しない。
 
-```text
-abstract model
-   ↓
-generated command sequence
-   ↓
-real implementation
-   ↓
-compare states
+最初の観測不一致または不変条件違反で `:failed`、コールバックがerrorを通知すると
+`:error` を記録する。失敗したコマンドと0始まりの位置はexplanationに入る。
+縮小では失敗種別とコマンド名を一致させる。コールバックerrorの場合は実行phaseと
+条件型も一致させる。位置はfailure identityに含めず、不要な前置コマンドを削除できる。
 
-```
-
-これは非常に強力だが、MVPには含めない。
+`replay-property` はseedから再生成する。`check-state-machine` は与えた列をcoreで
+一回実行する。通常のv1反例artifactには具体的な列を保存し、独立した初期状態を
+用意できる場合に `:state-policy :stateless` で直接再検査する。SBCLとcheck-itを使う
+実行例ではseed 2で生成した8コマンドが `(:withdraw :cancel :cancel)` に縮小し、
+二度目の取消で残高100に対して110を観測する。モデルに基づく次コマンドの生成、
+並行実行や外部状態の復元は将来の拡張範囲とする。
+[実行手順とAPI](guides/state-machine-walkthrough.md)
 
 ---
 
@@ -3921,7 +3922,7 @@ dependent types
 SMT solving
 automatic formal proof
 full CLOS protocol specification
-state-machine PBT
+model-directed command generation and concurrent state machines
 parallel property testing
 distributed testing
 automatic mutation testing
@@ -4017,10 +4018,11 @@ condition integration
 
 ## Phase 4: advanced PBT
 
-追加候補：
+当初の追加候補のうち、逐次state-machine testingの実装範囲は§41に記載した。
+残る候補に次がある。
 
 ```text
-state-machine testing
+model-directed command generation
 dependent generators
 better shrinking
 property coverage
@@ -4631,6 +4633,7 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `deserialize-counterexample-artifact` | 不正な保存artifactをreader評価なしで拒否する |
 | `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
 | `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
+| `check-state-machine` | 状態機械オブジェクトと、その機械のSpecが許すコマンド列について、入力の記録と判定・失敗種別の整合を検査する。専用カウンタの意味論はProperty `counter-machine-reports-first-dropped-increment` が最初の取りこぼしの位置・期待値・観測値を照合する（§41） |
 | `format-check-summary` | 保存したfixture検査の実行結果と評価を一行の文字列で返す |
 | `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
 | `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |

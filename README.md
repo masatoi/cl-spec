@@ -49,6 +49,7 @@ policies, direct checks and backend participation.
 | `cl-spec/examples/function-spec-cases` | executable named-case Function Spec example | `check-it` |
 | `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example | `check-it` |
 | `cl-spec/examples/reproducible-withdraw` | fresh-state shrinking and artifact recheck example | `check-it` |
+| `cl-spec/examples/withdraw-cancellation` | model-based checks for a double cancellation | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
@@ -544,6 +545,22 @@ without executing fixture hooks. Database rollback and worker-kill supervision
 remain outside the core feature. See the
 [reproducible stateful contract guide](docs/guides/reproducible-stateful-contracts.md)
 and [executable example](examples/reproducible-withdraw.lisp).
+
+### Check a sequence of commands against a model
+
+`defstate-machine` registers a property over command sequences. On each step it
+compares an observation from the model with one from the target. Each trial,
+shrink candidate and direct recheck starts from freshly initialized states.
+
+```lisp
+(asdf:load-system "cl-spec/examples/withdraw-cancellation")
+(cl-spec/examples/withdraw-cancellation:demo-double-cancellation :seed 2)
+```
+
+The generated eight-command trace shrinks to `(:withdraw :cancel :cancel)`.
+The model expects a balance of 100 after the second cancellation and the
+implementation reports 110. The repaired account passes the saved trace.
+[State-machine walkthrough](docs/guides/state-machine-walkthrough.md)
 
 ## Example
 

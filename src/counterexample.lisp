@@ -94,11 +94,30 @@ the case-less shapes are read exactly as before."
       (values (second signature) (cddr signature) t)
       (values nil signature nil)))
 
+(defun valid-machine-signature-p (signature reason status)
+  "Check a state-machine identity without resolving or executing its definition."
+  (and (eq (first signature) :state-machine)
+       (eq (second signature) reason)
+       (case reason
+         (:observation-mismatch
+          (and (eq status :failed) (= (length signature) 3) (keywordp (third signature))))
+         (:invariant-violation
+          (and (eq status :failed) (= (length signature) 3)
+               (typep (third signature) '(or null keyword))))
+         (:machine-error
+          (and (eq status :error) (= (length signature) 5) (symbolp (fifth signature))
+               (case (third signature)
+                 ((:commands :model-setup :target-setup) (null (fourth signature)))
+                 (:invariant (typep (fourth signature) '(or null keyword)))
+                 ((:enabled :model-step :target-step :compare) (keywordp (fourth signature)))))))))
+
 (defun valid-signature-shape-p (signature reason status kind)
   "Recognize one unwrapped failure identity against its reason and status."
   (and (finite-list-p signature)
        (if (eq kind :property)
            (case reason
+             ((:observation-mismatch :invariant-violation :machine-error)
+              (valid-machine-signature-p signature reason status))
              (:predicate-false (and (eq status :failed) (equal signature '(:property-false))))
              (:condition (and (eq status :error) (= (length signature) 2)
                               (eq (first signature) :property-condition)
@@ -131,7 +150,8 @@ never reached the target -- and is refused before this point."
       (case-signature-parts (getf data :signature))
     (and (finite-list-p (getf data :signature))
          (if wrapped-p
-             (and (keywordp case-name) (consp inner) (finite-list-p inner))
+             (and (keywordp case-name) (consp inner) (finite-list-p inner)
+                  (not (eq :state-machine (first inner))))
              t)
          (valid-signature-shape-p inner (getf data :reason) (getf data :status) kind))))
 

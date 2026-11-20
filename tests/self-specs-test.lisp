@@ -82,6 +82,52 @@
             (property-result-status
              (run-property 'cl-spec/specs::fixture-reconstruction-is-independent :seed 42))))))
 
+(deftest command-sequence-checker-has-an-executable-contract
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (ok (find-function-spec 'cl-spec:check-state-machine))
+    (when (find-function-spec 'cl-spec:check-state-machine)
+      (ok (eq :passed (property-result-status
+                       (check-function 'cl-spec:check-state-machine :trials 20 :seed 2)))))))
+
+(deftest state-machine-self-contract-describes-foreign-machines
+  (let ((*registry* (make-hash-table-registry)) (target-calls 0))
+    (cl-spec/specs:register-specifications)
+    (cl-spec:defspec accepted-command (or (member :drop) (tuple (member :add) integer)))
+    (let ((machine (cl-spec:defstate-machine agreeing (commands accepted-command :max-length 3)
+                     :model 0 :target 0
+                     :model-step (lambda (model command)
+                                   (declare (ignore command)) (values (1+ model) model))
+                     :target-step (lambda (target command)
+                                    (declare (ignore command)) (incf target-calls)
+                                    (values (1+ target) target)))))
+      (flet ((check (commands)
+               (getf (cl-spec:call-check-data
+                      (cl-spec:check-call 'cl-spec:check-state-machine (list machine commands)))
+                     :status)))
+        (ok (eq :passed (check '(:drop))))
+        (ok (eq :passed (check '((:add 2) :drop))))
+        (ok (= 3 target-calls))
+        (ok (eq :rejected (check '(:tick))))
+        (ok (= 3 target-calls))))
+    (let ((ordinary (cl-spec:defproperty impostor ((commands list))
+                      (:kind :state-machine) (listp commands))))
+      (ok (handler-case
+              (progn (cl-spec:check-call 'cl-spec:check-state-machine (list ordinary nil)) nil)
+            (cl-spec:invalid-call-arguments () t))))))
+
+(deftest counter-machine-semantic-law-checks-the-first-divergence
+  (let ((*registry* (make-hash-table-registry))
+        (name 'cl-spec/specs::counter-machine-reports-first-dropped-increment))
+    (cl-spec/specs:register-specifications)
+    (ok (member name (cl-spec/specs:property-names)))
+    (ok (member name (properties-for 'cl-spec:check-state-machine)))
+    (let ((property (find-property name)))
+      (when property
+        (dolist (commands '(() (:tick :tick) (:drop) (:tick :drop :drop)))
+          (ok (funcall (cl-spec:property-function property) commands)))
+        (ok (eq :passed (property-result-status (run-property name :profile :smoke :seed 2))))))))
+
 (deftest rest-projection-has-an-executable-law
   (let ((*registry* (make-hash-table-registry)))
     (cl-spec/specs:register-specifications)

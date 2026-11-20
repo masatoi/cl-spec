@@ -233,7 +233,8 @@ FUNCTION-CHECK-RESULT reader split.")
   "Return the public explanation captured in selected EVIDENCE."
   (when (and evidence (member (trial-observation-reason evidence)
                               '(:return-spec :condition-spec :missing-condition
-                                :contract-error :state-postcondition)))
+                                :contract-error :state-postcondition :observation-mismatch
+                                :invariant-violation :machine-error)))
     (trial-observation-explanation evidence)))
 
 (defun property-result-failure-reason (result)

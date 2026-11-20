@@ -190,6 +190,17 @@ and direct result projections include additive `:evidence` summaries; outer
 schema/artifact versions are unchanged. See
 `docs/guides/evidence-sufficiency.md` for the policy and backend protocols.
 
+## State-machine properties
+
+`src/state-machine.lisp` defines `defstate-machine` and the core direct checker
+`check-state-machine`. A property binding contains a list of commands. The model
+and target start afresh on each execution. Each step returns its next state and
+an observation. Failure identity follows the command name and violation kind,
+with phase and condition type for callback errors. Standard property runs,
+shrinking, seed replay and v1 artifacts use the same evaluator. See
+`docs/guides/state-machine-walkthrough.md` and the executable
+`cl-spec/examples/withdraw-cancellation` example.
+
 ## Coverage protocol
 
 Opt-in coverage lives in `src/coverage.lisp`, `src/coverage-report.lisp` and
