@@ -26,7 +26,33 @@ if [ -e "$dest" ]; then
   exit 2
 fi
 
+# Compare the actual pre-fault files, including ignored local sources, to an
+# immutable Git revision. The live checkout can advance during fault injection.
+snapshot_matches_revision() (
+  reference=$(mktemp -d "${TMPDIR:-/tmp}/cl-spec-reference.XXXXXX") || exit 1
+  trap 'rm -rf "$reference"' EXIT
+  trap 'exit 1' HUP INT TERM
+  git -C "$root" archive --output="$reference/core.tar" "$1" -- src main.lisp cl-spec.asd ||
+    exit 1
+  tar xf "$reference/core.tar" -C "$reference" || exit 1
+  for path in src main.lisp cl-spec.asd; do
+    git diff --no-index --quiet -- "$reference/$path" "$dest/$path" || exit 1
+  done
+)
+
+checkout_revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)
+declared_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
+  "$eval_dir/tasks/$task/manifest.json")
 "$eval_dir/make-snapshot.sh" "$dest" >/dev/null
+core_revision=unknown
+if [ "$checkout_revision" != unknown ] && snapshot_matches_revision "$checkout_revision"; then
+  core_revision=$checkout_revision
+  if git -C "$root" diff --quiet "$declared_revision" "$checkout_revision" \
+       -- src main.lisp cl-spec.asd 2>/dev/null; then
+    core_revision=$declared_revision
+  fi
+fi
+
 CL_SPEC_ROOT="$dest" CL_SPEC_TASK_DIR="$eval_dir/tasks/$task" \
   ros run -- --non-interactive --load "$eval_dir/apply-faults.lisp" >/dev/null
 
@@ -62,19 +88,12 @@ if [ "$condition" = "B" ]; then
     tests/instrument-status-integration-test.lisp"
 fi
 
-# The task pins the core at which its fault was verified. Later checkouts can
-# carry additional core changes alongside the same evaluation assets.
-declared_revision=$(sed -n 's/.*"core_baseline_commit": "\([^"]*\)".*/\1/p' \
-  "$eval_dir/tasks/$task/manifest.json")
-assets_revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)
-core_revision=unknown
-if [ "$assets_revision" != unknown ] &&
-   changes=$(git -C "$root" status --porcelain --untracked-files=all -- src main.lisp cl-spec.asd) &&
-   [ -z "$changes" ]; then
-  core_revision=$assets_revision
-  if git -C "$root" diff --quiet "$declared_revision" "$assets_revision" -- src main.lisp cl-spec.asd 2>/dev/null; then
-    core_revision=$declared_revision
-  fi
+# Assets are read from the checkout across preparation. A concurrent change of
+# checkout makes their revision ambiguous, independently of the captured core.
+if [ "$checkout_revision" = "$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || echo unknown)" ]; then
+  assets_revision=$checkout_revision
+else
+  assets_revision=unknown
 fi
 
 manifest="$dest.manifest.txt"

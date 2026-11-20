@@ -126,10 +126,12 @@ Copy `record-template.json` for each run and read `record-template.md` for the
 field meanings and the rules. Record the core baseline revision and the revision
 that carries the self-specifications and this harness separately: the task
 manifest's `core_baseline_commit` identifies the core where its fault was verified.
-`make-workcopy.sh` records it when `src/`, `main.lisp` and `cl-spec.asd` match.
-For later core changes it records the checkout commit. Local core modifications
-or unavailable Git history yield `unknown`. The separate `assets_revision` records
-the checkout's `HEAD`. The
+`make-workcopy.sh` compares the pristine copy of `src/`, `main.lisp` and
+`cl-spec.asd` to the commit at snapshot start. It records the task's pinned
+commit when the core matches, or the checkout commit for later core changes.
+Unmatched snapshot content or unavailable Git history yields `unknown`.
+The separate `assets_revision` records the checkout's `HEAD` when it stays
+fixed across preparation. The
 comparison between conditions A and B is **prepared but not run**: no model was
 invoked for this work, and `comparison_status` stays `not-run` until the same
 task, fault, model, settings and budget have actually been run under both
