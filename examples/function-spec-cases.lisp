@@ -17,7 +17,7 @@
   (:import-from #:cl-spec/main
                 #:*registry*
                 #:make-hash-table-registry
-                #:defgenerator #:defspec-function #:check-function
+                #:defgenerator #:defspec-function #:check-function #:check-function-with-examples
                 #:function-check-result-case-report
                 #:function-check-result-failure-reason
                 #:function-check-result-explanation
@@ -33,7 +33,7 @@
            #:remaining-balance #:broken-remaining-balance
            #:overlapping-balance #:gapped-balance
            #:demo-both-outcomes #:demo-wrong-implementation
-           #:demo-selection-errors #:demo-unchecked-cases))
+           #:demo-selection-errors #:demo-unchecked-cases #:demo-boundary-examples))
 
 (in-package #:cl-spec/examples/function-spec-cases)
 
@@ -49,8 +49,8 @@
 (defvar *target-calls* 0
   "Target invocations of the currently running demo, for reporting and testing.")
 
-(defvar *example-inputs* nil
-  "The argument lists the scripted generator returns, front to back.
+(defvar *example-inputs* :random
+  "The argument lists to return in order, or :RANDOM for seeded withdrawal pairs.
 
 A special rather than a closure so a demo can state its inputs in one place and
 the contract can name one registered generator.")
@@ -89,8 +89,10 @@ the contract can name one registered generator.")
 The caller's *REGISTRY* is neither read nor written."
   (let ((*registry* registry))
     (defgenerator scripted-arguments ()
-      "Return the next scripted argument list, so a demo controls its inputs."
-      (pop *example-inputs*))
+      "Use the demo's script or draw a seeded pair for the combined check."
+      (if (eq *example-inputs* :random)
+          (list (random 1001) (1+ (random 1000)))
+          (pop *example-inputs*)))
     (defspec-function remaining-balance
       "Require the remainder when the balance suffices, and the named error when it does not."
       (:args (balance (range integer 0 1000)) (amount (range integer 1 1000)))
@@ -194,3 +196,12 @@ that every case holds."
         (*example-inputs* (list '(10 2)))
         (*target-calls* 0))
     (summarize-run (check-function 'remaining-balance :trials 1 :seed 1))))
+
+(defun demo-boundary-examples (&optional (registry (register-example!)))
+  "Exercise equality and a one-unit overdraft, then check twelve seeded random inputs."
+  (let ((*example-inputs* :random)
+        (*target-calls* 0))
+    (check-function-with-examples 'remaining-balance
+                                  '((:sufficient-funds (100 100))
+                                    (:insufficient-funds (100 101)))
+                                  :trials 12 :seed 17 :registry registry)))

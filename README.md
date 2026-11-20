@@ -284,6 +284,23 @@ case conditions select the required behaviour inside it.
 (cl-spec:check-function 'remaining-balance :trials 100 :seed 42)
 ```
 
+Keep known boundaries in the test suite with `check-function-with-examples`.
+Each row names the expected case and supplies one raw argument list. The runner
+checks all rows in order and then runs the ordinary generator with the given seed.
+
+```lisp
+(let ((report (cl-spec:check-function-with-examples
+               'remaining-balance
+               '((:sufficient-funds (100 100)) (:insufficient-funds (100 101)))
+               :trials 100 :seed 42)))
+  (list (getf report :status) (getf report :example-count) (getf report :generated-trials)))
+;; => (:PASSED 2 100)
+```
+
+A fixed row must select its expected case and satisfy that case's outcome.
+`:examples` retains each row's verdict and direct evidence. `:generated` holds
+the ordinary function-check result with its own case counts and replay seed.
+
 Each case is a unique keyword name, an optional docstring, exactly one
 `(:when FORM)` and exactly one of `(:returns SPEC)` or `(:signals SPEC)`; a
 `:returns` case may add `:post` or `:post-values`, a `:signals` case may not in

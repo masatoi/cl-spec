@@ -187,9 +187,59 @@ that were actually generated, not proved for every input.
 `:PASSED` means no violation was observed in the trials that ran. It does not
 mean every case ran. `:NEVER-CALLED` lists the declared cases no trial reached,
 and a case reached once is still not proof of exhaustive coverage of that case.
-This version adds no per-case minimum trial count and does not fail a run for
-coverage; to reach a rare case, hand the contract a controlled
-`:args-generator` (as the example does) or generate the inputs explicitly.
+For a boundary that must be exercised on every run, give the test suite a
+fixed input and its expected case.
+
+## 5. Check both sides of a boundary on every run
+
+A withdrawal of 100 from a balance of 100 must return zero. A withdrawal of 101
+from the same balance must signal `insufficient-funds`. The suite can declare
+both examples together and still explore random balances and amounts.
+
+```lisp
+(cl-spec:check-function-with-examples
+ 'cl-spec/examples/function-spec-cases:remaining-balance
+ '((:sufficient-funds   (100 100))
+   (:insufficient-funds (100 101)))
+ :trials 12 :seed 17 :registry *registry*)
+```
+
+The executable demo binds its argument generator to draw random pairs for the
+twelve generated trials. Inspect its counts and row evidence directly.
+
+```lisp
+(let ((report (cl-spec/examples/function-spec-cases:demo-boundary-examples *registry*)))
+  (list (getf report :status)
+        (getf report :example-count)
+        (getf report :generated-trials)
+        (loop for row in (getf report :examples)
+              collect (list (getf row :actual-case) (getf row :status)))))
+;; => (:PASSED 2 12 ((:SUFFICIENT-FUNDS :PASSED) (:INSUFFICIENT-FUNDS :PASSED)))
+```
+
+Each row runs once through `check-call`. Calling the equality row
+`:insufficient-funds` would give that row `:status :failed` and
+`:reason :case-mismatch` even though its direct `:call` passed.
+`call-check-data` on the saved `:call` exposes the input, outcome and selected
+case. An error that escapes `check-call`, including `invalid-call-arguments`,
+is retained under `:condition` with `:reason :call-error`. Malformed table
+rows or undeclared case names signal `invalid-argument` before execution.
+
+The generated phase uses `check-function` even when an example fails.
+Its `:generated` result retains the ordinary seed, shrink report, coverage
+and case counts. `:generated-trials` counts actual ordinary trials, which may
+be lower than the requested budget. An error in either phase gives the combined
+result `:error`. A failed or rejected fixed example gives it `:failed`.
+Otherwise it takes the generated status, including `:skipped`. A condition
+that escapes the generated runner propagates to the caller. For example,
+`check-function` validates a saved result supplied as `:seed` after all fixed
+calls. If it refuses a fixture replay with a changed budget, the fixed calls
+have already taken effect on their caller-owned objects.
+
+For a mutating target, construct fresh raw arguments in the test for each row
+and invocation that needs fresh state. With a fixture, only generated trials
+and shrink candidates use recipe setup and cleanup. Each fixed row operates on
+the objects supplied by the caller.
 
 ## Reading the report
 

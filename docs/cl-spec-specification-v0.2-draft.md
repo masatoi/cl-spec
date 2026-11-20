@@ -1721,6 +1721,14 @@ OUTCOME   := (:returns SPEC) [(:post FORM ...) | (:post-values (NAME ...) FORM .
   共通outcomeの継承・上書きは導入しない。
 - 未知の節、重複節、重複名、不正な形は登録前に`invalid-function-spec-form`で拒否する。
 
+テスト側の固定例は `(check-function-with-examples designator examples &key trials seed options registry)`
+で実行する。各行は `(宣言済みケース名 生の引数リスト)`。表を検査した後、各行を順に一度ずつ
+`check-call` で判定する。指定されたケースを選択し、その outcome が通った場合に行は合格する。
+ケース違いは `:case-mismatch` として失敗し、後続の行と通常の `check-function` 生成試行も実行する。
+結果の `:examples` と `:example-count` は固定例、`:generated` と `:generated-trials` は
+通常の検査結果と実際の生成試行数を表す。fixture のある契約でも固定例は呼出側の生の引数を使い、
+生成側が recipe と hook を扱う。
+
 選択は**exclusive**（ちょうど一つ一致）であり、先頭一致ではない。通常の一試行は
 引数束縛 → 共通`:pre` → ケース条件（宣言順に全て評価。最初の真で打ち切らない）→
 一致件数の確定 → 対象の一度だけの呼び出し → 確定ケースのoutcomeでの判定、の順に進む。
