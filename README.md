@@ -164,6 +164,12 @@ Its `:status` distinguishes `:same-failure`, `:different-failure`, `:passed`,
 `:definition-missing`, `:definition-mismatch`, `:incomparable-definition`,
 `:input-invalid`, `:precondition-rejected`, `:unsupported` and `:contract-error`.
 
+Generated checks, direct checks and artifact rechecks use the supplied
+`:registry` to resolve the contract and its declared specs. User code runs with
+the caller's dynamic `cl-spec:*registry*`. For example, a postcondition that
+calls `validp` without `:registry` uses that dynamic registry. A recheck inside
+a property body leaves coverage counting to the enclosing property trial.
+
 `:state-policy :stateless` asserts that external state needs no restoration;
 without it execution is refused. Recorded or newly detected input mutation is
 unsupported. Arbitrary external state is neither detected nor restored.
@@ -178,8 +184,10 @@ label, independent of the declaration digest. A recheck accepts its own optional
 
 Artifact version 1 uses a bounded `AV1` format without the Lisp reader or symbol
 interning. It supports existing package symbols, characters, integers, ratios,
-finite single/double floats, simple strings, cons trees and simple general
-vectors. Float type and signed zero are preserved. Sharing, cycles, opaque
+finite single/double floats, simple strings with element type `character` or
+`base-char`, cons trees and simple general vectors. Float type, signed zero and
+string element type are preserved. Older AV1 strings used a single tag and
+decode as simple `character` arrays. Sharing, cycles, opaque
 objects, other arrays and absent packages/symbols are explicitly refused with
 `invalid-counterexample-artifact`. Defaults limit each value to 10,000 nodes,
 nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000
@@ -1063,14 +1071,23 @@ explain:
   nested check. Bind the limit higher for a larger control stack. Explaining a
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
-- A `(range real ...)` whose width or bound is beyond double-float range, such as
-  `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`, signals
-  `generator-unavailable` with kind `:range-too-wide`.
+- Real-range generation widens to double-float when a width or draw could
+  overflow a single-float. If a finite width or endpoint exceeds double-float
+  range, as in `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`,
+  generation signals `generator-unavailable` with kind `:range-too-wide`.
+- An infinite lower bound of −∞ or upper bound of +∞ allows finite draws on that
+  side. A lower bound of +∞ or upper bound of −∞ admits no integer. When a real
+  interval admits only that infinity, its generator returns the endpoint.
+  A reversed interval signals `generator-unavailable` with kind `:empty-domain`.
+  UNIQUE treats an empty integer interval as an empty element domain. Real
+  ranges, including those limited to an infinity, have no UNIQUE enumeration.
 - `(and ...)` generates from one source chosen by a fixed policy: the AND's own
   `(:generator NAME)`, else a unique conjunct carrying a custom generator, else
   the folded `(type ...)`/`(range ...)` base, else the first conjunct whose
   ordinary construction succeeds. An `and` of predicates alone (e.g.
   `(and (satisfies oddp) (satisfies plusp))`) signals `generator-unavailable`.
+  Folding treats `(range * *)` as a real constraint and `(type nil)` as an
+  empty type, including inside nested or named conjuncts.
 - A conjunct the source cannot discharge is enforced by a bounded filter that
   re-checks the whole `and`. One generation request shares a budget of
   `1000 × N` candidate reservations (`N` is the requested value or trial count;

@@ -14,7 +14,6 @@
   (:import-from #:cl-spec/src/guard-references #:guard-return-reference)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/conditions
                 #:invalid-spec-form
                 #:invalid-property-form

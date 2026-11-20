@@ -118,7 +118,7 @@ Malformed lists must not enter a law that promises normalization succeeds."
 (defun draw-artifact-leaf ()
   "Draw one fresh scalar of a kind the AV1 artifact codec supports, signs included."
   (let ((odd (1+ (* 2 (random 500)))))
-    (case (random 14)
+    (case (random 15)
       (0 nil)
       (1 t)
       (2 (- (/ odd 2)))
@@ -132,9 +132,10 @@ Malformed lists must not enter a law that promises normalization succeeds."
       (7 (- (random 1d6)))
       (8 (- (random 1f3)))
       (9 (code-char (random #xD800)))
-      (10 (copy-seq "say \"hi\""))
+      (10 (make-array 8 :element-type 'character :initial-contents "say \"hi\""))
       (11 (nth (random 3) '(car :keyword validp)))
       (12 (- (random 100000)))
+      (13 (make-array 8 :element-type 'base-char :initial-contents "say \"hi\""))
       (t most-negative-double-float))))
 
 (defun draw-artifact-value (&optional (depth 3))
@@ -158,7 +159,9 @@ EQL tells -0.0 from 0.0, a single from a double float, and -1/2 from 1/2."
     (cons (and (consp actual)
                (same-artifact-value-p (car expected) (car actual))
                (same-artifact-value-p (cdr expected) (cdr actual))))
-    (string (and (stringp actual) (string= expected actual)))
+    (simple-string (and (typep actual 'simple-string)
+                        (equal (array-element-type expected) (array-element-type actual))
+                        (string= expected actual)))
     (simple-vector (and (simple-vector-p actual)
                         (= (length expected) (length actual))
                         (every #'same-artifact-value-p expected actual)))
@@ -605,6 +608,8 @@ system itself, so every instrumentation symbol is resolved here by name."
   (mapcar #'cl-spec:normalize-spec-form
           (append '(integer string (range integer -5 5) (member 1 2 3) (member nil)
                     (nullable integer) (or integer string)
+                    (and integer (range * *))
+                    (range real 2.0f38 *) (range real -2.0f38 2.0f38)
                     (list-of integer :min-length 1 :max-length 3)
                     (vector-of (member 1 2 3) :min-length 1 :max-length 2 :unique t)
                     (tuple integer string)
@@ -855,20 +860,21 @@ so a threshold of one is met and a threshold of two is a recorded shortfall."
     (:generator registry-generator))
   (defspec-function cl-spec:definition-digest
     "A definition digest is a string when complete, otherwise NIL, with an optional registry key."
-    (:args (definition digest-definition) &key ((:registry registry) registry-object supplied))
+    (:args (definition digest-definition)
+           &key ((:registry registry) (nullable registry-object) supplied))
     (:returns (values (nullable string) boolean (list-of digest-omission-data)))
     (:post-values (digest complete omissions)
       (if complete
           (and (stringp digest) (null omissions))
           (and (null digest) (consp omissions)))))
   (defspec-function cl-spec:find-spec
-    "Omitted registry uses the current registry; supplied registry is used explicitly."
-    (:args (name arbitrary-symbol) &optional (registry registry-object supplied))
+    "An omitted or NIL registry uses the current registry. A registry object selects that registry."
+    (:args (name arbitrary-symbol) &optional (registry (nullable registry-object) supplied))
     (:returns (values (nullable (instance-of spec)) boolean))
     (:post-values (found-spec found-p)
       (multiple-value-bind (expected present)
           (registry-find-spec
-           (if supplied registry cl-spec:*registry*) name)
+           (if (and supplied registry) registry cl-spec:*registry*) name)
         (and (eq found-spec expected) (eq found-p present)))))
   (defspec-function validp
     "Validity is a boolean for a resolved spec and an arbitrary value."
@@ -1627,8 +1633,8 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
            (first (make-instance 'cl-spec:property
                                  :name 'self-property
                                  :arguments '((x integer))
-                                 :targets '(self-target-a)
-                                 :tags '(self-tag-a)
+                                 :targets (list 'self-target-a)
+                                 :tags (list 'self-tag-a)
                                  :function (lambda (x) (declare (ignore x)) t)))
            (second (make-instance 'cl-spec:property
                                   :name 'self-property
@@ -1646,6 +1652,9 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                                   (cl-spec:properties-with-tag 'self-tag-a registry))
                           (null (cl-spec:properties-for 'self-tag-a registry))
                           (null (cl-spec:properties-with-tag 'self-target-a registry)))))
+        ;; Clients can reuse the lists exposed by the registered property's readers.
+        (setf (car (cl-spec:property-targets first)) 'self-target-b
+              (car (cl-spec:property-tags first)) 'self-tag-b)
         (cl-spec:register-property second registry)
         (and indexed
              (null (cl-spec:properties-for 'self-target-a registry))
@@ -1691,7 +1700,7 @@ expected order is by symbol name alone and is computed here, not by the registry
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
     (let* ((registry (make-registry-under-test))
-           (names '(self-sort-c self-sort-a self-sort-b))
+           (names '(self-sort-b self-sort self-sort-a))
            (expected (sort (copy-list names) #'string< :key #'symbol-name)))
       (dolist (name names)
         (cl-spec:registry-register-spec registry name (normalize-spec-form 'integer))

@@ -248,6 +248,32 @@
       (let ((values (sample-spec '(and my-range (satisfies oddp)) :count 20 :seed 2)))
         (ok (every (lambda (value) (and (oddp value) (<= 1 value 10))) values))))))
 
+(deftest folded-types-retain-every-conjunct
+  (let ((*registry* (make-hash-table-registry)))
+    (registry-register-spec *registry* 'numbers
+                            (normalize-spec-form '(range * *) :name 'numbers))
+    (registry-register-spec *registry* 'nothing
+                            (normalize-spec-form '(type nil) :name 'nothing))
+    (dolist (form '((and string (range * *)) (and (range * *) string)
+                    (and string (and numbers (type sequence)))))
+      (ok (handler-case (progn (sample-spec form :count 8 :seed 1 :generation-budget 8) nil)
+            (generation-budget-exhausted () t))))
+    (dolist (form '((and integer (type nil)) (and (type nil) integer)
+                    (and (and nothing integer) (range * *))))
+      (ok (handler-case (progn (sample-spec form :count 8 :seed 1 :generation-budget 8) nil)
+            (generator-unavailable (condition)
+              (eq :empty-domain
+                  (cl-spec/src/conditions:generator-unavailable-kind condition))))))
+    (let ((calls 0))
+      (defproperty empty-intersection-law ((x (and string (range * *))))
+        (:trials (:normal 8))
+        (progn (incf calls) (stringp x)))
+      (let ((result (run-property 'empty-intersection-law :seed 1
+                                  :options '(:generation-budget 8))))
+        (ok (eq :error (property-result-status result)))
+        (ok (eq :generation (property-result-failure-phase result)))
+        (ok (zerop calls))))))
+
 (deftest nonnumeric-type-does-not-block-a-structured-source
   (let ((values (sample-spec '(and (type list) (list-of integer)) :count 20 :seed 1)))
     (ok (plusp (length values)))

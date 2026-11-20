@@ -3,6 +3,7 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/main)
+  (:import-from #:cl-spec/src/field-spec #:plist-structure-error)
   (:import-from #:cl-spec/src/coverage #:coverage-data #:coverage-schema))
 (in-package #:cl-spec/tests/coverage-direct-test)
 
@@ -103,6 +104,53 @@
                     (report (coverage-data result)))
                (ok (= 1 (getf report :input-unavailable)))
                (ok (= 1 (getf (getf report :input-unavailable-reasons) reason 0)))))))
+
+(defun count-record-scans (record thunk)
+  "Return THUNK's result and the number of structural inspections of RECORD."
+  (let ((original (fdefinition 'plist-structure-error)) (scans 0))
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'plist-structure-error)
+                 (lambda (value)
+                   (when (eq value record) (incf scans))
+                   (funcall original value)))
+           (values (funcall thunk) scans))
+      (setf (fdefinition 'plist-structure-error) original))))
+
+(deftest coverage-indexes-each-plist-once-per-capture
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (record (list :n 2 :memo nil)))
+    (cl-spec:defspec-function identity
+      (:args (payload (plist (:required (:n (range integer 1 2))) (:optional (:memo t)))))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context recipe)) (list record))
+                (:cleanup (context) (declare (ignore context recipe))))
+      (:returns t))
+    (flet ((observe ()
+             (flet ((run (coverage)
+                      (count-record-scans
+                       record (lambda () (cl-spec:check-fixture 'identity 1 :coverage coverage)))))
+               (multiple-value-bind (baseline ordinary-scans) (run nil)
+                 (multiple-value-bind (result observed-scans) (run '(:mode :observe))
+                   (ok (= (1+ ordinary-scans) observed-scans))
+                   (ok (eq (getf (cl-spec:fixture-check-data baseline) :status)
+                           (getf (cl-spec:fixture-check-data result) :status)))
+                   (coverage-data result))))))
+      (let ((report (observe)))
+        (ok (= 1 (count-bucket report :field-presence :checked :present)))
+        (ok (= 1 (count-bucket report :numeric-boundary :checked :upper)))
+        (ok (= 1 (count-bucket report :extra-key-presence :checked :absent))))
+      (setf (cdr record) (list 1 :extra 3))
+      (let ((report (observe)))
+        (ok (= 1 (count-bucket report :field-presence :checked :absent)))
+        (ok (= 1 (count-bucket report :numeric-boundary :checked :lower)))
+        (ok (= 1 (count-bucket report :extra-key-presence :checked :present))))
+      (setf (cdr record) (list 1 :n 2))
+      (let ((report (observe)))
+        (dolist (dimension (getf report :dimensions))
+          (let ((stage (find :domain-valid (getf dimension :stages)
+                             :key (lambda (s) (getf s :stage)))))
+            (ok (zerop (getf stage :observed-trials)))))))))
 
 (deftest evidence-summary-preserves-coverage-scope
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))

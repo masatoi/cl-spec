@@ -598,6 +598,12 @@ registryを単一のglobal hash-tableとして固定しない。
 (properties-for 'transfer)
 ```
 
+公開の入口で registry に NIL を渡すと、その時点の動的な `*registry*` を使う。
+低レベルの `registry-*` 総称関数は、第1引数に明示された registry に dispatch する。
+一覧と逆引きの結果は symbol 名の辞書順に並べ、同名なら home package 名で比較する。
+`registry-register-property` は登録時の targets/tags を逆引きキーとして保持する。
+呼び出し側が登録後にキーのリストを書き換えても、再登録で撤回するのは元のキーである。
+
 registry protocolは渡された値をそのまま保存し、値の種類を検査しない。名前の規則は
 protocolが課す。`registry-register-spec`は、NIL・keyword・Common Lispの型名を
 `invalid-spec-form`で拒否する（DSLはその記号を常に型として読むため、登録しても名前で
@@ -1191,16 +1197,22 @@ simple structures
 片側が無制限の区間（`(range integer 50 *)`、`(range real * -100)`など）は、有限の端点から
 `[0, max(|端点|, check-it:*size*)]`だけ離れた値を引く。端点が0から遠くても値は端点
 1つに潰れず、端点の大きさに比例して散らばる。両端が有限な実数の区間は、下端に
-幅の`[0, 1)`倍を足して引く。実数の区間はsingle-floatの範囲を超える端点でも
-double-floatで生成し、double-floatの範囲を超える端点や幅は`:range-too-wide`の
+幅の`[0, 1)`倍を足して引く。有限な端点から正確な幅を求め、端点、幅または加算結果が
+single-floatの範囲を超えうる場合はdouble-floatで生成する。double-floatの範囲を超える
+有限の端点や幅は`:range-too-wide`の
 `generator-unavailable`とする。`check-it:*size*`を引き上げるのは、両端が有限な
 整数の区間だけである。片側が無制限の区間と実数の区間は引き上げないので、同じ実行の
-他の引数が引く値の大きさを変えない。浮動小数点の無限大の端点は、無制限の端点`*`と
-同じに扱う（その側の有限の数をすべて受け付けるため）。
+他の引数が引く値の大きさを変えない。下端の負の無限大と上端の正の無限大は、有限値の
+生成では無制限の端点`*`と同じに扱う。下端が正の無限大、または上端が負の無限大のとき、
+整数区間は空である。実数区間がその無限大を含む場合は端点自身を生成する。下端が上端を
+上回る区間は`:empty-domain`とする。UNIQUEの列挙では空の整数区間を要素数0として扱う。
+実数区間は、無限大だけを受け付ける場合も含めてUNIQUEの列挙対象外である。
 
 ## ANDの生成元選択
 
 `and`は決定的な規則で生成元を一つ構築する（§9.2、§73.4）。
+型指定のないrangeも`real`を要求し、`(type nil)`は空の型を表す。入れ子や参照先を
+foldするときにも両者を区別する。
 
 - AND自身の`(:generator NAME)`があればそれを使い、新しいfilterは課さない。
 - 競合する連言のcustom generator指定が一つだけなら、それを生成元とし、AND全体の
@@ -5267,7 +5279,12 @@ this first version's restoration model.
 AV1 is a manually parsed, bounded tagged tree, never a Lisp reader form. Only
 existing symbols and documented scalar/tree values are supported; aliasing,
 cycles and opaque values are rejected rather than silently copied with changed
-semantics. A symbol's package is resolved by its exact package name, with no
+semantics. Tag 7 reconstructs a simple array of `character`. Tag 10 reconstructs
+a simple array of `base-char` and requires every character to belong to that
+type. The tag determines the element type even for empty strings and ASCII-only
+contents. Older writers used tag 7 for both types, so a legacy record contains
+no evidence that its string was specialized. A symbol's package is resolved
+by its exact package name, with no
 global or package-local nickname in effect, so decoding does not depend on the
 caller's `*package*`. Integers are limited to 13,000 bits as `integer-length`
 counts them, the same bound on both sides, and decoding allocates close to linearly in the digits it reads. The public data

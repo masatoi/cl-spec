@@ -69,6 +69,21 @@
 
 (in-package #:cl-spec/tests/self-api-contracts-test)
 
+(deftest registry-self-contracts-accept-the-public-default
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (flet ((verdict (name arguments)
+             (handler-case (cl-spec:call-check-result-status (cl-spec:check-call name arguments))
+               (cl-spec:invalid-call-arguments () :invalid-arguments))))
+      (let* ((name 'cl-spec/specs::registry-object)
+             (spec (find-spec name))
+             (other (make-hash-table-registry)))
+        (ok (eq spec (find-spec name nil)))
+        (dolist (arguments (list (list name) (list name nil) (list name other)))
+          (ok (eq :passed (verdict 'cl-spec:find-spec arguments))))
+        (dolist (arguments (list (list spec) (list spec :registry nil) (list spec :registry other)))
+          (ok (eq :passed (verdict 'cl-spec:definition-digest arguments))))))))
+
 (defun map-form-kind (form)
   "Return :ALIST or :HASH-TABLE for a map specification FORM, otherwise NIL.
 The head symbols are compared by name: the corpus lives in another package."
@@ -245,10 +260,11 @@ The head symbols are compared by name: the corpus lives in another package."
     (let ((before (list-properties))
           (generators (cl-spec:list-generators)))
       (dolist (budget '(0 1 5))
-        (let ((reports (generation-exhaustion-observations budget)))
-          (ok (= 3 (length reports)))
+        (let ((reports (generation-exhaustion-observations budget))
+              (paths '((:value :and 0) (:value :and 0) (:value :map-key) (:value :map-key))))
+          (ok (= (length paths) (length reports)))
           (loop for report in reports
-                for path in '((:value :and 0) (:value :map-key) (:value :map-key))
+                for path in paths
                 do (ok (eq :budget-exhausted (getf report :termination)))
                    (ok (eq :generation (getf report :exhaustion-phase)))
                    (ok (equal path (getf report :exhausted-at)))
@@ -434,7 +450,18 @@ REPLACEMENT is a function of the original definition and the call's arguments."
                        'cl-spec/src/utils/artifact-values:deserialize-artifact-value
                        (lambda (original &rest arguments)
                          (unsigned-ratios (apply original arguments)))
-                       law))))))
+                       law))))
+    (unless (typep (make-string 0 :element-type 'character) 'simple-base-string)
+      (testing "a decoder that widens simple base strings fails the law"
+        (ok (eq :failed (law-status-while
+                         'cl-spec/src/utils/artifact-values:deserialize-artifact-value
+                         (lambda (original &rest arguments)
+                           (let ((value (apply original arguments)))
+                             (if (typep value 'simple-base-string)
+                                 (make-array (length value) :element-type 'character
+                                                            :initial-contents value)
+                                 value)))
+                         law)))))))
 
 (deftest the-reproducibility-law-observes-the-recorded-profile
   ;; The law ran an always-passing property under the default profile, so a

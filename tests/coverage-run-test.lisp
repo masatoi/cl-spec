@@ -137,6 +137,61 @@
         (ok (= 10 (+ (count-bucket report :field-presence :checked :present)
                      (count-bucket report :field-presence :checked :absent))))))))
 
+#+sbcl
+(deftest infinite-field-boundaries-preserve-seeded-observation
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)) (seen nil))
+    (cl-spec:defproperty infinite-fields
+        ((payload (plist
+                   (:required (:negative (range integer #.sb-ext:double-float-negative-infinity 4))
+                              (:positive (range integer -4 #.sb-ext:double-float-positive-infinity))
+                              (:finite (range integer 1/2 5/2)))
+                   (:closed t))))
+      (:trials (:normal 4)) (push payload seen))
+    (let ((baseline (cl-spec:run-property 'infinite-fields :seed 1))
+          (inputs seen))
+      (setf seen nil)
+      (let* ((schema (cl-spec:coverage-schema (cl-spec:find-property 'infinite-fields)))
+             (result (cl-spec:run-property 'infinite-fields :seed 1
+                      :options '(:coverage (:mode :observe))))
+             (report (coverage-data result)))
+        (ok (eq :passed (cl-spec:property-result-status baseline)))
+        (ok (eq :passed (cl-spec:property-result-status result)))
+        (ok (equal inputs seen))
+        (ok (eq :partial (getf schema :discovery)))
+        (ok (equal '((:path (payload :negative) :reason :unsupported-boundary)
+                     (:path (payload :positive) :reason :unsupported-boundary))
+                   (getf schema :unexpanded)))
+        (ok (= 4 (+ (count-bucket report :numeric-boundary :checked :lower)
+                    (count-bucket report :numeric-boundary :checked :upper))))))))
+
+(deftest nested-rechecks-leave-the-enclosing-coverage-trial-intact
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defproperty false-property () (:trials (:normal 1)) nil)
+    (cl-spec:defspec-function identity
+      (:args (x integer)) (:returns string)
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context)) (list recipe))
+                (:cleanup (context) (declare (ignore context recipe)))))
+    (let ((stateless (cl-spec:make-counterexample-artifact
+                      (cl-spec:run-property 'false-property :seed 1)))
+          (fixture (cl-spec:make-counterexample-artifact (cl-spec:check-fixture 'identity 1))))
+      (cl-spec:defproperty check-saved-inputs ((payload (plist (:optional (:memo integer)))))
+        (:trials (:normal 1))
+        (declare (ignore payload))
+        (and (eq :same-failure (getf (cl-spec:recheck-counterexample stateless
+                                      :state-policy :stateless) :status))
+             (eq :same-failure (getf (cl-spec:recheck-counterexample fixture
+                                      :state-policy :fixture) :status))))
+      (let* ((baseline (cl-spec:run-property 'check-saved-inputs :seed 1))
+             (observed (cl-spec:run-property 'check-saved-inputs :seed 1
+                        :options '(:coverage (:mode :observe))))
+             (report (coverage-data observed)))
+        (ok (eq :passed (cl-spec:property-result-status baseline)))
+        (ok (eq :passed (cl-spec:property-result-status observed)))
+        (ok (= 1 (getf report :trials)))
+        (ok (= 1 (+ (count-bucket report :field-presence :checked :present)
+                    (count-bucket report :field-presence :checked :absent))))))))
+
 (defvar *coverage-predicate-calls* 0)
 
 (defun counted-integer-p (value)

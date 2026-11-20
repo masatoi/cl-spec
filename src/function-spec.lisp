@@ -52,7 +52,6 @@
                 #:capture-error-data
                 #:state-post-error
                 #:state-post-error-data
-                #:unsupported-stateful-operation
                 #:spec-violation)
   (:import-from #:cl-spec/src/utils/arguments
                 #:check-argument #:check-keyword-arguments #:check-run-options)
@@ -89,8 +88,7 @@
                 #:prepare-property-run #:run-property-with-result-constructor
                 #:property-result #:property-result-case-report #:property-result-entity-kind
                 #:check-replayed-result
-                #:property-result-budget #:property-result-options #:property-result-property
-                #:property-result-seed #:observation-data)
+                #:property-result-budget #:property-result-property #:observation-data)
   (:import-from #:cl-spec/src/generator
                 #:current-generator-backend
                 #:backend-default-trials)
@@ -2164,7 +2162,7 @@ INVALID-ARGUMENT."
                       &key coverage (registry *registry*) &allow-other-keys)
   "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-fixture)
-  (check-registry registry 'check-fixture)
+  (setf registry (check-registry registry 'check-fixture))
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))
@@ -2226,13 +2224,12 @@ contract failure. Fixture results and artifacts use version 2."
   (check-argument trials '(or null (integer 0 *)) 'check-function :trials)
   (check-argument seed '(or null property-result (integer 0 *)) 'check-function :seed)
   (check-run-options options 'check-function)
-  (check-registry registry 'check-function)
+  (setf registry (check-registry registry 'check-function))
   (let* ((seed-result (and (typep seed 'property-result) seed))
          (budget (or trials
                      (when (typep seed-result 'function-check-result)
                        (function-check-result-budget seed-result))
                      (backend-default-trials (current-generator-backend))))
-         (seed (if seed-result (property-result-seed seed-result) seed))
          (contract (resolve-function-spec function-designator registry))
          (name (function-spec-name contract))
          (property (if (function-spec-fixture contract)
@@ -2242,10 +2239,6 @@ contract failure. Fixture results and artifacts use version 2."
          (case-run (make-case-run contract)))
     ;; A result replays only the contract run it came from (#84).
     (check-replayed-result seed-result :function-spec name 'check-function)
-    ;; Replaying a state-observing contract requires explicit reconstruction.
-    (when (and seed-result (state-observing-contract-p contract)
-               (not (function-spec-fixture contract)))
-      (error 'unsupported-stateful-operation :operation :replay :function name))
     (let ((enclosing-case-run *case-run*)
           (*case-run* case-run))
       (run-property-with-result-constructor
@@ -2262,8 +2255,7 @@ contract failure. Fixture results and artifacts use version 2."
                  (validate-case-trial-report (getf initargs :trial-report)
                                              (case-run-report case-run)))
            (apply #'make-instance 'function-check-result initargs)))
-       :seed (if (and seed-result (function-spec-fixture contract)) seed-result seed)
-       :options (or options (and seed-result (property-result-options seed-result)))
+       :seed seed :options options
        :registry registry))))
 
 ;;; One concrete caller-supplied invocation (no generation).
@@ -2428,7 +2420,7 @@ A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-call)
-  (check-registry registry 'check-call)
+  (setf registry (check-registry registry 'check-call))
   (let* ((coverage-options (normalize-coverage-options coverage :direct t))
          (*coverage-trial* nil)
          (contract (resolve-function-spec function-designator registry))

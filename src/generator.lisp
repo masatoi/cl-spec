@@ -382,6 +382,7 @@ values its own spec rejects.  Shared and circular object graphs are walked once.
 
 SPEC-DESIGNATOR is either a symbol naming a registered spec or a spec object.
 The result is opaque to everything but the backend and GENERATE-VALUE."
+  (setf registry (check-registry registry 'generator-for))
   (let ((spec (resolve-spec spec-designator registry)))
     (validate-definition-tree spec)
     (compile-generator (current-generator-backend) spec
@@ -408,7 +409,7 @@ from an agent.
 A COUNT, SEED or GENERATION-BUDGET that is not a nonnegative integer (SEED may
 also be NIL) signals INVALID-ARGUMENT before anything is generated."
   (check-argument count '(integer 0 *) 'sample :count)
-  (check-registry registry 'sample)
+  (setf registry (check-registry registry 'sample))
   (check-argument seed '(or null (integer 0 *)) 'sample :seed)
   (when generation-budget-p
     (check-argument generation-budget '(integer 0 *) 'sample :generation-budget))

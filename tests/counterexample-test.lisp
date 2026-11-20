@@ -3,6 +3,10 @@
 (defpackage #:cl-spec/tests/counterexample-test
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok #:signals)
+  (:import-from #:cl-spec/main
+                #:*registry* #:defgenerator #:defspec #:defproperty
+                #:run-property #:property-result-status)
+  (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/src/counterexample
                 #:make-counterexample-artifact #:counterexample-artifact-data
                 #:serialize-counterexample-artifact #:deserialize-counterexample-artifact
@@ -182,6 +186,25 @@
         (ok (eq :same-failure
                 (getf (recheck-counterexample restored :registry registry
                                              :state-policy :stateless) :status)))))))
+
+(deftest a-property-on-string-storage-rechecks-as-the-same-failure
+  (let ((*registry* (make-registry)))
+    (defgenerator base-string-input ()
+      (make-array 3 :element-type 'base-char :initial-contents "abc"))
+    (defspec word string (:generator base-string-input))
+    (defproperty refuses-base-strings ((x word))
+      (:trials (:normal 1))
+      (not (typep x 'simple-base-string)))
+    (let* ((result (run-property 'refuses-base-strings :seed 7))
+           (artifact (make-counterexample-artifact result :selection :original))
+           (restored (deserialize-counterexample-artifact
+                      (serialize-counterexample-artifact artifact))))
+      (ok (eq :failed (property-result-status result)))
+      (ok (typep (first (getf (getf (counterexample-artifact-data restored) :original)
+                              :arguments))
+                 'simple-base-string))
+      (ok (eq :same-failure (getf (recheck-counterexample restored :state-policy :stateless)
+                                  :status))))))
 
 (deftest immutable-roundtrip-and-direct-recheck
   (let ((registry (make-registry)) (calls 0) (fixed nil))

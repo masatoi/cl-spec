@@ -448,20 +448,16 @@ or :RUN-OPTIONS-MISMATCH."
       (error 'unsupported-stateful-operation :operation :replay
              :function (property-name property) :reason reason))))
 
-(defun refuse-stateful-replay (property seed-result)
-  "Refuse re-applying a past run to a state-observing PROPERTY, or return NIL.
-
-A :CAPTURE / :STATE-POST function-check property observes state and never
-restores it, so a saved run cannot be reapplied to it.  SEED-RESULT is the
-PROPERTY-RESULT the caller is standing in for a run, or NIL when the caller
-starts a new run (no seed, or an integer seed) which stays allowed.  The
-refusal happens before metadata probing, generation, capture or the target run,
-so no call counter moves.  Ordinary properties declare no state constraints, so
-their existing replay is unchanged."
-  (when (and seed-result (definition-state-constraints property)
-             (not (definition-fixture-metadata property)))
-    (error 'unsupported-stateful-operation :operation :replay
-           :function (property-name property))))
+(defun validate-replay-state (property result options registry)
+  "Check the saved input kind and any state reconstruction requirements before execution."
+  (cond ((definition-fixture-metadata property)
+         (validate-fixture-replay property result options registry))
+        ((eq :fixture-recipe (getf (property-result-schema-metadata result) :input-kind))
+         (error 'unsupported-stateful-operation :operation :replay
+                :function (property-name property) :reason :definition-mismatch))
+        ((definition-state-constraints property)
+         (error 'unsupported-stateful-operation :operation :replay
+                :function (property-name property)))))
 
 (defgeneric prepare-property-run (property)
   (:documentation "Capture run-specific executable state before metadata and replay validation.")
@@ -512,7 +508,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
   (check-profile profile 'run-property)
   (check-run-options options 'run-property)
-  (check-registry registry 'run-property)
+  (setf registry (check-registry registry 'run-property))
   (let* ((result-constructor
            (when (and *pending-result-constructor*
                       (eq property-designator (car *pending-result-constructor*)))
@@ -536,15 +532,12 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
                       (and seed-result (property-result-options seed-result))))
          (property (let ((resolved (prepare-property-run
                                     (resolve-property property-designator registry))))
-                     ;; Refuse a state-observing property before metadata
-                     ;; probing, generation, capture or the target run.
-                     (refuse-stateful-replay resolved seed-result)
-                     ;; A run made through CHECK-FUNCTION checks its own result.
+                     ;; A run made through CHECK-FUNCTION checks its own result's name and kind.
                      (unless result-constructor
                        (check-replayed-result seed-result :property
                                               (property-name resolved) 'run-property))
-                      (when (and seed-result (definition-fixture-metadata resolved))
-                        (validate-fixture-replay resolved seed-result options registry))
+                     (when seed-result
+                       (validate-replay-state resolved seed-result options registry))
                      resolved))
          (backend (current-generator-backend))
          (coverage-options (normalize-coverage-options (getf options :coverage)))
@@ -658,6 +651,7 @@ signals INVALID-ARGUMENT before the first property runs."
                   :property-designators)
   (check-profile profile 'run-properties)
   (check-run-options options 'run-properties)
+  (setf registry (check-registry registry 'run-properties))
   (mapcar (lambda (designator)
             (run-property designator :profile profile :options options :registry registry))
           property-designators))
@@ -692,10 +686,9 @@ integer SEED starts a new run and stays allowed."
   (check-argument seed '(or property-result (integer 0 *)) 'replay-property :seed)
   (check-profile profile 'replay-property)
   (check-run-options options 'replay-property)
+  (setf registry (check-registry registry 'replay-property))
   ;; Preserve the result through RUN-PROPERTY so fixture identity and run
   ;; parameters are validated before any hooks execute.
-  (refuse-stateful-replay (resolve-property property-designator registry)
-                          (and (typep seed 'property-result) seed))
   (run-property property-designator
                 :seed seed
                 :profile (or profile

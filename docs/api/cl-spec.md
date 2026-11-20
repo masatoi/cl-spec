@@ -939,6 +939,9 @@ other policy, including the one for the other artifact version, returns :STATUS
 :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
+REGISTRY resolves the definition and its declared specs. User callbacks retain the
+caller's dynamic *REGISTRY*, as in generated and direct checks. Rechecking inside
+an observed trial contributes no stages or counts to that trial's coverage.
 Returns a :RECHECK record; never mutates the saved artifact or original result.
 In both versions an error the recheck itself meets, such as a target that is no
 longer defined, is recorded as :STATUS :CONTRACT-ERROR rather than signalled.
@@ -1638,7 +1641,8 @@ Register PROPERTY in REGISTRY under NAME.
 
 ```text
 TARGETS is a list of symbols the property is about; TAGS is a list of tag
-designators.  Both are indexed for reverse lookup.  Re-registering a name
+designators.  Reverse lookup uses their keys at the time of registration,
+including when the caller later reuses either list.  Re-registering a name
 replaces the previous definition and drops its stale index entries.
 Returns PROPERTY.
 ```

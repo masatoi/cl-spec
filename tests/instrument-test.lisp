@@ -339,6 +339,8 @@
     (ok (signals (funcall (fdefinition 'target) "bad") 'spec-violation))
     (uninstrument-function 'target)
     (instrument-function 'target :registry nil)
+    (ok (equal (cl-spec/src/instrument:instrumentation-status 'target)
+               (cl-spec/src/instrument:instrumentation-status 'target :registry nil)))
     (ok (signals (funcall (fdefinition 'target) "bad") 'spec-violation))))
 
 (deftest unsupported-target-errors-belong-to-framework

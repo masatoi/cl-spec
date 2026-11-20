@@ -254,6 +254,27 @@
           (ok (null (replay-refusal
                      (lambda () (cl-spec:check-function 'withdraw :seed first))))))))))
 
+(deftest replay-refuses-adding-or-removing-a-fixture
+  (with-contract
+    (let ((contract (cl-spec:find-function-spec 'withdraw))
+          (fixture-run (cl-spec:check-function 'withdraw :trials 3 :seed 41)))
+      (cl-spec:defspec-function withdraw
+        (:args (account (tuple integer)) (amount integer))
+        (:returns keyword))
+      (flet ((refuses-before-execution-p (run)
+               (let ((before (list *setups* *calls* *cleanups*)))
+                 (and (eq :definition-mismatch
+                          (first (replay-refusal
+                                  (lambda () (cl-spec:check-function 'withdraw :seed run)))))
+                      (equal before (list *setups* *calls* *cleanups*))))))
+        (ok (refuses-before-execution-p fixture-run))
+        (let ((stateless-run (cl-spec:check-function 'withdraw :trials 3 :seed 41)))
+          (ok (eq :passed (cl-spec:property-result-status stateless-run)))
+          (ok (eq :passed (cl-spec:property-result-status
+                           (cl-spec:check-function 'withdraw :seed stateless-run))))
+          (cl-spec:register-function-spec contract)
+          (ok (refuses-before-execution-p stateless-run)))))))
+
 (deftest fixture-property-replay-with-other-options-is-a-run-options-mismatch
   (with-contract
     (let* ((contract (cl-spec:find-function-spec 'withdraw))
