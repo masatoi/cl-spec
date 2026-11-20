@@ -317,7 +317,8 @@ allowed."
 
 (defun contract-names ()
   "Return the public functions covered by this executable specification bundle."
-  '(cl-spec:coverage-schema cl-spec:coverage-data cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
+  '(cl-spec:format-check-summary
+    cl-spec:coverage-schema cl-spec:coverage-data cl-spec:evidence-summary cl-spec:assess-evidence cl-spec:check-fixture cl-spec:fixture-check-data validp validate explain-data compile-validator
     compile-explainer spec-data semantic-data normalize-spec-form
     cl-spec:deserialize-counterexample-artifact cl-spec:validate-definition
      cl-spec:custom-generator-shrinker cl-spec:trial-observation-outcome
@@ -693,6 +694,12 @@ their finite input corpora, and the registry write contract names its scenarios.
     (:args (observation fresh-fixture-result))
     (:returns (plist (:required (:availability (member :not-collected))
                                 (:reason (member :disabled))))))
+  (defspec-function cl-spec:format-check-summary
+    "A direct fixture check produces one line with its execution verdict and assessment."
+    (:args (observation fresh-fixture-result))
+    (:returns string)
+    (:post (and (search "passed | evidence not-assessed" result)
+                (not (find #\Newline result)))))
   (defspec-function cl-spec:evidence-summary
     "A saved direct observation is summarized without an implicit policy."
     (:args (observation fresh-fixture-result))
