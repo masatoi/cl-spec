@@ -375,6 +375,32 @@ decides whether they pass."
             (ok (refuses (funcall (compile nil `(lambda () ,(macroexpand-1 form))))))
             (ok (eq original (find-function-spec 'identity)))))))))
 
+(deftest loop-and-prog-guards-use-their-own-bindings
+  (with-fresh-registry
+    (dolist (guard '((do ((result 1)) (t (plusp result)))
+                     (do* ((eventual 1) (n eventual)) (t (plusp n)))
+                     (prog ((result 1)) (return (plusp result)))
+                     (prog* ((eventual 1) (n eventual)) (return (plusp n)))
+                     (dotimes (result 1 t) (plusp result))
+                     (dolist (eventual '(1) t) (plusp eventual))))
+      (let* ((case (make-instance 'function-case :name :one :when-forms (list guard)
+                                  :when-function (constantly t) :outcome-kind :returns
+                                  :outcome-spec '(values integer) :post-value-variables '(eventual)
+                                  :postconditions '(t) :postcondition-function (constantly t)))
+             (owner (make-instance 'function-spec :name 'identity
+                                   :argument-specs '((x integer)) :cases (list case))))
+        (ok (eq owner (cl-spec:register-function-spec owner)))))
+    (dolist (guard '((do ((result result)) (t result))
+                     (do* ((n eventual) (eventual 1)) (t n))
+                     (prog ((eventual eventual)) (return eventual))
+                     (prog* ((n result) (result 1)) (return n))
+                     (dotimes (n result t))
+                     (dolist (n eventual t))))
+      (ok (refuses
+           (macroexpand-1 `(defspec-function identity (:args (x integer))
+                            (:cases (:one (:when ,guard) (:returns (values integer))
+                                          (:post-values (eventual) t))))))))))
+
 (deftest standard-guard-macros-respect-return-scope
   (dolist (name '(eventual result))
     (dolist (guard `((handler-case (plusp ,name) (error () nil))

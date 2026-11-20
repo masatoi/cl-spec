@@ -142,11 +142,13 @@ the case can later be validated against the bindings of its owning contract."
                ((eq operator 'assert)
                 (walk (first args) scope) (walk-forms (second args) scope)
                 (walk-forms (cddr args) scope))
+               ;; Native walkers may preserve standard binding macros such as DO
+               ;; and PROG. Inspect their expansion before the ordinary-call rule.
+               ((and (system-macro-p operator) (macro-function operator)
+                     (eq (macro-function operator environment) (macro-function operator)))
+                (walk (expand-system-guard-form expression environment) scope))
                ((or expanded-p (special-operator-p operator)
                     (not (macro-function operator environment)))
-                (walk-forms args scope))
-               ((and (system-macro-p operator)
-                     (eq (macro-function operator environment) (macro-function operator)))
-                (walk (expand-system-guard-form expression environment) scope))))))
+                (walk-forms args scope))))))
       (walk form nil)
       references)))
