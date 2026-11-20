@@ -278,13 +278,21 @@ find nothing.
 |---|---|---|---|---|
 | `plist` fields | required/optional/closed, key identity, presence vs `NIL` | yes | yes | every field spec needs a generator |
 | `alist` / `hash-table` fields | `:test`, presence vs `NIL`, duplicate-key/alist and wrong-table-test errors | yes | yes | key comparison is the declared `:test` |
-| `object-of` | explicit readers only | no automatic construction | no here: `window-object-spec` reports `:shrinking :none` because `window-object-generator` has no `:shrink` clause. A `defgenerator` `:shrink` clause is used only when that generator supplies a run's whole input — a `defspec-function` `:args-generator` — or a `:fixture` recipe ([reproducible guide](reproducible-stateful-contracts.md)); a `(:generator NAME)` spec used as a property or `:args` argument, a field or an AND conjunct is not shrunk | needs `(:generator NAME)`; no MOP inference |
+| `object-of` | explicit readers only | no automatic construction | `window-object-generator` has no `:shrink` clause, so `window-object-spec` reports `:shrinking :none`. A custom value shrinker applies when the spec supplies the sole argument of an ordinary property or a fixture recipe. | needs `(:generator NAME)`; no MOP inference |
 | `list-of` / `vector-of` | `:min-length`, `:max-length`, `:unique` (EQL) | yes | yes | `:unique` needs a finite element domain |
 | `tagged-by` | one branch per tag, branch named in errors | all branches | yes | `sample :branch` targets one branch |
 | `and` | full validation always | one selected source plus a bounded filter | follows the selected source; a custom-generator source is not shrunk (`:none`) | see the AND rules above |
 | `defspec-function` | argument/return/post/signals contracts | yes | yes | a top-level `:signals` excludes `:returns`/`:post`; named `:cases` mix both outcomes (§17, §17.2) |
-| Properties | `defproperty`, `run-property`, replay | yes | yes | custom generators have no automatic shrink |
+| Properties | `defproperty`, `run-property`, replay | yes | yes | a custom shrinker can reduce the value of the sole argument |
 | `describe-*` | — | — | — | stubs; not usable API |
+
+`backend-capabilities` describes a spec object used as the root. For a
+property, `property-data` and the run's `result-data` report the strategy for
+its argument tuple. A multi-argument property, an individual function-spec
+`:args` binding, a field or an AND conjunct keeps its custom value during
+shrinking. A function contract can shrink a whole call via `:args-generator`
+or rebuild state from a shrunk fixture recipe. See the
+[fixture guide](reproducible-stateful-contracts.md).
 
 Guarantee boundaries:
 

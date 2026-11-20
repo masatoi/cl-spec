@@ -191,8 +191,8 @@ shrink path only, which is why a sample and a passing run hid it (PR review)."))
 
 (defmethod shrink ((generator custom-value-generator) test)
   "Keep nested custom values unchanged.
-The backend invokes an explicit shrinker only for a whole argument generator,
-where it can validate and observe the complete correlated candidate."
+The runner applies an explicit shrinker at a supported input position, where
+it can validate and observe the complete candidate."
   (declare (ignore test))
   (cached-value generator))
 

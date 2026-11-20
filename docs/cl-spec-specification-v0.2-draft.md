@@ -1012,13 +1012,14 @@ readerは観測だけを行い、instanceの構築方法は持たない。した
 `(:generator NAME)`を付けて`defgenerator`で構築する。これが現時点で唯一の生成経路で、
 constructorとinitargを知るのは著者だけだからである。
 
-`defgenerator`の`:shrink`節が使われるのは、そのgeneratorがrunの入力全体を供給する場合
-（`defspec-function`の`:args-generator`と`:fixture`のrecipe）に限る。property引数・
-`:args`引数・field・ANDの連言の位置にある`(:generator NAME)`は値を生成するが、その値は
-縮小中も変化せず、同じ入力の他の値だけが縮小される。縮小できる値が他に無いときは元の反例を
-保持し、結果のcapabilityは`:shrinking :none`となる。`backend-capabilities`はspecを
-単独で（`sample`のrootとして）使った場合の能力を答えるため、この位置の差を反映しない
-（issue #45）。
+`defproperty` の引数が一つで、その引数specに `(:generator NAME)` を指定すると、
+`defgenerator` の `:shrink` 節が引数値を受け取り、候補値を優先順に返す。
+`defspec-function` の `:args-generator` は全引数リストを、`:fixture` の recipe は
+recipe 値を縮小できる。複数引数の property、個別の `:args` 引数、field、collection の要素、
+AND の連言に置いた custom generator の値は縮小中も固定される。
+`backend-capabilities` は spec オブジェクトを単独の root とした場合の能力を返す。
+property の引数構成に対応する能力は `property-data`、実行時の能力は `result-data` の
+`:capabilities` で確認できる。
 
 ---
 
@@ -2410,7 +2411,11 @@ artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠�
 
 候補列の不正、shrinker error、検出したcons/配列変更は探索を停止し、元の証拠とそれ以前の採用証拠を
 保持する。任意のユーザーコード自体の停止・外部状態復元・大域的最小性は保証しない。
-再現には決定的候補順序が必要。nested custom value generatorの縮小は従来のno-opを維持する。
+再現には決定的候補順序が必要。通常の property に引数が一つだけあり、その引数specの
+generator に `:shrink` 節がある場合も、同じ候補予算と失敗署名で探索する。
+shrinker は引数値を受け取り、各候補値をその引数に束縛して検証する（§9.4）。
+実行器は cons と配列をコピーする。それ以外のオブジェクトは同じ個体を渡すため、
+shrinker は入力を変更せずに候補を作る。
 
 上記3変数の比較テスト（100生成、seed 42）では、独立生成は80棄却・20回の関数検査、
 全引数generatorは0棄却・100回の関数検査となった。これはこの生成分布での実測であり、

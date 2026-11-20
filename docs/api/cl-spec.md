@@ -1398,7 +1398,10 @@ VALIDATION-DEPTH-EXCEEDED, rather than answering, when VALUE is nested more than
 
 *Generic function* · `(backend spec &key registry)`
 
-Describe generation and shrinking without drawing or invoking user predicates.
+Describe generation and shrinking with the spec object SPEC as the root.
+Resolve a registered spec name with FIND-SPEC. For an enclosing property's input
+schema, consult PROPERTY-DATA or the run's RESULT-DATA. Probing capabilities
+does not draw values or run user predicates.
 
 <a name="backend-default-trials"></a>
 ### backend-default-trials
