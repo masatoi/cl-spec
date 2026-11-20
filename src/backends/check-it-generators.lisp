@@ -487,7 +487,10 @@ the narrower operand before computing a range bound or a scaled draw."
           (right-digits (float-digits right)))
       (cond ((< left-digits right-digits) (setf left (float left right)))
             ((> left-digits right-digits) (setf right (float right left))))))
-  (funcall operation left right))
+  (handler-case (funcall operation left right)
+    ;; With no subnormals, even a unit draw times the smallest normal can
+    ;; signal. A REAL range also admits the exact intermediate result.
+    (floating-point-underflow () (funcall operation (rational left) (rational right)))))
 
 (defun scaled-real-generator (origin scale &key (direction 1) symmetric-p minimum maximum)
   "Return a generator for ORIGIN + DIRECTION * U * SCALE.
@@ -564,13 +567,17 @@ value towards OFFSET."
              :reason "the range is too wide to sample: its width exceeds double-float range"))
     ;; Distinct SHORT-FLOAT formats can have less range than SINGLE-FLOAT.
     ;; Match the wider floating endpoint, with SINGLE as the minimum format.
-    (cond ((or (typep minimum 'long-float) (typep maximum 'long-float))
-           (float width 1l0))
-          ((or (> width most-positive-single-float)
-               (typep minimum 'double-float) (typep maximum 'double-float))
-           (float width 1d0))
-          ((or (floatp minimum) (floatp maximum)) (float width 1f0))
-          (t width))))
+    (handler-case
+        (cond ((or (typep minimum 'long-float) (typep maximum 'long-float))
+               (float width 1l0))
+              ((or (> width most-positive-single-float)
+                   (typep minimum 'double-float) (typep maximum 'double-float))
+               (float width 1d0))
+              ((or (floatp minimum) (floatp maximum)) (float width 1f0))
+              (t width))
+      ;; Adjacent floating endpoints can differ by less than the smallest
+      ;; positive float. Keep their exact width for scaling in that case.
+      (floating-point-underflow () width))))
 
 (defun real-range-generator (lower upper spec)
   "Return a generator producing reals in [LOWER, UPPER], where either bound may

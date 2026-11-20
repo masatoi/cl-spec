@@ -1198,7 +1198,9 @@ simple structures
 `[0, max(|端点|, check-it:*size*)]`だけ離れた値を引く。端点が0から遠くても値は端点
 1つに潰れず、端点の大きさに比例して散らばる。両端が有限な実数の区間は、下端に
 幅の`[0, 1)`倍を足して引く。有限な端点から正確な幅を求め、端点、幅または加算結果が
-single-floatの範囲を超えうる場合はdouble-floatで生成する。double-floatの範囲を超える
+single-floatの範囲を超えうる場合はdouble-floatで生成する。幅の変換や有限な生成値の
+計算で処理系が `floating-point-underflow` を通知した場合、その演算には正確な有理数を
+用いる。生成値や縮小候補は比になることがある。double-floatの範囲を超える
 有限の端点や幅は`:range-too-wide`の
 `generator-unavailable`とする。`check-it:*size*`を引き上げるのは、両端が有限な
 整数の区間だけである。片側が無制限の区間と実数の区間は引き上げないので、同じ実行の

@@ -1072,7 +1072,9 @@ explain:
   refusal d levels deep costs O(d²), because every nested error carries its
   path from the root.
 - Real-range generation widens to double-float when a width or draw could
-  overflow a single-float. If a finite width or endpoint exceeds double-float
+  overflow a single-float. When the host signals `floating-point-underflow` while
+  converting the width or computing a finite draw, the generator uses exact
+  rational arithmetic for that operation. If a finite width or endpoint exceeds double-float
   range, as in `(range real -1d308 1d308)` or a range bounded by `(expt 10 400)`,
   generation signals `generator-unavailable` with kind `:range-too-wide`.
 - An infinite lower bound of −∞ or upper bound of +∞ allows finite draws on that
