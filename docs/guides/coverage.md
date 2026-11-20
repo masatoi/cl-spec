@@ -32,8 +32,9 @@ Integer endpoints are rounded inward. Singleton ranges hit both lower and upper;
 ranges with no interior integers declare the interior bucket inapplicable.
 Nested plists and finite references are followed. Absent parents and omitted
 arguments are inapplicable, distinct from a present key whose value is NIL.
-Unsupported composites (`:unsupported-composite`), field ranges that are
-unbounded, not over `integer` or contain no integer (`:unsupported-boundary`),
+Unsupported composites, including empty alist, hash-table, object and call-argument
+schemas (`:unsupported-composite`), field ranges with an open or infinite endpoint,
+a non-integer base type or no admissible integer (`:unsupported-boundary`),
 recursive references (`:recursive-reference`) and discovery limits
 (`:depth-limit`, `:dimension-limit`) are reported under `:unexpanded`; discovery
 is then `:partial`.
@@ -56,8 +57,10 @@ Coverage never adds validation/predicate calls. Where domain validation is not
 performed, its stage is `:not-collected`, not a numeric zero. Stage records with
 `:collected` distinguish `:observed-trials`, `:unknown-trials`,
 `:not-applicable-trials` and bucket counts. Buckets need not be mutually exclusive.
-Shrink candidates do not contribute. Values are classified before target code can
-mutate them; the collector keeps counters and bucket names, not input graphs.
+Shrink candidates do not contribute. Coverage checks each distinct plist's
+structure once while classifying an input, sharing its field index across
+dimensions. The indexes expire before the target runs. The report retains
+bucket names and counters, so later mutation leaves those observations intact.
 
 `check-call` and `check-fixture` accept `:coverage '(:mode :observe)` directly and
 report `:single-call` scope. Exercise is refused because these APIs do not generate.

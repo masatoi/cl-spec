@@ -4,7 +4,7 @@
   (:import-from #:cl-spec/src/property #:property-argument-schema)
   (:import-from #:cl-spec/src/ir #:spec-generator-name)
   (:import-from #:cl-spec/src/coverage
-                #:definition-coverage-schema #:observe-coverage-dimension #:coverage-bindings
+                #:definition-coverage-schema #:observe-coverage-input #:coverage-bindings
                 #:coverage-identity #:copy-coverage-data
                 #:backend-coverage-capabilities #:bounded-list-p)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
@@ -146,8 +146,8 @@
         (setf (coverage-trial-unavailable-reason *coverage-trial*) :argument-binding))
       (unless unavailable
         (setf (coverage-trial-hits *coverage-trial*)
-              (loop for d in (getf (coverage-context-schema *coverage-context*) :dimensions)
-                    collect (observe-coverage-dimension (getf d :kind) d bindings))
+              (observe-coverage-input
+               (getf (coverage-context-schema *coverage-context*) :dimensions) bindings)
               (coverage-trial-captured-p *coverage-trial*) t)))))
 
 (defun coverage-enable-stage (stage)

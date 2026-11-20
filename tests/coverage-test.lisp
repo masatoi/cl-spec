@@ -63,6 +63,31 @@
   (ok (eq :partial (getf (schema '(plist (:optional (:a t) (:b t))) :limit 1) :discovery)))
   (ok (getf (schema '(list-of (plist (:optional (:a t))))) :unexpanded)))
 
+(deftest empty-composites-remain-unexpanded
+  (dolist (form '((alist (:test eql)) (hash-table (:test eql)) (object-of standard-object)
+                  (tuple) (and) (or)))
+    (let ((data (schema form)))
+      (ok (eq :partial (getf data :discovery)))
+      (ok (equal '((:path (payload) :reason :unsupported-composite))
+                 (getf data :unexpanded)))))
+  (dolist (form '(integer (member 1 2) (satisfies integerp) (range integer 0 5)))
+    (let ((data (schema form)))
+      (ok (eq :complete (getf data :discovery)))
+      (ok (null (getf data :unexpanded))))))
+
+(deftest an-empty-call-schema-is-an-unexpanded-composite
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function list (:args &key &allow-other-keys) (:returns t))
+    (cl-spec:register-spec 'keyword-arguments
+                           (cl-spec:function-spec-argument-schema
+                            (cl-spec:find-function-spec 'list)))
+    (cl-spec:defproperty call-payload ((payload keyword-arguments)) (listp payload))
+    (ok (cl-spec:validp 'keyword-arguments '(:extra 1)))
+    (let ((data (cl-spec:coverage-schema (cl-spec:find-property 'call-payload))))
+      (ok (eq :partial (getf data :discovery)))
+      (ok (equal '((:path (payload) :reason :unsupported-composite))
+                 (getf data :unexpanded))))))
+
 (deftest discovery-bounds-metadata-and-rounds-integer-endpoints
   (let* ((data (schema '(plist (:required (:n (range integer 1/2 7/2))) (:closed t))))
          (dimension (first (getf data :dimensions))))

@@ -2,15 +2,25 @@
 (defpackage #:cl-spec/src/coverage-plist
   (:use #:cl)
   (:import-from #:cl-spec/src/ir
-                #:spec-children #:spec-generator-name
+                #:spec-children #:spec-generator-name #:and-spec #:or-spec #:collection-spec
                 #:reference-spec #:reference-spec-target
                 #:range-spec #:range-spec-base-type #:range-spec-minimum #:range-spec-maximum)
+  (:import-from #:cl-spec/src/call-schema #:call-arguments-spec)
   (:import-from #:cl-spec/src/field-spec
-                #:plist-spec #:field-spec-fields #:field-spec-closed-p
+                #:field-spec #:plist-spec #:field-spec-fields #:field-spec-closed-p
                 #:field-key #:field-value-spec #:field-required-p #:plist-structure-error)
+  (:import-from #:cl-spec/src/utils/numbers #:finite-real-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
-  (:export #:plist-coverage-schema #:observe-dimension))
+  (:export #:plist-coverage-schema #:observe-dimension #:*plist-observation-indexes*))
 (in-package #:cl-spec/src/coverage-plist)
+
+(defun integer-boundaries (range)
+  "Return the inward-rounded endpoints of a finite integer range."
+  (let ((minimum (range-spec-minimum range))
+        (maximum (range-spec-maximum range)))
+    (when (and (eq 'integer (range-spec-base-type range))
+               (finite-real-p minimum) (finite-real-p maximum))
+      (values (ceiling minimum) (floor maximum)))))
 
 (defun plist-coverage-schema (roots registry dimension-limit depth-limit)
   "Describe statically accessible plist dimensions without invoking readers or predicates."
@@ -40,12 +50,8 @@
                         (cons node ancestors) (1+ depth)
                         (and targetable (null (spec-generator-name node)))))
                  ((and path (typep node 'range-spec))
-                  (let ((lo (and (realp (range-spec-minimum node))
-                                 (ceiling (range-spec-minimum node))))
-                        (hi (and (realp (range-spec-maximum node))
-                                 (floor (range-spec-maximum node)))))
-                    (if (and (eq 'integer (range-spec-base-type node))
-                             (integerp lo) (integerp hi) (<= lo hi))
+                  (multiple-value-bind (lo hi) (integer-boundaries node)
+                    (if (and lo (<= lo hi))
                         (add name path :numeric-boundary '(:lower :upper :interior)
                              (list :minimum lo :maximum hi
                                    :inapplicable-buckets
@@ -68,20 +74,28 @@
                                (list :targetable targetable)))
                         (walk child name child-path (cons node ancestors) (1+ depth)
                               targetable)))))
-                 ((spec-children node) (omit (cons name path) :unsupported-composite)))))
+                 ((or (typep node '(or field-spec collection-spec and-spec or-spec
+                                       call-arguments-spec))
+                      (spec-children node))
+                  (omit (cons name path) :unsupported-composite)))))
       (catch 'discovery-limit
         (dolist (root roots) (walk (second root) (first root) nil nil 0 t))))
     (list :schema-version 1 :record-kind :coverage-schema :provider-version :plist-v1
           :discovery (if unexpanded :partial :complete)
           :dimensions (nreverse dimensions) :unexpanded (nreverse unexpanded))))
 
-(defun coverage-field (record key)
-  "Return a field and presence, or :UNKNOWN for a structurally invalid plist."
-  (if (plist-structure-error record)
-      (values nil :unknown)
-      (loop for (name value) on record by #'cddr
-            when (eq name key) do (return (values value t))
-            finally (return (values nil nil)))))
+(defvar *plist-observation-indexes* nil
+  "When bound, an EQ table of checked indexes for the duration of one input capture.
+A present NIL entry records a malformed plist.")
+
+(defun observation-index (record)
+  "Return the checked field index of RECORD, or NIL for a malformed plist."
+  (if *plist-observation-indexes*
+      (multiple-value-bind (index found) (gethash record *plist-observation-indexes*)
+        (if found index
+            (setf (gethash record *plist-observation-indexes*)
+                  (nth-value 2 (plist-structure-error record)))))
+      (nth-value 2 (plist-structure-error record))))
 
 (defun observe-dimension (dimension bindings)
   "Return hit bucket names, :UNKNOWN, or :NOT-APPLICABLE for saved input bindings."
@@ -94,18 +108,22 @@
     (loop for tail on path
           for key = (car tail)
           for last = (null (cdr tail))
-          do (multiple-value-bind (child present) (coverage-field value key)
-               (when (eq present :unknown) (return-from observe-dimension :unknown))
+          for index = (observation-index value)
+          unless index do (return-from observe-dimension :unknown)
+          do (multiple-value-bind (child present) (gethash key index)
                (when (and last (eq kind :field-presence))
                  (return-from observe-dimension (list (if present :present :absent))))
                (unless present (return-from observe-dimension :not-applicable))
                (setf value child)))
     (case kind
       (:extra-key-presence
-       (if (plist-structure-error value) :unknown
-           (list (if (loop for key in value by #'cddr
-                           thereis (not (member key (getf dimension :declared-keys))))
-                     :present :absent))))
+       (let ((index (observation-index value)))
+         (if index
+             (let ((declared-present
+                     (loop for key in (getf dimension :declared-keys)
+                           count (nth-value 1 (gethash key index)))))
+               (list (if (> (hash-table-count index) declared-present) :present :absent)))
+             :unknown)))
       (:numeric-boundary
        (let ((lo (getf dimension :minimum)) (hi (getf dimension :maximum)))
          (if (not (integerp value)) :unknown
