@@ -1641,7 +1641,8 @@ Register PROPERTY in REGISTRY under NAME.
 
 ```text
 TARGETS is a list of symbols the property is about; TAGS is a list of tag
-designators.  Both are indexed for reverse lookup.  Re-registering a name
+designators.  Reverse lookup uses their keys at the time of registration,
+including when the caller later reuses either list.  Re-registering a name
 replaces the previous definition and drops its stale index entries.
 Returns PROPERTY.
 ```
