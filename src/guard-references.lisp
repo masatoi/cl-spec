@@ -46,6 +46,10 @@ input compiled into a tautology."
     (or (eq package (find-package :cl))
         #+sbcl (and package (eql 0 (search "SB-" (package-name package)))
                     (sb-ext:package-locked-p package))
+        #+clasp (eq package (find-package :core))
+        #+ecl (eq package (find-package :si))
+        #+abcl (member package (list (find-package :system) (find-package :loop)))
+        #+clisp (eq package (find-package :system))
         #+ccl (member package (list (find-package :ccl) (find-package :ansi-loop))))))
 
 (defun expand-system-guard-form (form environment)

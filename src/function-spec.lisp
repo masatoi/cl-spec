@@ -165,12 +165,7 @@
 (in-package #:cl-spec/src/function-spec)
 
 (defvar *case-owner* nil
-  "The contract a case under construction belongs to, or NIL.
-
-Bound only while a FUNCTION-SPEC validates its cases, so a case can check its
-:post-values names against the contract's argument bindings without holding a
-back-pointer that would make the declaration graph cyclic.  A case built on its
-own validates its return arity only.")
+  "Contract whose input and capture bindings apply during validation of one of its cases.")
 
 (defvar *case-guard-analysis* nil
   "The DSL guard's source, predicate and variable references in its lexical environment.")
@@ -182,7 +177,13 @@ own validates its return arity only.")
            initargs)))
 
 (defclass function-case ()
-  ((guard-analysis :initform *case-guard-analysis* :reader case-guard-analysis
+  ((owners :initform (make-hash-table :test #'eq :size 1
+                                      #+(or sbcl ecl abcl clasp) :weakness
+                                      #+(or ccl clisp) :weak
+                                      #+(or sbcl ecl abcl clasp ccl clisp) :key)
+            :reader case-owners
+            :documentation "Contracts whose variable bindings constrain edits to this case.")
+   (guard-analysis :initform *case-guard-analysis* :reader case-guard-analysis
                    :documentation "Lexical references, original source and compiled guard.")
    (name :initarg :name
          :initform nil
@@ -301,7 +302,13 @@ new post forms and a new compiled predicate as well."
 
 (defmethod shared-initialize :after ((case function-case) slot-names &key)
   (declare (ignore slot-names))
-  (validate-definition case))
+  (validate-definition case)
+  (maphash (lambda (owner present)
+             (declare (ignore present))
+             (if (member case (function-spec-cases owner))
+                 (let ((*case-owner* owner)) (validate-case-guard case))
+                 (remhash owner (case-owners case))))
+           (case-owners case)))
 
 (defun validate-case-guard (case)
   "Check this case's visible guard references against its output and current input bindings."
@@ -1200,6 +1207,8 @@ would run while introspection reported no such clause"
   (setf (slot-value contract 'call-layout-cache) nil
         (slot-value contract 'call-layout-declarations) nil
         (slot-value contract 'call-layout-bindings-snapshot) nil)
+  (dolist (case (function-spec-cases contract))
+    (setf (gethash contract (case-owners case)) t))
   contract)
 
 (defmethod shared-initialize :after ((contract function-spec) slot-names &key)

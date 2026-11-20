@@ -696,27 +696,58 @@ Each is called once per trial and its primary value is the capture."
                    (declare (ignorable ,@variables ,@previous))
                    ,(second binding))))
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  #+ecl
+  (unless (and (find-package "WALKER")
+               (fboundp (find-symbol "MACROEXPAND-ALL" "WALKER")))
+    (require :cmp)))
+
+(defun expand-guard-lambda (form environment)
+  "Return the predicate to compile and whether its lexical macros have been expanded."
+  #-(or sbcl ccl ecl abcl clisp) (declare (ignore environment))
+  #+(or sbcl ccl abcl)
+  (values (#+sbcl sb-walker:macroexpand-all
+           #+ccl ccl:macroexpand-all
+           #+abcl ext:macroexpand-all
+           form environment) t)
+  #+ecl
+  ;; ECL's walker recognizes symbol macros introduced in the walked form.
+  ;; Its ASSOC lookup for functions requires removing compiler boundary markers.
+  (let* ((env (cons (car environment) (remove-if-not #'consp (cdr environment))))
+         (predicate (walker:macroexpand-all form env)))
+    (loop
+      for bindings = (loop for name in (guard-free-variables predicate nil nil :expanded-p t)
+                           append (multiple-value-bind (value expanded-p)
+                                      (macroexpand-1 name environment)
+                                    (when expanded-p (list (list name value)))))
+      unless bindings return (values predicate t)
+      do (setf predicate
+               (third (walker:macroexpand-all `(symbol-macrolet ,bindings ,predicate) env)))))
+  #+clisp
+  ;; EXT:EXPAND-FORM sets both compiler environments to NIL. Use its underlying
+  ;; walker with the variable/function environments supplied to DEFSPEC-FUNCTION.
+  (let ((sys::*venv* (and environment (svref environment 0)))
+        (sys::*fenv* (and environment (svref environment 1))))
+    (values (second (sys::%expand-form form)) t))
+  #-(or sbcl ccl ecl abcl clisp)
+  (values form nil))
+
 (defun expand-guard-check (when-form variables captures post-values environment)
   "Expand a guard in its defining environment, then check the code its predicate will use."
   (let* ((parameters (append variables captures))
-         (lambda-form `(lambda ,parameters (declare (ignorable ,@parameters)) ,when-form))
-         (predicate #+sbcl (sb-walker:macroexpand-all lambda-form environment)
-                    #+ccl (ccl:macroexpand-all lambda-form environment)
-                    #-(or sbcl ccl) lambda-form)
-         ;; Inspect the body itself: an input name might be reserved in a later owner.
-         (references (guard-free-variables (car (last predicate))
-                                           #+(or sbcl ccl) nil
-                                           #-(or sbcl ccl) environment
-                                           parameters :expanded-p #+(or sbcl ccl) t
-                                                                  #-(or sbcl ccl) nil))
-         (name (guard-return-reference references parameters
-                                       (unless (eq post-values :primary) post-values)
-                                       :check-primary t)))
-    (when name
-      (function-spec-error
-       (list :when when-form)
-       (format nil ":when runs before the call, so it cannot refer to ~S" name)))
-    (values predicate references)))
+         (lambda-form `(lambda ,parameters (declare (ignorable ,@parameters)) ,when-form)))
+    (multiple-value-bind (predicate expanded-p) (expand-guard-lambda lambda-form environment)
+      ;; Inspect the body itself: an input name might be reserved in a later owner.
+      (let* ((references (guard-free-variables (car (last predicate)) environment parameters
+                                               :expanded-p expanded-p))
+             (name (guard-return-reference references parameters
+                                           (unless (eq post-values :primary) post-values)
+                                           :check-primary t)))
+        (when name
+          (function-spec-error
+           (list :when when-form)
+           (format nil ":when runs before the call, so it cannot refer to ~S" name)))
+        (values predicate references)))))
 
 (defun expand-function-case (case variables captures environment)
   "Return the MAKE-INSTANCE form that builds one FUNCTION-CASE.

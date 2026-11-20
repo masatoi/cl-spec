@@ -73,7 +73,7 @@ one of that case's `:post-values` names is a declaration error. An input named
 same name, for example `(let ((result amount)) (plusp result))`. Quoted data,
 function names and names from another case's postcondition remain independent.
 
-On SBCL and CCL, the DSL expands the guard in the declaration's lexical
+On SBCL, CCL, ECL, ABCL and CLISP, the DSL expands the guard in the declaration's lexical
 environment and compiles that expansion as its predicate. A reference in a
 `handler-case` handler, a `loop` clause, a place, or the expansion of a local
 macro is checked with the bindings visible at that position. Introspection
@@ -86,6 +86,11 @@ Lisp source for expressions whose meaning depends on application macros:
 programmatic validation has no access to the lexical environment in which a
 separately supplied function was compiled. Source checking cannot establish
 what that function actually does or which name a dynamic lookup computes.
+
+Editing an attached case checks its guard against every contract that still
+uses it. A refused edit preserves the earlier predicate, guard form and digest.
+A detached case may use `result` as a prospective input. Attaching it to a
+contract then checks that name against the contract's actual inputs.
 
 Zero matches, several matches, and a guard that signals are contract-side
 **case-selection errors**. The target is not called at all, and the result is
