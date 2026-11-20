@@ -168,8 +168,8 @@ Passing a prior result as `check-function :seed` still means **regenerating a
 run**, not directly replaying the selected counterexample. Fixture replay checks
 declaration identity, options, profile and trial budget before setup. A mismatch
 signals `unsupported-stateful-operation` with a reason that names the cause:
-`:definition-mismatch` for a changed declaration or fixture (or a saved run that
-was not a fixture run), `:incomparable-definition` for an incomplete declaration
+`:definition-mismatch` for a changed declaration, including adding, changing or
+removing a fixture, `:incomparable-definition` for an incomplete declaration
 digest, and `:run-options-mismatch` for different options, profile or trial
 budget. Use an integer seed for a deliberately different new run.
 

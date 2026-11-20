@@ -8,12 +8,15 @@
                 #:recheck-counterexample #:invalid-counterexample-artifact
                 #:invalid-counterexample-artifact-reason)
   (:import-from #:cl-spec/src/function-spec
-                #:function-spec #:register-function-spec #:check-function)
+                #:function-spec #:register-function-spec #:check-function
+                #:check-call #:call-check-result-status)
   (:import-from #:cl-spec/src/property-runner
                 #:property-result-status #:property-result-shrunk-evidence
                 #:property-result-failure-evidence)
   (:import-from #:cl-spec/src/execution #:trial-observation-arguments)
-  (:import-from #:cl-spec/src/registry #:make-hash-table-registry)
+  (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry)
+  (:import-from #:cl-spec/src/dsl)
+  (:import-from #:cl-spec/src/validator #:validp)
   (:import-from #:cl-spec/src/generator #:*generator-backend*)
   (:import-from #:cl-spec/src/generator-definition #:custom-generator #:register-generator)
   (:import-from #:cl-spec/src/backends/check-it))
@@ -134,6 +137,20 @@
     (setf *behavior* :fixed)
     (ok (eq :passed (recheck-status artifact registry)))
     (ok (= *calls* (+ calls 2)))))
+
+(deftest recheck-preserves-the-callers-registry
+  (let ((registry (make-hash-table-registry))
+        (*registry* (make-hash-table-registry)))
+    (cl-spec/src/dsl:defspec domain string)
+    (let ((*registry* registry))
+      (cl-spec/src/dsl:defspec domain (range integer 7 7))
+      (cl-spec/src/dsl:defspec-function identity
+        (:args (x domain)) (:returns domain) (:post (validp 'domain result))))
+    (let ((run (check-function 'identity :trials 1 :seed 25 :registry registry))
+          (direct (check-call 'identity '(7) :registry registry)))
+      (ok (eq :failed (property-result-status run)))
+      (ok (eq :failed (call-check-result-status direct)))
+      (ok (eq :same-failure (recheck-status (make-counterexample-artifact run) registry))))))
 
 (deftest an-errored-run-without-a-trial-failure-is-refused-as-a-run-error
   ;; Generation exhausts its budget before any trial: the run ends in :ERROR
