@@ -18,7 +18,7 @@
   (:export #:property-result-trial-report #:property-result-declared-cases)
   (:import-from #:cl-spec/src/schema #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/execution
-                #:trial-observation-lifecycle #:trial-observation-call-evidence)
+                #:trial-observation-lifecycle #:trial-observation-call-evidence #:same-value-p)
   (:export #:property-result-run-error #:prepare-property-run
            #:run-property-with-result-constructor)
   (:import-from #:cl-spec/src/schema #:definition-metadata
@@ -442,7 +442,7 @@ or :RUN-OPTIONS-MISMATCH."
                        ((not (equal (getf saved :definition-digest)
                                     (getf current :definition-digest)))
                         :definition-mismatch)
-                       ((not (equal options (property-result-options result)))
+                       ((not (same-value-p options (property-result-options result)))
                         :run-options-mismatch))))
     (when reason
       (error 'unsupported-stateful-operation :operation :replay
@@ -467,7 +467,7 @@ or :RUN-OPTIONS-MISMATCH."
   "One run's result constructor, paired with its property designator.")
 
 (defun run-property-with-result-constructor
-    (property-designator result-constructor &key profile seed options (registry *registry*))
+    (property-designator result-constructor &rest run-arguments)
   "Run PROPERTY-DESIGNATOR with a one-use PROPERTY-RESULT constructor.
 
 RESULT-CONSTRUCTOR receives captured initargs, the selected failure reason, and
@@ -482,17 +482,18 @@ bindings are those enclosing the run, not the run's completed coverage context."
                       (let ((*coverage-context* enclosing-context)
                             (*coverage-trial* enclosing-trial))
                         (funcall result-constructor initargs reason explanation)))))))
-      (run-property property-designator :profile profile :seed seed :options options
-                    :registry registry))))
+      (apply #'run-property property-designator run-arguments))))
 
 (defun run-property (property-designator &rest keyword-arguments
-                     &key profile seed options (registry *registry*) &allow-other-keys)
+                     &key (profile nil profile-p) seed (options nil options-p)
+                       (registry *registry*) &allow-other-keys)
   "Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend.
+backend. With a result as SEED, omitted PROFILE and OPTIONS inherit their saved
+values. An explicit NIL selects profile :NORMAL or the empty option list.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
 whose definition declares state constraints without a fixture refuses that with
@@ -506,6 +507,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
   (check-argument property-designator '(or symbol property) 'run-property
                   :property-designator)
   (check-argument seed '(or null property-result (integer 0 *)) 'run-property :seed)
+  ;; Resolve omissions before validating the effective settings, including saved data.
+  (when (typep seed 'property-result)
+    (unless profile-p (setf profile (property-result-profile seed)))
+    (unless options-p (setf options (property-result-options seed))))
   (check-profile profile 'run-property)
   (check-run-options options 'run-property)
   (setf registry (check-registry registry 'run-property))
@@ -516,20 +521,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
              (prog1 (cdr *pending-result-constructor*)
                (setf *pending-result-constructor* nil))))
          (seed-result (and (typep seed 'property-result) seed))
-         (profile (or profile
-                      ;; A result stands in for its whole run.  The seed alone
-                      ;; is not it: the profile fixes the trial count, so
-                      ;; digging out only the seed replayed a 400-trial failure
-                      ;; as a 3-trial pass that contradicted the result it was
-                      ;; handed.  REPLAY-PROPERTY has always carried both.
-                      (and seed-result (property-result-profile seed-result))))
          (seed (if seed-result (property-result-seed seed-result) seed))
-         ;; A result also carries the options its run was given, so an explicit
-         ;; :GENERATION-BUDGET is reused when the caller omits options.  Otherwise
-         ;; a run that exhausted a small budget would pass on replay under the
-         ;; default budget, contradicting the result it was handed.
-         (options (or options
-                      (and seed-result (property-result-options seed-result))))
          (property (let ((resolved (prepare-property-run
                                     (resolve-property property-designator registry))))
                      ;; A run made through CHECK-FUNCTION checks its own result's name and kind.
@@ -686,15 +678,7 @@ integer SEED starts a new run and stays allowed."
   (check-argument seed '(or property-result (integer 0 *)) 'replay-property :seed)
   (check-profile profile 'replay-property)
   (check-run-options options 'replay-property)
-  (setf registry (check-registry registry 'replay-property))
+  (check-registry registry 'replay-property)
   ;; Preserve the result through RUN-PROPERTY so fixture identity and run
   ;; parameters are validated before any hooks execute.
-  (run-property property-designator
-                :seed seed
-                :profile (or profile
-                             (and (typep seed 'property-result)
-                                  (property-result-profile seed)))
-                :options (or options
-                             (and (typep seed 'property-result)
-                                  (property-result-options seed)))
-                :registry registry))
+  (apply #'run-property property-designator :seed seed keyword-arguments))

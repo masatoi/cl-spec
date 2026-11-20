@@ -171,7 +171,9 @@ signals `unsupported-stateful-operation` with a reason that names the cause:
 `:definition-mismatch` for a changed declaration, including adding, changing or
 removing a fixture, `:incomparable-definition` for an incomplete declaration
 digest, and `:run-options-mismatch` for different options, profile or trial
-budget. Use an integer seed for a deliberately different new run.
+budget. Omitting `:options` reuses the saved options. Supplying `:options nil`
+requests an empty option list. Options containing conses and arrays are compared
+against their saved snapshot. Use an integer seed for a deliberately different new run.
 
 ## Compatibility
 

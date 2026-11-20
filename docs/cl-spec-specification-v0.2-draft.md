@@ -1403,8 +1403,8 @@ Property実行結果は単なるbooleanではなく構造化する。
 
 `profile`は実際に選択したprofile名（例：`:normal`）を記録し、`trials`は実行済み試行数を記録する。
 profile名だけでは数値の予算は固定されない。Propertyの`:trials`定義とbackend defaultも必要になる。
-現在のresultからreplayするとseedとprofileは引き継がれるが、元の予算・options・定義・環境を
-完全には復元しない。これらの保存要件は§72.3に定める。
+resultからのreplayは保存されたseedを使い、profileとoptionsを省略すると元の値を引き継ぐ。
+statelessなPropertyの試行予算は選択したprofileと現在の定義から解決する（§15・§72.3）。
 
 現在の`property-result`はstatus、property、trials、seed、profile、counterexample、
 shrunk-counterexample、condition、elapsedを公開readerで提供する。
@@ -1504,13 +1504,16 @@ LLMが失敗を再現可能であることを必須条件とする。ただしse
 とは保証しない。現在の整数seed対応はSBCLに限定され、未対応実装では`unsupported-seed`となる。
 
 現在の`replay-property`は生成から再実行するAPIである。resultを渡すとseed・profile・optionsを
-再利用し、明示したprofileやoptionsがあればそちらを優先する。resultはその実行全体を表すため、
+再利用する。statelessな再実行では明示した値を優先し、`:profile nil`は`:normal`を、
+`:options nil`は空のオプションを指定する。fixture付きの再実行では設定変更をsetup前に
+`:run-options-mismatch`で拒否する。resultはその実行全体を表すため、
 別のproperty・contractのresultは`invalid-argument`（argument `:seed`、`invalid-argument-reason`に
 どの定義のresultか）で拒否する。乱数列を意図して借りる場合は整数seedを渡す。
 同じコード、Spec/Property、generator、profile定義、backend、Lisp実装、初期状態を前提とする。
 
 保存した反例を修正後の実装へ直接入力する「反例の再検査」は、生成列のreplayとは別の操作である。
-永続化形式と専用APIは未決定。現時点では具体例テストとして保存して再検査できる。
+反例は`make-counterexample-artifact`で保存でき、`recheck-counterexample`は
+statelessな引数またはfixture recipeを使って一回検査する。
 詳細な再現情報と不一致時の扱いは§72.3を参照する。
 
 ---

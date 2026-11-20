@@ -2236,7 +2236,8 @@ INVALID-ARGUMENT."
                    :coverage (coverage-report-data *coverage-context*))))
 
 (defun check-function (function-designator &rest keyword-arguments
-                       &key trials seed options (registry *registry*) &allow-other-keys)
+                       &key trials seed (options nil options-p) (registry *registry*)
+                         &allow-other-keys)
   "Check a function contract using evidence captured during each invocation.
 
 No target or predicate is called again to classify the result.  Shrinking still
@@ -2296,7 +2297,7 @@ contract failure. Fixture results and artifacts use version 2."
     (check-replayed-result seed-result :function-spec name 'check-function)
     (let ((enclosing-case-run *case-run*)
           (*case-run* case-run))
-      (run-property-with-result-constructor
+      (apply #'run-property-with-result-constructor
        property
        (lambda (initargs failure-reason explanation)
          ;; The final result is initialized in the caller's case context.
@@ -2310,8 +2311,7 @@ contract failure. Fixture results and artifacts use version 2."
                  (validate-case-trial-report (getf initargs :trial-report)
                                              (case-run-report case-run)))
            (apply #'make-instance 'function-check-result initargs)))
-       :seed seed :options options
-       :registry registry))))
+       :seed seed :registry registry (when options-p (list :options options))))))
 
 ;;; One concrete caller-supplied invocation (no generation).
 
