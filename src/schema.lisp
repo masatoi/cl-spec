@@ -36,7 +36,7 @@
                 #:property #:property-name #:property-arguments #:property-source-form
                 #:property-body #:property-documentation #:property-tags
                 #:property-kind #:property-targets #:property-trials
-                #:property-metadata #:property-argument-schema)
+                #:property-metadata #:property-argument-schema #:property-arguments-spec)
   (:import-from #:cl-spec/src/generator-definition
                 #:custom-generator #:custom-generator-name #:custom-generator-source-form
                 #:custom-generator-documentation #:custom-generator-shrinker)
@@ -224,7 +224,7 @@ unknown subclass yields an incomplete digest rather than a trusted partial one."
   (not (null (member (class-name (class-of definition))
                      '(type-spec reference-spec predicate-spec member-spec range-spec
                        instance-of-spec and-spec or-spec not-spec nullable-spec
-                       list-of-spec vector-of-spec tuple-spec
+                       list-of-spec vector-of-spec tuple-spec property-arguments-spec
                        field-spec plist-spec keyed-field-spec alist-spec hash-table-spec
                        object-spec tagged-union-spec
                        map-of-spec hash-table-of-spec alist-of-spec
