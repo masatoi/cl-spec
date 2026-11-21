@@ -4610,9 +4610,9 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 
 | 記述対象 | 実行可能な保証 |
 |---|---|
-| `validp` | 解決可能なspecと値からbooleanを返す |
-| `validate` | 名前付きcaseで正常系と拒否系を分ける。適合値は同一オブジェクトを返し、不適合値は`spec-violation`を通知する。拒否時の条件・errorsの一致はPropertyでも検査 |
-| `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
+| `validp` | 判定できた場合はbooleanを返し、参照深度の上限を超えた場合は`validation-depth-exceeded`を通知する |
+| `validate` | 名前付きcaseで適合・不適合・参照深度超過を分ける。適合値は同一オブジェクトを返し、不適合値は`spec-violation`、深度超過は`validation-depth-exceeded`を通知する。拒否時の条件・errorsの一致はPropertyでも検査 |
+| `explain-data` | 判定できた場合は必須field、valid/errorsの整合性、対象値の同一性を検査する。参照深度の上限を超えた場合は`validation-depth-exceeded`を通知する |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
 | `definition-digest` | keyword registryを省略・指定した定義のdigest主値を検査 |
@@ -4654,9 +4654,9 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 生成器は整数・文字列・NIL・T・list・vectorの値と、type・range・AND・OR・NOT・
 nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
 狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
-正規化成功まで主張しない。`validate`の適合caseは`integer`・`string`・`boolean`・
-`member`・`or`の有限corpusから生成し、同じcorpusが不適合値も供給する。このcorpusは
-公開APIが受け付けるdomain全体ではなく、両caseへ到達することを確かめる標本である。
+正規化成功まで主張しない。`validate`・`validp`・`explain-data`の生成器はDSL例と値の組、
+`integer`・`string`・`boolean`・`member`・`or`等の適合・不適合の固定例、
+および参照深度を4に束縛して5リンクを検査する再帰例を使う。
 境界testは`*scripted-validate-inputs*`に明示列を渡し、乱数seedに到達を依存させない。
 この自己仕様のcustom generatorにはshrinkerを指定していないため、失敗は元の反例を保持する。
 explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
@@ -4701,7 +4701,7 @@ result/artifactの基本envelope、instrumentationの基本protocolは取り込�
 残る記述範囲は、すべてのkeyword option組合せ、独自のgenerator backend実装、`defspec`自身の不正form、
 shrink候補生成の全過程、未実装の`describe-*`である。
 不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
-`validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
+`validate`は適合・拒否・深度超過の3つのcaseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
 関係は引き続きPropertyで記述する。`registry-register-property`の状態契約は逐次実行を対象とし、
 入力domainを固定scenario集合として宣言する（任意の索引リストへの一般契約ではない）。
 並行実行の原子性や任意のbackend内部エラーからのrollbackまでは新たに保証しない。

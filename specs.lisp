@@ -3,6 +3,7 @@
 (defpackage #:cl-spec/specs
   (:use #:cl)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
+  (:import-from #:cl-spec/src/resolve #:resolve-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/state-machine #:state-machine-property #:command-trace-p)
   (:import-from #:cl-spec/src/execution
@@ -62,7 +63,7 @@
                 #:*self-state-calls*
                 #:*self-state-scenario*
                 #:state-projection-fixtures
-                #:validate-corpus-entry)
+                #:validate-corpus-entry #:validation-depth-example)
   (:export #:register-instrumentation-specifications #:register-specifications
            #:contract-names #:property-names #:evidence-policy
            #:*registry-constructor* #:registry-implementation-p
@@ -186,9 +187,35 @@ EQL tells -0.0 from 0.0, a single from a double float, and -1/2 from 1/2."
   (or (typep value 'spec)
       (and (symbolp value) (nth-value 1 (find-spec value)))))
 
+(defun validation-case (designator value)
+  "Classify VALUE with a compiled validator independently of the public call being checked."
+  (handler-case
+      (let ((spec (resolve-spec designator cl-spec:*registry*)))
+        (if (funcall (compile-validator spec) value) :conforming :refused))
+    (cl-spec:validation-depth-exceeded () :depth-exceeded)))
+
 (defun explanation-consistent-p (value)
   "Check the relation between validity and errors after field validation."
   (eq (getf value :valid) (null (getf value :errors))))
+
+(defmacro define-explanation-contract (record-spec)
+  "Register RECORD-SPEC by name and embed it in EXPLAIN-DATA's ordinary return case.
+
+A reference in the return declaration would itself exceed a zero reference budget
+even when the target could check its input without following a reference."
+  `(progn
+     (defspec explanation-data ,record-spec)
+     (defspec-function explain-data
+       "A completed explanation preserves the checked value and agrees with validity."
+       (:args (contract-spec (satisfies resolved-designator-p)) (value t))
+       (:args-generator validate-corpus-generator)
+       (:cases
+        (:checked (:when (not (eq :depth-exceeded (validation-case contract-spec value))))
+                  (:returns ,record-spec)
+                  (:post (eq value (getf result :value))
+                         (eq (validp contract-spec value) (getf result :valid))))
+        (:depth-exceeded (:when (eq :depth-exceeded (validation-case contract-spec value)))
+                         (:signals (type cl-spec:validation-depth-exceeded)))))))
 
 (defun invalid-form-condition-p (condition)
   "Require a nonempty diagnostic reason for a malformed DSL form."
@@ -766,9 +793,9 @@ requires NIL and NIL, the documented answer for an absent name."
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
 Loading CL-SPEC/SPECS installs these once. Call this function again after
 CLEAR-REGISTRY or with a freshly bound registry. It does not instrument functions.
-Generators exercise finite subsets. Most API contracts accept broader domains;
-the malformed-normalization contract and the validate cases explicitly name
-their finite input corpora, and the registry write contract names its scenarios."
+Generators exercise finite subsets. The validation contracts accept resolved
+spec designators and arbitrary values. The malformed-normalization and registry
+write contracts declare their input corpora."
   (defgenerator counter-machine-generator ()
     (cl-spec/self-spec-fixtures:fresh-counter-machine))
   (defspec counter-machine-input (instance-of state-machine-property)
@@ -1026,10 +1053,6 @@ The input also covers empty policies, empty requirements and malformed versions,
   (defspec resolved-designator (satisfies resolved-designator-p)
     (:generator spec-generator))
   (defspec arbitrary-symbol symbol (:generator symbol-generator))
-  (defspec explanation-data
-    (and (plist (:required (:spec t) (:value t) (:valid boolean)
-                           (:errors (list-of t)) (:path (list-of t))))
-         (satisfies explanation-consistent-p)))
   (defspec digest-omission-data
     (plist (:required
              (:kind (member :unresolved-reference :opaque-definition :missing-source
@@ -1084,40 +1107,45 @@ The input also covers empty policies, empty requirements and malformed versions,
           (registry-find-spec
            (if (and supplied registry) registry cl-spec:*registry*) name)
         (and (eq found-spec expected) (eq found-p present)))))
-  (defspec-function validp
-    "Validity is a boolean for a resolved spec and an arbitrary value."
-    (:args (contract-spec resolved-designator) (value arbitrary-value))
-    (:returns boolean))
-  (defspec-function explain-data
-    "Explanation preserves the checked value and agrees with validity."
-    (:args (contract-spec resolved-designator) (value arbitrary-value))
-    (:returns explanation-data)
-    (:post (eq value (getf result :value))
-           (eq (validp contract-spec value) (getf result :valid))))
   (defgenerator validate-corpus-generator ()
-    ;; The finite corpus pairs admitted forms with refused values, so a run that
-    ;; reaches both pairs reaches both named cases.  This is a sample of the two
-    ;; outcomes, not the whole DSL or the whole value domain.
-    (destructuring-bind (form value) (validate-corpus-entry)
-      (list (normalize-spec-form form) value)))
+    (if (and (null *scripted-validate-inputs*) (zerop (random 2)))
+        (list (normalize-spec-form (draw-form)) (draw-value))
+        (destructuring-bind (form value) (validate-corpus-entry)
+          (list (normalize-spec-form form) value))))
+  (defspec-function validp
+    "A completed check returns a boolean. Exceeding the reference limit signals a depth error."
+    (:args (contract-spec (satisfies resolved-designator-p)) (value t))
+    (:args-generator validate-corpus-generator)
+    (:cases
+     (:checked (:when (not (eq :depth-exceeded (validation-case contract-spec value))))
+               (:returns boolean))
+     (:depth-exceeded (:when (eq :depth-exceeded (validation-case contract-spec value)))
+                      (:signals (type cl-spec:validation-depth-exceeded)))))
+  (define-explanation-contract
+    (and (plist (:required (:spec t) (:value t) (:valid boolean)
+                           (:errors (list-of t)) (:path (list-of t))))
+         (satisfies explanation-consistent-p)))
   (defspec-function validate
-    "An admitted value is returned identically; a refused value signals SPEC-VIOLATION.
+    "Validation returns an admitted value identically, or signals the applicable condition.
 
-The generated inputs are a finite admitted/refused corpus; the declared domain is
-every resolved designator and value, and the cases classify by the public
-validity predicate, so the contract itself is not limited to the corpus."
-    (:args (contract-spec resolved-designator) (value arbitrary-value))
+A refused value signals SPEC-VIOLATION. A check that exceeds the reference limit
+signals VALIDATION-DEPTH-EXCEEDED. The compiled validator distinguishes these
+outcomes for resolved spec names and objects."
+    (:args (contract-spec (satisfies resolved-designator-p)) (value t))
     (:args-generator validate-corpus-generator)
     (:cases
      (:conforming
       "The spec admits the value, and validation returns that same object."
-      (:when (validp contract-spec value))
+      (:when (eq :conforming (validation-case contract-spec value)))
       (:returns t)
       (:post (eq result value)))
      (:refused
       "The spec refuses the value, and validation reports SPEC-VIOLATION."
-      (:when (not (validp contract-spec value)))
-      (:signals (type spec-violation)))))
+      (:when (eq :refused (validation-case contract-spec value)))
+      (:signals (type spec-violation)))
+     (:depth-exceeded
+      (:when (eq :depth-exceeded (validation-case contract-spec value)))
+      (:signals (type cl-spec:validation-depth-exceeded)))))
   (defspec-function compile-validator
     (:args (contract-spec spec-object))
     (:returns function))
@@ -2277,35 +2305,34 @@ the shape of the other branch is admitted only if dispatch is wrong."
              '(self-collection-counterexample-target
                self-keyword-counterexample-target))))
   (defproperty validate-cases-classify-admitted-and-refused ()
-    "Fixed examples of VALIDATE and the generated trials each classify admitted and refused input."
+    "Fixed examples and generated trials distinguish admission, refusal and the reference limit."
     (:about validate cl-spec:check-function-with-examples)
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
-    (let ((*scripted-validate-inputs*
-            '((integer 0) (integer "refused") (string "ok") (string 3)
-              (integer 1) (integer :refused) (boolean t) (boolean 42))))
-      (let* ((integers (normalize-spec-form 'integer))
-             (examples (list (list :conforming (list integers 0))
-                             (list :refused (list integers "x"))))
-             (combined (cl-spec:check-function-with-examples 'validate examples :trials 4 :seed 1))
-             (result (getf combined :generated))
-             (report (cl-spec:function-check-result-case-report result)))
-        (and (eq :passed (getf combined :status))
-             (= 2 (getf combined :example-count))
-             (equal '(:conforming :refused)
-                    (loop for row in (getf combined :examples) collect (getf row :actual-case)))
-             (eq :passed (cl-spec:property-result-status result))
-             (= 4 (cl-spec:property-result-trials result))
-             (zerop (cl-spec:property-result-rejected result))
-             (equal '(:conforming :refused) (getf report :declared-cases))
-             (null (getf report :never-called))
-             (zerop (getf report :case-selection-errors))
-             (zerop (getf report :capture-errors))
-             (equal '(2 2)
-                    (mapcar (lambda (case) (getf case :called)) (getf report :cases)))
-             (equal '(2 2)
-                    (mapcar (lambda (case) (getf case :passed))
-                            (getf report :cases)))))))
+    (let* ((deep (validation-depth-example))
+           (*scripted-validate-inputs* (list '(integer 0) '(integer "refused") '(string "ok") deep))
+           (integers (normalize-spec-form 'integer))
+           (examples (list (list :conforming (list integers 0))
+                           (list :refused (list integers "x"))
+                           (list :depth-exceeded deep)))
+           (combined (cl-spec:check-function-with-examples 'validate examples :trials 4 :seed 1))
+           (result (getf combined :generated))
+           (report (cl-spec:function-check-result-case-report result)))
+      (and (eq :passed (getf combined :status))
+           (= 3 (getf combined :example-count))
+           (equal '(:conforming :refused :depth-exceeded)
+                  (loop for row in (getf combined :examples) collect (getf row :actual-case)))
+           (eq :passed (cl-spec:property-result-status result))
+           (= 4 (cl-spec:property-result-trials result))
+           (zerop (cl-spec:property-result-rejected result))
+           (equal '(:conforming :refused :depth-exceeded) (getf report :declared-cases))
+           (null (getf report :never-called))
+           (zerop (getf report :case-selection-errors))
+           (zerop (getf report :capture-errors))
+           (equal '(2 1 1)
+                  (mapcar (lambda (case) (getf case :called)) (getf report :cases)))
+           (equal '(2 1 1)
+                  (mapcar (lambda (case) (getf case :passed)) (getf report :cases))))))
   (defproperty registration-replacement-preserves-unrelated-indexes ()
     "A same-name write retracts only the subject's stale keys and keeps the sentinel's."
     (:about cl-spec:registry-register-property cl-spec:properties-for

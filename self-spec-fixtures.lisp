@@ -47,7 +47,8 @@
    #:*self-state-scenario*
    #:self-state-uncalled-target
    #:state-projection-fixtures
-   #:validate-corpus-entry))
+   #:validate-corpus-entry
+   #:validation-depth-example))
 
 (in-package #:cl-spec/self-spec-fixtures)
 
@@ -325,11 +326,24 @@ fixture recipe, so this function is its whole state construction."
     (null nil) (null t))
   "Finite (FORM VALUE) pairs spanning admitted and refused values.")
 
+(defun bounded-validation-chain-p (value)
+  "Check a recursive chain under the fixture's four-reference limit."
+  (let ((cl-spec:*registry* (make-hash-table-registry))
+        (cl-spec:*reference-depth-limit* 4))
+    (let ((chain (cl-spec:defspec validation-chain
+                   (nullable (tuple integer validation-chain)))))
+      (funcall (cl-spec:compile-validator chain) value))))
+
+(defun validation-depth-example ()
+  "Return a spec and five-link chain that reach a genuine depth error in a bounded check."
+  (list (cl-spec:normalize-spec-form '(satisfies bounded-validation-chain-p))
+        '(1 (2 (3 (4 (5 nil)))))))
+
 (defun validate-corpus-entry ()
-  "Return one (FORM VALUE) pair, scripted or drawn from the finite corpus."
-  (if *scripted-validate-inputs*
-      (pop *scripted-validate-inputs*)
-      (nth (random (length *validate-corpus*)) *validate-corpus*)))
+  "Return one (FORM VALUE) pair, scripted or drawn from the ordinary and over-depth examples."
+  (cond (*scripted-validate-inputs* (pop *scripted-validate-inputs*))
+        ((zerop (random 3)) (validation-depth-example))
+        (t (nth (random (length *validate-corpus*)) *validate-corpus*))))
 
 ;;; Explicit Function Spec projection fixtures.  Each call registers the three
 ;;; declarations in a registry of its own, so the projection property reads only

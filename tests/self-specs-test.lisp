@@ -4,6 +4,8 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/specs)
+  (:import-from #:cl-spec/src/function-spec
+                #:function-spec-cases #:function-case-name #:function-case-outcome-spec)
   (:import-from #:cl-spec/main
                 #:*registry*
                 #:check-function
@@ -273,12 +275,17 @@
     (setf (cdr (last circular)) circular)
     (ok (not (cl-spec/specs::sampled-dsl-form-p circular)))))
 
+(defun checked-explanation-spec ()
+  "Return EXPLAIN-DATA's return spec for a completed validation."
+  (let ((contract (find-function-spec 'explain-data)))
+    (function-case-outcome-spec
+     (find :checked (function-spec-cases contract) :key #'function-case-name))))
+
 (deftest executable-data-specs-refuse-inconsistent-evidence
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
     (let* ((spec (cl-spec:normalize-spec-form 'integer))
-           (contract (cl-spec:find-function-spec 'cl-spec:explain-data))
-           (return-spec (cl-spec:function-spec-return-spec contract))
+           (return-spec (checked-explanation-spec))
            (good (cl-spec:explain-data spec 1)))
       (ok (cl-spec:validp return-spec good))
       (let ((bad (copy-list good)))
@@ -297,9 +304,8 @@
 (deftest executable-data-specs-check-field-structure
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec/specs:register-specifications)
-    (let* ((contract (cl-spec:find-function-spec 'cl-spec:explain-data))
-           (spec (cl-spec:function-spec-return-spec contract))
-           (data (cl-spec:explain-data (cl-spec:normalize-spec-form 'integer) "bad")))
+    (let ((spec (checked-explanation-spec))
+          (data (cl-spec:explain-data (cl-spec:normalize-spec-form 'integer) "bad")))
       (ok (not (cl-spec:validp spec (append data '(:valid nil)))))
       (setf (getf data :errors) '(broken . errors))
       (ok (not (cl-spec:validp spec data))))

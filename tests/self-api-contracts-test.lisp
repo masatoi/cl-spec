@@ -384,27 +384,51 @@ The head symbols are compared by name: the corpus lives in another package."
                 (ok (handler-case (progn (validate spec value) nil)
                       (spec-violation () t))))))))))
 
-(deftest validate-cases-cover-admitted-and-refused-inputs
+(deftest validation-contracts-recognize-the-reference-depth-limit
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
+    (cl-spec:register-spec 'chain (normalize-spec-form '(or null (tuple integer chain))))
+    (dolist (cl-spec:*reference-depth-limit* '(0 8))
+      (let ((at-limit nil))
+        (dotimes (i cl-spec:*reference-depth-limit*)
+          (setf at-limit (list i at-limit)))
+        (dolist (designator (list 'chain (find-spec 'chain)))
+          (dolist (name '(validate validp cl-spec:explain-data))
+            (flet ((observe (value)
+                     (let ((call (cl-spec:check-call name (list designator value))))
+                       (ok (eq :passed (cl-spec:call-check-result-status call)))
+                       (cl-spec:call-check-result-observation call))))
+              (testing (format nil "~S with ~D references" name cl-spec:*reference-depth-limit*)
+                (let ((outcome (cl-spec:trial-observation-outcome (observe at-limit))))
+                  (ok (eq :returned (getf outcome :kind))))
+                (let* ((observation (observe (list 0 at-limit)))
+                       (outcome (cl-spec:trial-observation-outcome observation)))
+                  (ok (eq :depth-exceeded (cl-spec:trial-observation-case observation)))
+                  (ok (and (consp outcome) (eq :signaled (getf outcome :kind))
+                           (eq 'cl-spec:validation-depth-exceeded
+                               (getf outcome :condition-type)))))))))))))
+
+(deftest validation-contracts-cover-their-declared-cases
+  (let ((*registry* (make-hash-table-registry))
+        (cl-spec:*reference-depth-limit* 4))
+    (register-specifications)
+    (cl-spec:register-spec 'chain (normalize-spec-form '(nullable (tuple integer chain))))
     (ok (member 'cl-spec/specs::validate-cases-classify-admitted-and-refused
                 (properties-for 'cl-spec:check-function-with-examples)))
-    ;; The sequence is explicit, so both named cases are reached by the input
-    ;; list itself rather than by what a seed happens to draw.
-    (let ((*scripted-validate-inputs*
-            '((integer 0) (integer "x") (string "ok") (string 7)
-              (integer 1) (integer :x) (null nil) (null t))))
-      (let* ((result (check-function 'cl-spec:validate :trials 4 :seed 1))
+    (dolist (name '(validate validp cl-spec:explain-data))
+      (let* ((*scripted-validate-inputs*
+               '((integer 0) (integer "refused") (chain (1 (2 (3 (4 (5 nil))))))))
+             (result (check-function name :trials 3 :seed 1))
              (report (function-check-result-case-report result)))
-        (ok (eq :passed (property-result-status result)))
-        (ok (= 4 (property-result-trials result)))
-        (ok (equal '(:conforming :refused) (getf report :declared-cases)))
-        (ok (equal '(2 2)
-                   (mapcar (lambda (case) (getf case :called)) (getf report :cases))))
-        (ok (equal '(2 2)
-                   (mapcar (lambda (case) (getf case :passed)) (getf report :cases))))
-        (ok (null (getf report :never-called)))
-        (ok (zerop (getf report :case-selection-errors)))))))
+        (testing (symbol-name name)
+          (ok (eq :passed (property-result-status result)))
+          (ok (eq :satisfied (getf (assess-evidence result (evidence-policy 3)) :assessment)))
+          (ok (equal (if (eq name 'validate)
+                         '((:conforming 1) (:refused 1) (:depth-exceeded 1))
+                         '((:checked 2) (:depth-exceeded 1)))
+                     (loop for row in (getf report :cases)
+                           collect (list (getf row :name) (getf row :passed)))))
+          (ok (zerop (getf report :case-selection-errors))))))))
 
 (deftest evidence-policy-flags-an-unreached-case
   (let ((*registry* (make-hash-table-registry)))
@@ -415,7 +439,7 @@ The head symbols are compared by name: the corpus lives in another package."
                                   (:kind :min-checked-trials :count 4)
                                   (:kind :all-declared-cases :min-checked 1)))
                  (evidence-policy 4))))
-    ;; Only admitted pairs: the run passes, yet never reaches the :REFUSED case.
+    ;; Only admitted pairs: the run passes, yet misses the refused and depth-exceeded cases.
     (let ((*scripted-validate-inputs*
             '((integer 0) (string "ok") (integer 1) (null nil)
               (integer 2) (string "yes") (integer 3) (boolean t))))
@@ -424,7 +448,7 @@ The head symbols are compared by name: the corpus lives in another package."
         (testing "a passing run that misses a declared case is insufficient evidence"
           (ok (eq :passed (property-result-status result)))
           (ok (eq :insufficient (getf assessment :assessment)))
-          (ok (equal '(:refused)
+          (ok (equal '(:refused :depth-exceeded)
                      (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
 (deftest summary-contract-accepts-each-fixture-verdict
@@ -565,6 +589,23 @@ STAND-IN is a function of the original definition and the call's arguments."
              (values (property-result-status result)
                      (cl-spec:property-result-failure-reason result))))
       (setf (fdefinition name) original))))
+
+(deftest validation-contracts-require-the-documented-depth-condition
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (dolist (name '(validate validp cl-spec:explain-data))
+      (testing (symbol-name name)
+        (ok (eq :failed
+                (status-against (lambda (original &rest arguments)
+                                  (handler-case (apply original arguments)
+                                    (cl-spec:validation-depth-exceeded () nil)))
+                                name)))
+        (ok (eq :error
+                (status-against (lambda (original &rest arguments)
+                                  (handler-case (apply original arguments)
+                                    (cl-spec:validation-depth-exceeded ()
+                                      (error "Different condition"))))
+                                name)))))))
 
 (deftest the-evidence-contract-refuses-an-assessment-that-ignores-a-shortfall
   ;; The contract saw only policies the observed run satisfies, so an
