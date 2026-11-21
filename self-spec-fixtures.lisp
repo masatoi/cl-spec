@@ -19,7 +19,7 @@
                 #:registry-properties-for
                 #:registry-properties-with-tag
                 #:registry-register-property)
-  (:export #:fresh-counter-machine #:fresh-fixture-contract
+  (:export #:fresh-counter-machine #:fresh-fixture-contract #:draw-fixture-check
    #:*function-projection-expectations*
    #:next-registration-scenario-kind
    #:*registry-constructor*
@@ -84,6 +84,22 @@
       (:returns integer)
       (:state-post (= (car cell) (1+ before))))
     (cl-spec:find-function-spec 'self-fresh-increment)))
+
+(defun draw-fixture-check ()
+  "Draw a direct check with a passed, failed, rejected or cleanup-error verdict."
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity
+      (:args (value integer))
+      (:fixture
+       (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+       (:setup (context) (declare (ignore context)) (list recipe))
+       (:cleanup (context)
+         (declare (ignore context))
+         (when (= recipe -2) (error "Fixture cleanup failed."))))
+      (:pre (/= value -1))
+      (:returns (range integer 1 *)))
+    (cl-spec:check-fixture 'identity (- (random 6) 2)
+                           :coverage (when (zerop (random 2)) '(:mode :observe)))))
 
 (defun fresh-counter-machine ()
   "Build a small independent checker fixture. The target drops every :DROP increment."

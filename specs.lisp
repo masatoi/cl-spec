@@ -5,9 +5,14 @@
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/state-machine #:state-machine-property #:command-trace-p)
-  (:import-from #:cl-spec/src/execution #:same-value-p)
+  (:import-from #:cl-spec/src/execution
+                #:same-value-p #:trial-observation-lifecycle #:trial-observation-call-evidence
+                #:observation-failure-phase)
+  (:import-from #:cl-spec/src/function-spec
+                #:fixture-check-result-observation #:fixture-check-result-name
+                #:fixture-check-result-coverage)
   (:import-from #:cl-spec/src/utils/artifact-values
-                #:serialize-artifact-value #:deserialize-artifact-value)
+                #:serialize-artifact-value #:deserialize-artifact-value #:artifact-value-error)
   (:import-from #:cl-spec/main
                 #:compile-explainer
                 #:compile-validator
@@ -655,6 +660,108 @@ requires NIL and NIL, the documented answer for an absent name."
   (make-instance 'cl-spec:property :name name :arguments '((x integer))
                  :function (lambda (x) (declare (ignore x)) t)))
 
+(defun fixture-status (result)
+  "Return the verdict recorded by a direct fixture observation."
+  (cl-spec:trial-observation-status (fixture-check-result-observation result)))
+
+(defun fixture-checked-count (result)
+  "Return how many checked trials the single fixture invocation contributes."
+  (if (member (fixture-status result) '(:passed :failed)) 1 0))
+
+(defun fixture-required-error-p (condition)
+  "Recognize a declaration lacking the fixture CHECK-FIXTURE requires."
+  (eq :fixture-required (cl-spec/src/fixture:fixture-error-reason condition)))
+
+(defun checked-trial-threshold (policy)
+  "Return the positive count of a valid minimum-trial policy in the self-contract's domain."
+  (let* ((requirement (first (getf policy :requirements)))
+         (count (getf requirement :count)))
+    (and (eql 1 (getf policy :policy-version))
+         (eq :min-checked-trials (getf requirement :kind))
+         (typep count '(integer 1 *))
+         count)))
+
+(defun invalid-policy-condition-p (condition)
+  "Recognize the public reason for an invalid evidence policy."
+  (eq :invalid-policy (cl-spec:invalid-evidence-policy-reason condition)))
+
+(defun fixture-threshold-assessment-p (data observation policy)
+  "Check a single minimum-trial assessment against the verdict saved before assessment."
+  (let* ((checked (fixture-checked-count observation))
+         (threshold (checked-trial-threshold policy))
+         (short (< checked threshold))
+         (verdict (if short :insufficient :satisfied))
+         (checks (getf data :checks))
+         (check (first checks))
+         (gaps (getf data :gaps))
+         (gap (first gaps)))
+    (and (eq (fixture-status observation) (getf data :execution-status))
+         (equal policy (getf data :policy))
+         (eq verdict (getf data :assessment))
+         (= 1 (length checks))
+         (equal (first (getf policy :requirements)) (getf check :requirement))
+         (eq verdict (getf check :status))
+         (eql checked (getf check :observed))
+         (eql threshold (getf check :required))
+         (if short
+             (and (= 1 (length gaps))
+                  (eq :checked-trials-below-minimum (getf gap :kind))
+                  (eql checked (getf gap :observed))
+                  (eql threshold (getf gap :required))
+                  (equal '(:trial-report :checked) (getf gap :source)))
+             (null gaps)))))
+
+(defun property-false-evidence-p (observation)
+  "Recognize an ordinary predicate's saved false verdict."
+  (and (eq :failed (cl-spec:trial-observation-status observation))
+       (eq :predicate-false (cl-spec:trial-observation-reason observation))
+       (equal '(:property-false) (cl-spec:trial-observation-signature observation))))
+
+(defun artifact-property-result-p (run)
+  "Admit stateless property runs without a failure, or with a small portable false witness."
+  (and (typep run 'cl-spec:property-result)
+       (eq :property (cl-spec:property-result-entity-kind run))
+       (let ((metadata (cl-spec:property-result-schema-metadata run))
+             (original (cl-spec:property-result-failure-evidence run))
+             (shrunk (cl-spec:property-result-shrunk-evidence run)))
+         (and (not (eq :present (getf metadata :state-constraints)))
+              (not (eq :fixture-recipe (getf metadata :input-kind)))
+              (if original
+                  (and (property-false-evidence-p original)
+                       (or (null shrunk) (property-false-evidence-p shrunk))
+                       ;; Optional metadata may be omitted by AV1. Bound the required
+                       ;; fields together, leaving room for the artifact envelope.
+                       (handler-case
+                           (progn
+                             (serialize-artifact-value
+                              (list (cl-spec:property-result-property run)
+                                    (cl-spec:property-result-seed run)
+                                    (cl-spec:property-result-profile run)
+                                    (cl-spec:property-result-budget run)
+                                    (getf metadata :definition-digest)
+                                    (cl-spec:trial-observation-arguments original)
+                                    (when shrunk (cl-spec:trial-observation-arguments shrunk)))
+                              :max-chars 10000 :max-nodes 128 :max-depth 8)
+                             t)
+                         (artifact-value-error () nil)))
+                  (member (cl-spec:property-result-status run) '(:passed :skipped)))))))
+
+(defun not-failure-evidence-condition-p (condition)
+  "Recognize the refusal of an artifact with no failure to persist."
+  (eq :not-failure-evidence (cl-spec:invalid-counterexample-artifact-reason condition)))
+
+(defun artifact-observation-matches-p (record observation)
+  "Check the saved arguments and failure identity of one stateless artifact witness."
+  (if observation
+      (and (same-artifact-value-p (cl-spec:trial-observation-arguments observation)
+                                  (getf record :arguments))
+           (eq (cl-spec:trial-observation-status observation) (getf record :status))
+           (eq (cl-spec:trial-observation-reason observation) (getf record :reason))
+           (equal (cl-spec:trial-observation-signature observation) (getf record :signature))
+           (eq (cl-spec:trial-observation-arguments-mutated-p observation)
+               (getf record :mutated-p)))
+      (null record)))
+
 (defun register-specifications ()
   "Install executable contracts and laws in CL-SPEC:*REGISTRY*.
 Loading CL-SPEC/SPECS installs these once. Call this function again after
@@ -706,92 +813,138 @@ their finite input corpora, and the registry write contract names its scenarios.
                       (cl-spec:trial-observation-explanation result)))
           (eq :passed (cl-spec:trial-observation-status result)))))
   (defgenerator fresh-fixture-contract-generator ()
-    (cl-spec/self-spec-fixtures:fresh-fixture-contract))
+    (if (zerop (random 2))
+        (cl-spec/self-spec-fixtures:fresh-fixture-contract)
+        (self-sort-contract 'identity)))
   (defspec fresh-fixture-contract-input (instance-of cl-spec:function-spec)
     (:generator fresh-fixture-contract-generator))
   (defspec-function cl-spec:check-fixture
-    "A dedicated fresh recipe runs once and releases its fixture."
+    "One integer recipe records its verdict and lifecycle. A declaration needs a fixture."
     (:args (contract fresh-fixture-contract-input) (recipe (range integer 0 30)))
-    (:returns (instance-of cl-spec:fixture-check-result))
-    (:post (let ((data (cl-spec:fixture-check-data result)))
-             (and (eq :passed (getf data :status))
-                  (eql recipe (getf data :recipe))
-                  (eq :released (getf (getf data :lifecycle) :state))))))
+    (:cases
+     (:with-fixture
+      (:when (cl-spec:function-spec-fixture contract))
+      (:returns (instance-of cl-spec:fixture-check-result))
+      (:post (let* ((saved (fixture-check-result-observation result))
+                    (lifecycle (trial-observation-lifecycle saved))
+                    (cleanup (getf lifecycle :cleanup)))
+               (and (eq (cl-spec:function-spec-name contract) (fixture-check-result-name result))
+                    (eql recipe (first (cl-spec:trial-observation-arguments saved)))
+                    (case cleanup
+                      (:completed (eq :released (getf lifecycle :state)))
+                      (:error (and (eq :error (fixture-status result))
+                                   (eq :unknown (getf lifecycle :state))))
+                      (:not-started (and (eq :error (fixture-status result))
+                                         (eq :not-acquired (getf lifecycle :state)))))))))
+     (:without-fixture
+      (:when (null (cl-spec:function-spec-fixture contract)))
+      (:signals (and (type cl-spec/src/fixture:fixture-error)
+                     (satisfies fixture-required-error-p))))))
   (defgenerator fresh-fixture-result-generator ()
-    (cl-spec:check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 7))
+    (cl-spec/self-spec-fixtures:draw-fixture-check))
   (defspec fresh-fixture-result (instance-of cl-spec:fixture-check-result)
     (:generator fresh-fixture-result-generator))
+  (defspec fixture-verdict (member :passed :failed :rejected :error))
   (defspec-function cl-spec:fixture-check-data
-    "Fixture projection distinguishes recipe input from live call arguments."
+    "Fixture projection preserves the saved recipe, verdict, lifecycle and call evidence."
     (:args (observation fresh-fixture-result))
     (:returns (plist (:required (:schema-version (member 2))
                                 (:input-kind (member :fixture-recipe))
                                 (:record-kind (member :fixture-check))
-                                (:status (member :passed)) (:recipe (member 7)))))
-    (:post (eq :completed (getf (getf result :lifecycle) :cleanup))))
+                                (:execution-mode (member :fixture))
+                                (:status fixture-verdict) (:recipe t)
+                                (:name symbol) (:reason t) (:failure-phase t)
+                                (:lifecycle list) (:observation list))))
+    (:post (let ((saved (fixture-check-result-observation observation)))
+             (and (eq (fixture-check-result-name observation) (getf result :name))
+                  (same-value-p (first (cl-spec:trial-observation-arguments saved))
+                                (getf result :recipe))
+                  (eq (fixture-status observation) (getf result :status))
+                  (eq (cl-spec:trial-observation-reason saved) (getf result :reason))
+                  (eq (observation-failure-phase saved) (getf result :failure-phase))
+                  (same-value-p (trial-observation-lifecycle saved) (getf result :lifecycle))
+                  (same-value-p (trial-observation-call-evidence saved)
+                                (getf result :observation))))))
   (defspec-function cl-spec:coverage-schema
-    "Coverage discovery returns bounded declaration facts without running the target."
+    "For fully described inputs, coverage retains the declaration digest and its completeness."
     (:args (contract fresh-fixture-contract-input))
+    (:pre (cl-spec:definition-digest (cl-spec:function-spec-argument-schema contract)))
     (:returns (plist (:required (:schema-version (member 1))
                                 (:record-kind (member :coverage-schema))
+                                (:subject (plist (:required (:definition-digest (nullable string))
+                                                            (:definition-digest-complete boolean))))
                                 (:dimensions list) (:unexpanded list))))
-    (:post (stringp (getf (getf result :subject) :definition-digest))))
+    (:post (multiple-value-bind (digest complete) (cl-spec:definition-digest contract)
+             (let ((subject (getf result :subject)))
+               (and (equal digest (getf subject :definition-digest))
+                    (eq complete (getf subject :definition-digest-complete)))))))
   (defspec-function cl-spec:coverage-data
-    "A result saved without coverage reports explicit missing measurement."
+    "A direct fixture retains either its opted-in measurements or its missing-measurement reason."
     (:args (observation fresh-fixture-result))
-    (:returns (plist (:required (:availability (member :not-collected))
-                                (:reason (member :disabled))))))
+    (:returns (or (plist (:required (:availability (member :not-collected)) (:reason keyword)))
+                  (plist (:required (:schema-version (member 1))
+                                    (:record-kind (member :coverage-report))
+                                    (:scope (member :single-call))
+                                    (:trials (member 1)) (:dimensions list)))))
+    (:post (equal (fixture-check-result-coverage observation) result)))
   (defspec-function cl-spec:format-check-summary
     "A direct fixture check produces one line with its execution verdict and assessment."
     (:args (observation fresh-fixture-result))
     (:returns string)
-    (:post (let ((status (getf (cl-spec:evidence-summary observation) :execution-status)))
+    (:post (let ((status (fixture-status observation)))
              (and (search (format nil "~A | evidence not-assessed" (string-downcase status)) result)
                   (not (find #\Newline result))))))
   (defspec-function cl-spec:evidence-summary
-    "A saved direct observation is summarized without an implicit policy."
+    "A saved fixture verdict is reported separately from its single-call checked count."
     (:args (observation fresh-fixture-result))
     (:returns (plist (:required (:schema-version (member 1))
-                               (:record-kind (member :evidence-summary))
-                               (:assessment (member :not-assessed))
-                               (:execution-status (member :passed)))))
-    (:post (eql 1 (getf (find :checked-trials (getf result :dimensions)
-                             :key (lambda (entry) (getf entry :kind))) :value))))
+                                (:record-kind (member :evidence-summary))
+                                (:assessment (member :not-assessed))
+                                (:scope (member :single-call))
+                                (:execution-status fixture-verdict))))
+    (:post (let ((dimension (find :checked-trials (getf result :dimensions)
+                                 :key (lambda (entry) (getf entry :kind)))))
+             (and (eq (fixture-status observation) (getf result :execution-status))
+                  (eq :collected (getf dimension :availability))
+                  (eq :single-call (getf dimension :unit))
+                  (eql (fixture-checked-count observation) (getf dimension :value))))))
   (defgenerator evidence-policy-generator ()
-    ;; NIL is malformed; a count of 1 is met by the one checked trial of a
-    ;; fresh fixture result and a count of 2 is not, so both verdicts are seen.
-    (let ((draw (random 3)))
-      (if (zerop draw)
-          nil
-          (list :policy-version 1 :requirements
-                (list (list :kind :min-checked-trials :count draw))))))
-  (defspec evidence-policy-input list (:generator evidence-policy-generator))
-  (defspec short-evidence-gaps
-      (tuple (plist (:required (:kind (member :checked-trials-below-minimum))
-                               (:required (member 2))
-                               (:observed (member 1))))))
+    (case (random 5)
+      (0 nil)
+      (1 '(:policy-version 1 :requirements ((:kind :min-checked-trials :count 0))))
+      (2 '(:policy-version 1 :requirements ((:kind :min-checked-trials :count 1))))
+      (otherwise (list :requirements (list (list :count (+ 2 (random 10))
+                                                  :kind :min-checked-trials))
+                       :policy-version 1))))
+  (defspec evidence-policy-input
+    (or null
+        (plist (:required (:policy-version t)
+                          (:requirements
+                           (or null (tuple (plist (:required (:kind t) (:count t))
+                                                   (:closed t))))))
+               (:closed t)))
+    (:generator evidence-policy-generator))
+  (defspec threshold-assessment-data
+    (plist (:required (:schema-version (member 1)) (:record-kind (member :evidence-assessment))
+                      (:execution-status fixture-verdict) (:scope (member :single-call))
+                      (:policy list) (:checks list) (:assessment (member :satisfied :insufficient))
+                      (:gaps list) (:unknowns null))))
   (defspec-function cl-spec:assess-evidence
-    "An explicit threshold is assessed against the saved facts; malformed policy data is rejected.
-
-The observation is one passed fixture check, which has exactly one checked trial,
-so a threshold of one is met and a threshold of two is a recorded shortfall."
+    "Check one minimum-trial threshold against a direct fixture's saved verdict.
+The input also covers empty policies, empty requirements and malformed versions, kinds or counts."
     (:args (observation fresh-fixture-result) (policy evidence-policy-input))
     (:cases
-     (:valid (:when (equal policy '(:policy-version 1 :requirements
-                                   ((:kind :min-checked-trials :count 1)))))
-             (:returns (plist (:required (:schema-version (member 1))
-                                         (:record-kind (member :evidence-assessment))
-                                         (:assessment (member :satisfied))
-                                         (:execution-status (member :passed))
-                                         (:gaps null)))))
-     (:short (:when (equal policy '(:policy-version 1 :requirements
-                                   ((:kind :min-checked-trials :count 2)))))
-             (:returns (plist (:required (:schema-version (member 1))
-                                         (:record-kind (member :evidence-assessment))
-                                         (:assessment (member :insufficient))
-                                         (:execution-status (member :passed))
-                                         (:gaps short-evidence-gaps)))))
-     (:invalid (:when (null policy)) (:signals (type cl-spec:invalid-evidence-policy)))))
+     (:valid (:when (let ((count (checked-trial-threshold policy)))
+                      (and count (<= count (fixture-checked-count observation)))))
+             (:returns threshold-assessment-data)
+             (:post (fixture-threshold-assessment-p result observation policy)))
+     (:short (:when (let ((count (checked-trial-threshold policy)))
+                      (and count (> count (fixture-checked-count observation)))))
+             (:returns threshold-assessment-data)
+             (:post (fixture-threshold-assessment-p result observation policy)))
+     (:invalid (:when (null (checked-trial-threshold policy)))
+               (:signals (and (type cl-spec:invalid-evidence-policy)
+                              (satisfies invalid-policy-condition-p))))))
   (defproperty fixture-reconstruction-is-independent ((recipe (range integer 0 30)))
     "Repeating one recipe starts from the same value and does not overwrite past evidence."
     (:about cl-spec:check-fixture cl-spec:fixture-check-data)
@@ -1053,11 +1206,13 @@ validity predicate, so the contract itself is not limited to the corpus."
   (defspec passing-property-result (instance-of cl-spec:property-result)
     (:generator passing-result-generator))
 
-  (defgenerator failing-result-generator ()
-    (self-failing-result))
+  (defgenerator artifact-property-result-generator ()
+    (if (zerop (random 2))
+        (self-failing-result)
+        (self-run-result (lambda (x) (declare (ignore x)) t))))
 
-  (defspec failing-property-result (instance-of cl-spec:property-result)
-    (:generator failing-result-generator))
+  (defspec artifact-property-result (satisfies artifact-property-result-p)
+    (:generator artifact-property-result-generator))
 
   (defgenerator counterexample-artifact-generator ()
     (self-failing-artifact))
@@ -1496,9 +1651,23 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
                     t))))
 
   (defspec-function cl-spec:make-counterexample-artifact
-    "A failing result freezes into an artifact carrying its evidence."
-    (:args (result failing-property-result))
-    (:returns (instance-of cl-spec:counterexample-artifact)))
+    "A stateless property freezes its small portable false witnesses or reports their absence."
+    (:args (run artifact-property-result))
+    (:cases
+     (:failure
+      (:when (cl-spec:property-result-failure-evidence run))
+      (:returns (instance-of cl-spec:counterexample-artifact))
+      (:post (let ((data (cl-spec:counterexample-artifact-data result))
+                   (original (cl-spec:property-result-failure-evidence run))
+                   (shrunk (cl-spec:property-result-shrunk-evidence run)))
+               (and (eq (cl-spec:property-result-property run) (getf data :name))
+                    (eq (if shrunk :shrunk :original) (getf data :selection))
+                    (artifact-observation-matches-p (getf data :original) original)
+                    (artifact-observation-matches-p (getf data :shrunk) shrunk)))))
+     (:no-failure
+      (:when (null (cl-spec:property-result-failure-evidence run)))
+      (:signals (and (type cl-spec:invalid-counterexample-artifact)
+                     (satisfies not-failure-evidence-condition-p))))))
 
   (defspec-function cl-spec:recheck-counterexample
     "A stateless recheck identifies the saved definition and selected counterexample."

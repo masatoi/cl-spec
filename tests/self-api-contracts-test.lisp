@@ -447,8 +447,113 @@ The head symbols are compared by name: the corpus lives in another package."
                      (cl-spec:call-check-result-status
                       (cl-spec:check-call 'cl-spec:format-check-summary (list result))))))))
 
+(defun bundle-call-status (name &rest arguments)
+  "Check one concrete invocation against the optional self-specification bundle."
+  (cl-spec:call-check-result-status (cl-spec:check-call name arguments)))
+
+(deftest fixture-contracts-follow-the-saved-execution
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (cl-spec:defspec-function identity
+      (:args (x integer))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe (member 0 1 2 3 8)))
+                (:setup (context)
+                  (declare (ignore context))
+                  (when (= recipe 3) (error "setup failed"))
+                  (list recipe))
+                (:cleanup (context)
+                  (declare (ignore context))
+                  (when (= recipe 2) (error "cleanup failed"))))
+      (:pre (/= x 1))
+      (:returns (range integer 1 *)))
+    (loop with contract = (find-function-spec 'identity)
+          for (recipe status cleanup) in '((8 :passed :completed) (0 :failed :completed)
+                                           (1 :rejected :completed) (2 :error :error)
+                                           (3 :error :completed) (4 :error :not-started))
+          for observation = (check-fixture contract recipe :coverage '(:mode :observe))
+          for data = (fixture-check-data observation)
+          do (ok (eql recipe (getf data :recipe)))
+             (ok (eq status (getf data :status)))
+             (ok (eq cleanup (getf (getf data :lifecycle) :cleanup)))
+             (ok (eq :passed (bundle-call-status 'check-fixture contract recipe)))
+             (let* ((policy '(:policy-version 1 :requirements
+                              ((:kind :min-checked-trials :count 1))))
+                    (assessment (assess-evidence observation policy)))
+               (ok (eq (if (member status '(:passed :failed)) :satisfied :insufficient)
+                       (getf assessment :assessment)))
+               (ok (eq :passed (bundle-call-status 'assess-evidence observation policy))))
+             (dolist (name '(fixture-check-data cl-spec:evidence-summary
+                             cl-spec:coverage-data cl-spec:format-check-summary))
+               (ok (eq :passed (bundle-call-status name observation)) (symbol-name name))))))
+
+(deftest fixture-and-coverage-contracts-accept-programmatic-declarations
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((contract (make-instance 'cl-spec:function-spec :name 'identity
+                                   :argument-specs '((value integer))
+                                   :return-spec 'unresolved-return)))
+      (ok (null (cl-spec:definition-digest contract)))
+      (ok (eq :fixture-required
+              (handler-case (check-fixture contract 8)
+                (cl-spec/src/fixture:fixture-error (condition)
+                  (cl-spec/src/fixture:fixture-error-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'check-fixture contract 8)))
+      (ok (eq :passed (bundle-call-status 'cl-spec:coverage-schema contract))))
+    (let ((contract (make-instance 'cl-spec:function-spec :name 'identity
+                                   :argument-specs '((value unresolved-input))
+                                   :return-spec 'integer)))
+      (ok (eq :rejected (bundle-call-status 'cl-spec:coverage-schema contract))))))
+
+(deftest evidence-contract-assesses-positive-thresholds-and-refuses-malformed-policies
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((observation (check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 8)))
+      (dolist (threshold (list 1 2 3 (1+ most-positive-fixnum)))
+        ;; Property lists can present either the policy or the requirement keys in any order.
+        (let* ((policy (list :requirements (list (list :count threshold :kind :min-checked-trials))
+                             :policy-version 1))
+               (assessment (assess-evidence observation policy)))
+          (ok (eq (if (= threshold 1) :satisfied :insufficient)
+                  (getf assessment :assessment)))
+          (ok (equal (unless (= threshold 1)
+                       (list (list :kind :checked-trials-below-minimum :required threshold
+                                   :observed 1 :source '(:trial-report :checked))))
+                     (getf assessment :gaps)))
+          (ok (eq :passed (bundle-call-status 'assess-evidence observation policy)))))
+      (dolist (policy '(nil (:policy-version 1 :requirements nil)
+                        (:policy-version 2 :requirements ((:kind :min-checked-trials :count 1)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count 0)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count -2)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count t)))))
+        (ok (eq :invalid-policy
+                (handler-case (assess-evidence observation policy)
+                  (cl-spec:invalid-evidence-policy (condition)
+                    (cl-spec:invalid-evidence-policy-reason condition)))))
+        (ok (eq :passed (bundle-call-status 'assess-evidence observation policy)))))))
+
+(deftest artifact-contract-distinguishes-absent-and-saved-failure-evidence
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (defproperty integer-passes ((n (range integer 1 9))) (plusp n))
+    (defproperty integer-fails ((n (range integer 1 9))) (minusp n))
+    (let ((passed (run-property 'integer-passes :seed 41))
+          (failed (run-property 'integer-fails :seed 41)))
+      (ok (eq :passed (property-result-status passed)))
+      (ok (eq :not-failure-evidence
+              (handler-case (make-counterexample-artifact passed)
+                (cl-spec:invalid-counterexample-artifact (condition)
+                  (cl-spec:invalid-counterexample-artifact-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'make-counterexample-artifact passed)))
+      (ok (eq :failed (property-result-status failed)))
+      (let ((data (cl-spec:counterexample-artifact-data (make-counterexample-artifact failed))))
+        (ok (equal '(:property-false) (getf (getf data :original) :signature)))
+        (ok (equal (cl-spec:trial-observation-arguments
+                    (cl-spec:property-result-failure-evidence failed))
+                   (getf (getf data :original) :arguments))))
+      (ok (eq :passed (bundle-call-status 'make-counterexample-artifact failed))))))
+
 (defun status-against (stand-in name)
-  "Return the status of NAME's bundle contract run while NAME is STAND-IN.
+  "Return the status and failure reason of NAME's contract run while NAME is STAND-IN.
 
 STAND-IN is a function of the original definition and the call's arguments."
   (let ((original (fdefinition name)))
@@ -456,7 +561,9 @@ STAND-IN is a function of the original definition and the call's arguments."
          (progn
            (setf (fdefinition name)
                  (lambda (&rest arguments) (apply stand-in original arguments)))
-           (property-result-status (check-function name :trials 50 :seed 20261108)))
+           (let ((result (check-function name :trials 50 :seed 20261108)))
+             (values (property-result-status result)
+                     (cl-spec:property-result-failure-reason result))))
       (setf (fdefinition name) original))))
 
 (deftest the-evidence-contract-refuses-an-assessment-that-ignores-a-shortfall
@@ -474,6 +581,25 @@ STAND-IN is a function of the original definition and the call's arguments."
                                                 (getf assessment :gaps) '())
                                           assessment))
                                       'assess-evidence))))))
+
+(deftest fixture-projection-and-artifact-contracts-refuse-invented-evidence
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (ok (eq :failed
+            (status-against
+             (lambda (original observation)
+               (let ((data (funcall original observation)))
+                 (setf (getf data :recipe) 7)
+                 data))
+             'fixture-check-data)))
+    (ok (equal '(:error :condition-spec)
+               (multiple-value-list
+                (status-against
+                 (lambda (original run)
+                   (if (eq :passed (property-result-status run))
+                       (error 'cl-spec:invalid-counterexample-artifact :reason :invalid-record)
+                       (funcall original run)))
+                 'make-counterexample-artifact))))))
 
 (defun law-status-while (name replacement law)
   "Return the status of LAW run while the function NAME is REPLACEMENT.
