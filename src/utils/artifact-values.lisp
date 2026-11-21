@@ -197,7 +197,8 @@ Depth counts nested elements; flat and dotted list spines do not consume depth."
                               (let ((package (canonical-package (first args))))
                                 (multiple-value-bind (symbol status)
                                     (find-symbol (second args) package)
-                                  (unless status (value-error :missing-symbol))
+                                  (unless (and status (eq (symbol-package symbol) package))
+                                    (value-error :missing-symbol))
                                   symbol)))
                              (3
                               (let* ((code (text-integer (first args)))

@@ -3,6 +3,7 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/main)
+  (:import-from #:cl-spec/src/fixture #:trial-fixture)
   (:import-from #:cl-spec/src/generator #:*generator-backend*)
   (:import-from #:cl-spec/tests/fixture-function-test
                 #:with-contract #:withdraw #:fixture-check #:*mode*
@@ -24,6 +25,40 @@
       (ok (eq :passed
               (getf (cl-spec:recheck-counterexample restored :state-policy :fixture) :status)))
       (ok (= 3 *setups* *cleanups* *calls*)))))
+
+(deftest rechecks-a-historical-fixture-artifact
+  ;; The AV1 fixture was emitted by 33affd3a298bce022aa7ab210f5b09591374abc4.
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*generator-backend* nil))
+    ;; Construct the declaration lists at run time to avoid compiler literal sharing.
+    (let ((fixture (make-instance 'trial-fixture
+                                  :version 1
+                                  :recipe-name 'recipe
+                                  :recipe-spec 'integer
+                                  :setup-function (lambda (recipe context)
+                                                    (declare (ignore context))
+                                                    (list recipe))
+                                  :setup-forms (list (list 'list 'recipe))
+                                  :cleanup-function (lambda (recipe context)
+                                                      (declare (ignore recipe context))
+                                                      nil)
+                                  :cleanup-forms (list nil))))
+      (cl-spec:register-function-spec
+       (make-instance 'cl-spec:function-spec
+                      :name 'identity
+                      :argument-specs (list (list 'value 'integer))
+                      :return-spec 'string
+                      :fixture fixture)))
+    (let* ((path (asdf:system-relative-pathname "cl-spec" "tests/fixtures/counterexample-v2.av1"))
+           (artifact (cl-spec:deserialize-counterexample-artifact (uiop:read-file-string path)))
+           (data (cl-spec:counterexample-artifact-data artifact))
+           (recheck (cl-spec:recheck-counterexample artifact :state-policy :fixture))
+           (observation (getf recheck :observation)))
+      (ok (eql 2 (getf data :artifact-version)))
+      (ok (equal '(27) (getf (getf data :original) :arguments)))
+      (ok (eq :same-failure (getf recheck :status)))
+      (ok (eq :return-spec (getf observation :reason)))
+      (ok (eq :completed (getf (getf observation :lifecycle) :cleanup))))))
 
 (deftest base-string-fixture-recipe-survives-setup-and-recheck
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
