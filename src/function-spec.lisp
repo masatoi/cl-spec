@@ -36,7 +36,7 @@
   (:export #:function-spec-fixture #:fixture-check-property #:make-fixture-check-property
            #:check-fixture #:fixture-check-result #:fixture-check-data
            #:fixture-check-result-observation #:fixture-check-result-definition
-           #:fixture-check-result-name)
+           #:fixture-check-result-name #:fixture-check-result-coverage)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots #:call-with-definition-rollback

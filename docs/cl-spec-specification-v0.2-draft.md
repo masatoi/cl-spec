@@ -4610,9 +4610,9 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 
 | 記述対象 | 実行可能な保証 |
 |---|---|
-| `validp` | 解決可能なspecと値からbooleanを返す |
-| `validate` | 名前付きcaseで正常系と拒否系を分ける。適合値は同一オブジェクトを返し、不適合値は`spec-violation`を通知する。拒否時の条件・errorsの一致はPropertyでも検査 |
-| `explain-data` | 必須field、valid/errorsの整合性、対象値の同一性 |
+| `validp` | 判定できた場合はbooleanを返す。参照深度超過・非生産的な参照循環・未定義の参照先は下記の共通caseで検査する |
+| `validate` | 適合値は同一オブジェクトを返し、不適合値は`spec-violation`を通知する。参照エラーには共通caseを適用し、拒否時の条件・errorsの一致はPropertyでも検査する |
+| `explain-data` | 判定できた場合は必須field、valid/errorsの整合性、対象値の同一性を検査する。参照エラーには共通caseを適用する |
 | `compile-validator` / `compile-explainer` | spec IRから関数を返す |
 | `spec-data` | v1 definition envelope、digestの完全性とomissionの整合性、kind・source-formの保持 |
 | `definition-digest` | keyword registryを省略・指定した定義のdigest主値を検査 |
@@ -4629,14 +4629,14 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 | `registry-register-property` | 明示的なtargets/tagsの新規登録・同名置換・不正索引引数の拒否を、`:capture`/`:state-post`で検査する。シナリオ種別のkeywordを`:fresh` fixtureのrecipeとし、試行ごとに専用registryを再構築する。失敗はartifactとして保存でき、`recheck-counterexample`の`:state-policy :fixture`で1回再構築して再検査できる |
 | `property-call-arguments-p` / `property-named-arguments` | 生の呼出し形と束縛へのprojection |
 | `property-argument-schema` / `function-spec-argument-schema` | 引数schemaがSemantic IRのspecオブジェクトであること |
-| `make-counterexample-artifact` / `recheck-counterexample` | 失敗resultからartifactを作り、recheck recordを返す |
+| `make-counterexample-artifact` / `recheck-counterexample` | 通常のpropertyで小さな保存可能な述語違反が起きた場合、artifactの元の反例・縮小反例と選択を照合する。失敗のないrunは`:not-failure-evidence`で拒否する。保存した反例を再検査できる |
 | `deserialize-counterexample-artifact` | 不正な保存artifactをreader評価なしで拒否する |
 | `validate-definition` | 妥当なprogrammatic定義はオブジェクトの同一性を保つ |
-| `check-fixture` / `fixture-check-data` | 専用の`:fresh` recipeを1回実行してfixtureを解放し、projectionはrecipe入力と実際の呼出し引数を区別する |
+| `check-fixture` / `fixture-check-data` | fixtureを欠く宣言は対象関数の定義の有無にかかわらず拒否する。fixtureありの自己契約は定義済みの対象を検査する。直接検査の成功・違反・事前条件による拒否・エラーについて、保存したrecipe、判定、cleanup状態、呼出し証拠をprojectionと照合する |
 | `check-state-machine` | 状態機械オブジェクトと、その機械のSpecが許すコマンド列について、入力の記録と判定・失敗種別の整合を検査する。専用カウンタの意味論はProperty `counter-machine-reports-first-dropped-increment` が最初の取りこぼしの位置・期待値・観測値を照合する（§41） |
 | `format-check-summary` | 保存したfixture検査の実行結果と評価を一行の文字列で返す |
-| `evidence-summary` / `assess-evidence` | 保存した直接観測を暗黙のpolicyなしで要約し、明示的な閾値を評価する。不正なpolicy dataは拒否する |
-| `coverage-schema` / `coverage-data` | coverage discoveryは対象を実行せずに有界な宣言情報を返し、coverageなしで保存したresultは未測定を明示する |
+| `evidence-summary` / `assess-evidence` | 直接fixtureの実行結果からchecked件数（0か1）を照合する。単一の`:min-checked-trials`要件について任意の正整数の閾値と不足件数を検査し、空のpolicy、ベクタで渡した要件、不正なversion・kind・countを拒否する |
+| `coverage-schema` / `coverage-data` | 入力schemaのdigestが得られる宣言では、coverage discoveryのdigestと完全性を照合する。直接fixtureでは保存した計測値または未測定理由を照合する |
 | `observation-failure-p` / `failure-identities-match-p` | 失敗観測の判定とfailure identityの反射性 |
 | registry往復 | `register-*`→`find-*`の同一性、`register-*`の戻り値と`find-*`のfound-p（未登録名はNIL・NIL）、`registry-clear`がregistryを返すこと、`list-*`の含有、逆引きindexの更新、4種すべての定義に対する`clear-registry`の空化、名前順でない登録に対する`list-*`・逆引き問い合わせのソート順、4種すべての同名再登録による置換、異なるpackageの同名symbolを別entryとして保持し名前・package名の順に並べること |
 | registry protocol適合性 | `check-registry-implementation`が、`registry-conformance-names`の契約・Propertyを任意の`REGISTRY-*`実装に対して実行する。対象registryは`*registry-constructor*`から作られ、実装判定は`registry-implementation-p`が15個の総称関数の主methodの適用可能性で行う |
@@ -4654,9 +4654,10 @@ registryを消去・交換した場合は`cl-spec/specs:register-specifications`
 生成器は整数・文字列・NIL・T・list・vectorの値と、type・range・AND・OR・NOT・
 nullable・list-of・tupleの有限DSL例を生成する。公開契約の入力domainをこの標本集合だけに
 狭めるものではない。正規化Property自体の引数domainにはこの有限集合を明記し、不正DSLの
-正規化成功まで主張しない。`validate`の適合caseは`integer`・`string`・`boolean`・
-`member`・`or`の有限corpusから生成し、同じcorpusが不適合値も供給する。このcorpusは
-公開APIが受け付けるdomain全体ではなく、両caseへ到達することを確かめる標本である。
+正規化成功まで主張しない。`validate`・`validp`・`explain-data`の生成器はDSL例と値の組、
+`integer`・`string`・`boolean`・`member`・`or`等の適合・不適合の固定例、
+および専用registryで5リンクを深度4で検査する例、非生産的な参照循環の例、未定義の参照先の例を使う。
+3契約の共通caseはそれぞれ`validation-depth-exceeded`、`invalid-spec-form`、`unknown-spec`の通知を要求する。
 境界testは`*scripted-validate-inputs*`に明示列を渡し、乱数seedに到達を依存させない。
 この自己仕様のcustom generatorにはshrinkerを指定していないため、失敗は元の反例を保持する。
 explainとdefinition envelopeの構造は§9.2のplist DSLで記述し、必須キー・値specを
@@ -4701,7 +4702,7 @@ result/artifactの基本envelope、instrumentationの基本protocolは取り込�
 残る記述範囲は、すべてのkeyword option組合せ、独自のgenerator backend実装、`defspec`自身の不正form、
 shrink候補生成の全過程、未実装の`describe-*`である。
 不正DSLの有限例は`:signals`によるFunction SpecとmacroexpansionのPropertyで表現する。
-`validate`は適合caseと拒否caseを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
+`validate`は適合・拒否と3種の参照エラーを1つの契約にまとめ、拒否条件のvalue・errorsとexplain-dataの
 関係は引き続きPropertyで記述する。`registry-register-property`の状態契約は逐次実行を対象とし、
 入力domainを固定scenario集合として宣言する（任意の索引リストへの一般契約ではない）。
 並行実行の原子性や任意のbackend内部エラーからのrollbackまでは新たに保証しない。

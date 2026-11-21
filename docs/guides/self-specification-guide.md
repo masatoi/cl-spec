@@ -44,6 +44,11 @@ there, and pass the registry under test explicitly where the API takes one:
   (cl-spec:check-function 'cl-spec:validate :trials 50 :seed 42))
 ```
 
+The projection checks draw names already registered by the bundle. Artifact
+checks create their failing property in a private registry. The round-trip law
+rechecks the deserialized artifact against that registry and requires
+`:same-failure`. A recheck against an empty registry returns `:definition-missing`.
+
 `cl-spec:registry-register-property`'s self-contract goes one step further: it
 declares a `:fresh` fixture whose recipe is a scenario keyword (`:new`,
 `:replace`, `:refused-targets` or `:refused-tags`). Setup builds a fresh target
@@ -279,11 +284,23 @@ not test concurrency or recovery from an error inside your methods.
 
 ## 8. Finite corpus, public domain and unverified scope
 
-The `validate` contract draws admitted/refused inputs from a small finite
-`*validate-corpus*` and the boundary test passes an explicit sequence through
-`*scripted-validate-inputs*`. That corpus is a sample that reaches both named
-cases; it is not the whole DSL and not the whole value domain the public API
-accepts. The registry write contract goes further and **declares** its input
+The `validate`, `validp` and `explain-data` contracts accept resolved spec
+names or objects and arbitrary values. A compiled validator selects the case.
+For `validate`, `:conforming` requires the original value and `:refused`
+requires `spec-violation`. For `validp` and `explain-data`, `:checked` covers
+both validity verdicts. All three contracts require `validation-depth-exceeded`
+when validation would exceed its reference limit, `invalid-spec-form` when it
+reenters a reference at the same value and path, and `unknown-spec` when it
+reaches a missing definition. A short-circuiting branch can complete normally
+before validation follows a problematic reference.
+
+The shared generator draws DSL forms and values, admitted and refused pairs
+from `*validate-corpus*`, and three reference-error inputs. The fixture uses a
+private registry and binds the reference limit to four. Its inputs exercise a
+five-link chain, a nonproductive cycle, and a missing reference. The direct boundary tests check
+caller-defined recursive specs with budgets of zero and eight. The explicit
+`*scripted-validate-inputs*` sequence exercises every declared case under the
+bundle's evidence policy. The registry write contract **declares** its input
 domain as exactly the finite scenario set `registration-scenario-arguments` builds,
 through `registration-scenario-targets-p` and `registration-scenario-tags-p` in
 its `:args`: its state-post names those scenarios' fixed target and tag symbols,
@@ -323,7 +340,7 @@ more than self-spec availability; `eval/README.md` records this explicitly.
 
 | Self-specification | Public API | Related property | Test | Eval task |
 |---|---|---|---|---|
-| `:conforming`/`:refused` cases | `validate` | `validate-cases-classify-admitted-and-refused`, `validation-preserves-values-or-explains-refusal` | `self-specs-test`, `self-api-contracts-test` | — |
+| Validation verdicts and reference errors | `validate`, `validp`, `explain-data` | `validate-cases-classify-admitted-and-refused`, `validation-preserves-values-or-explains-refusal` | `self-specs-test`, `self-api-contracts-test` | — |
 | `:capture`/`:state-post` registration contract | `registry-register-property` | `registration-replacement-preserves-unrelated-indexes` | `self-specs-test`, `self-api-contracts-test` | `registry-stale-index` |
 | Function Spec projection | `function-spec-data` | `function-spec-projection-retains-declared-state` | `self-specs-test`, `self-api-contracts-test` | `function-spec-capture-drop` |
 | Result projection | `result-data` | `result-projection-retains-state-evidence` | `self-specs-test`, `self-api-contracts-test` | `result-state-evidence-drop` |

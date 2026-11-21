@@ -128,9 +128,11 @@ to isolate the bundle's registry, find a symbol's contract and laws, read
 and repair-comparison tasks, and specification §68.1 for the coverage and
 remaining work.
 
-The bundle now also exercises the newer clauses on its own API: `validate`
-declares named `:conforming` and `:refused` cases in one contract, a
-`registry-register-property` contract captures the target registry's public
+The `validate` self-contract distinguishes admission from ordinary refusal.
+`validate`, `validp` and `explain-data` also have cases for exceeding the
+reference limit, following a nonproductive reference cycle, and reaching a
+missing definition. Each case requires its documented condition. The `registry-register-property`
+contract captures the target registry's public
 readers before a new, replacement or refused write and checks the after-state
 with `:state-post` (its state is rebuilt by a `:fresh` fixture from a scenario
 keyword, so a failing scenario is saved as an artifact and rechecked), and two laws keep the `function-spec-data` and `result-data`

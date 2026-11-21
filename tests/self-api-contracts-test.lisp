@@ -84,6 +84,45 @@
         (dolist (arguments (list (list spec) (list spec :registry nil) (list spec :registry other)))
           (ok (eq :passed (verdict 'cl-spec:definition-digest arguments))))))))
 
+(deftest generated-self-checks-preserve-the-callers-registry
+  (let* ((*registry* (make-hash-table-registry))
+         (name 'cl-spec/specs::self-failing-target)
+         (sentinel (make-instance 'cl-spec:property :name name :arguments nil
+                                  :function (constantly t) :targets '(caller-target)
+                                  :tags '(:caller))))
+    (register-specifications)
+    (cl-spec:register-property sentinel)
+    (let ((contracts (list-function-specs))
+          (properties (list-properties)))
+      (dolist (api '(cl-spec:function-spec-data cl-spec:property-data
+                     cl-spec:make-counterexample-artifact cl-spec:recheck-counterexample))
+        (testing (symbol-name api)
+          (let ((result (check-function api :trials 5 :seed 42)))
+            (ok (eq :passed (property-result-status result))))
+          (ok (equal contracts (list-function-specs)))
+          (ok (equal properties (list-properties)))
+          (ok (eq sentinel (find-property name)))
+          (ok (equal (list name) (properties-for 'caller-target)))
+          (ok (equal (list name) (properties-with-tag :caller))))))))
+
+(deftest stateless-rechecks-use-the-selected-registry
+  (let* ((*registry* (make-hash-table-registry))
+         (owner (make-hash-table-registry))
+         (artifact (let ((*registry* owner))
+                     (defproperty failing-in-owner ((x integer)) (not (integerp x)))
+                     (make-counterexample-artifact (run-property 'failing-in-owner :seed 42)))))
+    (register-specifications)
+    (dolist (entry (list (list (list :registry owner) :same-failure)
+                         (list (list :registry *registry*) :definition-missing)
+                         (list '(:registry nil) :definition-missing)
+                         (list nil :definition-missing)))
+      (destructuring-bind (options expected) entry
+        (let* ((arguments (list* artifact :state-policy :stateless options))
+               (check (cl-spec:check-call 'cl-spec:recheck-counterexample arguments))
+               (observation (cl-spec:call-check-result-observation check)))
+          (ok (eq :passed (cl-spec:call-check-result-status check)))
+          (ok (eq expected (getf (cl-spec:trial-observation-value observation) :status))))))))
+
 (defun map-form-kind (form)
   "Return :ALIST or :HASH-TABLE for a map specification FORM, otherwise NIL.
 The head symbols are compared by name: the corpus lives in another package."
@@ -345,27 +384,79 @@ The head symbols are compared by name: the corpus lives in another package."
                 (ok (handler-case (progn (validate spec value) nil)
                       (spec-violation () t))))))))))
 
-(deftest validate-cases-cover-admitted-and-refused-inputs
+(deftest validation-contracts-recognize-the-reference-depth-limit
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
+    (cl-spec:register-spec 'chain (normalize-spec-form '(or null (tuple integer chain))))
+    (dolist (cl-spec:*reference-depth-limit* '(0 8))
+      (let ((at-limit nil))
+        (dotimes (i cl-spec:*reference-depth-limit*)
+          (setf at-limit (list i at-limit)))
+        (dolist (designator (list 'chain (find-spec 'chain)))
+          (dolist (name '(validate validp cl-spec:explain-data))
+            (flet ((observe (value)
+                     (let ((call (cl-spec:check-call name (list designator value))))
+                       (ok (eq :passed (cl-spec:call-check-result-status call)))
+                       (cl-spec:call-check-result-observation call))))
+              (testing (format nil "~S with ~D references" name cl-spec:*reference-depth-limit*)
+                (let ((outcome (cl-spec:trial-observation-outcome (observe at-limit))))
+                  (ok (eq :returned (getf outcome :kind))))
+                (let* ((observation (observe (list 0 at-limit)))
+                       (outcome (cl-spec:trial-observation-outcome observation)))
+                  (ok (eq :depth-exceeded (cl-spec:trial-observation-case observation)))
+                  (ok (and (consp outcome) (eq :signaled (getf outcome :kind))
+                           (eq 'cl-spec:validation-depth-exceeded
+                               (getf outcome :condition-type)))))))))))))
+
+(deftest validation-contracts-report-conditions-from-transitive-references
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (cl-spec:defspec loop-ref (and integer loop-ref))
+    (cl-spec:defspec forward-ref (and integer missing-ref))
+    (dolist (row '((loop-ref :invalid-spec-form cl-spec:invalid-spec-form)
+                   (forward-ref :unknown-spec cl-spec:unknown-spec)))
+      (destructuring-bind (spec-name expected-case expected-type) row
+        (dolist (designator (list spec-name (find-spec spec-name)))
+          (dolist (name '(validate validp cl-spec:explain-data))
+            (let* ((call (cl-spec:check-call name (list designator 1)))
+                   (observation (cl-spec:call-check-result-observation call))
+                   (outcome (cl-spec:trial-observation-outcome observation)))
+              (ok (eq :passed (cl-spec:call-check-result-status call)))
+              (ok (eq expected-case (cl-spec:trial-observation-case observation)))
+              (ok (and (consp outcome) (eq :signaled (getf outcome :kind))
+                       (eq expected-type (getf outcome :condition-type)))))
+            (let* ((call (cl-spec:check-call name (list designator "not an integer")))
+                   (observation (cl-spec:call-check-result-observation call)))
+              (ok (eq :passed (cl-spec:call-check-result-status call)))
+              (ok (eq (if (eq name 'validate) :refused :checked)
+                      (cl-spec:trial-observation-case observation))))))))))
+
+(deftest validation-contracts-cover-their-declared-cases
+  (let ((*registry* (make-hash-table-registry))
+        (cl-spec:*reference-depth-limit* 4))
+    (register-specifications)
+    (cl-spec:register-spec 'chain (normalize-spec-form '(nullable (tuple integer chain))))
+    (cl-spec:defspec loop-ref (and integer loop-ref))
+    (cl-spec:defspec forward-ref missing-ref)
     (ok (member 'cl-spec/specs::validate-cases-classify-admitted-and-refused
                 (properties-for 'cl-spec:check-function-with-examples)))
-    ;; The sequence is explicit, so both named cases are reached by the input
-    ;; list itself rather than by what a seed happens to draw.
-    (let ((*scripted-validate-inputs*
-            '((integer 0) (integer "x") (string "ok") (string 7)
-              (integer 1) (integer :x) (null nil) (null t))))
-      (let* ((result (check-function 'cl-spec:validate :trials 4 :seed 1))
+    (dolist (name '(validate validp cl-spec:explain-data))
+      (let* ((*scripted-validate-inputs*
+               '((integer 0) (integer "refused") (chain (1 (2 (3 (4 (5 nil))))))
+                 (loop-ref 1) (forward-ref 1)))
+             (result (check-function name :trials 5 :seed 1))
              (report (function-check-result-case-report result)))
-        (ok (eq :passed (property-result-status result)))
-        (ok (= 4 (property-result-trials result)))
-        (ok (equal '(:conforming :refused) (getf report :declared-cases)))
-        (ok (equal '(2 2)
-                   (mapcar (lambda (case) (getf case :called)) (getf report :cases))))
-        (ok (equal '(2 2)
-                   (mapcar (lambda (case) (getf case :passed)) (getf report :cases))))
-        (ok (null (getf report :never-called)))
-        (ok (zerop (getf report :case-selection-errors)))))))
+        (testing (symbol-name name)
+          (ok (eq :passed (property-result-status result)))
+          (ok (eq :satisfied (getf (assess-evidence result (evidence-policy 5)) :assessment)))
+          (ok (equal (if (eq name 'validate)
+                         '((:conforming 1) (:refused 1) (:depth-exceeded 1)
+                           (:invalid-spec-form 1) (:unknown-spec 1))
+                         '((:checked 2) (:depth-exceeded 1) (:invalid-spec-form 1)
+                           (:unknown-spec 1)))
+                     (loop for row in (getf report :cases)
+                           collect (list (getf row :name) (getf row :passed)))))
+          (ok (zerop (getf report :case-selection-errors))))))))
 
 (deftest evidence-policy-flags-an-unreached-case
   (let ((*registry* (make-hash-table-registry)))
@@ -376,7 +467,7 @@ The head symbols are compared by name: the corpus lives in another package."
                                   (:kind :min-checked-trials :count 4)
                                   (:kind :all-declared-cases :min-checked 1)))
                  (evidence-policy 4))))
-    ;; Only admitted pairs: the run passes, yet never reaches the :REFUSED case.
+    ;; Only admitted pairs reach the target, so the policy reports every other case.
     (let ((*scripted-validate-inputs*
             '((integer 0) (string "ok") (integer 1) (null nil)
               (integer 2) (string "yes") (integer 3) (boolean t))))
@@ -385,7 +476,7 @@ The head symbols are compared by name: the corpus lives in another package."
         (testing "a passing run that misses a declared case is insufficient evidence"
           (ok (eq :passed (property-result-status result)))
           (ok (eq :insufficient (getf assessment :assessment)))
-          (ok (equal '(:refused)
+          (ok (equal '(:refused :depth-exceeded :invalid-spec-form :unknown-spec)
                      (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
 (deftest summary-contract-accepts-each-fixture-verdict
@@ -408,8 +499,177 @@ The head symbols are compared by name: the corpus lives in another package."
                      (cl-spec:call-check-result-status
                       (cl-spec:check-call 'cl-spec:format-check-summary (list result))))))))
 
+(defun bundle-call-status (name &rest arguments)
+  "Check one concrete invocation against the optional self-specification bundle."
+  (cl-spec:call-check-result-status (cl-spec:check-call name arguments)))
+
+(deftest fixture-contracts-follow-the-saved-execution
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (cl-spec:defspec-function identity
+      (:args (x integer))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe (member 0 1 2 3 8)))
+                (:setup (context)
+                  (declare (ignore context))
+                  (when (= recipe 3) (error "setup failed"))
+                  (list recipe))
+                (:cleanup (context)
+                  (declare (ignore context))
+                  (when (= recipe 2) (error "cleanup failed"))))
+      (:pre (/= x 1))
+      (:returns (range integer 1 *)))
+    (loop with contract = (find-function-spec 'identity)
+          for (recipe status cleanup) in '((8 :passed :completed) (0 :failed :completed)
+                                           (1 :rejected :completed) (2 :error :error)
+                                           (3 :error :completed) (4 :error :not-started))
+          for observation = (check-fixture contract recipe :coverage '(:mode :observe))
+          for data = (fixture-check-data observation)
+          do (ok (eql recipe (getf data :recipe)))
+             (ok (eq status (getf data :status)))
+             (ok (eq cleanup (getf (getf data :lifecycle) :cleanup)))
+             (ok (eq :passed (bundle-call-status 'check-fixture contract recipe)))
+             (let* ((policy '(:policy-version 1 :requirements
+                              ((:kind :min-checked-trials :count 1))))
+                    (assessment (assess-evidence observation policy)))
+               (ok (eq (if (member status '(:passed :failed)) :satisfied :insufficient)
+                       (getf assessment :assessment)))
+               (ok (eq :passed (bundle-call-status 'assess-evidence observation policy))))
+             (dolist (name '(fixture-check-data cl-spec:evidence-summary
+                             cl-spec:coverage-data cl-spec:format-check-summary))
+               (ok (eq :passed (bundle-call-status name observation)) (symbol-name name))))))
+
+(deftest fixture-and-coverage-contracts-accept-programmatic-declarations
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((contract (make-instance 'cl-spec:function-spec :name 'identity
+                                   :argument-specs '((value integer))
+                                   :return-spec 'unresolved-return)))
+      (ok (null (cl-spec:definition-digest contract)))
+      (ok (eq :fixture-required
+              (handler-case (check-fixture contract 8)
+                (cl-spec/src/fixture:fixture-error (condition)
+                  (cl-spec/src/fixture:fixture-error-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'check-fixture contract 8)))
+      (ok (eq :passed (bundle-call-status 'cl-spec:coverage-schema contract))))
+    (let ((contract (make-instance 'cl-spec:function-spec :name 'identity
+                                   :argument-specs '((value unresolved-input))
+                                   :return-spec 'integer)))
+      (ok (eq :rejected (bundle-call-status 'cl-spec:coverage-schema contract))))))
+
+(deftest fixture-contract-checks-binding-before-running-hooks
+  (let ((*registry* (make-hash-table-registry))
+        (name (gensym "PENDING-FIXTURE-TARGET-"))
+        (setups 0)
+        (cleanups 0))
+    (register-specifications)
+    (cl-spec:defspec-function identity
+      (:args (value integer))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context)) (incf setups) (list recipe))
+                (:cleanup (context) (declare (ignore context recipe)) (incf cleanups)))
+      (:returns integer))
+    (let* ((bound (find-function-spec 'identity))
+           (unbound (make-instance 'cl-spec:function-spec :name name
+                                   :argument-specs '((value integer)) :return-spec 'integer
+                                   :fixture (cl-spec:function-spec-fixture bound)))
+           (without-fixture (make-instance 'cl-spec:function-spec :name name
+                                            :argument-specs '((value integer))
+                                            :return-spec 'integer)))
+      (ok (eq name (handler-case (check-fixture unbound 8)
+                     (cl-spec:unbound-target (condition) (cell-error-name condition)))))
+      (ok (eq :rejected (bundle-call-status 'check-fixture unbound 8)))
+      (ok (eq :fixture-required
+              (handler-case (check-fixture without-fixture 8)
+                (cl-spec/src/fixture:fixture-error (condition)
+                  (cl-spec/src/fixture:fixture-error-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'check-fixture without-fixture 8)))
+      (ok (zerop setups))
+      (ok (zerop cleanups))
+      (ok (eq :passed (bundle-call-status 'check-fixture bound 8)))
+      (ok (= 1 setups cleanups)))
+    (let* ((run (check-function 'check-fixture :trials 50 :seed 42))
+           (report (function-check-result-case-report run)))
+      (ok (equal '(:with-fixture :without-fixture) (getf report :declared-cases)))
+      (ok (eq :satisfied (getf (assess-evidence run (evidence-policy 50)) :assessment))))))
+
+(deftest evidence-contract-assesses-positive-thresholds-and-refuses-malformed-policies
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let ((observation (check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 8)))
+      (dolist (threshold (list 1 2 3 (1+ most-positive-fixnum)))
+        ;; Property lists can present either the policy or the requirement keys in any order.
+        (let* ((policy (list :requirements (list (list :count threshold :kind :min-checked-trials))
+                             :policy-version 1))
+               (assessment (assess-evidence observation policy)))
+          (ok (eq (if (= threshold 1) :satisfied :insufficient)
+                  (getf assessment :assessment)))
+          (ok (equal (unless (= threshold 1)
+                       (list (list :kind :checked-trials-below-minimum :required threshold
+                                   :observed 1 :source '(:trial-report :checked))))
+                     (getf assessment :gaps)))
+          (ok (eq :passed (bundle-call-status 'assess-evidence observation policy)))))
+      (dolist (policy '(nil (:policy-version 1 :requirements nil)
+                        (:policy-version 2 :requirements ((:kind :min-checked-trials :count 1)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count 0)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count -2)))
+                        (:policy-version 1 :requirements ((:kind :min-checked-trials :count t)))))
+        (ok (eq :invalid-policy
+                (handler-case (assess-evidence observation policy)
+                  (cl-spec:invalid-evidence-policy (condition)
+                    (cl-spec:invalid-evidence-policy-reason condition)))))
+        (ok (eq :passed (bundle-call-status 'assess-evidence observation policy)))))))
+
+(deftest threshold-policy-domain-classifies-malformed-containers
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let* ((observation (check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 8))
+           (requirement '(:kind :min-checked-trials :count 3))
+           (cycle (list requirement)))
+      (setf (cdr cycle) cycle)
+      (flet ((policy (requirements) (list :policy-version 1 :requirements requirements)))
+        ;; TUPLE admits a one-element vector. COUNT also admits arbitrary data as
+        ;; an invalid threshold, even when following that data would never terminate.
+        (dolist (input (list (policy (vector requirement))
+                             (policy (list (list :kind :min-checked-trials :count cycle)))))
+          (ok (validp 'cl-spec/specs::evidence-policy-input input))
+          (ok (eq :invalid-policy
+                  (handler-case (assess-evidence observation input)
+                    (cl-spec:invalid-evidence-policy (condition)
+                      (cl-spec:invalid-evidence-policy-reason condition)))))
+          (let ((check (cl-spec:check-call 'assess-evidence (list observation input))))
+            (ok (eq :passed (cl-spec:call-check-result-status check)))
+            (ok (eq :invalid (cl-spec:trial-observation-case
+                              (cl-spec:call-check-result-observation check))))))
+        ;; These containers fail the declared argument shape before case selection.
+        (dolist (input (list (policy (cons requirement :dotted))
+                             (policy cycle)
+                             (policy (list '(:kind :min-checked-trials :count 1 :count 2)))
+                             '(:policy-version 1 :policy-version 1 :requirements nil)))
+          (ok (not (validp 'cl-spec/specs::evidence-policy-input input))))))))
+
+(deftest artifact-contract-distinguishes-absent-and-saved-failure-evidence
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (defproperty integer-passes ((n (range integer 1 9))) (plusp n))
+    (defproperty integer-fails ((n (range integer 1 9))) (minusp n))
+    (let ((passed (run-property 'integer-passes :seed 41))
+          (failed (run-property 'integer-fails :seed 41)))
+      (ok (eq :passed (property-result-status passed)))
+      (ok (eq :not-failure-evidence
+              (handler-case (make-counterexample-artifact passed)
+                (cl-spec:invalid-counterexample-artifact (condition)
+                  (cl-spec:invalid-counterexample-artifact-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'make-counterexample-artifact passed)))
+      (ok (eq :failed (property-result-status failed)))
+      (let ((data (cl-spec:counterexample-artifact-data (make-counterexample-artifact failed))))
+        (ok (equal '(:property-false) (getf (getf data :original) :signature)))
+        (ok (equal (cl-spec:trial-observation-arguments
+                    (cl-spec:property-result-failure-evidence failed))
+                   (getf (getf data :original) :arguments))))
+      (ok (eq :passed (bundle-call-status 'make-counterexample-artifact failed))))))
+
 (defun status-against (stand-in name)
-  "Return the status of NAME's bundle contract run while NAME is STAND-IN.
+  "Return the status and failure reason of NAME's contract run while NAME is STAND-IN.
 
 STAND-IN is a function of the original definition and the call's arguments."
   (let ((original (fdefinition name)))
@@ -417,8 +677,42 @@ STAND-IN is a function of the original definition and the call's arguments."
          (progn
            (setf (fdefinition name)
                  (lambda (&rest arguments) (apply stand-in original arguments)))
-           (property-result-status (check-function name :trials 50 :seed 20261108)))
+           (let ((result (check-function name :trials 50 :seed 20261108)))
+             (values (property-result-status result)
+                     (cl-spec:property-result-failure-reason result))))
       (setf (fdefinition name) original))))
+
+(deftest validation-contracts-require-the-documented-depth-condition
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (dolist (name '(validate validp cl-spec:explain-data))
+      (testing (symbol-name name)
+        (ok (eq :failed
+                (status-against (lambda (original &rest arguments)
+                                  (handler-case (apply original arguments)
+                                    (cl-spec:validation-depth-exceeded () nil)))
+                                name)))
+        (ok (eq :error
+                (status-against (lambda (original &rest arguments)
+                                  (handler-case (apply original arguments)
+                                    (cl-spec:validation-depth-exceeded ()
+                                      (error "Different condition"))))
+                                name)))))))
+
+(deftest validation-contracts-refuse-swapped-reference-conditions
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (flet ((swap-conditions (original &rest arguments)
+             (handler-case (apply original arguments)
+               (cl-spec:invalid-spec-form () (error 'cl-spec:unknown-spec :name 'missing))
+               (cl-spec:unknown-spec ()
+                 (error 'cl-spec:invalid-spec-form :form 'missing :reason "Swapped condition")))))
+      (dolist (name '(validate validp cl-spec:explain-data))
+        (dolist (kind '(:invalid-spec-form :unknown-spec))
+          (let* ((example (cl-spec/self-spec-fixtures:validation-reference-example kind))
+                 (*scripted-validate-inputs* (make-list 50 :initial-element example)))
+            (testing (format nil "~S requires ~S" name kind)
+              (ok (eq :error (status-against #'swap-conditions name))))))))))
 
 (deftest the-evidence-contract-refuses-an-assessment-that-ignores-a-shortfall
   ;; The contract saw only policies the observed run satisfies, so an
@@ -435,6 +729,25 @@ STAND-IN is a function of the original definition and the call's arguments."
                                                 (getf assessment :gaps) '())
                                           assessment))
                                       'assess-evidence))))))
+
+(deftest fixture-projection-and-artifact-contracts-refuse-invented-evidence
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (ok (eq :failed
+            (status-against
+             (lambda (original observation)
+               (let ((data (funcall original observation)))
+                 (setf (getf data :recipe) 7)
+                 data))
+             'fixture-check-data)))
+    (ok (equal '(:error :condition-spec)
+               (multiple-value-list
+                (status-against
+                 (lambda (original run)
+                   (if (eq :passed (property-result-status run))
+                       (error 'cl-spec:invalid-counterexample-artifact :reason :invalid-record)
+                       (funcall original run)))
+                 'make-counterexample-artifact))))))
 
 (defun law-status-while (name replacement law)
   "Return the status of LAW run while the function NAME is REPLACEMENT.

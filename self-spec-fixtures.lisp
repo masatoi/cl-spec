@@ -19,7 +19,7 @@
                 #:registry-properties-for
                 #:registry-properties-with-tag
                 #:registry-register-property)
-  (:export #:fresh-counter-machine #:fresh-fixture-contract
+  (:export #:fresh-counter-machine #:fresh-fixture-contract #:draw-fixture-check
    #:*function-projection-expectations*
    #:next-registration-scenario-kind
    #:*registry-constructor*
@@ -47,7 +47,8 @@
    #:*self-state-scenario*
    #:self-state-uncalled-target
    #:state-projection-fixtures
-   #:validate-corpus-entry))
+   #:validate-corpus-entry
+   #:validation-reference-example))
 
 (in-package #:cl-spec/self-spec-fixtures)
 
@@ -84,6 +85,22 @@
       (:returns integer)
       (:state-post (= (car cell) (1+ before))))
     (cl-spec:find-function-spec 'self-fresh-increment)))
+
+(defun draw-fixture-check ()
+  "Draw a direct check with a passed, failed, rejected or cleanup-error verdict."
+  (let ((cl-spec:*registry* (make-hash-table-registry)))
+    (defspec-function identity
+      (:args (value integer))
+      (:fixture
+       (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+       (:setup (context) (declare (ignore context)) (list recipe))
+       (:cleanup (context)
+         (declare (ignore context))
+         (when (= recipe -2) (error "Fixture cleanup failed."))))
+      (:pre (/= value -1))
+      (:returns (range integer 1 *)))
+    (cl-spec:check-fixture 'identity (- (random 6) 2)
+                           :coverage (when (zerop (random 2)) '(:mode :observe)))))
 
 (defun fresh-counter-machine ()
   "Build a small independent checker fixture. The target drops every :DROP increment."
@@ -309,11 +326,35 @@ fixture recipe, so this function is its whole state construction."
     (null nil) (null t))
   "Finite (FORM VALUE) pairs spanning admitted and refused values.")
 
+(defun bounded-validation-reference-p (value)
+  "Check VALUE against the private reference examples with a four-reference budget."
+  (let ((cl-spec:*registry* (make-hash-table-registry))
+        (cl-spec:*reference-depth-limit* 4))
+    (let ((spec (cl-spec:defspec validation-reference
+                  (or null (tuple integer validation-reference)
+                      (and (member :nonproductive) validation-reference)
+                      (and (member :unresolved) missing-validation-reference)))))
+      (funcall (cl-spec:compile-validator spec) value))))
+
+(defun validation-reference-example (kind)
+  "Return a spec and input that encounter the reference error named by KIND.
+
+The CL type predicate propagates each condition from the nested validation."
+  (list (cl-spec:normalize-spec-form '(type (satisfies bounded-validation-reference-p)))
+        (ecase kind
+          (:depth-exceeded '(1 (2 (3 (4 (5 nil))))))
+          (:invalid-spec-form :nonproductive)
+          (:unknown-spec :unresolved))))
+
 (defun validate-corpus-entry ()
-  "Return one (FORM VALUE) pair, scripted or drawn from the finite corpus."
+  "Return a scripted (FORM VALUE) pair or draw an ordinary or reference-error example."
   (if *scripted-validate-inputs*
       (pop *scripted-validate-inputs*)
-      (nth (random (length *validate-corpus*)) *validate-corpus*)))
+      (case (random 5)
+        (0 (validation-reference-example :depth-exceeded))
+        (1 (validation-reference-example :invalid-spec-form))
+        (2 (validation-reference-example :unknown-spec))
+        (otherwise (nth (random (length *validate-corpus*)) *validate-corpus*)))))
 
 ;;; Explicit Function Spec projection fixtures.  Each call registers the three
 ;;; declarations in a registry of its own, so the projection property reads only
