@@ -19,7 +19,9 @@
   (:import-from #:cl-spec/src/evidence
                 #:evidence-facts #:evidence-summary #:evidence-subject #:evidence-declared-cases
                 #:single-observation-report)
-  (:import-from #:cl-spec/src/guard-references #:guard-free-variables #:guard-return-reference)
+  (:import-from #:cl-spec/src/guard-references
+                #:guard-free-variables #:guard-return-reference #:return-value-symbol)
+  (:import-from #:cl-spec/src/utils/source-location #:source-location-package)
   (:export #:make-function-case-with-guard)
   (:import-from #:cl-spec/src/fixture
                 #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
@@ -321,11 +323,12 @@ new post forms and a new compiled predicate as well."
 
 (defun validate-case-guard (case)
   "Check this case's visible guard references against its output and current input bindings."
-  (let ((form (first (function-case-when-forms case)))
+  (let* ((form (first (function-case-when-forms case)))
          (post-values (function-case-post-value-variables case))
-         (parameters (when *case-owner*
-                       (append (call-declaration-variables
-                                (function-spec-argument-specs *case-owner*))
+         (variables (when *case-owner*
+                      (call-declaration-variables (function-spec-argument-specs *case-owner*))))
+         (parameters (append variables
+                             (when *case-owner*
                                (mapcar #'first (function-spec-capture-bindings *case-owner*)))))
          (analysis (case-guard-analysis case)))
     ;; Before ownership is known, RESULT could be an ordinary input parameter.
@@ -335,9 +338,10 @@ new post forms and a new compiled predicate as well."
                         (equal (first analysis) form))
                    (third analysis)
                    (guard-free-variables form nil parameters :expand-symbols *case-owner*)))
+             (primary (when *case-owner* (contract-result-symbol *case-owner* variables)))
              (name (guard-return-reference references parameters
                                            (unless (eq post-values :primary) post-values)
-                                           :check-primary *case-owner*)))
+                                           :primary primary)))
         (when name
           (error 'invalid-function-spec-form :form (list :when form)
                  :reason (format nil ":when runs before the call, so it cannot refer to ~S"
@@ -976,14 +980,14 @@ and the compiled predicates that read the capture values" key))))))
            :reason "Post-value names must match fixed returns and be unique, bindable variables."))
   names)
 
-(defun contract-result-symbol (variables)
-  "Return the symbol RESULT denotes for a contract over VARIABLES, or NIL.
-
-The same lookup the DSL's RETURN-VALUE-SYMBOL performs for its own package
-resolution; duplicated here because DSL depends on this file, so this file
-cannot import from it."
-  (let ((home (if variables (symbol-package (first variables)) *package*)))
-    (and home (find-symbol "RESULT" home))))
+(defun contract-result-symbol (contract variables)
+  "Resolve the RESULT name reserved by a case guard in CONTRACT."
+  (let* ((location (function-spec-source-location contract))
+         (source-package (and (definition-keyword-plist-p location)
+                              (source-location-package location))))
+    (return-value-symbol variables
+                         (or (and (stringp source-package) (find-package source-package))
+                             (symbol-package (function-spec-name contract))))))
 
 (defun validate-capture-bindings (contract)
   "Refuse capture declarations the checker could not honour, and return them.
@@ -1020,7 +1024,7 @@ because the compiled predicates bind all of those in one lambda list."
                      (every #'functionp functions))
           (refuse "capture bindings and compiled capture functions must align one to one"))
         (let* ((variables (call-declaration-variables (function-spec-argument-specs contract)))
-               (result (contract-result-symbol variables))
+               (result (return-value-symbol variables))
                (contract-values (explicit (function-spec-post-value-variables contract)))
                (case-values (loop for case in (function-spec-cases contract)
                                   append (explicit

@@ -99,10 +99,12 @@ jobs:
                                     guard-local-bindings-and-data-are-independent-of-the-outcome
                                     a-local-result-is-available-in-a-case-guard
                                     common-lisp-argument-names-do-not-hide-the-return-value
+                                    case-guards-accept-foreign-result-variables
                                     guard-check-respects-local-macro-syntax
                                     guard-macros-expand-once-and-cannot-introduce-output-references
                                     case-guard-check-sees-enclosing-symbol-macros
                                     owning-contract-validates-programmatic-guard-references
+                                    programmatic-guards-accept-foreign-result-variables
                                     registration-keeps-lexical-guard-analysis-until-the-guard-changes
                                     attached-case-edits-respect-each-current-owner))
                             :style :dot) 0 1))'
