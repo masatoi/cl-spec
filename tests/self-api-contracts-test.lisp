@@ -528,6 +528,42 @@ The head symbols are compared by name: the corpus lives in another package."
                                    :return-spec 'integer)))
       (ok (eq :rejected (bundle-call-status 'cl-spec:coverage-schema contract))))))
 
+(deftest fixture-contract-checks-binding-before-running-hooks
+  (let ((*registry* (make-hash-table-registry))
+        (name (gensym "PENDING-FIXTURE-TARGET-"))
+        (setups 0)
+        (cleanups 0))
+    (register-specifications)
+    (cl-spec:defspec-function identity
+      (:args (value integer))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+                (:setup (context) (declare (ignore context)) (incf setups) (list recipe))
+                (:cleanup (context) (declare (ignore context recipe)) (incf cleanups)))
+      (:returns integer))
+    (let* ((bound (find-function-spec 'identity))
+           (unbound (make-instance 'cl-spec:function-spec :name name
+                                   :argument-specs '((value integer)) :return-spec 'integer
+                                   :fixture (cl-spec:function-spec-fixture bound)))
+           (without-fixture (make-instance 'cl-spec:function-spec :name name
+                                            :argument-specs '((value integer))
+                                            :return-spec 'integer)))
+      (ok (eq name (handler-case (check-fixture unbound 8)
+                     (cl-spec:unbound-target (condition) (cell-error-name condition)))))
+      (ok (eq :rejected (bundle-call-status 'check-fixture unbound 8)))
+      (ok (eq :fixture-required
+              (handler-case (check-fixture without-fixture 8)
+                (cl-spec/src/fixture:fixture-error (condition)
+                  (cl-spec/src/fixture:fixture-error-reason condition)))))
+      (ok (eq :passed (bundle-call-status 'check-fixture without-fixture 8)))
+      (ok (zerop setups))
+      (ok (zerop cleanups))
+      (ok (eq :passed (bundle-call-status 'check-fixture bound 8)))
+      (ok (= 1 setups cleanups)))
+    (let* ((run (check-function 'check-fixture :trials 50 :seed 42))
+           (report (function-check-result-case-report run)))
+      (ok (equal '(:with-fixture :without-fixture) (getf report :declared-cases)))
+      (ok (eq :satisfied (getf (assess-evidence run (evidence-policy 50)) :assessment))))))
+
 (deftest evidence-contract-assesses-positive-thresholds-and-refuses-malformed-policies
   (let ((*registry* (make-hash-table-registry)))
     (register-specifications)
@@ -554,6 +590,34 @@ The head symbols are compared by name: the corpus lives in another package."
                   (cl-spec:invalid-evidence-policy (condition)
                     (cl-spec:invalid-evidence-policy-reason condition)))))
         (ok (eq :passed (bundle-call-status 'assess-evidence observation policy)))))))
+
+(deftest threshold-policy-domain-classifies-malformed-containers
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (let* ((observation (check-fixture (cl-spec/self-spec-fixtures:fresh-fixture-contract) 8))
+           (requirement '(:kind :min-checked-trials :count 3))
+           (cycle (list requirement)))
+      (setf (cdr cycle) cycle)
+      (flet ((policy (requirements) (list :policy-version 1 :requirements requirements)))
+        ;; TUPLE admits a one-element vector. COUNT also admits arbitrary data as
+        ;; an invalid threshold, even when following that data would never terminate.
+        (dolist (input (list (policy (vector requirement))
+                             (policy (list (list :kind :min-checked-trials :count cycle)))))
+          (ok (validp 'cl-spec/specs::evidence-policy-input input))
+          (ok (eq :invalid-policy
+                  (handler-case (assess-evidence observation input)
+                    (cl-spec:invalid-evidence-policy (condition)
+                      (cl-spec:invalid-evidence-policy-reason condition)))))
+          (let ((check (cl-spec:check-call 'assess-evidence (list observation input))))
+            (ok (eq :passed (cl-spec:call-check-result-status check)))
+            (ok (eq :invalid (cl-spec:trial-observation-case
+                              (cl-spec:call-check-result-observation check))))))
+        ;; These containers fail the declared argument shape before case selection.
+        (dolist (input (list (policy (cons requirement :dotted))
+                             (policy cycle)
+                             (policy (list '(:kind :min-checked-trials :count 1 :count 2)))
+                             '(:policy-version 1 :policy-version 1 :requirements nil)))
+          (ok (not (validp 'cl-spec/specs::evidence-policy-input input))))))))
 
 (deftest artifact-contract-distinguishes-absent-and-saved-failure-evidence
   (let ((*registry* (make-hash-table-registry)))

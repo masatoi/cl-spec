@@ -701,12 +701,14 @@ requires NIL and NIL, the documented answer for an absent name."
 
 (defun checked-trial-threshold (policy)
   "Return the positive count of a valid minimum-trial policy in the self-contract's domain."
-  (let* ((requirement (first (getf policy :requirements)))
-         (count (getf requirement :count)))
-    (and (eql 1 (getf policy :policy-version))
-         (eq :min-checked-trials (getf requirement :kind))
-         (typep count '(integer 1 *))
-         count)))
+  (let ((requirements (getf policy :requirements)))
+    (when (and (eql 1 (getf policy :policy-version))
+               (consp requirements) (null (cdr requirements)))
+      (let* ((requirement (car requirements))
+             (count (getf requirement :count)))
+        (and (eq :min-checked-trials (getf requirement :kind))
+             (typep count '(integer 1 *))
+             count)))))
 
 (defun invalid-policy-condition-p (condition)
   "Recognize the public reason for an invalid evidence policy."
@@ -842,12 +844,15 @@ write contracts declare their input corpora."
   (defgenerator fresh-fixture-contract-generator ()
     (if (zerop (random 2))
         (cl-spec/self-spec-fixtures:fresh-fixture-contract)
-        (self-sort-contract 'identity)))
+        (self-sort-contract (if (zerop (random 2)) 'identity (make-symbol "PENDING-TARGET")))))
   (defspec fresh-fixture-contract-input (instance-of cl-spec:function-spec)
     (:generator fresh-fixture-contract-generator))
   (defspec-function cl-spec:check-fixture
-    "One integer recipe records its verdict and lifecycle. A declaration needs a fixture."
+    "A fixture-less declaration is refused. A fixture with a bound target records its lifecycle."
     (:args (contract fresh-fixture-contract-input) (recipe (range integer 0 30)))
+    ;; UNBOUND-TARGET is an UNDEFINED-FUNCTION, reserved even for :SIGNALS contracts.
+    (:pre (or (null (cl-spec:function-spec-fixture contract))
+              (fboundp (cl-spec:function-spec-name contract))))
     (:cases
      (:with-fixture
       (:when (cl-spec:function-spec-fixture contract))
@@ -937,7 +942,8 @@ write contracts declare their input corpora."
                   (eql (fixture-checked-count observation) (getf dimension :value))))))
   (defgenerator evidence-policy-generator ()
     (case (random 5)
-      (0 nil)
+      (0 (when (zerop (random 2))
+           '(:policy-version 1 :requirements #((:kind :min-checked-trials :count 3)))))
       (1 '(:policy-version 1 :requirements ((:kind :min-checked-trials :count 0))))
       (2 '(:policy-version 1 :requirements ((:kind :min-checked-trials :count 1))))
       (otherwise (list :requirements (list (list :count (+ 2 (random 10))
