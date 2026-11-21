@@ -23,6 +23,23 @@
 
 (defun make-registry () (make-hash-table-registry))
 
+(deftest rechecks-a-historical-stateless-artifact
+  ;; The AV1 fixture was emitted by 33affd3a298bce022aa7ab210f5b09591374abc4.
+  (let ((*registry* (make-registry))
+        (cl-spec/src/generator:*generator-backend* nil))
+    (cl-spec:defproperty legacy-counterexample-property ((x (member 4)))
+      (:trials (:normal 1))
+      (= x 5))
+    (let* ((path (asdf:system-relative-pathname "cl-spec" "tests/fixtures/counterexample-v1.av1"))
+           (artifact (deserialize-counterexample-artifact (uiop:read-file-string path)))
+           (data (counterexample-artifact-data artifact))
+           (recheck (recheck-counterexample artifact :state-policy :stateless))
+           (failure (getf recheck :failure)))
+      (ok (eql 1 (getf data :artifact-version)))
+      (ok (eq :same-failure (getf recheck :status)))
+      (ok (equal '(4) (getf failure :arguments)))
+      (ok (eq :predicate-false (getf failure :reason))))))
+
 (deftest legacy-artifact-details-are-explicitly-uncollected
   (let ((registry (make-registry)))
     (multiple-value-bind (result property) (fixture registry)

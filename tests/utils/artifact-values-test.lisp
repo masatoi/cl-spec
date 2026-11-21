@@ -82,6 +82,27 @@
     (ok (eq :missing-package
             (reason-of (lambda () (decode-artifact-value '(2 "CL" "CAR"))))))))
 
+(deftest artifact-symbols-require-the-recorded-home-package
+  (let ((home (make-package (symbol-name (gensym "AV-HOME")) :use '()))
+        (other (make-package (symbol-name (gensym "AV-OTHER")) :use '())))
+    (unwind-protect
+         (let* ((original (intern "AV-PROBE" home))
+                (substitute (intern "AV-PROBE" other))
+                (wire (serialize-artifact-value original)))
+           (ok (eq original (deserialize-artifact-value wire)))
+           (unintern original home)
+           (export substitute other)
+           (use-package other home)
+           (testing "a replacement inherited from another package"
+             (ok (eq :missing-symbol
+                     (reason-of (lambda () (deserialize-artifact-value wire))))))
+           (import substitute home)
+           (testing "a replacement imported from another package"
+             (ok (eq :missing-symbol
+                     (reason-of (lambda () (deserialize-artifact-value wire)))))))
+      (delete-package home)
+      (delete-package other))))
+
 (deftest integers-decode-in-bounded-space
   (let* ((digits (make-string 3900 :initial-element #\9))
          (before (sb-ext:get-bytes-consed))

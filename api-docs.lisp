@@ -35,18 +35,18 @@
   #+sbcl (require :sb-introspect))
 
 (defparameter +public-packages+
-  '(("cl-spec" "CL-SPEC/MAIN" "cl-spec"
+  '(("cl-spec" "CL-SPEC" "cl-spec"
      "Semantic IR, validation, structured explain, introspection, registry and the DSL.")
     ("cl-spec/instrument" "CL-SPEC/INSTRUMENT" "cl-spec/instrument"
      "Runtime instrumentation that checks registered contracts at call sites.")
     ("cl-spec/specs" "CL-SPEC/SPECS" "cl-spec/specs"
      "Optional executable specifications of cl-spec's own APIs and semantic laws.")
     ("cl-spec/check-it" "CL-SPEC/SRC/BACKENDS/CHECK-IT" "cl-spec/check-it"
-     "check-it based generator construction and property execution backend."))
+     "Bundled generation and execution backend in the `cl-spec/src/backends/check-it` package."))
   "Public systems, as (TITLE PACKAGE SYSTEM DESCRIPTION).
 
-TITLE names the reference file and the index row.  PACKAGE is the package whose
-external symbols are documented; it may be a nickname.")
+TITLE names the reference file. PACKAGE is the package whose external symbols
+are documented and appears in the index. It may be a nickname.")
 
 (defparameter +kind-order+
   '(:macro :function :generic-function :accessor :class :condition :structure
@@ -405,6 +405,9 @@ reflow or swallow."
     (terpri out)
     (write-string "regenerates and commits it after every push to `main`." out)
     (terpri out) (terpri out)
+    (write-string "See the 1.x compatibility policy for supported interfaces. " out)
+    (write-string "[Compatibility policy](../compatibility.md)" out)
+    (terpri out) (terpri out)
     (write-string "Regenerate locally with:" out)
     (terpri out) (terpri out)
     (write-string "```lisp" out) (terpri out)
@@ -416,7 +419,7 @@ reflow or swallow."
     (dolist (package packages)
       (let ((slug (title-slug (getf package :title))))
         (format out "| `~A` | `~A` | ~D | [`~A.md`](~A.md) |~%"
-                (getf package :title) (getf package :system)
+                (string-downcase (getf package :package)) (getf package :system)
                 (length (getf package :symbols)) slug slug)))))
 
 (defun api-doc-files (&optional (packages (public-api-packages)))

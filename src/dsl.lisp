@@ -742,7 +742,7 @@ Each is called once per trial and its primary value is the capture."
                                                :expanded-p expanded-p))
              (name (guard-return-reference references parameters
                                            (unless (eq post-values :primary) post-values)
-                                           :check-primary t)))
+                                           :primary (return-value-symbol variables *package*))))
         (when name
           (function-spec-error
            (list :when when-form)

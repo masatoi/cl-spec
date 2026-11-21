@@ -1,6 +1,6 @@
 # cl-spec/check-it
 
-check-it based generator construction and property execution backend.
+Bundled generation and execution backend in the `cl-spec/src/backends/check-it` package.
 
 System `cl-spec/check-it`, 3 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 

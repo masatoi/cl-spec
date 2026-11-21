@@ -6,7 +6,10 @@
 An executable semantic IR and property framework for Common Lisp programs,
 designed for both humans and LLM coding agents.
 
-**Status: MVP vertical slice.** Normalization, validation, structured explain,
+**1.0 release candidate.** The [1.x compatibility policy](docs/compatibility.md)
+defines the supported API, data formats, and replay guarantees.
+
+Normalization, validation, structured explain,
 spec introspection, the check-it generator backend, `defproperty` and the
 property runner with seed, replay and shrinking are implemented, as are
 function specs (`defspec-function`, `check-function`, `check-call`,
@@ -54,12 +57,35 @@ policies, direct checks and backend participation.
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
 backend into `cl-spec:*generator-backend*`.
 
-## Usage
+## Installation
+
+Clone the candidate and start a fresh Lisp session in the checkout.
+
+```sh
+git clone --branch v1.0.0-rc.1 https://github.com/masatoi/cl-spec.git
+cd cl-spec
+```
+
+The core requires ASDF.
 
 ```lisp
-(asdf:load-system :cl-spec)
-(asdf:load-system :cl-spec/check-it)
+(require :asdf)
+(asdf:load-asd (truename "cl-spec.asd"))
+(asdf:load-system "cl-spec")
 ```
+
+For generation and shrinking, install `check-it` and load
+`(asdf:load-system "cl-spec/check-it")`. With Quicklisp loaded,
+`(ql:quickload "cl-spec/check-it")` handles the dependency.
+
+| Runtime on Linux | CI runs |
+|---|---|
+| SBCL 2.5.0 | Full suite, including generation, shrinking, integer seed replay, and instrumentation |
+| Clozure CL 1.12.2 | Core load, range validation, and a direct multiple-value contract check |
+| CLISP | Real-range checks in default and ANSI modes |
+| ECL | Function-spec case-guard regressions |
+
+## Usage
 
 For a runnable tour of the structured-data and AND-generation features, see the
 [structured-data walkthrough](docs/guides/structured-data-walkthrough.md). Its
@@ -199,9 +225,10 @@ objects, other arrays and absent packages/symbols are explicitly refused with
 nesting depth 128 and 1,000,000 wire characters; an integer is limited to 13,000
 bits as `integer-length` counts them (so -2^13000 is in range and 2^13000 is
 not) and a string to 1,000,000 characters. A symbol is written with its package's
-own name and decoded by that name alone: neither a global nickname nor a
-package-local nickname of the caller's `*package*` changes which symbol an
-artifact names. A flat list consumes the node budget rather than one depth level per
+own name. Decoding resolves that exact package name and requires the symbol to
+have that home package. A missing symbol or a name visible only through import
+or inheritance signals `invalid-counterexample-artifact` with `:missing-symbol`.
+A flat list consumes the node budget rather than one depth level per
 cons cell; traversal and parsing use bounded iterative work lists.
 Nonfinite floats are refused through the same artifact condition as other
 unsupported evidence. Unsupported or excessive optional `:options`, `:provenance`
@@ -1225,6 +1252,10 @@ The API reference is regenerated and committed by CI after every push to
 MIT
 
 ### Programmatic definition invariants
+
+The CLOS construction and evaluator extension points below are development
+interfaces. See the [1.x compatibility policy](docs/compatibility.md) for the
+supported registry protocol and read APIs.
 
 `property`, `function-spec` and `custom-generator` validate construction,
 reinitialization and class-update initialization. Arguments normalize to IR;
