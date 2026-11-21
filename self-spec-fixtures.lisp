@@ -48,7 +48,7 @@
    #:self-state-uncalled-target
    #:state-projection-fixtures
    #:validate-corpus-entry
-   #:validation-depth-example))
+   #:validation-reference-example))
 
 (in-package #:cl-spec/self-spec-fixtures)
 
@@ -326,24 +326,35 @@ fixture recipe, so this function is its whole state construction."
     (null nil) (null t))
   "Finite (FORM VALUE) pairs spanning admitted and refused values.")
 
-(defun bounded-validation-chain-p (value)
-  "Check a recursive chain under the fixture's four-reference limit."
+(defun bounded-validation-reference-p (value)
+  "Check VALUE against the private reference examples with a four-reference budget."
   (let ((cl-spec:*registry* (make-hash-table-registry))
         (cl-spec:*reference-depth-limit* 4))
-    (let ((chain (cl-spec:defspec validation-chain
-                   (nullable (tuple integer validation-chain)))))
-      (funcall (cl-spec:compile-validator chain) value))))
+    (let ((spec (cl-spec:defspec validation-reference
+                  (or null (tuple integer validation-reference)
+                      (and (member :nonproductive) validation-reference)
+                      (and (member :unresolved) missing-validation-reference)))))
+      (funcall (cl-spec:compile-validator spec) value))))
 
-(defun validation-depth-example ()
-  "Return a spec and five-link chain that reach a genuine depth error in a bounded check."
-  (list (cl-spec:normalize-spec-form '(satisfies bounded-validation-chain-p))
-        '(1 (2 (3 (4 (5 nil)))))))
+(defun validation-reference-example (kind)
+  "Return a spec and input that encounter the reference error named by KIND.
+
+The CL type predicate propagates each condition from the nested validation."
+  (list (cl-spec:normalize-spec-form '(type (satisfies bounded-validation-reference-p)))
+        (ecase kind
+          (:depth-exceeded '(1 (2 (3 (4 (5 nil))))))
+          (:invalid-spec-form :nonproductive)
+          (:unknown-spec :unresolved))))
 
 (defun validate-corpus-entry ()
-  "Return one (FORM VALUE) pair, scripted or drawn from the ordinary and over-depth examples."
-  (cond (*scripted-validate-inputs* (pop *scripted-validate-inputs*))
-        ((zerop (random 3)) (validation-depth-example))
-        (t (nth (random (length *validate-corpus*)) *validate-corpus*))))
+  "Return a scripted (FORM VALUE) pair or draw an ordinary or reference-error example."
+  (if *scripted-validate-inputs*
+      (pop *scripted-validate-inputs*)
+      (case (random 5)
+        (0 (validation-reference-example :depth-exceeded))
+        (1 (validation-reference-example :invalid-spec-form))
+        (2 (validation-reference-example :unknown-spec))
+        (otherwise (nth (random (length *validate-corpus*)) *validate-corpus*)))))
 
 ;;; Explicit Function Spec projection fixtures.  Each call registers the three
 ;;; declarations in a registry of its own, so the projection property reads only

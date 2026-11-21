@@ -289,13 +289,16 @@ names or objects and arbitrary values. A compiled validator selects the case.
 For `validate`, `:conforming` requires the original value and `:refused`
 requires `spec-violation`. For `validp` and `explain-data`, `:checked` covers
 both validity verdicts. All three contracts require `validation-depth-exceeded`
-when validation would exceed its reference limit.
+when validation would exceed its reference limit, `invalid-spec-form` when it
+reenters a reference at the same value and path, and `unknown-spec` when it
+reaches a missing definition. A short-circuiting branch can complete normally
+before validation follows a problematic reference.
 
 The shared generator draws DSL forms and values, admitted and refused pairs
-from `*validate-corpus*`, and a five-link chain whose fixture predicate checks
-it with a four-reference budget. The boundary tests also check a caller's own
-recursive spec at the limit and one reference beyond it, with budgets of zero
-and eight. The explicit
+from `*validate-corpus*`, and three reference-error inputs. The fixture uses a
+private registry and binds the reference limit to four. Its inputs exercise a
+five-link chain, a nonproductive cycle, and a missing reference. The direct boundary tests check
+caller-defined recursive specs with budgets of zero and eight. The explicit
 `*scripted-validate-inputs*` sequence exercises every declared case under the
 bundle's evidence policy. The registry write contract **declares** its input
 domain as exactly the finite scenario set `registration-scenario-arguments` builds,
@@ -337,7 +340,7 @@ more than self-spec availability; `eval/README.md` records this explicitly.
 
 | Self-specification | Public API | Related property | Test | Eval task |
 |---|---|---|---|---|
-| Validation cases including `:depth-exceeded` | `validate`, `validp`, `explain-data` | `validate-cases-classify-admitted-and-refused`, `validation-preserves-values-or-explains-refusal` | `self-specs-test`, `self-api-contracts-test` | — |
+| Validation verdicts and reference errors | `validate`, `validp`, `explain-data` | `validate-cases-classify-admitted-and-refused`, `validation-preserves-values-or-explains-refusal` | `self-specs-test`, `self-api-contracts-test` | — |
 | `:capture`/`:state-post` registration contract | `registry-register-property` | `registration-replacement-preserves-unrelated-indexes` | `self-specs-test`, `self-api-contracts-test` | `registry-stale-index` |
 | Function Spec projection | `function-spec-data` | `function-spec-projection-retains-declared-state` | `self-specs-test`, `self-api-contracts-test` | `function-spec-capture-drop` |
 | Result projection | `result-data` | `result-projection-retains-state-evidence` | `self-specs-test`, `self-api-contracts-test` | `result-state-evidence-drop` |

@@ -63,7 +63,7 @@
                 #:*self-state-calls*
                 #:*self-state-scenario*
                 #:state-projection-fixtures
-                #:validate-corpus-entry #:validation-depth-example)
+                #:validate-corpus-entry #:validation-reference-example)
   (:export #:register-instrumentation-specifications #:register-specifications
            #:contract-names #:property-names #:evidence-policy
            #:*registry-constructor* #:registry-implementation-p
@@ -192,11 +192,27 @@ EQL tells -0.0 from 0.0, a single from a double float, and -1/2 from 1/2."
   (handler-case
       (let ((spec (resolve-spec designator cl-spec:*registry*)))
         (if (funcall (compile-validator spec) value) :conforming :refused))
-    (cl-spec:validation-depth-exceeded () :depth-exceeded)))
+    (cl-spec:validation-depth-exceeded () :depth-exceeded)
+    (invalid-spec-form () :invalid-spec-form)
+    (cl-spec:unknown-spec () :unknown-spec)))
 
 (defun explanation-consistent-p (value)
   "Check the relation between validity and errors after field validation."
   (eq (getf value :valid) (null (getf value :errors))))
+
+(defmacro define-validation-contract (name documentation &body ordinary-cases)
+  "Register NAME's normal outcomes and the three conditions a reference check can signal."
+  `(defspec-function ,name ,documentation
+     (:args (contract-spec (satisfies resolved-designator-p)) (value t))
+     (:args-generator validate-corpus-generator)
+     (:cases
+      ,@ordinary-cases
+      (:depth-exceeded (:when (eq :depth-exceeded (validation-case contract-spec value)))
+                       (:signals (type cl-spec:validation-depth-exceeded)))
+      (:invalid-spec-form (:when (eq :invalid-spec-form (validation-case contract-spec value)))
+                          (:signals (type invalid-spec-form)))
+      (:unknown-spec (:when (eq :unknown-spec (validation-case contract-spec value)))
+                     (:signals (type cl-spec:unknown-spec))))))
 
 (defmacro define-explanation-contract (record-spec)
   "Register RECORD-SPEC by name and embed it in EXPLAIN-DATA's ordinary return case.
@@ -205,17 +221,12 @@ A reference in the return declaration would itself exceed a zero reference budge
 even when the target could check its input without following a reference."
   `(progn
      (defspec explanation-data ,record-spec)
-     (defspec-function explain-data
+     (define-validation-contract explain-data
        "A completed explanation preserves the checked value and agrees with validity."
-       (:args (contract-spec (satisfies resolved-designator-p)) (value t))
-       (:args-generator validate-corpus-generator)
-       (:cases
-        (:checked (:when (not (eq :depth-exceeded (validation-case contract-spec value))))
-                  (:returns ,record-spec)
-                  (:post (eq value (getf result :value))
-                         (eq (validp contract-spec value) (getf result :valid))))
-        (:depth-exceeded (:when (eq :depth-exceeded (validation-case contract-spec value)))
-                         (:signals (type cl-spec:validation-depth-exceeded)))))))
+       (:checked (:when (member (validation-case contract-spec value) '(:conforming :refused)))
+                 (:returns ,record-spec)
+                 (:post (eq value (getf result :value))
+                        (eq (validp contract-spec value) (getf result :valid)))))))
 
 (defun invalid-form-condition-p (condition)
   "Require a nonempty diagnostic reason for a malformed DSL form."
@@ -1114,44 +1125,30 @@ The input also covers empty policies, empty requirements and malformed versions,
            (if (and supplied registry) registry cl-spec:*registry*) name)
         (and (eq found-spec expected) (eq found-p present)))))
   (defgenerator validate-corpus-generator ()
-    (if (and (null *scripted-validate-inputs*) (zerop (random 2)))
+    (if (and (null *scripted-validate-inputs*) (zerop (random 3)))
         (list (normalize-spec-form (draw-form)) (draw-value))
         (destructuring-bind (form value) (validate-corpus-entry)
           (list (normalize-spec-form form) value))))
-  (defspec-function validp
-    "A completed check returns a boolean. Exceeding the reference limit signals a depth error."
-    (:args (contract-spec (satisfies resolved-designator-p)) (value t))
-    (:args-generator validate-corpus-generator)
-    (:cases
-     (:checked (:when (not (eq :depth-exceeded (validation-case contract-spec value))))
-               (:returns boolean))
-     (:depth-exceeded (:when (eq :depth-exceeded (validation-case contract-spec value)))
-                      (:signals (type cl-spec:validation-depth-exceeded)))))
+  (define-validation-contract validp
+    "A completed validation returns a boolean. Reference errors signal their documented conditions."
+    (:checked (:when (member (validation-case contract-spec value) '(:conforming :refused)))
+              (:returns boolean)))
   (define-explanation-contract
     (and (plist (:required (:spec t) (:value t) (:valid boolean)
                            (:errors (list-of t)) (:path (list-of t))))
          (satisfies explanation-consistent-p)))
-  (defspec-function validate
-    "Validation returns an admitted value identically, or signals the applicable condition.
-
-A refused value signals SPEC-VIOLATION. A check that exceeds the reference limit
-signals VALIDATION-DEPTH-EXCEEDED. The compiled validator distinguishes these
-outcomes for resolved spec names and objects."
-    (:args (contract-spec (satisfies resolved-designator-p)) (value t))
-    (:args-generator validate-corpus-generator)
-    (:cases
-     (:conforming
-      "The spec admits the value, and validation returns that same object."
-      (:when (eq :conforming (validation-case contract-spec value)))
-      (:returns t)
-      (:post (eq result value)))
-     (:refused
-      "The spec refuses the value, and validation reports SPEC-VIOLATION."
-      (:when (eq :refused (validation-case contract-spec value)))
-      (:signals (type spec-violation)))
-     (:depth-exceeded
-      (:when (eq :depth-exceeded (validation-case contract-spec value)))
-      (:signals (type cl-spec:validation-depth-exceeded)))))
+  (define-validation-contract validate
+    "Validation returns an admitted value identically. A refused value signals SPEC-VIOLATION.
+Reference checks can signal VALIDATION-DEPTH-EXCEEDED, INVALID-SPEC-FORM or UNKNOWN-SPEC."
+    (:conforming
+     "The spec admits the value, and validation returns that same object."
+     (:when (eq :conforming (validation-case contract-spec value)))
+     (:returns t)
+     (:post (eq result value)))
+    (:refused
+     "The spec refuses the value, and validation reports SPEC-VIOLATION."
+     (:when (eq :refused (validation-case contract-spec value)))
+     (:signals (type spec-violation))))
   (defspec-function compile-validator
     (:args (contract-spec spec-object))
     (:returns function))
@@ -2311,34 +2308,35 @@ the shape of the other branch is admitted only if dispatch is wrong."
              '(self-collection-counterexample-target
                self-keyword-counterexample-target))))
   (defproperty validate-cases-classify-admitted-and-refused ()
-    "Fixed examples and generated trials distinguish admission, refusal and the reference limit."
+    "Fixed examples and generated trials distinguish admission, refusal and each reference error."
     (:about validate cl-spec:check-function-with-examples)
     (:tags :cl-spec-self)
     (:trials (:smoke 1 :normal 2))
-    (let* ((deep (validation-depth-example))
-           (*scripted-validate-inputs* (list '(integer 0) '(integer "refused") '(string "ok") deep))
-           (integers (normalize-spec-form 'integer))
+    (let* ((integers (normalize-spec-form 'integer))
            (examples (list (list :conforming (list integers 0))
                            (list :refused (list integers "x"))
-                           (list :depth-exceeded deep)))
-           (combined (cl-spec:check-function-with-examples 'validate examples :trials 4 :seed 1))
+                           (list :depth-exceeded (validation-reference-example :depth-exceeded))
+                           (list :invalid-spec-form
+                                 (validation-reference-example :invalid-spec-form))
+                           (list :unknown-spec (validation-reference-example :unknown-spec))))
+           (expected '(:conforming :refused :depth-exceeded :invalid-spec-form :unknown-spec))
+           (*scripted-validate-inputs* (mapcar #'second examples))
+           (combined (cl-spec:check-function-with-examples 'validate examples :trials 5 :seed 1))
            (result (getf combined :generated))
            (report (cl-spec:function-check-result-case-report result)))
       (and (eq :passed (getf combined :status))
-           (= 3 (getf combined :example-count))
-           (equal '(:conforming :refused :depth-exceeded)
+           (= 5 (getf combined :example-count))
+           (equal expected
                   (loop for row in (getf combined :examples) collect (getf row :actual-case)))
            (eq :passed (cl-spec:property-result-status result))
-           (= 4 (cl-spec:property-result-trials result))
+           (= 5 (cl-spec:property-result-trials result))
            (zerop (cl-spec:property-result-rejected result))
-           (equal '(:conforming :refused :depth-exceeded) (getf report :declared-cases))
+           (equal expected (getf report :declared-cases))
            (null (getf report :never-called))
            (zerop (getf report :case-selection-errors))
            (zerop (getf report :capture-errors))
-           (equal '(2 1 1)
-                  (mapcar (lambda (case) (getf case :called)) (getf report :cases)))
-           (equal '(2 1 1)
-                  (mapcar (lambda (case) (getf case :passed)) (getf report :cases))))))
+           (every (lambda (case) (= 1 (getf case :called) (getf case :passed)))
+                  (getf report :cases)))))
   (defproperty registration-replacement-preserves-unrelated-indexes ()
     "A same-name write retracts only the subject's stale keys and keeps the sentinel's."
     (:about cl-spec:registry-register-property cl-spec:properties-for

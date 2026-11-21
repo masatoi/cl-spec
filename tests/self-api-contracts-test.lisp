@@ -408,24 +408,52 @@ The head symbols are compared by name: the corpus lives in another package."
                            (eq 'cl-spec:validation-depth-exceeded
                                (getf outcome :condition-type)))))))))))))
 
+(deftest validation-contracts-report-conditions-from-transitive-references
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (cl-spec:defspec loop-ref (and integer loop-ref))
+    (cl-spec:defspec forward-ref (and integer missing-ref))
+    (dolist (row '((loop-ref :invalid-spec-form cl-spec:invalid-spec-form)
+                   (forward-ref :unknown-spec cl-spec:unknown-spec)))
+      (destructuring-bind (spec-name expected-case expected-type) row
+        (dolist (designator (list spec-name (find-spec spec-name)))
+          (dolist (name '(validate validp cl-spec:explain-data))
+            (let* ((call (cl-spec:check-call name (list designator 1)))
+                   (observation (cl-spec:call-check-result-observation call))
+                   (outcome (cl-spec:trial-observation-outcome observation)))
+              (ok (eq :passed (cl-spec:call-check-result-status call)))
+              (ok (eq expected-case (cl-spec:trial-observation-case observation)))
+              (ok (and (consp outcome) (eq :signaled (getf outcome :kind))
+                       (eq expected-type (getf outcome :condition-type)))))
+            (let* ((call (cl-spec:check-call name (list designator "not an integer")))
+                   (observation (cl-spec:call-check-result-observation call)))
+              (ok (eq :passed (cl-spec:call-check-result-status call)))
+              (ok (eq (if (eq name 'validate) :refused :checked)
+                      (cl-spec:trial-observation-case observation))))))))))
+
 (deftest validation-contracts-cover-their-declared-cases
   (let ((*registry* (make-hash-table-registry))
         (cl-spec:*reference-depth-limit* 4))
     (register-specifications)
     (cl-spec:register-spec 'chain (normalize-spec-form '(nullable (tuple integer chain))))
+    (cl-spec:defspec loop-ref (and integer loop-ref))
+    (cl-spec:defspec forward-ref missing-ref)
     (ok (member 'cl-spec/specs::validate-cases-classify-admitted-and-refused
                 (properties-for 'cl-spec:check-function-with-examples)))
     (dolist (name '(validate validp cl-spec:explain-data))
       (let* ((*scripted-validate-inputs*
-               '((integer 0) (integer "refused") (chain (1 (2 (3 (4 (5 nil))))))))
-             (result (check-function name :trials 3 :seed 1))
+               '((integer 0) (integer "refused") (chain (1 (2 (3 (4 (5 nil))))))
+                 (loop-ref 1) (forward-ref 1)))
+             (result (check-function name :trials 5 :seed 1))
              (report (function-check-result-case-report result)))
         (testing (symbol-name name)
           (ok (eq :passed (property-result-status result)))
-          (ok (eq :satisfied (getf (assess-evidence result (evidence-policy 3)) :assessment)))
+          (ok (eq :satisfied (getf (assess-evidence result (evidence-policy 5)) :assessment)))
           (ok (equal (if (eq name 'validate)
-                         '((:conforming 1) (:refused 1) (:depth-exceeded 1))
-                         '((:checked 2) (:depth-exceeded 1)))
+                         '((:conforming 1) (:refused 1) (:depth-exceeded 1)
+                           (:invalid-spec-form 1) (:unknown-spec 1))
+                         '((:checked 2) (:depth-exceeded 1) (:invalid-spec-form 1)
+                           (:unknown-spec 1)))
                      (loop for row in (getf report :cases)
                            collect (list (getf row :name) (getf row :passed)))))
           (ok (zerop (getf report :case-selection-errors))))))))
@@ -439,7 +467,7 @@ The head symbols are compared by name: the corpus lives in another package."
                                   (:kind :min-checked-trials :count 4)
                                   (:kind :all-declared-cases :min-checked 1)))
                  (evidence-policy 4))))
-    ;; Only admitted pairs: the run passes, yet misses the refused and depth-exceeded cases.
+    ;; Only admitted pairs reach the target, so the policy reports every other case.
     (let ((*scripted-validate-inputs*
             '((integer 0) (string "ok") (integer 1) (null nil)
               (integer 2) (string "yes") (integer 3) (boolean t))))
@@ -448,7 +476,7 @@ The head symbols are compared by name: the corpus lives in another package."
         (testing "a passing run that misses a declared case is insufficient evidence"
           (ok (eq :passed (property-result-status result)))
           (ok (eq :insufficient (getf assessment :assessment)))
-          (ok (equal '(:refused :depth-exceeded)
+          (ok (equal '(:refused :depth-exceeded :invalid-spec-form :unknown-spec)
                      (mapcar (lambda (gap) (getf gap :case)) (getf assessment :gaps)))))))))
 
 (deftest summary-contract-accepts-each-fixture-verdict
@@ -670,6 +698,21 @@ STAND-IN is a function of the original definition and the call's arguments."
                                     (cl-spec:validation-depth-exceeded ()
                                       (error "Different condition"))))
                                 name)))))))
+
+(deftest validation-contracts-refuse-swapped-reference-conditions
+  (let ((*registry* (make-hash-table-registry)))
+    (register-specifications)
+    (flet ((swap-conditions (original &rest arguments)
+             (handler-case (apply original arguments)
+               (cl-spec:invalid-spec-form () (error 'cl-spec:unknown-spec :name 'missing))
+               (cl-spec:unknown-spec ()
+                 (error 'cl-spec:invalid-spec-form :form 'missing :reason "Swapped condition")))))
+      (dolist (name '(validate validp cl-spec:explain-data))
+        (dolist (kind '(:invalid-spec-form :unknown-spec))
+          (let* ((example (cl-spec/self-spec-fixtures:validation-reference-example kind))
+                 (*scripted-validate-inputs* (make-list 50 :initial-element example)))
+            (testing (format nil "~S requires ~S" name kind)
+              (ok (eq :error (status-against #'swap-conditions name))))))))))
 
 (deftest the-evidence-contract-refuses-an-assessment-that-ignores-a-shortfall
   ;; The contract saw only policies the observed run satisfies, so an

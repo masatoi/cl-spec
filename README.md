@@ -128,9 +128,10 @@ to isolate the bundle's registry, find a symbol's contract and laws, read
 and repair-comparison tasks, and specification §68.1 for the coverage and
 remaining work.
 
-The `validate` self-contract distinguishes `:conforming`, `:refused` and
-`:depth-exceeded`. The last case requires `validation-depth-exceeded` from
-`validate`, `validp` and `explain-data`. The `registry-register-property`
+The `validate` self-contract distinguishes admission from ordinary refusal.
+`validate`, `validp` and `explain-data` also have cases for exceeding the
+reference limit, following a nonproductive reference cycle, and reaching a
+missing definition. Each case requires its documented condition. The `registry-register-property`
 contract captures the target registry's public
 readers before a new, replacement or refused write and checks the after-state
 with `:state-post` (its state is rebuilt by a `:fresh` fixture from a scenario
