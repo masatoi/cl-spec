@@ -866,6 +866,9 @@ claims, which is what an agent asking \"what may I pass here\" needs.")
                     :initform nil
                     :reader function-spec-source-location
                     :documentation "Source location plist, or NIL.")
+   (case-guard-package :initform *package*
+                       :reader function-spec-case-guard-package
+                       :documentation "Construction package used by guards without source metadata.")
    (metadata :initarg :metadata
              :initform nil
              :reader function-spec-metadata
@@ -915,7 +918,7 @@ function at a time (specification §3.2)."))
 (defparameter *function-spec-slot-names*
   '(fixture name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
-    source-form source-location metadata cases
+    source-form source-location case-guard-package metadata cases
     capture-bindings capture-functions state-postconditions state-postcondition-function
     call-layout-cache call-layout-declarations call-layout-bindings-snapshot)
   "Every slot of FUNCTION-SPEC, for the rollback in SHARED-INITIALIZE :AROUND.")
@@ -987,7 +990,7 @@ and the compiled predicates that read the capture values" key))))))
                               (source-location-package location))))
     (return-value-symbol variables
                          (or (and (stringp source-package) (find-package source-package))
-                             (symbol-package (function-spec-name contract))))))
+                             (function-spec-case-guard-package contract)))))
 
 (defun validate-capture-bindings (contract)
   "Refuse capture declarations the checker could not honour, and return them.

@@ -105,6 +105,7 @@ jobs:
                                     case-guard-check-sees-enclosing-symbol-macros
                                     owning-contract-validates-programmatic-guard-references
                                     programmatic-guards-accept-foreign-result-variables
+                                    programmatic-guards-reserve-the-declaration-packages-result
                                     registration-keeps-lexical-guard-analysis-until-the-guard-changes
                                     attached-case-edits-respect-each-current-owner))
                             :style :dot) 0 1))'

@@ -639,7 +639,8 @@ decides whether they pass."
 
 (deftest programmatic-guards-accept-foreign-result-variables
   (with-fresh-registry
-    (let* ((guard 'cl-spec/tests/foreign-guard-value:result)
+    (let* ((*package* (find-package '#:cl-spec/tests/function-cases-test))
+           (guard 'cl-spec/tests/foreign-guard-value:result)
            (case (guarded-case :returns :when-forms (list guard)
                                :when-function
                                (lambda (argument)
@@ -651,9 +652,28 @@ decides whether they pass."
                        (invalid-function-spec-form () nil))))
       (ok contract)
       (when contract
-        (ok (eq contract (cl-spec:register-function-spec contract)))
-        (ok (eq :passed (cl-spec:call-check-result-status
-                         (cl-spec:check-call 'identity '(1)))))))))
+        (let ((*package* (symbol-package guard)))
+          (ok (eq contract (cl-spec:register-function-spec contract)))
+          (ok (eq :passed (cl-spec:call-check-result-status
+                           (cl-spec:check-call 'identity '(1))))))))))
+
+(deftest programmatic-guards-reserve-the-declaration-packages-result
+  (with-fresh-registry
+    (let* ((*package* (find-package '#:cl-spec/tests/function-cases-test))
+           (result t)
+           (predicate (lambda (argument) (declare (ignore argument)) result)))
+      (flet ((contract-with (case)
+               (make-instance 'function-spec :name 'identity
+                              :argument-specs '((count integer)) :cases (list case))))
+        (ok (refuses (contract-with (guarded-case :returns :when-forms '(result)
+                                                 :when-function predicate))))
+        (let* ((case (guarded-case :returns))
+               (contract (contract-with case))
+               (*package* (symbol-package 'cl-spec/tests/foreign-guard-value:result)))
+          (ok (eq contract (cl-spec:register-function-spec contract)))
+          (ok (refuses (reinitialize-instance case :when-forms '(result)
+                                              :when-function predicate)))
+          (ok (equal '(t) (function-case-when-forms case))))))))
 
 (deftest registration-keeps-lexical-guard-analysis-until-the-guard-changes
   (let ((cl-spec:*registry* (make-hash-table-registry)))
