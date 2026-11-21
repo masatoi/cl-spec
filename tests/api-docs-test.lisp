@@ -32,3 +32,8 @@
     (let ((files (api-doc-files)))
       (ok (equal "docs/api/README.md" (caar files)))
       (ok (= (length files) (1+ (length (public-api-packages))))))))
+
+(deftest reference-index-distinguishes-package-from-system
+  (let ((index (cdar (api-doc-files))))
+    (ok (search "| `cl-spec/src/backends/check-it` | `cl-spec/check-it` |" index))
+    (ok (search "../compatibility.md" index))))

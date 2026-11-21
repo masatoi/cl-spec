@@ -427,13 +427,14 @@ inspection from a known empty omission list."
              always (member key '(:registry :scopes)))))
 
 (defun instrument-function (name &rest options)
-  "Install checks for NAME and return NAME; refresh an existing wrapper without stacking.
+  "Install checks for NAME and return NAME. Refresh an existing wrapper without stacking.
 
 OPTIONS accepts :REGISTRY (NIL or omitted means *REGISTRY*) and :SCOPES
 (default (:INPUT :OUTPUT :POST)). The positional registry argument is also accepted.
-:INPUT checks arity, argument specs and :PRE; :OUTPUT checks the primary value;
-:POST checks postconditions. NIL scopes disables checks. All target values and
-conditions pass through. Failed checks signal INSTRUMENTATION-VIOLATION.
+:INPUT checks arity, argument specs and :PRE. :OUTPUT checks the primary value
+for ordinary returns, or the value count and each value for fixed multiple
+returns. :POST checks postconditions. NIL scopes disables checks. All target
+values and conditions pass through. Failed checks signal INSTRUMENTATION-VIOLATION.
 
 Only ordinary symbol-named functions outside COMMON-LISP are supported.
 Missing contracts signal UNKNOWN-FUNCTION-SPEC, undefined targets UNBOUND-TARGET,
