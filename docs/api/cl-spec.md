@@ -396,20 +396,18 @@ No target or predicate is called again to classify the result.  Shrinking still
 executes candidate inputs; only candidates with the original failure identity are
 accepted.  A run with no admitted trials is :SKIPPED.
 
-A contract with :CASES selects exactly one case per admitted trial and judges the
-invocation by that case's outcome.  The result carries a per-case report
-(FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
-outcomes actually observed per case, the case-selection errors, and the cases no
-trial reached.  A selected case owns its trial even when classifying the result
-signalled -- the target was called, so the contract error is counted as that
-case's :ERROR and keeps the case in its failure identity.  :PASSED says no
-violation was observed in the trials that ran; it does not say every case ran, so
-read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
-reached case selection, not the number of target calls: a case-selection error
-calls no target.  A backend that neither opens trial reporting nor records an
-observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
-participating backend's zero-trial and first-draw-exhaustion runs report known
-zeros.
+A contract with :CASES requires exactly one match when selection runs and judges
+the invocation by the selected case's outcome. FUNCTION-CHECK-RESULT-CASE-REPORT
+lists the declared cases, target calls and outcomes per case, selection errors,
+and cases that were never called. A contract error while classifying the outcome
+of a target call counts as that case's :ERROR and keeps the case in the failure
+identity. Read :NEVER-CALLED alongside :PASSED to see which cases ran. TRIALS
+minus REJECTED can include trials that stopped before selection, such as a
+capture failure. Use each case's :CALLED for target calls and
+:CASE-SELECTION-ERRORS for selection failures. A backend that neither opens
+trial reporting nor records an observation leaves the report :NOT-COLLECTED.
+A participating backend's zero-trial and first-draw-exhaustion runs report
+known zeros.
 
 A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
 common :PRE admits an input and before case selection; state-post runs only after
@@ -1019,14 +1017,13 @@ Return the selected observation's failure identity, or NIL on success.
 *Function* · `(artifact &key (registry *registry*) (state-policy :unconfirmed) (target-revision :unknown))`
 
 Recheck saved input once without generation or shrinking.
-Definition identity must be complete and unchanged (for a fixture artifact, the
-fixture version too). Execution then requires a caller assertion about external
-state: :STATE-POLICY :STATELESS for an ordinary (version 1) artifact, asserting
-that no restoration is needed, or :STATE-POLICY :FIXTURE for a fixture (version
-2) artifact, whose saved recipe is rebuilt through the contract's fixture. Any
-other policy, including the one for the other artifact version, returns :STATUS
-:UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
-recheck also refuses a definition that now observes state
+Definition identity must be complete and matching, including the fixture version
+for a fixture artifact. STATE-POLICY accepts :UNCONFIRMED, :STATELESS and :FIXTURE.
+:STATELESS asserts that an ordinary (version 1) artifact needs no restoration.
+:FIXTURE rebuilds the saved recipe of a fixture (version 2) artifact. After the
+definition checks pass, :UNCONFIRMED or the policy for the other artifact
+version returns :STATUS :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs
+nothing. A version 1 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 REGISTRY resolves the definition and its declared specs. User callbacks retain the
 caller's dynamic *REGISTRY*, as in generated and direct checks. Rechecking inside
@@ -2056,14 +2053,10 @@ invocation, including for a function that would not answer the same way twice.
 Generated argument lists the preconditions refused.
 
 ```text
-TRIALS counts what the backend generated; TRIALS minus this is the number of
-trials that reached case selection.  Reporting only the first would let a run
-that rejected every input read as a run that checked every input (§19, §73.3).
-
-Not the number of target calls: a case-selection error calls no target, and
-shrinking may invoke the function on candidate inputs.  Classification itself
-makes no additional call.  This counts generated trials; read
-FUNCTION-CHECK-RESULT-CASE-REPORT for per-case call counts.
+TRIALS counts what the backend generated (§19, §73.3). TRIALS minus this
+rejection count can include trials that stopped before case selection, such
+as capture failures. Read FUNCTION-CHECK-RESULT-CASE-REPORT for target calls
+and outcomes per case in ordinary trials.
 ```
 
 <a name="function-check-result-shrunk-outcome"></a>
@@ -3341,12 +3334,11 @@ Registry the front-end functions in this package operate on by default.
 Rebind it to isolate specs and properties, for example in tests.
 
 ```text
-A rebinding does not cross a thread boundary.  §48 puts the time limit on the
-execution host, so a host that runs checks off the calling thread has to carry
-this value over itself -- PROGV, or the :REGISTRY argument every entry point
-takes.  Without that, a run started on another thread resolves names in the
-global registry: if the same name is registered in both, it checks a different
-definition and reports a verdict for it, with nothing on the result to say so.
+Dynamic bindings are thread-local. A host that runs checks off the calling
+thread (§48) can bind *REGISTRY* there with PROGV. To pass a registry explicitly,
+follow the entry point's signature. FIND-SPEC and LIST-SPECS take an optional
+positional registry. VALIDP and CHECK-FUNCTION take :REGISTRY. User callbacks
+that use the dynamic default need the binding on the executing thread.
 ```
 
 <a name="spec-primitives"></a>

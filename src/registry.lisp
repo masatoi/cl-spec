@@ -326,12 +326,11 @@ describes."
   "Registry the front-end functions in this package operate on by default.
 Rebind it to isolate specs and properties, for example in tests.
 
-A rebinding does not cross a thread boundary.  §48 puts the time limit on the
-execution host, so a host that runs checks off the calling thread has to carry
-this value over itself -- PROGV, or the :REGISTRY argument every entry point
-takes.  Without that, a run started on another thread resolves names in the
-global registry: if the same name is registered in both, it checks a different
-definition and reports a verdict for it, with nothing on the result to say so.")
+Dynamic bindings are thread-local. A host that runs checks off the calling
+thread (§48) can bind *REGISTRY* there with PROGV. To pass a registry explicitly,
+follow the entry point's signature. FIND-SPEC and LIST-SPECS take an optional
+positional registry. VALIDP and CHECK-FUNCTION take :REGISTRY. User callbacks
+that use the dynamic default need the binding on the executing thread.")
 
 (defun check-registry (registry operator)
   "Return the effective public registry, or signal INVALID-ARGUMENT for OPERATOR.

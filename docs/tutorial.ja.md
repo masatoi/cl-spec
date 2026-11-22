@@ -220,14 +220,15 @@ spec は値の検査だけでなく、値の生成にも使えます。
 
 ```lisp
 (cl-spec:sample 'cart :count 2 :seed 42)
-;; => (((:SKU "4skdcB5UzLJP2t" :PRICE 1529 :QTY 3) (:SKU "u11z" :PRICE 2613 :QTY 2)
-;;      (:SKU "6hNrb5VRBdpN84rXmoy" :PRICE 8007 :QTY 9))
-;;     NIL)   ; 例えば（2 件目は空のカート）
+;; => (((:SKU "7g6Xh5XFUzLJ" :PRICE 2048 :QTY 92)
+;;      (:SKU "olYS8D1zt6h" :PRICE 8227 :QTY 78)
+;;      (:SKU "" :PRICE 1586 :QTY 4))
+;;     ((:SKU "JRBdpN84rXmoy" :PRICE 8007 :QTY 9)))   ; 例えば
 ;; 2 つ目の戻り値（生成レポート）は省略
 ```
 
 `:count 2` なので、2 件のカートを並べたリストが返ります。上の例では、1 件目が明細 3 件の
-カート、2 件目が空のカート（`NIL`）です。`list-of` に下限を付けていないので、空のリストも
+カート、2 件目が明細 1 件のカートです。`list-of` に下限を付けていないので、空のリストも
 `cart` を満たします。生成されたカートは、どれも明細 5 件以下で、各明細が `line-item` を
 満たします。具体的な値は、前章と同じく環境によって異なることがあります。
 
@@ -327,12 +328,11 @@ spec は値の検査だけでなく、値の生成にも使えます。
 ```lisp
 (cl-spec:property-result-counterexample *broken*)
 ;; => (A
-;;     ((:SKU "K70jiib" :PRICE 3105 :QTY 48) (:SKU "7C42" :PRICE 3841 :QTY 5)
-;;      (:SKU "89M63woD6VjYl" :PRICE 3628 :QTY 84))
+;;     ((:SKU "7g6Xh5XFUzLJ" :PRICE 2048 :QTY 92)
+;;      (:SKU "olYS8D1zt6h" :PRICE 8227 :QTY 78)
+;;      (:SKU "" :PRICE 1586 :QTY 4))
 ;;     B
-;;     ((:SKU "Wga8IFI0l5" :PRICE 1496 :QTY 52) (:SKU "Z60xQ5AbZ675t5PI" :PRICE 9340 :QTY 59)
-;;      (:SKU "2dCTt" :PRICE 8681 :QTY 33) (:SKU "rky9PYQ" :PRICE 2050 :QTY 1)
-;;      (:SKU "4wc2vXqf2yrr2i3" :PRICE 6945 :QTY 14)))   ; 例えば
+;;     ((:SKU "JRBdpN84rXmoy" :PRICE 8007 :QTY 9)))   ; 例えば
 ```
 
 反例は、property の変数名と値を並べた plist です。この大きさのカートでは、何が悪いのかを
@@ -340,8 +340,8 @@ spec は値の検査だけでなく、値の生成にも使えます。
 
 ```lisp
 (cl-spec:property-result-shrunk-counterexample *broken*)
-;; => (A ((:SKU "89M63woD6VjYl" :PRICE 1 :QTY 1))
-;;     B ((:SKU "4wc2vXqf2yrr2i3" :PRICE 1 :QTY 1)))   ; 例えば
+;; => (A ((:SKU "" :PRICE 1 :QTY 1))
+;;     B ((:SKU "JRBdpN84rXmoy" :PRICE 1 :QTY 1)))   ; 例えば
 ```
 
 `a` も `b` も明細 1 件、価格も数量も 1 まで小さくなりました。この入力で性質を手で計算すると、
@@ -422,7 +422,7 @@ property は性質を自由な式で書けますが、「この関数はこう�
 (cl-spec:property-result-failure-reason *broken-subtotal-check*)
 ;; => :POSTCONDITION
 (cl-spec:property-result-shrunk-counterexample *broken-subtotal-check*)
-;; => (CART ((:SKU "Qs6Z64Zb5" :PRICE 1 :QTY 1)))   ; 例えば
+;; => (CART ((:SKU "JRBdpN84rXmoy" :PRICE 1 :QTY 1)))   ; 例えば
 ```
 
 `:postcondition` は事後条件が破れたことを示します。縮小後の反例は明細 1 件のカートで、
@@ -470,7 +470,7 @@ property と関数契約は、次のように使い分けます。
   約束です。正常に値を返すと違反になります。
 - `qty` の spec を `(range integer -10 0)` にしているのは、この契約が「不正な数量に
   ついての約束」だからです。生成される数量はすべて 1 未満なので、どの試行でもエラーが
-  期待されます。正常系と異常系を 1 つの契約にまとめる方法は、次章の `:cases` で扱います。
+  期待されます。次章では、入力の条件ごとに結果の約束を書ける `:cases` を紹介します。
 - `(type invalid-quantity)` の `type` には意味があります。`invalid-quantity` は condition
   クラス、つまり型ですが、COMMON-LISP パッケージの型ではありません。そのため第 2 章の規則に
   より、`(:signals invalid-quantity)` と裸で書くと「`invalid-quantity` という名前の spec」を

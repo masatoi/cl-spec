@@ -1731,9 +1731,11 @@ OUTCOME   := (:returns SPEC) [(:post FORM ...) | (:post-values (NAME ...) FORM .
 通常の検査結果と実際の生成試行数を表す。fixture のある契約でも固定例は呼出側の生の引数を使い、
 生成側が recipe と hook を扱う。
 
-選択は**exclusive**（ちょうど一つ一致）であり、先頭一致ではない。通常の一試行は
-引数束縛 → 共通`:pre` → ケース条件（宣言順に全て評価。最初の真で打ち切らない）→
+選択は**exclusive**（ちょうど一つ一致）である。通常の一試行は
+引数束縛 → 共通`:pre` → `:capture`（宣言があれば）→ ケース条件 →
 一致件数の確定 → 対象の一度だけの呼び出し → 確定ケースのoutcomeでの判定、の順に進む。
+ケース条件は宣言順に評価する。真の条件があっても次の条件を評価し、条件がerrorを
+送出した時点で選択を中断する。
 `:when`は引数・captureと通常のLisp束縛を参照できる。呼び出し後の`RESULT`と明示的な
 返り値束縛への参照は、シンボルの同一性で判定して拒否する。先頭引数の所属packageで
 `RESULT`が解決できないガードでは、宣言元のpackageで同名のシンボルを探す。省略引数の扱いと
@@ -1796,8 +1798,8 @@ shrinkせず、対象のcounterexample artifactとして保存しない。
 加算しない。ケース選択エラーはどのケースの`:called`も増やさない。選択後に判定側が
 errorを送出した試行は、対象を呼んだそのケースの`:error`へ数える。reportは実際の試行から
 集計し、そのために条件や対象を再実行しない。カウンタは一runのコンテキストが所有し、
-登録定義やグローバル表へ保存しない。`trials - rejected`は対象呼出件数ではなく、
-ケース選択まで到達した試行数である。
+登録定義やグローバル表へ保存しない。対象呼出件数は各ケースの`:called`の合計である。
+`trials - rejected`には、`:capture`の失敗など、ケース選択前にエラーとなった試行も含む。
 
 計測への参加は最初のobservationより前に確定する。計測対応backendは最初のdrawの前に
 計測開始を宣言するため、試行0件や最初の入力生成での予算枯渇でも「既知のゼロ」を
@@ -5741,11 +5743,12 @@ clauses, meaning, signatures, projection and digest bytes.
 
 ### Selection
 
-After the argument schema and the common `:pre`, every guard runs in declaration
-order, once per trial, without stopping at the first true one. Exactly one match
-selects that case; zero and several matches are `:no-matching-case` and
-`:ambiguous-case`; a guard that signals is `:case-guard-error`, including a
-`SPEC-VIOLATION`. Those are `:error` / `:contract-error` results with
+After the argument schema and common `:pre` admit an input and any declared
+`:capture` succeeds, guards run in declaration order, including after a match.
+A guard that signals stops selection with `:case-guard-error`, including a
+`SPEC-VIOLATION`. When all guards finish, exactly one match selects that case.
+Zero and several matches give `:no-matching-case` and `:ambiguous-case`.
+These errors produce `:error` / `:contract-error` results with
 `:failure-phase :case-selection`, a `case-selection-error` condition, the
 signature `(:case-selection KIND)` (or `(:case-selection :case-guard-error NAME)`)
 and the structured explanation fixed in §17.2. The target is not invoked, the
@@ -5778,8 +5781,8 @@ a first draw that exhausts the generation budget report known zeros while the
 exhaustion itself is reported separately under `:failure-phase :generation`;
 only a backend that neither opens reporting nor records an observation answers
 `:not-collected`. `:passed` keeps its meaning over the trials that ran and does
-not claim every case ran; `trials - rejected` counts trials that reached
-selection, not target calls.
+not claim every case ran. Sum per-case `:called` counts for target calls.
+`trials - rejected` includes errors before case selection, such as a failing capture.
 
 The counterexample artifact format version is unchanged: the case name is
 payload inside the existing signature, so a pre-change artifact loads unchanged

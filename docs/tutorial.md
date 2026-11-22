@@ -243,17 +243,18 @@ Carts can be generated too.
 
 ```lisp
 (cl-spec:sample 'cart :count 2 :seed 42)
-;; => (((:SKU "4skdcB5UzLJP2t" :PRICE 1529 :QTY 3) (:SKU "u11z" :PRICE 2613 :QTY 2)
-;;      (:SKU "6hNrb5VRBdpN84rXmoy" :PRICE 8007 :QTY 9))
-;;     NIL)   ; for example (the second cart is empty)
+;; => (((:SKU "7g6Xh5XFUzLJ" :PRICE 2048 :QTY 92)
+;;      (:SKU "olYS8D1zt6h" :PRICE 8227 :QTY 78)
+;;      (:SKU "" :PRICE 1586 :QTY 4))
+;;     ((:SKU "JRBdpN84rXmoy" :PRICE 8007 :QTY 9)))   ; for example
 ;; the second return value (the generation report) is omitted
 ```
 
 With `:count 2`, the result is a list of two carts. In the example above, the
-first cart has three line items and the second is an empty cart (`NIL`). Because
-`list-of` has no lower bound, an empty list also satisfies `cart`. Every generated
-cart has at most 5 line items, and each line item satisfies `line-item`. As in
-the previous chapter, the concrete values may differ by environment.
+first cart has three line items and the second has one. Because `list-of` has no
+lower bound, an empty list also satisfies `cart`. Every generated cart has at
+most 5 line items, and each line item satisfies `line-item`. As in the previous
+chapter, the concrete values may differ by environment.
 
 > **Chapter summary**: `plist` and `list-of` describe structured data. A violation
 > is reported through `:kind` and `:path` as what went wrong and where, and
@@ -357,12 +358,11 @@ found.
 ```lisp
 (cl-spec:property-result-counterexample *broken*)
 ;; => (A
-;;     ((:SKU "K70jiib" :PRICE 3105 :QTY 48) (:SKU "7C42" :PRICE 3841 :QTY 5)
-;;      (:SKU "89M63woD6VjYl" :PRICE 3628 :QTY 84))
+;;     ((:SKU "7g6Xh5XFUzLJ" :PRICE 2048 :QTY 92)
+;;      (:SKU "olYS8D1zt6h" :PRICE 8227 :QTY 78)
+;;      (:SKU "" :PRICE 1586 :QTY 4))
 ;;     B
-;;     ((:SKU "Wga8IFI0l5" :PRICE 1496 :QTY 52) (:SKU "Z60xQ5AbZ675t5PI" :PRICE 9340 :QTY 59)
-;;      (:SKU "2dCTt" :PRICE 8681 :QTY 33) (:SKU "rky9PYQ" :PRICE 2050 :QTY 1)
-;;      (:SKU "4wc2vXqf2yrr2i3" :PRICE 6945 :QTY 14)))   ; for example
+;;     ((:SKU "JRBdpN84rXmoy" :PRICE 8007 :QTY 9)))   ; for example
 ```
 
 The counterexample is a plist of the property's variable names and their values.
@@ -371,8 +371,8 @@ the shrunk counterexample instead.
 
 ```lisp
 (cl-spec:property-result-shrunk-counterexample *broken*)
-;; => (A ((:SKU "89M63woD6VjYl" :PRICE 1 :QTY 1))
-;;     B ((:SKU "4wc2vXqf2yrr2i3" :PRICE 1 :QTY 1)))   ; for example
+;; => (A ((:SKU "" :PRICE 1 :QTY 1))
+;;     B ((:SKU "JRBdpN84rXmoy" :PRICE 1 :QTY 1)))   ; for example
 ```
 
 Both `a` and `b` are down to one line item, with price and quantity down to 1.
@@ -466,7 +466,7 @@ Write the same contract for the broken implementation and check it.
 (cl-spec:property-result-failure-reason *broken-subtotal-check*)
 ;; => :POSTCONDITION
 (cl-spec:property-result-shrunk-counterexample *broken-subtotal-check*)
-;; => (CART ((:SKU "Qs6Z64Zb5" :PRICE 1 :QTY 1)))   ; for example
+;; => (CART ((:SKU "JRBdpN84rXmoy" :PRICE 1 :QTY 1)))   ; for example
 ```
 
 `:postcondition` says the postcondition was broken. The shrunk counterexample is a
@@ -520,8 +520,8 @@ Write this error promise as a contract.
   satisfies this spec". Returning a value normally is a violation.
 - The `qty` spec is `(range integer -10 0)` because this contract is a promise
   about invalid quantities. Every generated quantity is below 1, so every trial
-  expects the error. The next chapter's `:cases` shows how to put the normal and
-  the error behaviour in one contract.
+  expects the error. The next chapter introduces `:cases`, which lets a contract
+  specify the outcome for each input condition.
 - The `type` in `(type invalid-quantity)` matters. `invalid-quantity` is a
   condition class, and so a type, but not a type from the COMMON-LISP package. By
   the rule from chapter 2, writing `(:signals invalid-quantity)` bare therefore

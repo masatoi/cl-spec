@@ -526,14 +526,13 @@ than persisted as a call that never happened."
                                            (state-policy :unconfirmed)
                                            (target-revision :unknown))
   "Recheck saved input once without generation or shrinking.
-Definition identity must be complete and unchanged (for a fixture artifact, the
-fixture version too). Execution then requires a caller assertion about external
-state: :STATE-POLICY :STATELESS for an ordinary (version 1) artifact, asserting
-that no restoration is needed, or :STATE-POLICY :FIXTURE for a fixture (version
-2) artifact, whose saved recipe is rebuilt through the contract's fixture. Any
-other policy, including the one for the other artifact version, returns :STATUS
-:UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs nothing. A version 1
-recheck also refuses a definition that now observes state
+Definition identity must be complete and matching, including the fixture version
+for a fixture artifact. STATE-POLICY accepts :UNCONFIRMED, :STATELESS and :FIXTURE.
+:STATELESS asserts that an ordinary (version 1) artifact needs no restoration.
+:FIXTURE rebuilds the saved recipe of a fixture (version 2) artifact. After the
+definition checks pass, :UNCONFIRMED or the policy for the other artifact
+version returns :STATUS :UNSUPPORTED with :DETAIL :STATE-UNCONFIRMED and runs
+nothing. A version 1 recheck also refuses a definition that now observes state
 (:STATEFUL-CONTRACT-UNSUPPORTED) and recorded or detected input mutation.
 REGISTRY resolves the definition and its declared specs. User callbacks retain the
 caller's dynamic *REGISTRY*, as in generated and direct checks. Rechecking inside
