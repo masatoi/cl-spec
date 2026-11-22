@@ -423,12 +423,11 @@ predicate without its form would run while introspection reported no such clause
 (defun function-case-select (cases bindings function &optional captures)
   "Select exactly one of CASES for BINDINGS, or report why that is impossible.
 
-BINDINGS is the bound argument value list the common :PRE also sees.  Every guard
-runs in declaration order and evaluation does not stop at the first true one:
-duplicates have to be observed, not hidden.  Returns (values CASE CONDITION);
-exactly one of them is non-NIL.  A guard that signals stops selection at that
-case and yields a :CASE-GUARD-ERROR; zero and several matches yield
-:NO-MATCHING-CASE and :AMBIGUOUS-CASE.  The target is not called for any of them."
+BINDINGS is the bound argument value list the common :PRE also sees. Guards run
+in declaration order, including after a match. A guard error stops selection
+at that case and yields :CASE-GUARD-ERROR. Zero and several matches yield
+:NO-MATCHING-CASE and :AMBIGUOUS-CASE. The target is not called for any of
+these errors. Returns (values CASE CONDITION) with exactly one non-NIL value."
   (let ((matches '()))
     (dolist (case cases)
       (handler-case
@@ -1307,14 +1306,10 @@ to notice it by.")
              :reader function-check-result-rejected
              :documentation "Generated argument lists the preconditions refused.
 
-TRIALS counts what the backend generated; TRIALS minus this is the number of
-trials that reached case selection.  Reporting only the first would let a run
-that rejected every input read as a run that checked every input (§19, §73.3).
-
-Not the number of target calls: a case-selection error calls no target, and
-shrinking may invoke the function on candidate inputs.  Classification itself
-makes no additional call.  This counts generated trials; read
-FUNCTION-CHECK-RESULT-CASE-REPORT for per-case call counts.")
+TRIALS counts what the backend generated (§19, §73.3). TRIALS minus this
+rejection count can include trials that stopped before case selection, such
+as capture failures. Read FUNCTION-CHECK-RESULT-CASE-REPORT for target calls
+and outcomes per case in ordinary trials.")
    (failure-reason :initarg :failure-reason
                    :initform nil
                    :reader function-check-result-failure-reason
@@ -2260,20 +2255,18 @@ No target or predicate is called again to classify the result.  Shrinking still
 executes candidate inputs; only candidates with the original failure identity are
 accepted.  A run with no admitted trials is :SKIPPED.
 
-A contract with :CASES selects exactly one case per admitted trial and judges the
-invocation by that case's outcome.  The result carries a per-case report
-(FUNCTION-CHECK-RESULT-CASE-REPORT) with the declared cases, the target calls and
-outcomes actually observed per case, the case-selection errors, and the cases no
-trial reached.  A selected case owns its trial even when classifying the result
-signalled -- the target was called, so the contract error is counted as that
-case's :ERROR and keeps the case in its failure identity.  :PASSED says no
-violation was observed in the trials that ran; it does not say every case ran, so
-read :NEVER-CALLED as well.  TRIALS minus REJECTED is the number of trials that
-reached case selection, not the number of target calls: a case-selection error
-calls no target.  A backend that neither opens trial reporting nor records an
-observation leaves the report :NOT-COLLECTED rather than measured zeros, while a
-participating backend's zero-trial and first-draw-exhaustion runs report known
-zeros.
+A contract with :CASES requires exactly one match when selection runs and judges
+the invocation by the selected case's outcome. FUNCTION-CHECK-RESULT-CASE-REPORT
+lists the declared cases, target calls and outcomes per case, selection errors,
+and cases that were never called. A contract error while classifying the outcome
+of a target call counts as that case's :ERROR and keeps the case in the failure
+identity. Read :NEVER-CALLED alongside :PASSED to see which cases ran. TRIALS
+minus REJECTED can include trials that stopped before selection, such as a
+capture failure. Use each case's :CALLED for target calls and
+:CASE-SELECTION-ERRORS for selection failures. A backend that neither opens
+trial reporting nor records an observation leaves the report :NOT-COLLECTED.
+A participating backend's zero-trial and first-draw-exhaustion runs report
+known zeros.
 
 A contract with :CAPTURE or :STATE-POST observes state.  Capture runs after the
 common :PRE admits an input and before case selection; state-post runs only after

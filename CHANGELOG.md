@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.0-rc.2
+
+- `run-property` and `check-function` report invalid explicit generation and
+  shrink budgets as `cl-spec:invalid-argument`, with the public caller and
+  option name.
+- The API reference explains how capture failures affect case counts, how to
+  pass a registry, and which recheck policies return a verdict or signal an
+  argument error.
+- The README case and direct-check examples now include their setup. The
+  fixture guide shows a saved failure through serialization and recheck.
+  The tutorials and structured-data walkthrough use verified output examples.
+
 ## v1.0.0-rc.1
 
 This candidate defines the public API and data compatibility rules for the

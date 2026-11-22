@@ -61,11 +61,10 @@ own arguments or precondition, nest `:cases`, or use `:else` or a priority.
 
 ### Selection is exclusive
 
-After the argument schema and the common `:PRE` admit an input, **every** case's
-`:when` runs in declaration order and exactly one must be true. Evaluation does
-not stop at the first true guard, because a later guard error would then be
-hidden. `:when t` is an ordinary always-true form, not an implicit `:else`, and
-`:when nil` is an ordinary never-true one.
+After the argument schema and the common `:pre` admit an input and any declared
+`:capture` succeeds, guards run in declaration order, including after a match.
+A guard error stops selection. When all guards finish, exactly one must be true.
+`:when t` always matches and `:when nil` never matches.
 
 A guard runs before the target returns. A visible reference to `RESULT` or to
 one of that case's `:post-values` names is a declaration error. An input named
@@ -267,10 +266,10 @@ not trials, a precondition refusal belongs to no case, and a case-selection erro
 increases no case's `:called`. A contract error raised while classifying a
 selected case — a case postcondition that signals, say — is counted as that
 case's `:error` and keeps the case in its evidence and identity, because the
-target was called for it. Because a selection error calls no target,
-`TRIALS - REJECTED` is the number of trials that reached selection, not the
-number of target calls. The counters belong to one run and are snapshotted onto
-its result. A participating backend opens the report before its first draw, so a
+target was called for it. Sum the per-case `:called` counts for target calls.
+`TRIALS - REJECTED` includes errors before selection, such as a failing capture.
+The counters belong to one run and are snapshotted onto its result.
+A participating backend opens the report before its first draw, so a
 run with zero trials, or one whose first draw exhausted the generation budget,
 reports known zeros (the exhaustion itself under `:FAILURE-PHASE :GENERATION`);
 a result built by hand, and one whose backend never opened reporting, answers

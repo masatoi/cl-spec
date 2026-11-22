@@ -33,6 +33,11 @@ The mirrored suite is `tests/reproducible-withdraw-example-test.lisp`.
 ## Declare a fixture
 
 ```lisp
+(asdf:load-system "cl-spec")
+
+(defun increment-cell! (cell)
+  (incf (car cell)))
+
 (cl-spec:defspec-function increment-cell!
   (:args (cell (list-of integer)))
   (:fixture
@@ -51,9 +56,9 @@ The mirrored suite is `tests/reproducible-withdraw-example-test.lisp`.
   (:state-post (= (car cell) (1+ before))))
 ```
 
-The application supplies `increment-cell!`. All five fixture clauses are
-required and unique. `:version` is a positive integer; change it when helper
-changes alter the meaning of state construction.
+The target increments the integer stored in the cell and returns its new value.
+All five fixture clauses are required and unique. `:version` is a positive
+integer. Change it when helper changes alter the meaning of state construction.
 
 `:recipe` binds one name to a value matching its spec. Setup and cleanup each
 receive that recipe and a context with their declared name. Context is a fresh
@@ -86,8 +91,10 @@ declaration digests, so fixture version discipline matters.
 | `check-function` | Generated recipes | check-it | Fresh lifecycle per trial/candidate |
 
 ```lisp
-(cl-spec:fixture-check-data
-  (cl-spec:check-fixture 'increment-cell! 7))
+(let ((data (cl-spec:fixture-check-data
+             (cl-spec:check-fixture 'increment-cell! 7))))
+  (list (getf data :status) (getf (getf data :lifecycle) :state)))
+;; => (:PASSED :RELEASED)
 ```
 
 This core operation does not load a generator backend. The result has
@@ -133,10 +140,23 @@ Database isolation, asynchronous tasks and external I/O are outside `:fresh`.
 
 ## Save and recheck a counterexample
 
+For this example, redefine the target to return the expected integer while
+leaving the cell untouched. Its `:state-post` now fails on every recipe.
+Load the check-it backend to generate the initial failure.
+
 ```lisp
+(asdf:load-system "cl-spec/check-it")
+
+(defun increment-cell! (cell)
+  (1+ (car cell)))
+
 (let* ((result (cl-spec:check-function 'increment-cell! :trials 100 :seed 42))
-       (artifact (cl-spec:make-counterexample-artifact result)))
-  (cl-spec:serialize-counterexample-artifact artifact))
+       (artifact (cl-spec:make-counterexample-artifact result))
+       (wire (cl-spec:serialize-counterexample-artifact artifact))
+       (restored (cl-spec:deserialize-counterexample-artifact wire))
+       (recheck (cl-spec:recheck-counterexample restored :state-policy :fixture)))
+  (list (cl-spec:property-result-status result) (getf recheck :status)))
+;; => (:FAILED :SAME-FAILURE)
 ```
 
 Artifact creation requires a failure: a result in which no trial failed is
@@ -145,19 +165,15 @@ refused with `invalid-counterexample-artifact` and the reason
 Direct `fixture-check-result` objects are accepted too. Fixture artifacts use
 version 2, while ordinary artifacts retain version 1 and the same AV1 wire codec.
 
-```lisp
-(cl-spec:recheck-counterexample artifact :state-policy :fixture)
-```
-
 Recheck validates the saved record, requires a complete matching declaration
 digest and fixture version, then reconstructs one recipe without generator
 draws or shrinking. Results distinguish `:same-failure`, `:different-failure`,
 `:passed`, `:precondition-rejected`, `:contract-error`, `:fixture-error`, and the
 definition checks `:definition-missing`, `:definition-mismatch` and
-`:incomparable-definition`. `:state-policy :fixture` is required: `:state-policy`
-defaults to `:unconfirmed`, and without `:fixture` a recheck that passes the
-definition checks returns `:status :unsupported` with `:detail :state-unconfirmed`
-and runs nothing.
+`:incomparable-definition`. A fixture recheck runs with `:state-policy :fixture`.
+After the definition checks pass, the default `:unconfirmed` and `:stateless`
+return `:status :unsupported` with `:detail :state-unconfirmed` and run nothing.
+An unknown policy signals `invalid-argument` before the hooks run.
 
 The target implementation may change so a repair can be checked. Changing the
 contract or fixture is not silently accepted as the same experiment.

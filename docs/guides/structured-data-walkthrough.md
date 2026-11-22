@@ -247,7 +247,7 @@ dispatch on a data tag; it is not a function's normal-versus-error contract
 ```lisp
 (cl-spec/examples/structured-data:demo-budget-exhaustion 6)
 ;; => (:OUTCOME :EXHAUSTED :ATTEMPTS 6 :BUDGET 6 :REJECTIONS 6
-;;     :PHASE :GENERATION :PATH (0)
+;;     :PHASE :GENERATION :PATH (:VALUE :AND 0)
 ;;     :REPORT (... :TERMINATION :BUDGET-EXHAUSTED ...))
 ```
 

@@ -62,7 +62,7 @@ backend into `cl-spec:*generator-backend*`.
 Clone the candidate and start a fresh Lisp session in the checkout.
 
 ```sh
-git clone --branch v1.0.0-rc.1 https://github.com/masatoi/cl-spec.git
+git clone --branch v1.0.0-rc.2 https://github.com/masatoi/cl-spec.git
 cd cl-spec
 ```
 
@@ -298,6 +298,8 @@ outcome for every admitted input. The common `:pre` still bounds the region; the
 case conditions select the required behaviour inside it.
 
 ```lisp
+(define-condition insufficient-funds (error) ())
+
 (defun remaining-balance (balance amount)
   (if (<= amount balance)
       (- balance amount)
@@ -346,42 +348,47 @@ just as they are at the contract level. `:args`, `:args-generator` and the commo
 cannot declare its own arguments or precondition, nest `:cases`, or use `:else`
 or a priority.
 
-Selection is exclusive, not first-match: after the common `:pre` admits an input,
-every guard runs in declaration order and exactly one must be true. `:when t` is
-an ordinary always-true form, not an implicit `:else`. Zero matches, several
-matches and a guard that signals are contract-side errors reported as `:error` /
-`:contract-error` with `:failure-phase :case-selection`: the target is not
-called, no case is counted, the run is not shrunk, and no target counterexample
-is saved. A `spec-violation` from a guard is such an error; only the common
-`:pre` treats that as a refusal. The phase is recorded by the classifier where
+Selection requires exactly one match. After the common `:pre` admits an input
+and any declared `:capture` succeeds, guards run in declaration order, including
+after a match. A guard error stops selection.
+`:when t` is always true and participates in the same exclusivity rule. Zero
+matches, several matches and a guard that signals are contract-side errors
+reported as `:error` / `:contract-error` with `:failure-phase :case-selection`.
+The target is not called, no case is counted, the run is not shrunk, and no
+target counterexample is saved. A guard that signals `spec-violation` also
+produces a selection error. The common `:pre` treats that condition as a
+refusal. The phase is recorded by the classifier where
 selection failed, never inferred from a condition's class, so a target that
 signals the public `case-selection-error` itself stays an ordinary target failure
 whose evidence may be shrunk and persisted.
 
 `function-check-result-case-report` and `result-data`'s `:case-report` report the
 declared cases, the calls and outcomes actually observed per case, the selection
-errors, and the cases no trial reached:
+errors, and the cases no trial reached. The seeded run above produced these
+counts on SBCL 2.5.0 with check-it.
 
 ```lisp
 (:selection :exclusive :unit :normal-trials
  :declared-cases (:sufficient-funds :insufficient-funds)
- :cases ((:name :sufficient-funds ... :called 62 :passed 62 :failed 0 :error 0)
-         (:name :insufficient-funds ... :called 38 :passed 38 :failed 0 :error 0))
+ :cases ((:name :sufficient-funds ... :called 52 :passed 52 :failed 0 :error 0)
+         (:name :insufficient-funds ... :called 48 :passed 48 :failed 0 :error 0))
  :case-selection-errors 0 :capture-errors 0 :never-called nil)
 ```
 
 A successful expected-error trial counts as a pass for its case. `:passed` means
 no violation was observed in the trials that ran, not that every case ran: read
 `:never-called`. Counters cover ordinary trials only, so shrinking and
-precondition refusals are not counted and `trials - rejected` counts trials that
-reached selection rather than target calls. A contract error raised while
-classifying a selected case is counted as that case's `:error` and keeps the case
-in its evidence and identity, because the target was called. A participating
-backend opens the report before its first draw, so zero trials and a first draw
-that exhausts the generation budget report known zeros (the exhaustion itself
-under `:failure-phase :generation`); a result that did not go through a
-function-check run, and a backend that never opens reporting, answer
-`:not-collected` instead. The selected case's name is
+precondition refusals are not counted. `trials - rejected` also includes trials
+that stop before case selection, such as a capture failure. Use each case's
+`:called` for target calls and `:case-selection-errors` for selection failures.
+A contract error while classifying a selected case counts as that case's
+`:error` and keeps the case in its evidence and identity because the target was
+called. A participating backend opens the report before its first draw, so zero
+trials and a first draw that exhausts the generation budget report known zeros.
+The exhaustion is recorded under `:failure-phase :generation`. Results from
+outside a function-check run have a `:not-collected` report. That also applies
+when a backend neither opens reporting nor records an observation.
+The selected case's name is
 part of the failure identity (`(:case NAME . existing-signature)`), so shrinking,
 replay and counterexample artifacts stay inside that case;
 `function-spec-data` exposes ordered `:cases` with `:case-selection :exclusive`,
@@ -401,24 +408,26 @@ an unchecked case, see the
 Function Spec without generating, shrinking or replaying anything:
 
 ```lisp
+(defstruct checking-account balance)
+
 (defun withdraw (account amount)
-  (decf (account-balance account) amount)
+  (decf (checking-account-balance account) amount)
   amount)
 
 (cl-spec:defspec-function withdraw
-  (:args (account (satisfies account-p)) (amount (range integer 1 200)))
-  (:capture (balance-before (account-balance account)))
+  (:args (account (satisfies checking-account-p)) (amount (range integer 1 200)))
+  (:capture (balance-before (checking-account-balance account)))
   (:returns integer)
   (:post (= result amount))
-  (:state-post (= (account-balance account) (- balance-before amount))))
+  (:state-post (= (checking-account-balance account) (- balance-before amount))))
 
-(cl-spec:check-call 'withdraw (list account 40))
-;; => a CALL-CHECK-RESULT; (:status :passed) when the one call satisfies the contract
-
-(let ((result (cl-spec:check-call 'withdraw (list account 40))))
-  (cl-spec:call-check-result-status result)        ; :passed / :failed / :error / :rejected
-  (cl-spec:call-check-result-failure-phase result) ; e.g. :state-post, or NIL
-  (cl-spec:call-check-data result))                ; version 1 structured record
+(let* ((account (make-checking-account :balance 100))
+       (result (cl-spec:check-call 'withdraw (list account 40))))
+  (list (cl-spec:call-check-result-status result)
+        (cl-spec:call-check-result-failure-phase result)
+        (getf (cl-spec:call-check-data result) :schema-version)
+        (checking-account-balance account)))
+;; => (:PASSED NIL 1 60)
 ```
 
 `check-call` takes a Function Spec designator (a name or the `function-spec`

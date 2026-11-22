@@ -62,10 +62,10 @@ refused under its own name.  Checking at the public entry point names the
 operator the caller called rather than the internal one that would otherwise
 fail first (issue #79)."
   (check-argument options '(or null (satisfies run-options-p)) operator :options)
-  (let ((generation-budget (getf options :generation-budget :absent))
-        (shrink-budget (getf options :shrink-budget :absent)))
-    (unless (eq generation-budget :absent)
-      (check-argument generation-budget '(integer 0 *) operator :generation-budget))
-    (unless (eq shrink-budget :absent)
-      (check-argument shrink-budget '(integer 0 100000) operator :shrink-budget)))
+  (multiple-value-bind (key budget) (get-properties options '(:generation-budget))
+    (when key
+      (check-argument budget '(integer 0 *) operator key)))
+  (multiple-value-bind (key budget) (get-properties options '(:shrink-budget))
+    (when key
+      (check-argument budget '(integer 0 100000) operator key)))
   options)

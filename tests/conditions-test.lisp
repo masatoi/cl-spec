@@ -242,6 +242,18 @@ compile this file rather than let the call reach the entry point."
           (list :registry 'cl-spec/src/introspection:function-spec-data
                 (lambda () (cl-spec/src/introspection:function-spec-data
                             'argument-check-target :registry 42)))
+          (list :generation-budget 'run-property
+                (lambda () (run-property 'argument-check-property
+                                         :options '(:generation-budget :absent))))
+          (list :shrink-budget 'run-property
+                (lambda () (run-property 'argument-check-property
+                                         :options '(:shrink-budget :absent))))
+          (list :generation-budget 'cl-spec/src/function-spec:check-function
+                (lambda () (cl-spec/src/function-spec:check-function
+                            'argument-check-target :options '(:generation-budget :absent))))
+          (list :shrink-budget 'cl-spec/src/function-spec:check-function
+                (lambda () (cl-spec/src/function-spec:check-function
+                            'argument-check-target :options '(:shrink-budget :absent))))
           (list :bogus 'cl-spec/src/function-spec:check-function
                 (lambda () (apply #'cl-spec/src/function-spec:check-function
                                   'argument-check-target (bogus-keyword-arguments))))
