@@ -305,6 +305,7 @@ and status."
                        (:state-frame
                         (and (= 5 (length signature)) (eq :error (second signature))
                              (third signature) (symbolp (third signature))
+                             ;; Persisted fixtures require a target call.
                              (member (fourth signature)
                                      '(:after :compare :key :project-before :project-after))
                              (symbolp (fifth signature))))))))))))

@@ -165,6 +165,38 @@
       (ok (eq :rows (getf frame :observer)))
       (ok (eq :before (getf frame :stage))))))
 
+(deftest pre-call-frame-errors-retain-the-selected-case
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*target-calls* 0)
+        (failed-stage nil))
+    (cl-spec:register-state-observer :records :version 1
+      :snapshot (lambda ()
+                  (when (eq failed-stage :before) (error "Before snapshot failed"))
+                  nil)
+      :compare (lambda (before after) (declare (ignore before after)) nil)
+      :project (lambda (snapshot key) (declare (ignore snapshot key)) (values nil nil)))
+    (cl-spec:defspec-function frame-target
+      (:args (key keyword))
+      (:modifies (:records
+                  (if (eq failed-stage :allowed-keys) (error "Allowed keys failed") key)))
+      (:cases
+        (:primary (:when (eq key :primary)) (:returns keyword))
+        (:other (:when (not (eq key :primary))) (:returns keyword))))
+    (dolist (stage '(:allowed-keys :before))
+      (setf failed-stage stage)
+      (let* ((data (cl-spec:call-check-data (cl-spec:check-call 'frame-target '(:primary))))
+             (observation (getf data :observation))
+             (observer (when (eq stage :before) :records)))
+        (ok (eq :error (getf data :status)))
+        (ok (eq :primary (getf observation :case)))
+        (ok (equal (list :case :primary :state-frame :error observer stage 'simple-error)
+                   (getf observation :signature)))
+        (ok (some (lambda (gap)
+                    (and (eq :case-never-called (getf gap :kind))
+                         (eq :primary (getf gap :case))))
+                  (getf (getf data :evidence) :gaps)))
+        (ok (zerop *target-calls*))))))
+
 (deftest fixture-frame-evidence-survives-artifact-roundtrip
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (register-table-observer 1)
