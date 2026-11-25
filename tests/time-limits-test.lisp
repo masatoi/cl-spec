@@ -373,6 +373,57 @@
                  (reverse events))))))
 
 #+(and sbcl sb-thread)
+(deftest enclosing-run-timeout-bounds-cancellation-of-an-untimed-fixture
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (entry-point nil) (interrupt-in nil) (events nil))
+    (cl-spec:defspec-function sleeping-target
+      (:args) (:returns (member t))
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe (member 0)))
+        (:around (run) (unwind-protect (funcall run) (push :rollback events)))
+        (:setup (context) (declare (ignore context recipe))
+          (push :setup events)
+          (case interrupt-in
+            (:setup (sleep 1/4))
+            (:caller (throw 'cancel-fixture-check :caller)))
+          (push :setup-finished events)
+          nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :cleanup events)
+          (sleep 1/3)
+          (push :cleanup-finished events))))
+    (cl-spec:defproperty interrupting-nested-fixture ()
+      (:trials (:normal 1))
+      (ecase entry-point
+        (:direct (cl-spec:check-fixture 'sleeping-target 0))
+        (:generated (cl-spec:check-function 'sleeping-target :trials 1 :seed 2)))
+      (push :outer-continued events)
+      t)
+    (dolist (entry '(:direct :generated))
+      (dolist (phase '(:setup :target))
+        (dolist (limit '(:timeout :trial-timeout))
+          (setf interrupt-in phase entry-point entry events nil)
+          (let* ((result (cl-spec:run-property 'interrupting-nested-fixture :seed 1
+                            :options (list limit 1/10 :cleanup-timeout 1/20)))
+                 (data (cl-spec:result-data result))
+                 (timeout (getf data :timeout)))
+            (ok (eq :timeout (getf data :status)))
+            (ok (eq (if (eq limit :timeout) :run :trial) (getf timeout :limit)))
+            (ok (eq :property (getf timeout :phase)))
+            (ok (eql 1 (getf timeout :trial)))
+            (ok (equal '(:status :timeout :limit :cleanup) (getf timeout :cleanup)))
+            (ok (equal (if (eq phase :setup)
+                           '(:setup :cleanup :rollback)
+                           '(:setup :setup-finished :cleanup :rollback))
+                       (reverse events)))))))
+    (setf interrupt-in :caller entry-point :direct events nil)
+    (ok (eq :caller
+            (catch 'cancel-fixture-check
+              (cl-spec:run-property 'interrupting-nested-fixture :seed 1
+                                    :options '(:timeout 2 :cleanup-timeout 1/20)))))
+    (ok (equal '(:setup :cleanup :cleanup-finished :rollback) (reverse events)))))
+
+#+(and sbcl sb-thread)
 (deftest pending-enclosing-timeout-keeps-separate-nested-cleanup-results
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (inner-result nil) (inner-cap nil) (inner-deadline nil)
