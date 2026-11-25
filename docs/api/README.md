@@ -15,7 +15,7 @@ Regenerate locally with:
 
 | Package | System | Symbols | Reference |
 |---|---|---:|---|
-| `cl-spec` | `cl-spec` | 299 | [`cl-spec.md`](cl-spec.md) |
+| `cl-spec` | `cl-spec` | 300 | [`cl-spec.md`](cl-spec.md) |
 | `cl-spec/instrument` | `cl-spec/instrument` | 13 | [`cl-spec-instrument.md`](cl-spec-instrument.md) |
 | `cl-spec/rove` | `cl-spec/rove` | 1 | [`cl-spec-rove.md`](cl-spec-rove.md) |
 | `cl-spec/specs` | `cl-spec/specs` | 9 | [`cl-spec-specs.md`](cl-spec-specs.md) |
