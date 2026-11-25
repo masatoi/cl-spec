@@ -15,7 +15,8 @@
   (:export #:register-state-observer #:register-hash-table-state-observer
            #:state-frame #:make-state-frame #:state-frame-clauses #:state-frame-observers
            #:state-frame-variables
-           #:valid-frame-clauses-p #:capture-state-frame #:check-state-frame
+           #:valid-frame-clauses-p #:frame-key-set-form-p #:check-frame-key-set
+           #:capture-state-frame #:check-state-frame
            #:state-frame-error #:state-frame-error-data #:state-frame-error-condition))
 (in-package #:cl-spec/src/state-frame)
 
@@ -140,12 +141,27 @@ and meaning."
   (key-function nil :read-only t)
   (observers nil :read-only t))
 
+(defun frame-key-set-form-p (form)
+  "Recognize an explicit key set marker in a frame declaration."
+  (and (consp form) (eq :each (first form))))
+
 (defun valid-frame-clauses-p (clauses)
   "Recognize a finite sequence of (OBSERVER KEY-FORM ...) declarations."
   (and (consp clauses) (finite-list-p clauses) (finite-definition-form-p clauses)
        (every (lambda (entry)
-                (and (consp entry) (finite-list-p entry) (observer-name-p (first entry))))
+                (and (consp entry)
+                     (finite-list-p entry)
+                     (observer-name-p (first entry))
+                     (every (lambda (form)
+                              (or (not (frame-key-set-form-p form))
+                                  (and (consp (cdr form)) (null (cddr form)))))
+                            (rest entry))))
               clauses)))
+
+(defun check-frame-key-set (value)
+  "Copy the spine of VALUE after validating a finite proper list of allowed keys."
+  (check-argument value '(satisfies finite-list-p) 'check-frame-key-set :each)
+  (copy-list value))
 
 (defun make-state-frame (clauses variables key-function &optional (registry *registry*))
   "Resolve the observer registrations used by the compiled frame."

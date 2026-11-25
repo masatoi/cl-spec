@@ -138,6 +138,11 @@
 
 (defvar *around-event-hook* nil)
 
+#+(and sbcl sb-thread)
+(defvar *foreign-trial-outcome* nil)
+
+(defvar *saved-around-trial* nil)
+
 (defvar *outer-trial* nil)
 
 (defvar *nested-fixture-data* nil)
@@ -174,6 +179,15 @@
                             (case *mode*
                               (:skip nil)
                               (:signal (error "around error"))
+                              #+(and sbcl sb-thread)
+                              (:foreign-thread
+                               (setf *foreign-trial-outcome*
+                                     (sb-thread:join-thread
+                                      (sb-thread:make-thread
+                                       (lambda ()
+                                         (handler-case (multiple-value-list (funcall trial))
+                                           (error (condition) (list condition))))))))
+                              (:save-trial (setf *saved-around-trial* trial) (funcall trial))
                               (:escape (throw 'escape :escaped))
                               (:double
                                (funcall trial)
@@ -220,7 +234,7 @@
                  (:state-post (progn
                                 (around-event :state-post)
                                 (and (member *mode*
-                                             '(:correct :double-via-nested-check
+                                             '(:correct :save-trial :double-via-nested-check
                                                :try-outer-thunk :use-outer-thunk))
                                      (= 100 before)
                                      (= *around-balance* (- before amount))))))))))
@@ -269,6 +283,30 @@
   (ecase entry-point
     (:direct (cl-spec:check-fixture 'around-withdraw 7))
     (:generated (cl-spec:check-function 'around-withdraw :trials 1 :seed 41))))
+
+#+(and sbcl sb-thread)
+(deftest foreign-thread-trial-reports-the-lifecycle-error-to-the-owner
+  (with-around-contract
+    (let ((*mode* :foreign-thread) (*foreign-trial-outcome* nil))
+      (let* ((data (cl-spec:result-data (run-around-check :generated)))
+             (failure (getf data :run-error))
+             (lifecycle (getf failure :lifecycle)))
+        (ok (equal '(nil :fixture-around-thunk-outside-extent) *foreign-trial-outcome*))
+        (ok (eq :error (getf data :status)))
+        (ok (eq :fixture-around-thunk-outside-extent (getf data :failure-reason)))
+        (ok (not (getf lifecycle :target-called)))
+        (ok (equal '(:enter :rollback) (reverse *around-events*)))))))
+
+(deftest saved-trial-reports-its-inactive-extent-to-the-caller
+  (with-around-contract
+    (let ((*mode* :save-trial) (*saved-around-trial* nil))
+      (ok (eq :passed (getf (fixture-data (run-around-check :direct)) :status)))
+      (setf *around-events* nil)
+      (ok (equal '(nil :fixture-around-thunk-outside-extent)
+                 (handler-case (multiple-value-list (funcall *saved-around-trial*))
+                   (error (condition) (list condition)))))
+      (ok (null *around-events*))
+      (ok (= 100 *around-balance*)))))
 
 (deftest around-fixture-propagates-outward-throws
   (with-around-contract

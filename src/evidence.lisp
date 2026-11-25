@@ -5,7 +5,7 @@
   (:import-from #:cl-spec/src/execution #:snapshot-value)
   (:export #:evidence-declared-cases #:evidence-facts #:evidence-summary #:assess-evidence
            #:invalid-evidence-policy #:invalid-evidence-policy-reason
-           #:evidence-subject #:single-observation-report))
+           #:evidence-subject #:single-observation-report #:validate-evidence-policy))
 (in-package #:cl-spec/src/evidence)
 
 (defgeneric invalid-evidence-policy-reason (condition)

@@ -1226,12 +1226,16 @@ explain:
   `(rational a b)` and `(real a b)` have no built-in generator. Use
   `(range real a b)` for a real interval and
   `(and (type rational) (range real a b))` for a rational interval.
-- Default keyword and symbol generators draw from a fixed vocabulary. Default
-  lists and vectors contain up to eight small integers. Use `(member ...)` for
-  application symbols and `list-of` or `vector-of` to describe the elements.
-- Unbounded rational generation uses small numerators and denominators.
-  Bounded rational ranges interpolate in steps of `1/2^24` of the interval
-  width. Denominators can grow with the endpoints and interval width.
+- The default `keyword` generator draws from `:a` through `:z`. The default
+  `symbol` generator also draws eight writable symbols from its own package.
+  Unique collections and map counts use those finite vocabularies. Keywords
+  are constants. Use `(member ...)` for application symbols.
+- Default lists and vectors contain up to eight small integers. Use
+  `list-of` or `vector-of` to describe the elements.
+- With neither endpoint specified, rational generation uses small numerators
+  and denominators. With at least one endpoint specified, the generator fills
+  any missing endpoint and interpolates in steps of `1/2^24` of that finite
+  interval's width. Denominators can grow with the endpoints and interval width.
   Rational, real and float shrinking tries simple numbers that still fail
   within the declared domain.
 - Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`

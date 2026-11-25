@@ -5891,6 +5891,9 @@ non-participating backend answers `:not-collected`.
 `:isolation :around` requires one `(:around (THUNK) FORM...)` clause. After
 recipe validation, the hook calls THUNK synchronously exactly once. The
 thunk runs setup, call checks and cleanup within the hook's dynamic extent.
+Calling the thunk outside that extent returns `nil` and
+`:fixture-around-thunk-outside-extent`. A misuse observed during the hook is
+also recorded as a lifecycle error for that invocation.
 This applies to direct fixture checks, generated trials and shrink candidates.
 An error escaping the hook, an omitted or repeated thunk call, or a hook that
 returns after an incomplete trial produces a fixture lifecycle error. Control
@@ -5910,7 +5913,9 @@ A top-level `(:modifies (OBSERVER KEY-FORM ...) ...)` adds a frame
 condition to a Function Spec. Observers are registered in the contract's
 registry and captured when it is declared. The declaration digest includes
 the frame and its observer descriptors. Allowed keys use the argument and
-capture bindings. Observer snapshots before the target and after the passing
+capture bindings. A key form `(:each FORM)` contributes the members of its
+finite proper list. The frame digest includes that declaration.
+Observer snapshots before the target and after the passing
 outcome define the change set. A forbidden change records its observer, key
 and bounded before/after projections with reason `:state-postcondition`.
 Frame checks use the existing state-observing rules for fixture restoration,

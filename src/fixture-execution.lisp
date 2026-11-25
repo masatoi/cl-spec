@@ -24,27 +24,35 @@
 
 (defun invoke-fixture-around (around trial)
   "Run AROUND with a synchronous one-shot TRIAL, returning any lifecycle error."
-  (let* ((token (list nil))
-         (*fixture-around-tokens* (cons token *fixture-around-tokens*))
-         (called nil)
-         (completed nil)
-         (repeated nil)
-         (wrapper-error nil))
-    ;; Transfers past the wrapper belong to their original destination.
-    (handler-case
-        (funcall around
-                 (lambda ()
-                   (unless (member token *fixture-around-tokens* :test #'eq)
-                     (error 'fixture-error :reason :thunk-outside-around))
-                   (when called
-                     (setf repeated (make-condition 'fixture-error :reason :thunk-repeated))
-                     (error repeated))
-                   (setf called t)
-                   (multiple-value-prog1 (funcall trial)
-                     (setf completed t))))
-      (error (condition) (setf wrapper-error condition)))
+  (let ((token (list nil))
+        #+(and sbcl sb-thread) (owner sb-thread:*current-thread*)
+        (called nil)
+        (completed nil)
+        (repeated nil)
+        (wrapper-error nil))
+    (flet ((call-trial ()
+             (unless (and #+(and sbcl sb-thread) (eq owner sb-thread:*current-thread*)
+                          (member token *fixture-around-tokens* :test #'eq))
+               ;; Record the misuse without entering the debugger in another thread.
+               #+(and sbcl sb-thread) (sb-ext:compare-and-swap (car token) nil t)
+               #-(and sbcl sb-thread) (setf (car token) t)
+               (return-from call-trial (values nil :fixture-around-thunk-outside-extent)))
+             (when called
+               (setf repeated (make-condition 'fixture-error :reason :thunk-repeated))
+               (error repeated))
+             (setf called t)
+             (multiple-value-prog1 (funcall trial)
+               (setf completed t))))
+      ;; Transfers past the wrapper belong to their original destination.
+      (handler-case
+          (let ((*fixture-around-tokens* (cons token *fixture-around-tokens*)))
+            (funcall around #'call-trial))
+        (error (condition) (setf wrapper-error condition))))
     (cond
       (repeated (values :fixture-around-thunk-repeated repeated))
+      ((car token)
+       (values :fixture-around-thunk-outside-extent
+               (make-condition 'fixture-error :reason :thunk-outside-around)))
       (wrapper-error (values :fixture-around-error wrapper-error))
       ((not called)
        (values :fixture-around-thunk-not-called

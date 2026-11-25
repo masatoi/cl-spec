@@ -32,6 +32,36 @@
       (remove-test 'pass-contract)
       (remove-test 'fail-contract))))
 
+(deftest selectors-are-refused-during-macroexpansion
+  (dolist (selector '(:names :package :tag))
+    (ok (handler-case
+            (progn (macroexpand-1 (list 'deftest-contract 'probe 'passing selector nil)) nil)
+          (cl-spec:invalid-argument (condition)
+            (eq selector (cl-spec:invalid-argument-argument condition))))))
+  (ok (nth-value 1 (macroexpand-1 '(deftest-contract probe passing :profile :tag)))))
+
+(defun fixed-example-error-target (value)
+  (declare (ignore value))
+  (error "Fixed example call failed with condition details"))
+
+(deftest failed-examples-report-the-call-condition
+  (let ((*registry* (make-hash-table-registry))
+        (*report-stream* (make-string-output-stream)))
+    (defproperty passing ((x (member 7))) (:trials (:normal 1)) (= x 7))
+    (cl-spec:defspec-function fixed-example-error-target
+      (:args (value integer)) (:returns integer))
+    (unwind-protect
+         (progn
+           (deftest-contract failing-example (:property passing)
+             :seeds '(17)
+             :examples '((fixed-example-error-target (7)) (unknown-example-target (7))))
+           (ok (null (run-test 'failing-example)))
+           (let ((output (get-output-stream-string *report-stream*)))
+             (ok (search "example (7) failed" output))
+             (ok (search "Fixed example call failed with condition details" output))
+             (ok (search "UNKNOWN-FUNCTION-SPEC" output :test #'char-equal))))
+      (remove-test 'failing-example))))
+
 (define-condition unprintable-counterexample (serious-condition) ())
 
 (defclass opaque-counterexample () ())
