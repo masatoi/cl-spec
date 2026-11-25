@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/generation-request
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:with-timer-bookkeeping)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/conditions
                 #:cl-spec-error
@@ -248,19 +249,21 @@ the rejection count."
               (generation-request-budget request))
       (when (eq request *optional-draw-request*)
         (error 'optional-draw-declined))
-      (setf (generation-request-termination request) :budget-exhausted
-            (generation-request-exhaustion-phase request) (generation-request-phase request)
-            (generation-request-exhausted-at request) path)
+      (with-timer-bookkeeping
+        (setf (generation-request-termination request) :budget-exhausted
+              (generation-request-exhaustion-phase request) (generation-request-phase request)
+              (generation-request-exhausted-at request) path))
       (error 'generation-budget-exhausted
              :spec spec
              :argument (path-argument path)
              :reason "the request-owned candidate budget was exhausted"
              :report (generation-request-report request)
              :request request))
-    (incf (generation-request-attempts request))
-    (ecase (generation-request-phase request)
-      (:generation (incf (generation-request-generation-attempts request)))
-      (:shrinking (incf (generation-request-shrinking-attempts request))))
+    (with-timer-bookkeeping
+      (incf (generation-request-attempts request))
+      (ecase (generation-request-phase request)
+        (:generation (incf (generation-request-generation-attempts request)))
+        (:shrinking (incf (generation-request-shrinking-attempts request)))))
     (generation-request-attempts request)))
 
 (defun record-generation-rejection ()
@@ -270,10 +273,11 @@ Only normal-generation filter rejections and shrink-time regeneration rejections
 reach here; a pure shrink-candidate validation failure never does."
   (let ((request *generation-request*))
     (when request
-      (incf (generation-request-rejections request))
-      (ecase (generation-request-phase request)
-        (:generation (incf (generation-request-generation-rejections request)))
-        (:shrinking (incf (generation-request-shrinking-rejections request)))))))
+      (with-timer-bookkeeping
+        (incf (generation-request-rejections request))
+        (ecase (generation-request-phase request)
+          (:generation (incf (generation-request-generation-rejections request)))
+          (:shrinking (incf (generation-request-shrinking-rejections request))))))))
 
 (defun record-generated-value ()
   "Record one root value returned normally by a top-level generator."

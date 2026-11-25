@@ -89,6 +89,8 @@
    (declared-cases :initarg :declared-cases :initform :not-collected
                    :reader property-result-declared-cases
                    :documentation "Declared case names at execution start, NIL or :NOT-COLLECTED.")
+   (timeout :initarg :timeout :initform nil :reader property-result-timeout
+            :documentation "Owned run, trial or cleanup deadline evidence, when timed out.")
    (run-error :initarg :run-error :initform nil :reader property-result-run-error
               :documentation "Lifecycle failure retained separately from counterexamples.")
    (shrink-report :initarg :shrink-report :initform :not-collected
@@ -100,8 +102,8 @@
 or :NOT-COLLECTED when the backend did not collect one.")
    (failure-phase :initarg :failure-phase :initform nil
                   :reader property-result-failure-phase
-                  :documentation ":GENERATION when the run stopped in generation infrastructure rather
-than on a target observation, else NIL.")
+                  :documentation
+                  "The backend phase when a generation budget or deadline was exhausted.")
    (stored-failure-reason :initarg :failure-reason :initform nil
                           :reader property-result-stored-failure-reason
                           :documentation "Failure reason for a result with no target observation,
@@ -139,8 +141,7 @@ such as the generation-only error branch.")
    (status :initarg :status
            :initform :pending
            :reader property-result-status
-           :documentation "One of :PASSED, :FAILED, :ERROR, :SKIPPED or
-:PENDING.")
+           :documentation "One of :PASSED, :FAILED, :ERROR, :SKIPPED, :TIMEOUT or :PENDING.")
    (property :initarg :property
              :initform nil
              :reader property-result-property
@@ -340,6 +341,8 @@ results without captured metadata have an explicitly incomplete digest."
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value
      (append metadata
+             (when (property-result-timeout result)
+               (list :timeout (property-result-timeout result)))
              (when (property-result-run-error result)
                (list :run-error (observation-data (property-result-run-error result))))
              (list :coverage (coverage-data result) :evidence (evidence-summary result)
@@ -493,7 +496,9 @@ bindings are those enclosing the run, not the run's completed coverage context."
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend. With a result as SEED, omitted PROFILE and OPTIONS inherit their saved
+backend. :TIMEOUT and :TRIAL-TIMEOUT in OPTIONS are wall clock limits in seconds.
+:CLEANUP-TIMEOUT caps fixture cleanup. With a result as SEED, omitted PROFILE
+and OPTIONS inherit their saved
 values. An explicit NIL selects profile :NORMAL or the empty option list.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
@@ -601,6 +606,7 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
              :trial-report (getf outcome :trial-report :not-collected)
              :declared-cases declared-cases
              :run-error (getf outcome :run-error)
+             :timeout (getf outcome :timeout)
              :schema-metadata metadata :budget trials
              :options captured-options :provenance provenance
              :property (property-name property)

@@ -89,7 +89,8 @@
 | Instrumentation | 実装済み | 独立system、`:input` / `:output` / `:post`。`instrumentation-status`で導入状態と宣言の鮮度を、`refresh-instrumentation`で再構築を扱う（Instrumentation freshness addendum） |
 | cl-mcp adapter | cl-mcp側に実装 | 本リポジトリには無い。`spec-list`・`spec-symbol`・`spec-describe`・`spec-check`。公開名や想定tool名の存在を利用可能の根拠にしない |
 | 状態隔離 | 一部実装 | `:fixture`の`:isolation :fresh`と§41の状態機械は、試行ごとに定義者が新しいメモリ内状態を用意する |
-| timeout・trust強制 | 要件（現状は未保証） | §40、§45、§48、§60、§72。メタデータだけで強制されない |
+| timeout | threaded SBCLとcheck-itで実装済み | 生成run、trial、fixture cleanupの時間制限（§48） |
+| trust強制 | 要件（現状は未保証） | §40、§45、§60、§72。メタデータだけで強制されない |
 | 状態機械Property | 実装済み（逐次実行、メモリ内の新しい状態） | `defstate-machine`、`run-property`、`check-state-machine`。コマンド列の生成・縮小・直接再現（§41） |
 | mutation・Coalton | 将来構想 | §43、§53〜55 |
 
@@ -157,8 +158,8 @@ Propertyを削除したり、入力domainや試行予算を縮小したりしな
           (cl-spec:replay-property property-name result)))
 ```
 
-`run-property`の現在のキーワードは `:profile`、`:seed`、`:options`、`:registry`。
-`:timeout`を直接渡すAPIは未実装。replayの制限は§15を参照する。
+`run-property`のキーワードは `:profile`、`:seed`、`:options`、`:registry`。
+時間制限は `:options` 内で指定する（§48）。replayの制限は§15を参照する。
 
 関数の契約の取得と検査：
 
@@ -3719,21 +3720,23 @@ LLMが原因を判別しやすくする。
 
 # 48. Timeout
 
-> **位置付け:** 要件（現状は未保証）。以下のtimeoutキーワードは現在利用不可。
-
-LLMによる自律実行を考慮するとtimeoutは必須。
+threaded SBCL上のcheck-it backendでは、`run-property`と`check-function`の
+`:options`にwall-clock秒数を指定できる。
 
 ```lisp
-(run-property
- 'foo
- :timeout 5)
-
+(run-property 'foo :options '(:timeout 5 :trial-timeout 1 :cleanup-timeout 1/2))
 ```
 
-timeoutをLLMの自律実行に対する受け入れ要件とするが、coreの当該APIは未実装である。
-現在は実行ホスト側で時間上限と必要なワーカー破棄を管理する。
-将来のAPIでは生成・trial・shrinking・cleanupを含む全体予算と、trial単位予算を区別する。
-中断後に同じimageを再利用してよいかも含め、§73のD5で責務を確定する。
+`:timeout`は生成と縮小を含む全体予算、`:trial-timeout`は各trialおよび
+縮小候補の予算、`:cleanup-timeout`はfixture cleanupの上限である。
+setupや評価を中断してもcleanupを実行し、期限後はその上限までの猶予を取る。
+時間制限を有効にしてcleanupの上限を省略した場合は1秒とする。
+
+結果のstatusは`:timeout`となり、`:timeout`レコードに制限の種類、1始まりの
+trial番号、到達phase、該当する場合はcleanupの結果を記録する。既に観測した反例と
+採用済みの縮小結果を保持する。replayは保存したoptionで新しい時計を開始する。
+割り込みを遅延するコードには実行ホストでの監督が必要である。
+
 
 ---
 

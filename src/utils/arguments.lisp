@@ -53,6 +53,11 @@ with."
        (loop for (key) on options by #'cddr
              always (and (keywordp key) (not (member key +runner-owned-options+))))))
 
+(defun time-limit-seconds-p (seconds)
+  "Whether SECONDS is a timer duration safely representable on supported hosts."
+  (handler-case (and (realp seconds) (< 0 (rational seconds) (expt 2 31)))
+    (arithmetic-error () nil)))
+
 (defun check-run-options (options operator)
   "Return OPTIONS after refusing a malformed runner options plist for OPERATOR.
 
@@ -68,4 +73,6 @@ fail first (issue #79)."
   (multiple-value-bind (key budget) (get-properties options '(:shrink-budget))
     (when key
       (check-argument budget '(integer 0 100000) operator key)))
+  (dolist (key '(:timeout :trial-timeout :cleanup-timeout))
+    (check-argument (getf options key) '(or null (satisfies time-limit-seconds-p)) operator key))
   options)

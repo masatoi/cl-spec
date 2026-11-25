@@ -6,6 +6,7 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:mark-run-phase)
   (:import-from #:cl-spec/src/coverage
                 #:definition-coverage-schema #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options)
@@ -1675,8 +1676,10 @@ keeps its existing classification and leaves state-post explicitly
                                                               :contract-error)
                                             :state-case selected-case)))
              (evaluate ()
+               (mark-run-phase :binding)
                (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                       (argument-values (bound-call-values bound)))
+                 (mark-run-phase :pre)
                  (when (precondition-refuses-p pre argument-values)
                    (return-from evaluate
                      (make-trial-classification
@@ -1685,6 +1688,7 @@ keeps its existing classification and leaves state-post explicitly
                                                   :state-status :not-evaluated
                                                   :state-reason :precondition-rejected))))
                  (coverage-mark-stage :pre-admitted)
+                 (mark-run-phase :capture)
                  (multiple-value-bind (captures condition index)
                      (run-captures contract argument-values)
                    (setf captured-values captures
@@ -1713,6 +1717,7 @@ keeps its existing classification and leaves state-post explicitly
                                                       :capture-index index
                                                       :state-status :not-evaluated
                                                       :state-reason :capture-failed)))))
+                   (mark-run-phase :case-selection)
                    (multiple-value-bind (case selection-condition)
                        (if cases
                            (function-case-select cases argument-values
@@ -1725,6 +1730,7 @@ keeps its existing classification and leaves state-post explicitly
                            (returns signals post post-forms values-post-p
                             state-post-function state-post-forms)
                          (function-case-outcome-parts contract case)
+                       (mark-run-phase :target)
                        (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
                               (target-condition
                                 (when (eq :signaled (call-outcome-kind raw-outcome))
@@ -1735,6 +1741,7 @@ keeps its existing classification and leaves state-post explicitly
                                         :kind (call-outcome-kind raw-outcome)
                                         :values (snapshot-value (call-outcome-values raw-outcome))
                                         :condition target-condition))
+                         (mark-run-phase :outcome)
                          (let ((classification
                                  (classify-target-outcome
                                   returns signals post post-forms values-post-p
@@ -2078,6 +2085,7 @@ closure reaches the digest."
            (call-with-fixture
             (checked-fixture property) (first arguments)
             (lambda (raw)
+              (mark-run-phase :fixture-arguments)
               (handler-case
                   (progn
                     (coverage-capture-input inner raw)
@@ -2282,8 +2290,11 @@ not the initial object state, which the author must build.
 With :FIXTURE, the runner generates recipes and reconstructs fresh state for each
 trial and shrink candidate. A result supplied as :SEED requires matching complete
 declaration identity, options, profile and budget. Cleanup failures stop the run
-with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
-contract failure. Fixture results and artifacts use version 2."
+with phase :FIXTURE. :RUN-ERROR retains that evidence separately from any earlier
+contract failure. Fixture results and artifacts use version 2.
+
+OPTIONS accepts :TIMEOUT, :TRIAL-TIMEOUT and :CLEANUP-TIMEOUT in wall clock
+seconds. The result retains these limits when replayed."
   (setf registry (check-function-arguments 'check-function keyword-arguments
                                            trials seed options registry))
   (let* ((seed-result (and (typep seed 'property-result) seed))
