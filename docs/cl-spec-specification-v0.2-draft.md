@@ -1192,12 +1192,16 @@ simple structures
 
 ```
 
-`fixnum`・`rational`・`real`・`float`とその各形式、`null`・`boolean`・`keyword`・
-`symbol`・`vector`にも既定の生成器がある。`keyword`と`symbol`は固定の集合から選び、
+`integer`・`fixnum`・`rational`・`real`・`float`とその各形式、`character`・
+`string`・`null`・`boolean`・`keyword`・`symbol`・`list`・`vector`に既定の型生成器がある。
+`keyword`と`symbol`は固定の集合から選び、
 `list`と`vector`は小さな整数を要素に持つ長さ0〜8の列を生成する。
 `(type (integer lo hi))`と浮動小数点型の同形の区間指定も生成できる。`*`は無制限、
 `(lo)`や`(hi)`はその端点を除外する。指定された浮動小数点形式に区間内の値がない場合は
 `:empty-domain`とする。これらの区間はANDの数値foldにも反映する。
+単独の`rational`と`real`は生成できる。複合型`(rational a b)`と`(real a b)`に
+既定の生成器はない。実数区間は`(range real a b)`で指定し、有理数区間は
+`(and (type rational) (range real a b))`で指定する。
 
 `(range integer lo hi)`の端点が小数のときは、validationと同じく区間に含まれる整数を
 生成する（下端は切り上げ、上端は切り捨てる）。例えば`(range integer 1/2 7/2)`は1・2・3を

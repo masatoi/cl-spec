@@ -98,9 +98,13 @@ Here `with-rolled-back-transaction` is supplied by the application. The trial
 function runs setup, the same call checks as `check-call`, evidence capture and
 cleanup while the transaction is active. The wrapper's return values are
 ignored. Both generation and shrinking use this lifecycle for each recipe
-that passes recipe validation. An error, an outward transfer of control, or a
-missing or repeated trial call aborts the run with an `:around` lifecycle error.
-A repeated call cannot rerun setup or the target.
+that passes recipe validation. A wrapper error, a return after an incomplete
+trial, or an omitted or repeated trial call aborts the run with an `:around`
+lifecycle error. A repeated call cannot rerun setup or the target.
+
+`check-call` calls the target directly with the supplied arguments. For an
+`:around` contract, it runs outside the wrapper and can leave persistent
+changes to shared state. Use `check-fixture` to run the wrapper for one recipe.
 
 The executable example uses `unwind-protect` to roll back withdrawals from
 one shared ledger. Each trial checks that it started at 100.

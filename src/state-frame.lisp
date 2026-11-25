@@ -61,8 +61,9 @@
 SNAPSHOT () returns an independent view of the observed state. COMPARE (BEFORE
 AFTER) returns a finite list of changed keys. PROJECT (SNAPSHOT KEY) returns a
 bounded AV1 value and a boolean presence flag. The functions are captured at
-registration. Supply SOURCE as stable declaration data for any anonymous
-operation, and increase VERSION when its meaning or observed scope changes."
+registration. VERSION is a required positive integer. Supply SOURCE as stable
+declaration data for any anonymous operation. Increase VERSION when an
+operation's meaning or observed scope changes."
   (check-argument name '(satisfies observer-name-p) 'register-state-observer :name)
   (check-argument version '(integer 1 *) 'register-state-observer :version)
   (check-argument source '(satisfies finite-definition-form-p) 'register-state-observer :source)
@@ -123,7 +124,8 @@ operation, and increase VERSION when its meaning or observed scope changes."
 (defun register-hash-table-state-observer (name reader &key version (registry *registry*))
   "Register an in-memory observer for the EQUAL hash table returned by READER.
 Keys and values must be bounded AV1 data, with keys stable under EQUAL after
-copying. VERSION identifies the reader's scope and meaning."
+copying. VERSION is a required positive integer identifying the reader's scope
+and meaning."
   (let ((read-table (observer-callback reader 'register-hash-table-state-observer :reader)))
     (register-state-observer name :version version :registry registry
                              :snapshot (lambda () (snapshot-equal-table (funcall read-table)))
