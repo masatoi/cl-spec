@@ -6,8 +6,9 @@
   (:import-from #:cl-spec/src/generator
                 #:*generator-backend* #:run-generated-test #:backend-trial-reporting)
   (:import-from #:cl-spec/src/execution
-                #:begin-trial-report #:note-trial-outcome #:observe-trial #:make-trial-observation)
-  (:import-from #:cl-spec/src/trial-report #:end-trial-report))
+                #:begin-trial-report #:note-trial-outcome #:observe-trial #:make-trial-observation
+                #:*trial-observations*)
+  (:import-from #:cl-spec/src/trial-report #:end-trial-report #:*trial-report-context*))
 (in-package #:cl-spec/tests/trial-report-test)
 
 (defclass spoofing-backend () ())
@@ -35,8 +36,20 @@
 (defmethod run-generated-test ((backend retention-backend) property &key options)
   (declare (ignore backend options) (notinline report-collectable-observation))
   (begin-trial-report property)
-  (let ((pointer (report-collectable-observation property)))
-    (sb-sys:scrub-control-stack)
+  (let ((pointer
+          #+sb-thread
+          (let ((owner *trial-observations*)
+                (report *trial-report-context*))
+            ;; The producer exits before GC, so its stack cannot pin the observation.
+            (sb-thread:join-thread
+             (sb-thread:make-thread
+              (lambda ()
+                (let ((*trial-observations* owner)
+                      (*trial-report-context* report))
+                  (report-collectable-observation property))))))
+          #-sb-thread
+          (report-collectable-observation property)))
+    #-sb-thread (sb-sys:scrub-control-stack)
     (sb-ext:gc :full t)
     (ok (null (sb-ext:weak-pointer-value pointer))
         "Completed successful observations are collectable before the run ends."))
