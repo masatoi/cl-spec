@@ -87,6 +87,10 @@ declaration digests, so fixture version discipline matters.
 
 Choose `(:isolation :around)` and add one wrapper clause. Its body receives
 a zero-argument function and calls it synchronously exactly once.
+Calling it from another thread or after its wrapper has returned yields
+`nil` and `:fixture-around-thunk-outside-extent` as two values. If the
+wrapper is still running and observes the call before returning, the check
+records the same lifecycle reason.
 
 ```lisp
 (:around (trial)
