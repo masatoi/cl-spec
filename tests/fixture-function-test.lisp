@@ -136,13 +136,17 @@
 
 (defvar *around-events* nil)
 
+(defvar *around-event-hook* nil)
+
 (defvar *outer-trial* nil)
 
 (defvar *nested-fixture-data* nil)
 
 (defun around-event (event)
   (assert *around-active*)
-  (push event *around-events*))
+  (push event *around-events*)
+  (when *around-event-hook*
+    (funcall *around-event-hook* event)))
 
 (defun around-withdraw (amount)
   (around-event :target)
@@ -175,6 +179,13 @@
                                (funcall trial)
                                (handler-case (funcall trial) (error () nil)))
                               (:escape-in-trial (catch 'target-escape (funcall trial)))
+                              (:return-past-trial
+                               (block canceled
+                                 (let ((*around-event-hook*
+                                         (lambda (event)
+                                           (when (eq event :target)
+                                             (return-from canceled :escaped)))))
+                                   (funcall trial))))
                               (:double-via-nested-check
                                (funcall trial)
                                (let ((*mode* :try-outer-thunk) (*outer-trial* trial)
@@ -238,15 +249,12 @@
     (loop for (mode reason calls)
             in '((:skip :fixture-around-thunk-not-called 0)
                  (:signal :fixture-around-error 0)
-                 (:escape :fixture-around-nonlocal-exit 0)
                  (:double :fixture-around-thunk-repeated 1)
                  (:escape-in-trial :fixture-around-nonlocal-exit 1)
-                 (:escape-after :fixture-around-nonlocal-exit 1)
-                 (:escape-target-outward :fixture-around-nonlocal-exit 1))
+                 (:return-past-trial :fixture-around-nonlocal-exit 1))
           do (let* ((*mode* mode)
                     (*around-events* nil)
-                    (result (catch 'escape (cl-spec:check-fixture 'around-withdraw 7)))
-                    (data (fixture-data result))
+                    (data (fixture-data (cl-spec:check-fixture 'around-withdraw 7)))
                     (lifecycle (getf data :lifecycle)))
                (ok (eq :error (getf data :status)))
                (ok (eq reason (getf data :reason)))
@@ -255,6 +263,115 @@
                (ok (eq (plusp calls) (getf lifecycle :target-called)))
                (ok (= calls (count :target *around-events*)))
                (ok (= calls (count :cleanup *around-events*)))
+               (ok (= 100 *around-balance*))))))
+
+(defun run-around-check (entry-point)
+  (ecase entry-point
+    (:direct (cl-spec:check-fixture 'around-withdraw 7))
+    (:generated (cl-spec:check-function 'around-withdraw :trials 1 :seed 41))))
+
+(deftest around-fixture-propagates-outward-throws
+  (with-around-contract
+    (loop for (mode events)
+            in '((:escape (:enter :rollback))
+                 (:escape-target-outward (:enter :setup :capture :target :cleanup :rollback))
+                 (:escape-after
+                  (:enter :setup :capture :target :state-post :cleanup :rollback)))
+          do (dolist (entry-point '(:direct :generated))
+               (let ((*mode* mode) (*around-events* nil))
+                 (ok (eq :escaped (catch 'escape (run-around-check entry-point))))
+                 (ok (equal events (reverse *around-events*)))
+                 (ok (= 100 *around-balance*)))))))
+
+(deftest around-fixture-honors-caller-restart-after-cleanup
+  (with-around-contract
+    (dolist (entry-point '(:direct :generated))
+      (let ((*around-events* nil)
+            (*around-event-hook*
+              (lambda (event)
+                (when (eq event :target)
+                  (signal 'simple-condition :format-control "stop the fixture")))))
+        (ok (eq :restarted
+                (restart-case
+                    (handler-bind ((simple-condition
+                                     (lambda (condition)
+                                       (declare (ignore condition))
+                                       (invoke-restart :stop-fixture))))
+                      (run-around-check entry-point))
+                  (:stop-fixture () :restarted))))
+        (ok (equal '(:enter :setup :capture :target :cleanup :rollback)
+                   (reverse *around-events*)))
+        (ok (= 100 *around-balance*))))))
+
+#+(and sbcl sb-thread)
+(deftest around-fixture-honors-caller-timeout-after-cleanup
+  (with-around-contract
+    (dolist (entry-point '(:direct :generated))
+      (let ((*around-events* nil)
+            (*around-event-hook* (lambda (event) (when (eq event :target) (sleep 3)))))
+        (ok (eq :timed-out
+                (handler-case
+                    (sb-ext:with-timeout 0.5 (run-around-check entry-point))
+                  (sb-ext:timeout () :timed-out))))
+        (ok (equal '(:enter :setup :capture :target :cleanup :rollback)
+                   (reverse *around-events*)))
+        (ok (= 100 *around-balance*))))))
+
+#+(and sbcl sb-thread)
+(deftest bounded-around-cleanup-preserves-a-pending-caller-exit
+  (with-around-contract
+    (dolist (options '((:cleanup-timeout 1/10) (:timeout 1/2 :cleanup-timeout 2)))
+      (dolist (exit '(:deadline :restart))
+        (let* ((cleanup-completed nil)
+               (*around-events* nil)
+               (*around-event-hook*
+                 (lambda (phase)
+                   (case phase
+                     (:target
+                      (ecase exit
+                        (:deadline (sleep 3))
+                        (:restart (signal 'simple-condition :format-control "cancel"))))
+                     (:cleanup
+                      (sleep 3)
+                      (setf cleanup-completed t))))))
+          (flet ((check ()
+                   (cl-spec:check-function 'around-withdraw :trials 1 :seed 41
+                                           :options options)))
+            (ok (eq exit
+                    (ecase exit
+                      (:deadline
+                       (handler-case (sb-ext:with-timeout 1/5 (check))
+                         (sb-ext:timeout () :deadline)))
+                      (:restart
+                       (restart-case
+                           (handler-bind ((simple-condition
+                                            (lambda (condition)
+                                              (declare (ignore condition))
+                                              (invoke-restart :stop-fixture))))
+                             (check))
+                         (:stop-fixture () :restart)))))))
+          (ok (equal '(:enter :setup :capture :target :cleanup :rollback)
+                     (reverse *around-events*)))
+          (ok (not cleanup-completed)))))))
+
+#+(and sbcl sb-thread)
+(deftest around-fixture-propagates-interrupts-throughout-wrapper
+  (with-around-contract
+    (loop for (phase events)
+            in '((:enter (:enter))
+                 (:target (:enter :setup :capture :target :cleanup :rollback))
+                 (:rollback
+                  (:enter :setup :capture :target :state-post :cleanup :rollback)))
+          do (let ((*around-events* nil)
+                   (*around-event-hook*
+                     (lambda (event)
+                       (when (eq event phase)
+                         (sb-thread:interrupt-thread sb-thread:*current-thread*
+                           (lambda () (signal 'sb-sys:interactive-interrupt)))))))
+               (ok (eq :interrupted
+                       (handler-case (run-around-check :direct)
+                         (sb-sys:interactive-interrupt () :interrupted))))
+               (ok (equal events (reverse *around-events*)))
                (ok (= 100 *around-balance*))))))
 
 (deftest nested-around-check-cannot-hide-a-repeated-outer-call

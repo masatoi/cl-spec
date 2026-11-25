@@ -5,7 +5,7 @@
   (:export #:call-with-run-time-limits #:time-limits-requested-p #:time-limits-supported-p
            #:call-catching-run-timeout #:call-with-run-finalization
            #:with-trial-clock #:with-run-phase
-           #:mark-run-phase #:run-timeout-data #:timeout-unwinding-p
+           #:mark-run-phase #:run-timeout-data
            #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
            #:with-native-shrink #:with-native-candidate
            #:call-with-run-limit-handoff #:run-clock-start))
@@ -99,10 +99,6 @@
 (defun run-timeout-data ()
   "Return the active run's owned timeout record, when expired."
   (when *run-limits* (run-limits-timeout *run-limits*)))
-
-(defun timeout-unwinding-p ()
-  "Return true while a deadline escape is unwinding through application code."
-  (some #'run-limits-timeout *active-run-limits*))
 
 (defun call-catching-run-timeout (function on-timeout)
   "Call FUNCTION, or call ON-TIMEOUT with the owned record after its deadline escape."
@@ -217,7 +213,7 @@
             (setf earliest clock)))))))
 
 #+(and sbcl sb-thread)
-(defun finish-timed-cleanup (function)
+(defun finish-timed-cleanup (function body-returned-p)
   (let* ((frame *timed-phase*)
          (pending (find-if #'run-limits-timeout *active-run-limits*))
          (owner (or pending (timed-phase-owner frame)))
@@ -241,24 +237,31 @@
          (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout)))))
     (setf (timed-phase-cleanup frame) cleanup)
     (when pending (setf (getf (run-limits-timeout pending) :cleanup) cleanup))
-    (cond
-      ;; An enclosing timer can own the earlier deadline of a nested run.
-      ((and underlying-expiry (not (eq clock-phase frame)))
-       (when clock-phase (setf (timed-phase-cleanup clock-phase) cleanup))
-       (funcall (deadline-clock-expire clock)))
-      ((and (not pending) (or already-due (eq status :timeout)))
-       (abort-run-for-timeout owner (timed-phase-trial frame)
-                              (if (eq :shrinking (timed-phase-name frame))
-                                  :shrinking :fixture-cleanup)
-                              (if already-due run-limit limit) cleanup)))))
+    ;; An external transfer already unwinding continues after bounded cleanup.
+    (when (or body-returned-p pending)
+      (cond
+        ;; An enclosing timer can own the earlier deadline of a nested run.
+        ((and underlying-expiry (not (eq clock-phase frame)))
+         (when clock-phase (setf (timed-phase-cleanup clock-phase) cleanup))
+         (funcall (deadline-clock-expire clock)))
+        ((and (not pending) (or already-due (eq status :timeout)))
+         (abort-run-for-timeout owner (timed-phase-trial frame)
+                                (if (eq :shrinking (timed-phase-name frame))
+                                    :shrinking :fixture-cleanup)
+                                (if already-due run-limit limit) cleanup))))))
 
 (defun call-with-timed-fixture-cleanup (function cleanup)
   "Call FUNCTION and run CLEANUP even after a deadline, within its own bounded grace."
   #+(and sbcl sb-thread)
   (when *timed-phase*
     (return-from call-with-timed-fixture-cleanup
-      (sb-sys:without-interrupts
-        (unwind-protect (sb-sys:with-local-interrupts (funcall function))
-          (mark-run-phase :fixture-cleanup)
-          (sb-sys:allow-with-interrupts (finish-timed-cleanup cleanup))))))
+      (let ((body-returned-p nil))
+        (sb-sys:without-interrupts
+          (unwind-protect
+               (sb-sys:with-local-interrupts
+                 (multiple-value-prog1 (funcall function)
+                   (setf body-returned-p t)))
+            (mark-run-phase :fixture-cleanup)
+            (sb-sys:allow-with-interrupts
+              (finish-timed-cleanup cleanup body-returned-p)))))))
   (unwind-protect (funcall function) (funcall cleanup)))
