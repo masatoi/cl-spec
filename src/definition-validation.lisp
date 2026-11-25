@@ -3,7 +3,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:validate-definition #:definition-validation-slots
-           #:call-with-definition-rollback #:finite-definition-form-p
+           #:call-with-definition-rollback #+sbcl #:call-with-class-update-rollback
+           #:finite-definition-form-p
            #:definition-keyword-plist-p))
 (in-package #:cl-spec/src/definition-validation)
 
@@ -67,3 +68,28 @@ values and changes to an object's class are outside this rollback boundary."
             (if boundp
                 (setf (slot-value object slot) value)
                 (slot-makunbound object slot))))))))
+
+#+sbcl
+(defun call-with-class-update-rollback (previous current thunk)
+  "Restore participating instance slots omitted during a refused SBCL class update."
+  (let* ((participating (definition-validation-slots current))
+         ;; SBCL leaves slots named by initargs unbound until initialization,
+         ;; even when the previous layout had a binding.
+         (omitted
+           (loop for slot in (sb-mop:class-slots (class-of current))
+                 for name = (sb-mop:slot-definition-name slot)
+                 when (and (member name participating)
+                           (eq (sb-mop:slot-definition-allocation slot) :instance)
+                           (not (slot-boundp current name))
+                           (slot-exists-p previous name)
+                           (slot-boundp previous name))
+                   collect (list slot (slot-value previous name))))
+         (completed nil))
+    (unwind-protect
+         (multiple-value-prog1 (funcall thunk) (setf completed t))
+      (unless completed
+        (dolist (entry omitted)
+          (destructuring-bind (slot value) entry
+            ;; The destination class can narrow the slot's type.
+            (when (typep value (sb-mop:slot-definition-type slot))
+              (setf (slot-value current (sb-mop:slot-definition-name slot)) value))))))))

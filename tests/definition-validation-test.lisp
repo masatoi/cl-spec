@@ -14,6 +14,8 @@
   (:import-from #:cl-spec/src/ir #:spec))
 (in-package #:cl-spec/tests/definition-validation-test)
 
+(define-condition invalid-extension-slot (error) ())
+
 (defun rejected-p (thunk)
   (handler-case (progn (funcall thunk) nil)
     (error () t)))
@@ -90,12 +92,24 @@
 (deftest change-class-validates-and-restores-participating-state
   (let* ((object (make-valid-property :arguments '((x integer))))
          (arguments (property-arguments object)))
-    (ok (rejected-p
-          (lambda ()
-            (change-class object 'extended-property :extra :invalid :arguments '((x string))))))
+    (ok (handler-case
+            (progn (change-class object 'extended-property :extra :invalid :arguments '((x string)))
+                   nil)
+          (invalid-extension-slot () t)))
     (ok (eq arguments (property-arguments object)))
     (ok (or (not (slot-exists-p object 'extra))
             (not (slot-boundp object 'extra))))))
+
+(deftest change-class-restores-inherited-extension-slots
+  (let ((object (make-instance 'extended-property :name 'extended :function #'identity
+                               :existing :preserved)))
+    (ok (handler-case
+            (progn (change-class object 'further-extended-property :extra :invalid
+                                 :existing :changed)
+                   nil)
+          (invalid-extension-slot () t)))
+    (ok (eq :preserved (slot-value object 'existing)))
+    (ok (not (slot-boundp object 'extra)))))
 
 (defconstant +unusable-property-name+ 17)
 
@@ -125,9 +139,11 @@
   ((extra :initarg :extra)
    (existing :initarg :existing :initform :original)))
 
+(defclass further-extended-property (extended-property) ())
+
 (defmethod definition-validation-slots append ((object extended-property))
   '(extra existing))
 
 (defmethod validate-definition :after ((object extended-property))
   (when (and (slot-boundp object 'extra) (eq :invalid (slot-value object 'extra)))
-    (error "Subclass rejects EXTRA")))
+    (error 'invalid-extension-slot)))

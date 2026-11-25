@@ -41,7 +41,8 @@
            #:fixture-check-result-name #:fixture-check-result-coverage)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
-                #:validate-definition #:definition-validation-slots #:call-with-definition-rollback
+                #:validate-definition #:definition-validation-slots
+                #:call-with-definition-rollback #+sbcl #:call-with-class-update-rollback
                 #:finite-definition-form-p #:definition-keyword-plist-p)
   (:import-from #:cl-spec/src/conditions
                 #:unknown-function-spec
@@ -924,6 +925,12 @@ function at a time (specification §3.2)."))
 
 (defmethod definition-validation-slots append ((contract function-spec))
   (copy-list *function-spec-slot-names*))
+
+#+sbcl
+(defmethod update-instance-for-different-class :around
+    ((previous standard-object) (current function-spec) &rest initargs)
+  (declare (ignore initargs))
+  (call-with-class-update-rollback previous current (lambda () (call-next-method))))
 
 (defmethod shared-initialize :around ((contract function-spec) slot-names &rest initargs)
   "Validate paired clauses and restore all participating slots on refusal."

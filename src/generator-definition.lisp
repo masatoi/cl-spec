@@ -18,7 +18,7 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots
-                #:call-with-definition-rollback
+                #:call-with-definition-rollback #+sbcl #:call-with-class-update-rollback
                 #:finite-definition-form-p #:definition-keyword-plist-p)
   (:export #:custom-generator
            #:custom-generator-name
@@ -67,6 +67,12 @@ be shared by several specs and found by name the way a spec or a contract can.")
 
 (defmethod definition-validation-slots append ((generator custom-generator))
   '(name function shrinker documentation-string source-form source-location))
+
+#+sbcl
+(defmethod update-instance-for-different-class :around
+    ((previous standard-object) (current custom-generator) &rest initargs)
+  (declare (ignore initargs))
+  (call-with-class-update-rollback previous current (lambda () (call-next-method))))
 
 (defmethod shared-initialize :around ((generator custom-generator) slot-names
                                      &rest initargs &key &allow-other-keys)
