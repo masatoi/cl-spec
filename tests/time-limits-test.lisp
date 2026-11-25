@@ -552,3 +552,33 @@
     (dolist (options '((:timeout -1) (:trial-timeout 0) (:cleanup-timeout "slow")))
       (ok (handler-case (progn (cl-spec:run-property 'timed :options options) nil)
             (cl-spec:invalid-argument () t))))))
+
+#+sbcl
+(deftest nonfinite-run-limits-name-the-refused-option
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defproperty finite-limit-probe ((x (member 1))) (eql x 1))
+    (cl-spec:defspec-function identity (:args (x integer)) (:returns integer))
+    (let ((entry-points
+            (list (cons 'cl-spec:run-property
+                        (lambda (options)
+                          (cl-spec:run-property 'finite-limit-probe :options options)))
+                  (cons 'cl-spec:check-function
+                        (lambda (options)
+                          (cl-spec:check-function 'identity :trials 1 :options options)))
+                  (cons 'cl-spec:check-contracts
+                        (lambda (options)
+                          (cl-spec:check-contracts :names '((:property finite-limit-probe))
+                                                   :options options))))))
+      (dolist (positive-infinity '(sb-ext:single-float-positive-infinity
+                                   sb-ext:double-float-positive-infinity))
+        (let* ((infinity (symbol-value positive-infinity))
+               (nan (sb-int:with-float-traps-masked (:invalid) (- infinity infinity))))
+          (dolist (value (list infinity (- infinity) nan))
+            (dolist (option '(:timeout :trial-timeout :cleanup-timeout))
+              (dolist (entry entry-points)
+                (ok (equal (list (car entry) option)
+                           (handler-case (progn (funcall (cdr entry) (list option value)) nil)
+                             (cl-spec:invalid-argument (condition)
+                               (list (cl-spec/src/conditions:invalid-argument-operator condition)
+                                     (cl-spec/src/conditions:invalid-argument-argument condition)))
+                             (error (condition) (type-of condition)))))))))))))
