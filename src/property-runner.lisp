@@ -265,7 +265,7 @@ contract errors does not change."
 (defun observation-data (observation)
   "Project captured trial evidence as Lisp data rather than a structure object.
 
-:STATE is present only when the contract declared :CAPTURE or :STATE-POST and
+:STATE is present when the contract declared :CAPTURE, :STATE-POST or :MODIFIES and
 the evaluator reported state evidence; a featureless failure omits it, so its
 projection is unchanged.  The state plist says whether capture ran to completion
 and whether state-post was not evaluated (with a reason), passed, was violated or

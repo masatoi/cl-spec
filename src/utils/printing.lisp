@@ -181,4 +181,5 @@ limits do not bound a string a report quotes, so the text is also cut to
         (truncate-text (with-bounded-printing ()
                          (princ-to-string condition))
                        +report-text-limit+)
-      (error () (format nil "~S (condition report unavailable)" (type-of condition))))))
+      (serious-condition ()
+        (format nil "~S (condition report unavailable)" (type-of condition))))))

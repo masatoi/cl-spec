@@ -47,6 +47,36 @@
         (ok (equal '(:trial-timeout 1/10 :timeout 3) (getf second :options)))))))
 
 #+(and sbcl sb-thread)
+(deftest timeout-names-the-state-frame-observer-phase
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (slow-snapshot nil)
+        (snapshots 0))
+    (cl-spec:register-state-observer
+     :rows :version 1 :source 'snapshot-phase-probe
+     :snapshot (lambda ()
+                 (when (= (incf snapshots) slow-snapshot) (sleep 1))
+                 0)
+     :compare (lambda (before after)
+                (declare (ignore before after))
+                nil)
+     :project (lambda (snapshot key)
+                (declare (ignore key))
+                (values snapshot t)))
+    (cl-spec:defspec-function identity
+      (:args (value (member 7)))
+      (:returns integer)
+      (:modifies (:rows)))
+    (loop for snapshot in '(1 2)
+          for phase in '(:capture :state-post)
+          do (setf slow-snapshot snapshot snapshots 0)
+             (let* ((result (cl-spec:check-function
+                             'identity :trials 1 :seed 41
+                             :options '(:timeout 3 :trial-timeout 1/10)))
+                    (data (cl-spec:result-data result)))
+               (ok (eq :timeout (getf data :status)))
+               (ok (eq phase (getf (getf data :timeout) :phase)))))))
+
+#+(and sbcl sb-thread)
 (deftest shrink-timeout-retains-the-latest-accepted-counterexample
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defgenerator timed-integer ()

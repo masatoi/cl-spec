@@ -7,6 +7,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/function-examples #:check-function-with-examples)
   (:export #:check-function-with-examples)
+  (:import-from #:cl-spec/src/contract-runner #:check-contracts)
+  (:export #:check-contracts)
   (:import-from #:cl-spec/src/coverage
                 #:coverage-schema #:coverage-data #:invalid-coverage-options
                 #:invalid-coverage-options-reason #:unsupported-coverage-operation
@@ -30,6 +32,9 @@
   (:export #:validate-definition #:definition-validation-slots)
   (:import-from #:cl-spec/src/state-machine #:defstate-machine #:check-state-machine)
   (:export #:defstate-machine #:check-state-machine)
+  (:import-from #:cl-spec/src/state-frame
+                #:register-state-observer #:register-hash-table-state-observer)
+  (:export #:register-state-observer #:register-hash-table-state-observer)
   (:import-from #:cl-spec/src/counterexample
                 #:counterexample-artifact #:make-counterexample-artifact
                 #:counterexample-artifact-data #:serialize-counterexample-artifact

@@ -4,7 +4,8 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/tests/backends/real-range-checks
-                #:check-draw-formats #:check-smallest-double #:check-tiny-intervals))
+                #:check-draw-formats #:check-smallest-double #:check-tiny-intervals
+                #:check-float-type-intervals))
 
 (in-package #:cl-spec/tests/backends/real-range-test)
 
@@ -19,3 +20,6 @@
 
 (deftest tiny-signed-intervals-generate-and-shrink
   (check-tiny-intervals #'report-range-check))
+
+(deftest compound-float-intervals-respect-the-format-and-excluded-bounds
+  (check-float-type-intervals #'report-range-check))

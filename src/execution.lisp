@@ -3,6 +3,7 @@
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits #:with-run-phase #:mark-run-phase)
+  (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/coverage-report #:collect-coverage-trial #:*coverage-context*)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-trial* #:deferred-coverage-p #:begin-core-coverage-report
@@ -230,6 +231,14 @@ case-less failure."
        (keywordp (second signature))
        (consp (cddr signature))))
 
+(defun frame-violation-signature-p (signature)
+  "Recognize a frame violation whose reported key is safe to compare with EQUAL."
+  (and (eq :state-frame (first signature))
+       (consp (rest signature))
+       (consp (cddr signature))
+       (null (cdddr signature))
+       (finite-definition-form-p (third signature))))
+
 (defun failure-identities-match-p (original candidate)
   "Compare observed failure signatures against the ORIGINAL trial.
 False property results and conditions have distinct classes, and conditions
@@ -260,10 +269,15 @@ INVALID-ARGUMENT."
                 (not (and (member (first candidate) '(:return-value :return-values))
                           (eq (second candidate) :postcondition)
                           (null (third candidate))))
-                (if (eq (first original) :return-value)
-                    (or (not (eq (second original) (second candidate)))
-                        (same-value-p (cddr original) (cddr candidate)))
-                    (same-value-p (rest original) (rest candidate)))))))
+                (cond
+                  ((eq (first original) :return-value)
+                   (or (not (eq (second original) (second candidate)))
+                       (same-value-p (cddr original) (cddr candidate))))
+                  ((and (frame-violation-signature-p original)
+                        (frame-violation-signature-p candidate))
+                   (and (eq (second original) (second candidate))
+                        (equal (third original) (third candidate))))
+                  (t (same-value-p (rest original) (rest candidate))))))))
 
 (defun observation-failure-p (observation)
   "Return true when OBSERVATION records a failed or signalled trial."

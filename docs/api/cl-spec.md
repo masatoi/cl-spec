@@ -2,13 +2,13 @@
 
 Semantic IR, validation, structured explain, introspection, registry and the DSL.
 
-System `cl-spec`, 296 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
+System `cl-spec`, 299 exported symbols. Docstrings are reproduced from the source; accessor entries use their class slot's documentation, and a leading summary paragraph is followed by the rest of the docstring verbatim.
 
 ## Contents
 
 **Macros**: [`defgenerator`](#defgenerator) · [`defproperty`](#defproperty) · [`defspec`](#defspec) · [`defspec-function`](#defspec-function) · [`defstate-machine`](#defstate-machine)
 
-**Functions**: [`assess-evidence`](#assess-evidence) · [`call-check-data`](#call-check-data) · [`call-check-result-failure-phase`](#call-check-result-failure-phase) · [`call-check-result-status`](#call-check-result-status) · [`capture-error-data`](#capture-error-data) · [`case-selection-error-data`](#case-selection-error-data) · [`check-call`](#check-call) · [`check-fixture`](#check-fixture) · [`check-function`](#check-function) · [`check-function-with-examples`](#check-function-with-examples) · [`check-state-machine`](#check-state-machine) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`coverage-schema`](#coverage-schema) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`evidence-summary`](#evidence-summary) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`fixture-check-data`](#fixture-check-data) · [`format-check-summary`](#format-check-summary) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`state-post-error-data`](#state-post-error-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-state`](#trial-observation-state) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
+**Functions**: [`assess-evidence`](#assess-evidence) · [`call-check-data`](#call-check-data) · [`call-check-result-failure-phase`](#call-check-result-failure-phase) · [`call-check-result-status`](#call-check-result-status) · [`capture-error-data`](#capture-error-data) · [`case-selection-error-data`](#case-selection-error-data) · [`check-call`](#check-call) · [`check-contracts`](#check-contracts) · [`check-fixture`](#check-fixture) · [`check-function`](#check-function) · [`check-function-with-examples`](#check-function-with-examples) · [`check-state-machine`](#check-state-machine) · [`clear-registry`](#clear-registry) · [`compile-explainer`](#compile-explainer) · [`compile-validator`](#compile-validator) · [`counterexample-artifact-data`](#counterexample-artifact-data) · [`coverage-schema`](#coverage-schema) · [`current-generator-backend`](#current-generator-backend) · [`definition-digest`](#definition-digest) · [`definition-metadata`](#definition-metadata) · [`describe-property`](#describe-property) · [`describe-spec`](#describe-spec) · [`deserialize-counterexample-artifact`](#deserialize-counterexample-artifact) · [`evidence-summary`](#evidence-summary) · [`explain`](#explain) · [`explain-data`](#explain-data) · [`failure-identities-match-p`](#failure-identities-match-p) · [`find-function-spec`](#find-function-spec) · [`find-generator`](#find-generator) · [`find-property`](#find-property) · [`find-spec`](#find-spec) · [`fixture-check-data`](#fixture-check-data) · [`format-check-summary`](#format-check-summary) · [`function-check-result-function`](#function-check-result-function) · [`function-spec-argument-schema`](#function-spec-argument-schema) · [`function-spec-data`](#function-spec-data) · [`generation-budget-exhausted-attempts`](#generation-budget-exhausted-attempts) · [`generation-budget-exhausted-budget`](#generation-budget-exhausted-budget) · [`generation-budget-exhausted-path`](#generation-budget-exhausted-path) · [`generation-budget-exhausted-phase`](#generation-budget-exhausted-phase) · [`generation-budget-exhausted-rejections`](#generation-budget-exhausted-rejections) · [`generator-for`](#generator-for) · [`list-function-specs`](#list-function-specs) · [`list-generators`](#list-generators) · [`list-properties`](#list-properties) · [`list-specs`](#list-specs) · [`make-counterexample-artifact`](#make-counterexample-artifact) · [`make-hash-table-registry`](#make-hash-table-registry) · [`make-trial-observation`](#make-trial-observation) · [`normalize-spec-form`](#normalize-spec-form) · [`observation-failure-p`](#observation-failure-p) · [`properties-for`](#properties-for) · [`properties-with-tag`](#properties-with-tag) · [`property-data`](#property-data) · [`property-result-explanation`](#property-result-explanation) · [`property-result-failure-reason`](#property-result-failure-reason) · [`property-result-failure-signature`](#property-result-failure-signature) · [`recheck-counterexample`](#recheck-counterexample) · [`register-function-spec`](#register-function-spec) · [`register-generator`](#register-generator) · [`register-hash-table-state-observer`](#register-hash-table-state-observer) · [`register-property`](#register-property) · [`register-spec`](#register-spec) · [`register-state-observer`](#register-state-observer) · [`replay-property`](#replay-property) · [`result-data`](#result-data) · [`run-properties`](#run-properties) · [`run-property`](#run-property) · [`sample`](#sample) · [`schema-info`](#schema-info) · [`semantic-data`](#semantic-data) · [`serialize-counterexample-artifact`](#serialize-counterexample-artifact) · [`source-location-file`](#source-location-file) · [`source-location-package`](#source-location-package) · [`spec-data`](#spec-data) · [`state-post-error-data`](#state-post-error-data) · [`tagged-union-branch`](#tagged-union-branch) · [`trial-observation-arguments`](#trial-observation-arguments) · [`trial-observation-arguments-mutated-p`](#trial-observation-arguments-mutated-p) · [`trial-observation-case`](#trial-observation-case) · [`trial-observation-condition`](#trial-observation-condition) · [`trial-observation-condition-report`](#trial-observation-condition-report) · [`trial-observation-explanation`](#trial-observation-explanation) · [`trial-observation-outcome`](#trial-observation-outcome) · [`trial-observation-reason`](#trial-observation-reason) · [`trial-observation-signature`](#trial-observation-signature) · [`trial-observation-state`](#trial-observation-state) · [`trial-observation-status`](#trial-observation-status) · [`trial-observation-value`](#trial-observation-value) · [`validate`](#validate) · [`validp`](#validp)
 
 **Generic functions**: [`backend-capabilities`](#backend-capabilities) · [`backend-default-trials`](#backend-default-trials) · [`compile-generator`](#compile-generator) · [`coverage-data`](#coverage-data) · [`definition-description`](#definition-description) · [`definition-validation-slots`](#definition-validation-slots) · [`evaluate-trial`](#evaluate-trial) · [`function-check-result-budget`](#function-check-result-budget) · [`generate-value`](#generate-value) · [`invalid-coverage-options-reason`](#invalid-coverage-options-reason) · [`invalid-evidence-policy-reason`](#invalid-evidence-policy-reason) · [`observe-trial`](#observe-trial) · [`property-argument-schema`](#property-argument-schema) · [`property-call-arguments-p`](#property-call-arguments-p) · [`property-named-arguments`](#property-named-arguments) · [`property-result-entity-kind`](#property-result-entity-kind) · [`registry-clear`](#registry-clear) · [`registry-find-function-spec`](#registry-find-function-spec) · [`registry-find-generator`](#registry-find-generator) · [`registry-find-property`](#registry-find-property) · [`registry-find-spec`](#registry-find-spec) · [`registry-list-function-specs`](#registry-list-function-specs) · [`registry-list-generators`](#registry-list-generators) · [`registry-list-properties`](#registry-list-properties) · [`registry-list-specs`](#registry-list-specs) · [`registry-properties-for`](#registry-properties-for) · [`registry-properties-with-tag`](#registry-properties-with-tag) · [`registry-register-function-spec`](#registry-register-function-spec) · [`registry-register-generator`](#registry-register-generator) · [`registry-register-property`](#registry-register-property) · [`registry-register-spec`](#registry-register-spec) · [`run-generated-test`](#run-generated-test) · [`spec-children`](#spec-children) · [`spec-kind`](#spec-kind) · [`unsupported-coverage-operation-reason`](#unsupported-coverage-operation-reason) · [`validate-definition`](#validate-definition)
 
@@ -124,7 +124,7 @@ Attach a contract to the existing function NAME without redefining it.
 ```text
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
 (:ARGS-GENERATOR NAME), (:FIXTURE SUBCLAUSE ...), (:PRE FORM ...),
-(:CAPTURE (NAME FORM) ...),
+(:CAPTURE (NAME FORM) ...), (:MODIFIES (OBSERVER KEY-FORM ...) ...),
 (:RETURNS SPEC), (:POST FORM ...),
 (:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
@@ -376,6 +376,36 @@ signals either condition is an ordinary target observation with reason
 A state-observing contract may be checked once, because the caller supplies the
 fresh state explicitly.  This does not make that state restorable, reproducible
 or persistable, and it does not relax any existing stateful restriction.
+```
+
+<a name="check-contracts"></a>
+### check-contracts
+
+*Function* · `(&rest keyword-arguments &key (names nil names-p) (package nil package-p) (tag nil tag-p) (seeds (quote (:fresh))) profile trials options examples (registry *registry*) &allow-other-keys)`
+
+Run registered Function Specs and properties and return a CI verdict plist.
+
+```text
+Select at most one of :NAMES, :PACKAGE and :TAG. With none, run everything in
+REGISTRY. NAMES is a list of symbols or (:FUNCTION-SPEC NAME) and (:PROPERTY NAME)
+pairs. A bare symbol selects both kinds when registered under both. PACKAGE
+selects names whose home package it designates. TAG selects tagged properties.
+
+For each item in SEEDS, run each selected target once. Defaults to (:FRESH).
+Each :FRESH draws a seed per target. Fixed seeds are nonnegative integers.
+TRIALS sets the Function Spec budget. A non-NIL PROFILE must be declared by
+each selected property. With NIL, use the ordinary property budget. OPTIONS
+goes to both generated runners. EXAMPLES is a list of (NAME ARGS [EXPECTED-CASE])
+rows checked once after generation. Each row uses CHECK-CALL.
+
+The report has :STATUS, :ENTRIES, :EXAMPLES and suite-level :PROBLEMS. Each run
+entry records :KIND, :NAME, :SEED as decimal text, execution :STATUS and CI
+:VERDICT. It includes the RESULT-DATA record and evidence :ASSESSMENT when
+available. Example entries retain CALL-CHECK-DATA when available.
+
+The suite passes with a nonempty selection and seed list, passing generated
+results with measured checked trials and every declared case checked, and passing
+examples that reach any expected case. Unknown or missing results fail.
 ```
 
 <a name="check-fixture"></a>
@@ -751,6 +781,7 @@ Return a plist describing the contract registered for FUNCTION-SPEC-DESIGNATOR.
    :source-location (:file <string> :package <string>) :metadata <plist>
    [:capture ((:name <symbol> :form <form>) ...)]
    [:state-post (<form> ...)]
+   [:modifies ((<observer> <key-form> ...) ...)]
    [:case-selection :exclusive
     :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
              :outcome :returns-or-:signals
@@ -1050,6 +1081,15 @@ Register FUNCTION-SPEC in REGISTRY under its own name and return it.
 
 Register GENERATOR in REGISTRY under its own name and return it.
 
+<a name="register-hash-table-state-observer"></a>
+### register-hash-table-state-observer
+
+*Function* · `(name reader &key version (registry *registry*))`
+
+Register an in-memory observer for the EQUAL hash table returned by READER.
+Keys and values must be bounded AV1 data, with keys stable under EQUAL after
+copying. VERSION identifies the reader's scope and meaning.
+
 <a name="register-property"></a>
 ### register-property
 
@@ -1076,6 +1116,18 @@ any other value is refused with INVALID-SPEC-FORM before the registry changes.
 The registry protocol underneath stores whatever it is handed, so this is the
 public entry point that keeps a non-spec out of the registry.
 ```
+
+<a name="register-state-observer"></a>
+### register-state-observer
+
+*Function* · `(name &key version snapshot compare project source (registry *registry*))`
+
+Register three operations for NAME in REGISTRY.
+SNAPSHOT () returns an independent view of the observed state. COMPARE (BEFORE
+AFTER) returns a finite list of changed keys. PROJECT (SNAPSHOT KEY) returns a
+bounded AV1 value and a boolean presence flag. The functions are captured at
+registration. Supply SOURCE as stable declaration data for any anonymous
+operation, and increase VERSION when its meaning or observed scope changes.
 
 <a name="replay-property"></a>
 ### replay-property
@@ -2133,7 +2185,7 @@ claims, which is what an agent asking "what may I pass here" needs.
 
 *Accessor* of `function-spec` · `(object)`
 
-Explicit fresh-state recipe fixture, or NIL.
+Explicit recipe fixture, or NIL.
 
 <a name="function-spec-metadata"></a>
 ### function-spec-metadata

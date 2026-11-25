@@ -9,6 +9,10 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits #:with-native-candidate)
   (:import-from #:cl-spec/src/backends/check-it-coverage #:planned-field #:planned-extra-key)
+  (:import-from #:cl-spec/src/backends/check-it-numbers
+                #:float-type-p #:compound-numeric-interval #:interval-endpoint
+                #:+default-type-size+ #:relative-numeric-bounds #:float-range-generator
+                #:rational-range-generator #:make-shrinking-number-generator)
   (:import-from #:check-it
                 #:generator
                 #:generate
@@ -452,23 +456,58 @@ before the type's own method does."
         (custom-spec-generator name spec context)
         (call-next-method))))
 
-(defun type-specifier-generator (type-specifier spec)
-  "Return a generator for the Common Lisp TYPE-SPECIFIER.
+(defparameter *generated-keywords*
+  '(:a :b :c :d :e :f :g :h :i :j :k :l :m :n :o :p :q :r :s :t :u :v :w :x :y :z)
+  "Fixed set of already interned keywords used by the default symbol generators.")
 
-The table is deliberately short.  A type is listed only when check-it produces
-values the corresponding TYPEP actually accepts: REAL-GENERATOR yields floats,
-so FLOAT and RATIONAL are absent rather than silently wrong."
-  (case type-specifier
-    ((integer) (make-instance 'int-generator))
-    ((real) (real-range-generator '* '* spec))
-    ((character) (make-instance 'char-generator))
-    ((string) (make-instance 'string-generator))
-    ((null) nil)
-    ((boolean) (make-instance 'or-generator :sub-generators (list t nil)))
-    (t (error 'generator-unavailable
-              :spec spec :kind :unsupported-type
-              :reason (format nil "no generator is registered for the type ~S"
-                              type-specifier)))))
+(defclass symbol-generator (generator)
+  ((values :initarg :values :reader symbol-generator-values))
+  (:documentation "Draw from a fixed symbol set in order of increasing shrink preference."))
+
+(defmethod generate ((generator symbol-generator))
+  (let ((values (symbol-generator-values generator)))
+    (nth (random (length values)) values)))
+
+(defmethod regenerate ((generator symbol-generator))
+  (cached-value generator))
+
+(defmethod shrink ((generator symbol-generator) test)
+  "Try preceding symbols in the fixed preference order."
+  (loop for value in (symbol-generator-values generator)
+        until (eq value (cached-value generator))
+        unless (funcall test value)
+          do (return-from shrink (setf (cached-value generator) value)))
+  (cached-value generator))
+
+(defun default-fixnum-generator ()
+  "Draw small fixnums regardless of how large the other arguments in a run are."
+  (make-instance 'int-generator :lower-limit (- +default-type-size+)
+                                :upper-limit +default-type-size+))
+
+(defun type-specifier-generator (type spec)
+  "Return a generator for the Common Lisp TYPE without evaluating user code."
+  (multiple-value-bind (base lower upper) (compound-numeric-interval type)
+    (cond
+      (base (bounded-generator base lower upper spec))
+      ((float-type-p type) (float-range-generator type :unbounded :unbounded spec))
+      (t
+       (case type
+         (integer (make-instance 'int-generator))
+         (real (real-range-generator '* '* spec))
+         (rational (rational-range-generator nil nil spec))
+         (fixnum (default-fixnum-generator))
+         (character (make-instance 'char-generator))
+         (string (make-instance 'string-generator))
+         (null nil)
+         (boolean (make-instance 'or-generator :sub-generators (list t nil)))
+         (keyword (make-instance 'symbol-generator :values *generated-keywords*))
+         (symbol (make-instance 'symbol-generator
+                                :values (append '(nil t car cdr list vector string integer)
+                                                *generated-keywords*)))
+         (list (default-collection-generator nil))
+         (vector (default-collection-generator t))
+         (t (error 'generator-unavailable :spec spec :kind :unsupported-type
+                   :reason (format nil "no generator is registered for the type ~S" type))))))))
 
 (defun float-operand (number)
   "Prepare NUMBER for addition or subtraction with another single-float operand.
@@ -510,8 +549,7 @@ zero cannot overflow, since a caller never asks for one wider than
 MOST-POSITIVE-DOUBLE-FLOAT, and is not limited -- limiting it too kept a range
 starting near -1.8e308 from ever reaching zero.  Converting ORIGIN or the product to a float
 rounds, so the result is clamped into [MINIMUM, MAXIMUM] where those are given: a
-draw never leaves its declared range.  Shrinking U towards zero moves the value
-towards ORIGIN."
+draw never leaves its declared range."
   (let* ((origin (float-operand origin))
          (headroom (if (or symmetric-p (>= (* direction (signum origin)) 0))
                        (range-float-operation #'- most-positive-double-float (abs origin))
@@ -601,22 +639,28 @@ A real range draws without raising *SIZE*, so it neither needs nor inflates the
 size other generators see.  A bound or width beyond double-float range cannot be
 drawn near and is refused as :RANGE-TOO-WIDE."
   (flet ((too-wide (reason)
-           (error 'generator-unavailable :spec spec :kind :range-too-wide :reason reason)))
+           (error 'generator-unavailable :spec spec :kind :range-too-wide :reason reason))
+         (shrinkable (source)
+           (make-shrinking-number-generator (lambda () (generate source))
+                                            (unless (eq lower '*) lower)
+                                            (unless (eq upper '*) upper))))
     (dolist (bound (list lower upper))
       (when (and (realp bound) (> (abs bound) most-positive-double-float))
         (too-wide "a bound of the range is beyond double-float range, so no float lies near it")))
     (cond
       ((and (eq lower '*) (eq upper '*))
-       (scaled-real-generator 0 (lambda () *size*) :symmetric-p t))
+       (shrinkable (scaled-real-generator 0 (lambda () *size*) :symmetric-p t)))
       ((eq upper '*)
-       (scaled-real-generator lower (lambda () (max (abs lower) *size*)) :minimum lower))
+       (shrinkable (scaled-real-generator lower (lambda () (max (abs lower) *size*))
+                                          :minimum lower)))
       ((eq lower '*)
-       (scaled-real-generator upper (lambda () (max (abs upper) *size*))
-                              :direction -1 :maximum upper))
+       (shrinkable (scaled-real-generator upper (lambda () (max (abs upper) *size*))
+                                          :direction -1 :maximum upper)))
       ((= lower upper)
        lower)
       (t
-       (scaled-real-generator lower (range-width lower upper spec) :minimum lower :maximum upper)))))
+       (shrinkable (scaled-real-generator lower (range-width lower upper spec)
+                                          :minimum lower :maximum upper))))))
 
 (defmethod spec-generator ((spec type-spec) context)
   (declare (ignore context))
@@ -630,6 +674,14 @@ drawn near and is refused as :RANGE-TOO-WIDE."
   "Return a positive infinite lower bound or a negative infinite upper bound."
   (cond ((and (infinite-bound-p minimum) (plusp minimum)) minimum)
         ((and (infinite-bound-p maximum) (minusp maximum)) maximum)))
+
+(defun empty-type-interval-p (minimum maximum)
+  "Return true if the bounds exclude every real number before type and format constraints."
+  (let ((low (interval-endpoint minimum))
+        (high (interval-endpoint maximum)))
+    (and (realp low) (realp high)
+         (or (> low high)
+             (and (= low high) (or (consp minimum) (consp maximum)))))))
 
 (defun generation-interval (base-type minimum maximum)
   "Return the inclusive generation bounds and a third value true for an empty interval."
@@ -648,21 +700,59 @@ drawn near and is refused as :RANGE-TOO-WIDE."
                       (t bound))))
          (let ((low (endpoint minimum #'ceiling))
                (high (endpoint maximum #'floor)))
-           (values low high (and (realp low) (realp high) (> low high)))))))))
+           (values low high (empty-type-interval-p low high))))))))
+
+(defun bounded-fixnum-generator (lower upper spec)
+  "Draw from the intersection with FIXNUM without widening the size of other arguments."
+  (multiple-value-bind (start end) (relative-numeric-bounds lower upper)
+    (let ((minimum (max start most-negative-fixnum))
+          (maximum (min end most-positive-fixnum)))
+      (cond
+        ((> minimum maximum)
+         (error 'generator-unavailable :spec spec :kind :empty-domain
+                :reason "no fixnum lies between the range's endpoints"))
+        ((= minimum maximum) minimum)
+        (t
+         (make-instance 'widened-generator
+                        :minimum-size (max (abs minimum) (abs maximum))
+                        :mapping #'identity
+                        :sub-generators (list (make-instance 'int-generator
+                                                             :lower-limit minimum
+                                                             :upper-limit maximum))))))))
+
+(defun bounded-float-generator (base-type minimum maximum spec)
+  "Resolve infinite endpoints, then draw within the finite portion of a float interval."
+  (when (empty-type-interval-p minimum maximum)
+    (error 'generator-unavailable :spec spec :kind :empty-domain
+           :reason "the floating-point interval is empty"))
+  (let ((inward (inward-infinite-bound (interval-endpoint minimum) (interval-endpoint maximum))))
+    (cond
+      ((and inward (typep inward base-type)) inward)
+      (inward
+       (error 'generator-unavailable :spec spec :kind :range-too-wide
+              :reason "the interval requires a non-finite value of its float type"))
+      (t
+       (float-range-generator base-type
+                              (if (infinite-bound-p minimum) :unbounded minimum)
+                              (if (infinite-bound-p maximum) :unbounded maximum)
+                              spec)))))
 
 (defun bounded-generator (base-type minimum maximum spec)
-  "Return a generator for BASE-TYPE within the inclusive interval MINIMUM to MAXIMUM."
-  (multiple-value-bind (low high empty-p) (generation-interval base-type minimum maximum)
+  "Return a generator for BASE-TYPE between MINIMUM and MAXIMUM."
+  (when (float-type-p base-type)
+    (return-from bounded-generator (bounded-float-generator base-type minimum maximum spec)))
+  (multiple-value-bind (low high empty-p)
+      (generation-interval (if (eq base-type 'fixnum) 'integer base-type) minimum maximum)
     (when empty-p
       (error 'generator-unavailable :spec spec :kind :empty-domain
              :reason "no value of the base type lies between the range's endpoints"))
-    (let ((lower (if (eq low :unbounded) '* low))
-          (upper (if (eq high :unbounded) '* high)))
+    (let ((lower (unless (eq low :unbounded) low))
+          (upper (unless (eq high :unbounded) high)))
       (case base-type
         (integer
-         (cond ((and (eq lower '*) (eq upper '*)) (make-instance 'int-generator))
-               ((eq upper '*) (shifted-integer-generator lower 0 '*))
-               ((eq lower '*) (shifted-integer-generator upper '* 0))
+         (cond ((and (null lower) (null upper)) (make-instance 'int-generator))
+               ((null upper) (shifted-integer-generator lower 0 '*))
+               ((null lower) (shifted-integer-generator upper '* 0))
                (t
                 ;; Check-it clamps both finite bounds to *SIZE*.
                 (setf *required-size* (max *required-size* (abs lower) (abs upper)))
@@ -670,7 +760,13 @@ drawn near and is refused as :RANGE-TOO-WIDE."
         (real
          (if (infinite-bound-p lower)
              lower
-             (real-range-generator lower upper spec)))
+             (real-range-generator (or lower '*) (or upper '*) spec)))
+        (fixnum (bounded-fixnum-generator lower upper spec))
+        (rational
+         (when (infinite-bound-p lower)
+           (error 'generator-unavailable :spec spec :kind :empty-domain
+                  :reason "no rational can reach the infinite endpoint"))
+         (rational-range-generator lower upper spec))
         (t (error 'generator-unavailable :spec spec :kind :unsupported-type
                   :reason (format nil "~S cannot carry a numeric range" base-type)))))))
 
@@ -743,11 +839,25 @@ drawn near and is refused as :RANGE-TOO-WIDE."
 
 (defun integer-range-bounds (spec)
   "Return LOW, HIGH and FINITE-P for an integer range. NIL bounds denote an empty domain."
-  (when (eq (range-spec-base-type spec) 'integer)
-    (multiple-value-bind (low high empty-p)
-        (generation-interval 'integer (range-spec-minimum spec) (range-spec-maximum spec))
-      (cond (empty-p (values nil nil t))
-            ((and (integerp low) (integerp high)) (values low high t))))))
+  (multiple-value-bind (base minimum maximum)
+      (etypecase spec
+        (range-spec (values (range-spec-base-type spec)
+                            (range-spec-minimum spec)
+                            (range-spec-maximum spec)))
+        (type-spec (compound-numeric-interval (type-spec-type-specifier spec))))
+    (when (eq base 'integer)
+      (multiple-value-bind (low high empty-p) (generation-interval 'integer minimum maximum)
+        (cond (empty-p (values nil nil t))
+              ((and (integerp low) (integerp high)) (values low high t)))))))
+
+(defun enumerate-integer-range (spec)
+  "Return the complete integer interval when it fits the enumeration limit."
+  (multiple-value-bind (low high finite-p) (integer-range-bounds spec)
+    (cond ((not finite-p) (values nil nil))
+          ((null low) (values nil t))
+          ((<= (- high low) *enumeration-limit*)
+           (values (loop for value from low to high collect value) t))
+          (t (values nil nil)))))
 
 (defgeneric enumerable-values (spec context)
   (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
@@ -772,7 +882,7 @@ check-it's guard generator, which recurses with no depth limit.")
   (case (type-spec-type-specifier spec)
     ((null) (values (list nil) t))
     ((boolean) (values (list t nil) t))
-    (t (values nil nil))))
+    (t (enumerate-integer-range spec))))
 
 (defmethod enumerable-values ((spec nullable-spec) context)
   (multiple-value-bind (inner enumerable-p)
@@ -786,12 +896,7 @@ check-it's guard generator, which recurses with no depth limit.")
 
 (defmethod enumerable-values ((spec range-spec) context)
   (declare (ignore context))
-  (multiple-value-bind (low high finite-p) (integer-range-bounds spec)
-    (cond ((not finite-p) (values nil nil))
-          ((null low) (values nil t))
-          ((<= (- high low) *enumeration-limit*)
-           (values (loop for value from low to high collect value) t))
-          (t (values nil nil)))))
+  (enumerate-integer-range spec))
 
 (defmethod enumerable-values ((spec or-spec) context)
   (let ((values nil))
@@ -828,8 +933,12 @@ generation even though the target is one of the enumerable domains."
 (defmethod finite-integer-range ((spec range-spec) context)
   (declare (ignore context))
   (multiple-value-bind (low high) (integer-range-bounds spec)
-    ;; An interval with no integer in it is left to ENUMERABLE-VALUES, which
-    ;; reports it as an empty domain rather than as no domain at all.
+    ;; ENUMERABLE-VALUES reports empty domains explicitly.
+    (when low (values low high))))
+
+(defmethod finite-integer-range ((spec type-spec) context)
+  (declare (ignore context))
+  (multiple-value-bind (low high) (integer-range-bounds spec)
     (when low (values low high))))
 
 (defmethod finite-integer-range ((spec reference-spec) context)
@@ -928,7 +1037,7 @@ too wide to materialize, else NIL.")
 (defun bounded-candidate (generator list)
   "Build a collection of GENERATOR's representation from LIST."
   (if (bounded-generator-vector-p generator)
-      (coerce list 'vector)
+      (make-array (length list) :initial-contents list)
       list))
 
 (defun bounded-generator-domain-size (generator)
@@ -1058,6 +1167,16 @@ domain would silently replace it."
          (when include-composites
            (some (lambda (child) (effective-generator-name child context))
                  (or-spec-children spec)))))))
+
+(defun default-collection-generator (vector-p)
+  "Draw bounded lists or vectors of small integers with ordinary collection shrinking."
+  (make-instance 'bounded-collection-generator
+                 :element-generator #'default-fixnum-generator
+                 :element-validator nil
+                 :min-length 0
+                 :max-length 8
+                 :unique-p nil
+                 :vector-p vector-p))
 
 (defun compile-collection-generator (spec context vector-p)
   "Compile a generator for the bounded collection SPEC."
@@ -1534,17 +1653,26 @@ whole-AND filter."
         ((subtypep new current) new)
         (t :no-base)))
 
+(defun tighter-bound (current new stricter-p)
+  "Choose the stricter bound, preferring exclusion when the endpoints coincide."
+  (cond
+    ((eq new :unbounded) current)
+    ((eq current :unbounded) new)
+    (t
+     (let ((left (interval-endpoint current))
+           (right (interval-endpoint new)))
+       (if (or (funcall stricter-p right left)
+               (and (= left right) (consp new)))
+           new
+           current)))))
+
 (defun tighter-minimum (current new)
   "Return the greater of two lower bounds, treating :UNBOUNDED as no bound."
-  (cond ((eq new :unbounded) current)
-        ((eq current :unbounded) new)
-        (t (max current new))))
+  (tighter-bound current new #'>))
 
 (defun tighter-maximum (current new)
   "Return the lesser of two upper bounds, treating :UNBOUNDED as no bound."
-  (cond ((eq new :unbounded) current)
-        ((eq current :unbounded) new)
-        (t (min current new))))
+  (tighter-bound current new #'<))
 
 (defclass bounded-filter-generator (generator)
   ((sub-generator :initarg :sub-generator
@@ -1650,7 +1778,12 @@ distribution. Anything else is collected into LEFTOVERS."
              :reason "a conjunct has a custom generator; name a generator on the whole AND"))
     (typecase child
       (type-spec
-       (setf base-type (merge-base-type base-type (type-spec-type-specifier child) spec)))
+       (let ((type (type-spec-type-specifier child)))
+         (multiple-value-bind (numeric lower upper) (compound-numeric-interval type)
+           (setf base-type (merge-base-type base-type (or numeric type) spec))
+           (when numeric
+             (setf minimum (tighter-minimum minimum lower)
+                   maximum (tighter-maximum maximum upper))))))
       (range-spec
        (setf base-type (merge-base-type base-type (or (range-spec-base-type child) 'real) spec)
              minimum (tighter-minimum minimum (range-spec-minimum child))
@@ -1674,6 +1807,14 @@ distribution. Anything else is collected into LEFTOVERS."
       (t (push child leftovers))))
   (values base-type minimum maximum leftovers))
 
+(defun default-source-priority (entry)
+  "Sort generic nonnumeric defaults after sources with explicitly specified values."
+  (let ((spec (getf entry :spec)))
+    (if (and (typep spec 'type-spec)
+             (member (type-spec-type-specifier spec) '(keyword symbol list vector)))
+        1
+        0)))
+
 (defmethod spec-generator ((spec and-spec) context)
   "Build one generation source for SPEC and filter it against the whole AND.
 
@@ -1681,9 +1822,9 @@ Source selection is deterministic and construction-time only; it never draws a
 value, runs a custom generator body, or evaluates the validator.  A unique custom
 conjunct wins ahead of numeric folding; multiple custom conjuncts are refused
 rather than silently coalesced; supported numeric folding stays a fast path;
-otherwise the first ordinarily constructible conjunct is the source.  Every new
-fallback checks the whole AND, so the selected source's own constraints are
-enforced too."
+otherwise the first ordinarily constructible conjunct is the source, with broad
+nonnumeric defaults considered after explicit sources. Every fallback checks the
+whole AND, so the selected source's own constraints are enforced too."
   (labels ((resolve-candidate (child trail)
              (let ((node child) (seen trail))
                (loop
@@ -1722,8 +1863,12 @@ enforced too."
                                                *declaration-path*)))
                (spec-generator (getf entry :spec) context)))
            (constructible (candidates)
-             "Return (VALUES GENERATOR ENTRY) for the first candidate that compiles."
-             (dolist (entry candidates)
+             "Prefer explicit sources, then the defaults for broad nonnumeric types."
+             ;; LIST and VECTOR supply generic elements. KEYWORD and SYMBOL
+             ;; have a fixed vocabulary. Preserve more specific sources such
+             ;; as LIST-OF and MEMBER when they can supply their own values.
+             (dolist (entry (stable-sort (copy-list candidates) #'<
+                                         :key #'default-source-priority))
                (handler-case
                    (return (values (source-generator entry) entry))
                  (generator-unavailable () nil))))
@@ -1758,14 +1903,14 @@ enforced too."
                                 nil :unbounded :unbounded '())
            ;; An empty folded range is a construction-time fact independent of
            ;; which source the fold settles on, so it is diagnosed before P2/P3.
-           (when (and (not (eq minimum :unbounded))
-                      (not (eq maximum :unbounded))
-                      (> minimum maximum))
+           (when (empty-type-interval-p minimum maximum)
              (error 'generator-unavailable
                     :spec spec :kind :empty-domain :reason "the folded range is empty"))
            (if (and base-type
                     (not (eq base-type :no-base))
-                    (member base-type '(integer real character string null boolean)))
+                    (or (member base-type
+                                '(integer fixnum rational real character string null boolean))
+                        (float-type-p base-type)))
                ;; P2: supported numeric/primitive folding stays a fast path.
                (let* ((bounded-p (not (and (eq minimum :unbounded)
                                            (eq maximum :unbounded))))

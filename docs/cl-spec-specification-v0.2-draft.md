@@ -1192,6 +1192,13 @@ simple structures
 
 ```
 
+`fixnum`・`rational`・`real`・`float`とその各形式、`null`・`boolean`・`keyword`・
+`symbol`・`vector`にも既定の生成器がある。`keyword`と`symbol`は固定の集合から選び、
+`list`と`vector`は小さな整数を要素に持つ長さ0〜8の列を生成する。
+`(type (integer lo hi))`と浮動小数点型の同形の区間指定も生成できる。`*`は無制限、
+`(lo)`や`(hi)`はその端点を除外する。指定された浮動小数点形式に区間内の値がない場合は
+`:empty-domain`とする。これらの区間はANDの数値foldにも反映する。
+
 `(range integer lo hi)`の端点が小数のときは、validationと同じく区間に含まれる整数を
 生成する（下端は切り上げ、上端は切り捨てる）。例えば`(range integer 1/2 7/2)`は1・2・3を
 生成する。片側が無制限の区間と、ANDの数値foldにも同じ規則を適用する。含まれる整数が無い
@@ -1226,7 +1233,8 @@ foldするときにも両者を区別する。
 - 無ければ対応する数値型・rangeのfoldを優先し、foldで尽くされない連言は有限予算の
   filterで課す。foldが完全ならfilterを省いてよい。
 - 非数値型は構造化specの生成元選択を妨げない。例えば`(and (type list) (list-of integer))`は
-  `list-of`を生成元とし、AND全体のvalidatorで`(type list)`も検査する。
+  `list-of`を生成元とし、AND全体のvalidatorで`(type list)`も検査する。`list`・`vector`・
+  `keyword`・`symbol`の既定の生成器は、他の生成元候補より後に試す。
 - 適格な生成元が一つも構築できなければ`generator-unavailable`を通知する。構築時の
   未対応だけをskipし、malformed declaration・不正参照・任意の拡張エラーは伝播させる。
 - 一度選んだ生成元は、棄却率や予算切れを理由に選び直さない。
@@ -5552,7 +5560,9 @@ running a target. Priority: the outer AND's own `(:generator NAME)`; then a
 unique conjunct carrying a custom generator (direct, through an alias, or a node
 annotation discovery reaches without descending into collection fields), ahead
 of numeric folding; then supported numeric/primitive folding; then the first
-conjunct, in declaration order, whose ordinary construction succeeds. Multiple
+conjunct, in declaration order, whose ordinary construction succeeds. The
+default generators for `keyword`, `symbol`, `list` and `vector` are considered
+after the other ordinary candidates. Multiple
 competing custom-bearing conjuncts signal `generator-unavailable`; the explicit
 choice is a whole-AND generator. A candidate that signals
 `generator-unavailable` during construction is skipped; malformed declarations,
@@ -5887,6 +5897,20 @@ Lifecycle records identify the isolation, and an around lifecycle records
 completion of the wrapper. The wrapper source and isolation participate in the
 definition digest. Earlier fixture v2 artifacts with implicit fresh isolation
 remain readable and recheckable.
+
+### §17.3 implementation addendum: state frames
+
+A top-level `(:modifies (OBSERVER KEY-FORM ...) ...)` adds a frame
+condition to a Function Spec. Observers are registered in the contract's
+registry and captured when it is declared. The declaration digest includes
+the frame and its observer descriptors. Allowed keys use the argument and
+capture bindings. Observer snapshots before the target and after the passing
+outcome define the change set. A forbidden change records its observer, key
+and bounded before/after projections with reason `:state-postcondition`.
+Frame checks use the existing state-observing rules for fixture restoration,
+shrinking, artifacts and instrumentation.
+
+[State frame guide](guides/state-frames.md)
 
 ## Evidence sufficiency implementation addendum (2026-09-26)
 
