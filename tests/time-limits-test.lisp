@@ -424,6 +424,46 @@
     (ok (equal '(:setup :cleanup :cleanup-finished :rollback) (reverse events)))))
 
 #+(and sbcl sb-thread)
+(deftest enclosing-cancellation-cleanup-ignores-descendant-deadlines
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (middle-budget nil) (events nil))
+    (cl-spec:defspec-function sleeping-target
+      (:args) (:returns (member t))
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe (member 0)))
+        (:around (run) (unwind-protect (funcall run) (push :rollback events)))
+        (:setup (context) (declare (ignore context recipe)) (push :setup events) nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :cleanup events)
+          (sleep 1/8)
+          (push :cleanup-finished events))))
+    (cl-spec:defproperty check-untimed-fixture ()
+      (:trials (:normal 1))
+      (cl-spec:check-fixture 'sleeping-target 0)
+      (push :middle-continued events)
+      t)
+    (cl-spec:defproperty check-timed-middle ()
+      (:trials (:normal 1))
+      (cl-spec:run-property 'check-untimed-fixture :seed 2
+                            :options (list :timeout middle-budget :cleanup-timeout 1/9))
+      (push :outer-continued events)
+      t)
+    (dolist (limit '(:timeout :trial-timeout))
+      (let ((outer-limit (if (eq limit :timeout) :run :trial)))
+        (loop for (outer-budget middle-cap outer-first-p) in '((1/5 1/4 t) (1/4 1/5 nil))
+              do (setf middle-budget middle-cap events nil)
+                 (let* ((result (cl-spec:run-property 'check-timed-middle :seed 1
+                                    :options (list limit outer-budget :cleanup-timeout 1/9)))
+                        (data (cl-spec:result-data result))
+                        (timeout (getf data :timeout)))
+                   (ok (eq :timeout (getf data :status)))
+                   (ok (eq :property (getf timeout :phase)))
+                   (ok (eq outer-limit (getf timeout :limit)))
+                   (ok (equal (list :status :timeout :limit (if outer-first-p :cleanup outer-limit))
+                              (getf timeout :cleanup)))
+                   (ok (equal '(:setup :cleanup :rollback) (reverse events)))))))))
+
+#+(and sbcl sb-thread)
 (deftest pending-enclosing-timeout-keeps-separate-nested-cleanup-results
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (inner-result nil) (inner-cap nil) (inner-deadline nil)

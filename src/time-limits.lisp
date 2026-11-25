@@ -13,7 +13,7 @@
 
 (defstruct (run-limits (:copier nil))
   "The deadlines and private escape tag for one generated run."
-  started deadline trial-ticks cleanup-ticks (tag (list nil)) timeout)
+  started deadline trial-ticks cleanup-ticks enclosing-clocks (tag (list nil)) timeout)
 
 (defstruct (timed-phase (:copier nil))
   "An operation's deadline and the location reached when it expires."
@@ -85,6 +85,7 @@
     (let* ((*run-limits*
              (when timed-p
                (make-run-limits :started started :deadline (when ticks (+ started ticks))
+                                :enclosing-clocks *timer-scopes*
                                 :trial-ticks (seconds-to-ticks (getf options :trial-timeout))
                                 :cleanup-ticks (seconds-to-ticks
                                                 (or (getf options :cleanup-timeout) 1)))))
@@ -202,9 +203,9 @@
     (setf (timed-phase-name *timed-phase*) phase)))
 
 #+(and sbcl sb-thread)
-(defun earliest-active-clock (&optional excluded-phase)
+(defun earliest-active-clock (clocks &optional excluded-phase)
   (let ((earliest nil))
-    (dolist (clock *timer-scopes* earliest)
+    (dolist (clock clocks earliest)
       (let ((phase (deadline-clock-phase clock)))
         (unless (or (member clock *paused-timers*)
                     (and phase (or (eq phase excluded-phase)
@@ -220,10 +221,12 @@
          (grace (+ now (min (run-limits-cleanup-ticks owner)
                             (run-limits-cleanup-ticks
                              (if frame (timed-phase-owner frame) owner)))))
-         (clock (earliest-active-clock))
+         ;; An in-flight timeout can yield to a clock enclosing its owner.
+         (clocks (if pending (run-limits-enclosing-clocks pending) *timer-scopes*))
+         (clock (earliest-active-clock clocks))
          (clock-phase (when clock (deadline-clock-phase clock)))
          (enclosing-clock (if (and frame (eq clock-phase frame))
-                              (earliest-active-clock frame)
+                              (earliest-active-clock clocks frame)
                               clock))
          (deadline (when clock (deadline-clock-deadline clock)))
          (run-limit (if clock-phase (timed-phase-limit clock-phase) :cleanup))
