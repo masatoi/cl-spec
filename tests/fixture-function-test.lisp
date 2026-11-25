@@ -136,13 +136,19 @@
 
 (defvar *around-events* nil)
 
+(defvar *outer-trial* nil)
+
+(defvar *nested-fixture-data* nil)
+
 (defun around-event (event)
   (assert *around-active*)
   (push event *around-events*))
 
 (defun around-withdraw (amount)
   (around-event :target)
-  (when (eq *mode* :escape-in-trial) (throw 'target-escape :escaped))
+  (case *mode*
+    (:escape-in-trial (throw 'target-escape :escaped))
+    (:escape-target-outward (throw 'escape :escaped)))
   (decf *around-balance* amount)
   :receipt)
 
@@ -169,6 +175,23 @@
                                (funcall trial)
                                (handler-case (funcall trial) (error () nil)))
                               (:escape-in-trial (catch 'target-escape (funcall trial)))
+                              (:double-via-nested-check
+                               (funcall trial)
+                               (let ((*mode* :try-outer-thunk) (*outer-trial* trial)
+                                     (*around-balance* 100))
+                                 (cl-spec:check-fixture 'around-withdraw 9)))
+                              (:try-outer-thunk
+                               (handler-case (funcall *outer-trial*) (error () nil))
+                               (funcall trial))
+                              (:first-call-via-nested-check
+                               (let ((*mode* :use-outer-thunk) (*outer-trial* trial))
+                                 (setf *nested-fixture-data*
+                                       (fixture-data
+                                        (cl-spec:check-fixture 'around-withdraw 9
+                                                               :coverage '(:mode :observe))))))
+                              (:use-outer-thunk
+                               (let ((*around-balance* 100)) (funcall *outer-trial*))
+                               (funcall trial))
                               (:escape-after
                                (funcall trial)
                                (throw 'escape :escaped))
@@ -185,7 +208,9 @@
                  (:returns keyword)
                  (:state-post (progn
                                 (around-event :state-post)
-                                (and (eq *mode* :correct)
+                                (and (member *mode*
+                                             '(:correct :double-via-nested-check
+                                               :try-outer-thunk :use-outer-thunk))
                                      (= 100 before)
                                      (= *around-balance* (- before amount))))))))))
 
@@ -216,7 +241,8 @@
                  (:escape :fixture-around-nonlocal-exit 0)
                  (:double :fixture-around-thunk-repeated 1)
                  (:escape-in-trial :fixture-around-nonlocal-exit 1)
-                 (:escape-after :fixture-around-nonlocal-exit 1))
+                 (:escape-after :fixture-around-nonlocal-exit 1)
+                 (:escape-target-outward :fixture-around-nonlocal-exit 1))
           do (let* ((*mode* mode)
                     (*around-events* nil)
                     (result (catch 'escape (cl-spec:check-fixture 'around-withdraw 7)))
@@ -226,9 +252,27 @@
                (ok (eq reason (getf data :reason)))
                (ok (eq :aborted (getf lifecycle :completion)))
                (ok (eq :unknown (getf lifecycle :state)))
+               (ok (eq (plusp calls) (getf lifecycle :target-called)))
                (ok (= calls (count :target *around-events*)))
                (ok (= calls (count :cleanup *around-events*)))
                (ok (= 100 *around-balance*))))))
+
+(deftest nested-around-check-cannot-hide-a-repeated-outer-call
+  (with-around-contract
+    (let ((*mode* :double-via-nested-check))
+      (let ((data (fixture-data (cl-spec:check-fixture 'around-withdraw 7))))
+        (ok (eq :error (getf data :status)))
+        (ok (eq :fixture-around-thunk-repeated (getf data :reason)))
+        (ok (= 2 (count :target *around-events*) (count :cleanup *around-events*)))))))
+
+(deftest nested-around-first-call-keeps-each-coverage-trial-independent
+  (with-around-contract
+    (let ((*mode* :first-call-via-nested-check) (*nested-fixture-data* nil))
+      (let ((outer (fixture-data (cl-spec:check-fixture 'around-withdraw 7
+                                                       :coverage '(:mode :observe)))))
+        (dolist (data (list outer *nested-fixture-data*))
+          (ok (eq :passed (getf data :status)))
+          (ok (eql 1 (getf (getf data :coverage) :trials))))))))
 
 (deftest around-fixture-source-contributes-to-the-digest
   (with-around-contract

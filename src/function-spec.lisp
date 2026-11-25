@@ -35,7 +35,7 @@
                 #:make-trial-observation #:*trial-observations*
                 #:trial-observation-reason #:trial-observation-signature
                 #:trial-observation-condition
-                #:trial-observation-condition-report #:trial-observation-outcome
+                #:trial-observation-condition-report
                 #:trial-observation-state
                 #:trial-observation-lifecycle #:trial-observation-call-evidence
                 #:render-condition-report)
@@ -45,7 +45,8 @@
            #:fixture-check-result-name #:fixture-check-result-coverage)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/definition-validation
-                #:validate-definition #:definition-validation-slots #:call-with-definition-rollback
+                #:validate-definition #:definition-validation-slots
+                #:call-with-definition-rollback #+sbcl #:call-with-class-update-rollback
                 #:finite-definition-form-p #:definition-keyword-plist-p)
   (:import-from #:cl-spec/src/conditions
                 #:unknown-function-spec
@@ -953,6 +954,12 @@ function at a time (specification §3.2)."))
 (defmethod definition-validation-slots append ((contract function-spec))
   (copy-list *function-spec-slot-names*))
 
+#+sbcl
+(defmethod update-instance-for-different-class :around
+    ((previous standard-object) (current function-spec) &rest initargs)
+  (declare (ignore initargs))
+  (call-with-class-update-rollback previous current (lambda () (call-next-method))))
+
 (defmethod shared-initialize :around ((contract function-spec) slot-names &rest initargs)
   "Validate paired clauses and restore all participating slots on refusal."
   (flet ((supplied (key)
@@ -1756,10 +1763,14 @@ its classification. Nothing is re-run to build the evidence."
                            (returns signals post post-forms values-post-p
                             state-post-function state-post-forms)
                          (function-case-outcome-parts contract case)
-                       (let* ((state-frame
-                                (capture-state-frame (function-spec-state-frame contract)
-                                                     argument-values captures))
-                              (raw-outcome (invoke-target-once (checked-target property) arguments))
+                        (let* ((state-frame
+                                 (capture-state-frame (function-spec-state-frame contract)
+                                                      argument-values captures))
+                               (target-entry (getf context :fixture-target-entry))
+                               (raw-outcome
+                                 (progn
+                                   (when target-entry (funcall target-entry))
+                                   (invoke-target-once (checked-target property) arguments)))
                               (target-condition
                                 (when (eq :signaled (call-outcome-kind raw-outcome))
                                   (call-outcome-condition raw-outcome))))
@@ -2126,21 +2137,27 @@ closure reaches the digest."
   (let* ((inner (fixture-inner-property property))
          (contract (checked-contract property))
          (registry (or (getf context :registry) *registry*))
-         (observation nil) (call-data nil) (arguments-error nil)
+         (observation nil) (call-data nil) (arguments-error nil) (target-entered nil)
+         (coverage-context *coverage-context*)
+         (coverage-trial *coverage-trial*)
+         (inner-context (list* :fixture-target-entry (lambda () (setf target-entered t))
+                               context))
          (result
            (call-with-fixture
             (checked-fixture property) (first arguments)
             (lambda (raw)
-              (handler-case
-                  (progn
-                    (coverage-capture-input inner raw)
-                    (validate-call-arguments contract (function-spec-name contract) raw registry)
-                    (coverage-mark-stage :domain-valid))
-                (error (condition) (setf arguments-error condition)))
-              (unless arguments-error
-                (setf observation (observe-trial inner raw :context context)
-                      call-data (fixture-call-data observation)))
-              observation)
+              ;; A nested check can invoke the outer thunk within its wrapper.
+              (let ((*coverage-context* coverage-context) (*coverage-trial* coverage-trial))
+                (handler-case
+                    (progn
+                      (coverage-capture-input inner raw)
+                      (validate-call-arguments contract (function-spec-name contract) raw registry)
+                      (coverage-mark-stage :domain-valid))
+                  (error (condition) (setf arguments-error condition)))
+                (unless arguments-error
+                  (setf observation (observe-trial inner raw :context inner-context)
+                        call-data (fixture-call-data observation)))
+                observation))
             :registry registry))
          (reason (or (getf result :reason)
                      (when arguments-error :fixture-arguments-error)))
@@ -2154,8 +2171,7 @@ closure reaches the digest."
                   :condition-report (render-condition-report arguments-error))
             (getf lifecycle :errors)))
     (coverage-note-unavailable-input (getf (first (getf lifecycle :errors)) :phase))
-    (setf (getf lifecycle :target-called)
-          (and observation (consp (trial-observation-outcome observation)) t))
+    (setf (getf lifecycle :target-called) target-entered)
     (make-trial-observation
      :run *trial-observations* :property property
      :arguments (list (getf result :recipe))
