@@ -3,12 +3,12 @@
   (:use #:cl)
   (:import-from #:cl-spec/main
                 #:*registry* #:make-hash-table-registry #:defgenerator #:defspec
-                #:defspec-function #:check-function #:property-result-status
+                #:defspec-function #:check-function #:property-result-status #:property-result-trials
                 #:property-result-shrunk-counterexample #:make-counterexample-artifact
                 #:counterexample-artifact-data #:serialize-counterexample-artifact
                 #:deserialize-counterexample-artifact #:recheck-counterexample)
   (:import-from #:cl-spec/src/backends/check-it)
-  (:export #:make-example-registry #:register-example! #:demo-recheck))
+  (:export #:make-example-registry #:register-example! #:demo-recheck #:demo-rollback))
 (in-package #:cl-spec/examples/reproducible-withdraw)
 
 (defstruct account
@@ -19,12 +19,26 @@
   "Return a plausible receipt while deliberately forgetting the balance update."
   (list :account (account-id account) :amount amount))
 
+(defvar *ledger* nil
+  "One shared balance cell for the rollback demonstration.")
+
+(defmacro with-ledger-rollback (&body body)
+  "Run BODY against the shared ledger and restore the original balance on exit."
+  (let ((balance (gensym "BALANCE")))
+    `(let ((,balance (car *ledger*)))
+       (unwind-protect (progn ,@body)
+         (setf (car *ledger*) ,balance)))))
+
+(defun withdraw-from-ledger (amount)
+  "Debit the shared ledger and return the remaining balance."
+  (decf (car *ledger*) amount))
+
 (defun make-example-registry ()
   "Return an empty registry dedicated to this example."
   (make-hash-table-registry))
 
 (defun register-example! (registry)
-  "Register a deterministic recipe generator and failing withdrawal contract."
+  "Register the fresh-account and rollback-ledger contracts."
   (let ((*registry* registry))
     (defgenerator withdrawal-recipes ()
       (:shrink (recipe)
@@ -50,7 +64,19 @@
                 (id-before (account-id account)))
       (:returns list)
       (:state-post (= (account-balance account) (- balance-before amount))
-                   (= (account-id account) id-before))))
+                   (= (account-id account) id-before)))
+    (defspec-function withdraw-from-ledger
+      (:args (amount (range integer 1 10)))
+      (:fixture
+        (:isolation :around) (:version 1)
+        (:recipe (recipe (range integer 1 10)))
+        (:around (trial) (with-ledger-rollback (funcall trial)))
+        (:setup (context) (list recipe))
+        (:cleanup (context) nil))
+      (:capture (balance-before (car *ledger*)))
+      (:returns integer)
+      (:state-post (= balance-before 100)
+                   (= (car *ledger*) (- balance-before amount)))))
   registry)
 
 (defun demo-recheck (registry)
@@ -65,3 +91,12 @@
           :shrunk-recipe (getf (property-result-shrunk-counterexample result) 'recipe)
           :artifact-version (getf (counterexample-artifact-data restored) :artifact-version)
           :recheck (getf recheck :status))))
+
+(defun demo-rollback (registry)
+  "Withdraw twice from one ledger, with rollback restoring it before each new trial."
+  (let ((*ledger* (list 100)))
+    (let ((result (check-function 'withdraw-from-ledger :trials 2 :seed 42
+                                  :registry registry)))
+      (list :status (property-result-status result)
+            :trials (property-result-trials result)
+            :balance (car *ledger*)))))
