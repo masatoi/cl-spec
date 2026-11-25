@@ -75,5 +75,9 @@
                        (:candidates 0 :budget 100001 :termination :exhausted)
                        (:candidates 1 :budget 10 :termination "wrong")
                        (:candidates 1 :budget 10)
-                       (:candidates 1 :budget 10 :termination :exhausted :candidates 2)))
+                       (:candidates 1 :budget 10 :termination :exhausted :candidates 2)
+                       (:candidates 2 :budget 10 :termination :exhausted :timed-out-candidates -1)
+                       (:candidates 2 :budget :unbounded :termination :exhausted
+                        :timed-out-candidates 3)
+                       (:candidates 2 :budget 10 :timed-out-candidates 1 :timed-out-candidates 2)))
       (ok (signals (run-property property :seed 42) 'invalid-backend-result)))))

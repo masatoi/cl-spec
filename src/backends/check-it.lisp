@@ -9,7 +9,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits #:with-native-candidate #:with-native-shrink)
   (:import-from #:cl-spec/src/time-limits
-                #:call-catching-run-timeout #:with-trial-clock #:with-run-phase)
+                #:call-catching-run-timeout #:call-with-shrink-candidate
+                #:run-timeout-data #:with-trial-clock #:with-run-phase #:with-timer-bookkeeping)
   (:import-from #:cl-spec/src/generator #:backend-time-limit-protocol)
   (:import-from #:cl-spec/src/coverage-report #:coverage-enable-stage
                 #:begin-coverage-report #:end-coverage-report #:deferred-coverage-p)
@@ -282,13 +283,76 @@ unvisited contents may collide, but equivalent snapshots always share a bucket."
 
 (defstruct (check-it-progress (:copier nil))
   "Observations already committed to the running backend."
-  (trials 0) (rejected 0) original accepted capabilities shrink-candidates)
+  (trials 0) (rejected 0) original accepted capabilities
+  shrink-candidates shrink-budget timed-out-candidates)
 
 (defvar *check-it-progress* nil
   "Progress for the active check-it run, including completed shrink observations.")
 
+(defun begin-shrink-search (budget)
+  "Collect candidate counts for the current search."
+  (setf (check-it-progress-shrink-candidates *check-it-progress*) 0
+        (check-it-progress-shrink-budget *check-it-progress*) budget))
+
+(defun shrink-progress-report (termination)
+  "Project the collected counts, including candidates rejected by their trial clocks."
+  (let* ((progress *check-it-progress*)
+         (candidates (check-it-progress-shrink-candidates progress))
+         (timed-out (check-it-progress-timed-out-candidates progress)))
+    (when candidates
+      (list* :candidates candidates :budget (check-it-progress-shrink-budget progress)
+             :termination termination
+             (when timed-out (list :timed-out-candidates timed-out))))))
+
+(defun record-rejected-shrink-timeout ()
+  (incf (check-it-progress-timed-out-candidates *check-it-progress*))
+  nil)
+
+(defstruct (native-candidate (:copier nil))
+  "Observations and mutations pending completion of a native candidate's clock."
+  observation mutated-p)
+
+(defvar *native-candidate* nil
+  "The state of one native candidate with a recoverable trial clock.")
+
+(defun accept-native-candidate (observation)
+  (if *native-candidate*
+      (setf (native-candidate-observation *native-candidate*) observation)
+      (setf (check-it-progress-accepted *check-it-progress*) observation)))
+
+(defun call-with-native-argument-snapshot (arguments function)
+  "Record candidate mutations while its local deadline is unwinding."
+  (let ((before (snapshot-value arguments)))
+    (unwind-protect
+         (funcall function before)
+      (when (and *native-candidate* (run-timeout-data))
+        (with-timer-bookkeeping
+          (unless (same-value-p before arguments)
+            (setf (native-candidate-mutated-p *native-candidate*) t)))))))
+
+(defun call-with-counted-native-candidate (trial function on-mutation)
+  (let* ((*native-candidate* (make-native-candidate))
+         (progress *check-it-progress*)
+         (before (check-it-progress-shrink-candidates progress))
+         (rejected
+           (call-with-shrink-candidate
+            trial function
+            (lambda ()
+              (with-timer-bookkeeping
+                ;; A timed-out prefilter never reaches the root test's counter.
+                (when (eql before (check-it-progress-shrink-candidates progress))
+                  (incf (check-it-progress-shrink-candidates progress)))
+                (record-rejected-shrink-timeout))
+              (when (native-candidate-mutated-p *native-candidate*)
+                (funcall on-mutation))
+              t)))
+         (observation (native-candidate-observation *native-candidate*)))
+    (when (and (not rejected) observation)
+      (setf (check-it-progress-accepted progress) observation))
+    rejected))
+
 (defmacro with-shrink-clock (&body body)
-  "Use a fresh candidate limit while preserving the failing ordinary trial number."
+  "Time shrinker work that produces candidates for the failing ordinary trial."
   `(with-trial-clock ((check-it-progress-trials *check-it-progress*))
      (with-run-phase (:shrinking)
        ,@body)))
@@ -298,47 +362,57 @@ unvisited contents may collide, but equivalent snapshots always share a bucket."
   "Search ordered candidates while retaining the original failure identity.
 A whole-input shrinker proposes argument lists. A single-value shrinker receives
 the value from the argument snapshot and each candidate binds that one argument."
-  (let ((accepted nil) (different nil) (count 0)
+  (let ((progress *check-it-progress*) (different nil)
         (current (trial-observation-arguments original))
         (visited (make-hash-table :test #'eql)))
-    (setf (check-it-progress-shrink-candidates *check-it-progress*) 0)
+    (begin-shrink-search budget)
     (push (snapshot-value current) (gethash (candidate-bucket-key current) visited))
     (labels ((finish (reason &optional abort)
                (return-from shrink-custom-arguments
-                 (values accepted different
-                         (list :candidates count :budget budget :termination reason) abort)))
+                 (values (check-it-progress-accepted progress) different
+                         (shrink-progress-report reason) abort)))
              (consider (candidate)
-               (setf (check-it-progress-shrink-candidates *check-it-progress*) (incf count))
-               (with-shrink-clock
-                 (let ((bucket (candidate-bucket-key candidate)))
-                 (when (some (lambda (prior) (same-value-p prior candidate))
-                             (gethash bucket visited))
-                   (return-from consider nil))
-                 (let* ((arguments (snapshot-value candidate))
-                        (before (snapshot-value arguments)))
-                   (push before (gethash bucket visited))
-                   (let ((admitted
-                           (handler-case (and (finite-list-p arguments)
-                                              (funcall validator arguments))
-                             (error () (finish :validation-error)))))
-                     (unless (same-value-p before arguments) (finish :mutation))
-                     (unless admitted (return-from consider nil)))
-                   (let ((observation
-                           (handler-case (observe-trial property arguments :context context)
-                             (error () (finish :execution-error)))))
-                     (when (eq :fixture (observation-failure-phase observation))
-                       (finish :fixture-error observation))
-                     (when (trial-observation-arguments-mutated-p observation) (finish :mutation))
-                     (unless (observation-failure-p observation) (return-from consider nil))
-                     (if (failure-identities-match-p (trial-observation-signature original)
-                                                     (trial-observation-signature observation))
-                         (progn (setf (check-it-progress-accepted *check-it-progress*) observation
-                                      accepted observation
-                                      current (trial-observation-arguments observation))
-                                t)
-                         (progn (setf different t) nil))))))))
+               (incf (check-it-progress-shrink-candidates progress))
+               (let ((observation
+                       (call-with-shrink-candidate
+                        (check-it-progress-trials progress)
+                        (lambda ()
+                          (block evaluate
+                            (let ((bucket (candidate-bucket-key candidate)))
+                              (when (some (lambda (prior) (same-value-p prior candidate))
+                                          (gethash bucket visited))
+                                (return-from evaluate nil))
+                              (let* ((arguments (snapshot-value candidate))
+                                     (before (snapshot-value arguments)))
+                                (push before (gethash bucket visited))
+                                (let ((admitted
+                                        (handler-case (and (finite-list-p arguments)
+                                                           (funcall validator arguments))
+                                          (error () (finish :validation-error)))))
+                                  (unless (same-value-p before arguments) (finish :mutation))
+                                  (unless admitted (return-from evaluate nil)))
+                                (handler-case
+                                    (let ((observation
+                                            (observe-trial property arguments :context context)))
+                                      (when (eq :fixture (observation-failure-phase observation))
+                                        (finish :fixture-error observation))
+                                      observation)
+                                  (error () (finish :execution-error)))))))
+                        #'record-rejected-shrink-timeout)))
+                 (when observation
+                   (when (trial-observation-arguments-mutated-p observation) (finish :mutation))
+                   (unless (observation-failure-p observation) (return-from consider nil))
+                   (if (failure-identities-match-p (trial-observation-signature original)
+                                                   (trial-observation-signature observation))
+                       (progn
+                         (with-timer-bookkeeping
+                           (setf (check-it-progress-accepted progress) observation
+                                 current (trial-observation-arguments observation)))
+                         t)
+                       (progn (setf different t) nil))))))
       (loop
-        (when (= count budget) (finish :budget-exhausted))
+        (when (= (check-it-progress-shrink-candidates progress) budget)
+          (finish :budget-exhausted))
         (let* ((input (snapshot-value current))
                (candidates
                  (with-shrink-clock
@@ -347,10 +421,10 @@ the value from the argument snapshot and each candidate binds that one argument.
                      (error () (finish :shrinker-error))))))
           (unless (same-value-p input current) (finish :mutation))
           (multiple-value-bind (reason inspected)
-              (bounded-candidate-list candidates (- budget count))
+              (bounded-candidate-list candidates (- budget
+                                                    (check-it-progress-shrink-candidates progress)))
             (when reason
-              (setf (check-it-progress-shrink-candidates *check-it-progress*)
-                    (incf count inspected))
+              (incf (check-it-progress-shrink-candidates progress) inspected)
               (finish reason)))
           (unless (loop for value in candidates
                         thereis (consider (if single-value-p (list value) value)))
@@ -398,12 +472,12 @@ filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
              (not (eq :fixture (observation-failure-phase observation))))
     (setf (check-it-progress-original *check-it-progress*) observation)))
 
-(defun timed-out-check-it-outcome (timeout options)
+(defun timed-out-check-it-outcome (timeout)
   "Keep completed trials and previously observed counterexamples on expiration."
   (let* ((progress *check-it-progress*)
          (original (check-it-progress-original progress))
          (accepted (check-it-progress-accepted progress))
-         (candidates (check-it-progress-shrink-candidates progress)))
+         (report (shrink-progress-report :timeout)))
     (append (list :status :timeout :timeout timeout :failure-reason :timeout
                   :failure-phase (getf timeout :phase)
                   :trials (check-it-progress-trials progress)
@@ -412,10 +486,7 @@ filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
             (when original
               (list :failure original :shrunk-failure accepted
                     :shrunk-outcome (if accepted :used :none)))
-            (when candidates
-              (list :shrink-report (list :candidates candidates
-                                         :budget (getf options :shrink-budget 100)
-                                         :termination :timeout))))))
+            (when report (list :shrink-report report)))))
 
 (defmethod backend-time-limit-protocol ((backend check-it-backend))
   (when (eq (class-of backend) (find-class 'check-it-backend))
@@ -425,7 +496,9 @@ filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
   (:documentation "Execute the checked backend's ordinary or fixture trial loop."))
 
 (defmethod run-generated-test ((backend check-it-backend) property &key options)
-  (let ((*check-it-progress* (make-check-it-progress)))
+  (let ((*check-it-progress* (make-check-it-progress
+                             :timed-out-candidates (when (getf options :trial-timeout) 0)))
+        (*native-candidate* nil))
     (begin-trial-report property)
     (begin-coverage-report property)
     (call-catching-run-timeout
@@ -433,49 +506,61 @@ filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
        (let ((outcome (run-check-it-test backend property options)))
          (with-run-phase (:run (max 1 (getf outcome :trials)))
            outcome)))
-     (lambda (timeout) (timed-out-check-it-outcome timeout options)))))
+     #'timed-out-check-it-outcome)))
 
-(defun shrink-native-arguments (generator property original validator context)
-  "Search native candidates and retain each observed reduction as it is accepted."
-  (let ((accepted nil) (different nil))
-    (with-native-shrink ((check-it-progress-trials *check-it-progress*))
-      (handler-case
-          (block search
-            (shrink
-             generator
-             (lambda (arguments)
-               (with-native-candidate
-                 (handler-case
-                     (let ((before (snapshot-value arguments))
-                           (admitted (and (finite-list-p arguments)
-                                          (funcall validator arguments))))
-                       (unless (same-value-p before arguments) (return-from search nil))
-                       (if admitted
-                           (let ((candidate (observe-trial property arguments :context context)))
-                             (when (trial-observation-arguments-mutated-p candidate)
-                               (return-from search nil))
-                             (cond
-                               ((not (observation-failure-p candidate)) t)
-                               ((failure-identities-match-p
-                                 (trial-observation-signature original)
-                                 (trial-observation-signature candidate))
-                                (unless (same-value-p (trial-observation-arguments original)
-                                                      (trial-observation-arguments candidate))
-                                  (setf (check-it-progress-accepted *check-it-progress*) candidate
-                                        accepted candidate))
-                                nil)
-                               (t (setf different t) t)))
-                           t))
-                   (error () (setf different t) t))))))
-        (generation-budget-exhausted (condition)
-          (if (owned-generation-exhaustion-p condition :shrinking)
-              (error condition)
-              (progn (record-generation-interruption)
-                     (setf different t))))
-        (error ()
-          (record-generation-interruption)
-          (setf different t))))
-    (values accepted different)))
+(defun shrink-native-arguments (generator property original validator context trial-timeout)
+  "Search native candidates and retain each observation accepted by the timed callback."
+  (let ((progress *check-it-progress*) (different nil) (termination :exhausted))
+    (when trial-timeout (begin-shrink-search :unbounded))
+    (block search
+      (flet ((stop-for-mutation ()
+               (setf termination :mutation)
+               (return-from search nil)))
+        (with-native-shrink ((check-it-progress-trials progress)
+                            (when trial-timeout
+                              (lambda (trial function)
+                                (call-with-counted-native-candidate
+                                 trial function #'stop-for-mutation))))
+          (handler-case
+              (shrink
+               generator
+               (lambda (arguments)
+                 (with-native-candidate
+                   (when trial-timeout (incf (check-it-progress-shrink-candidates progress)))
+                   (handler-case
+                       (call-with-native-argument-snapshot
+                        arguments
+                        (lambda (before)
+                          (let ((admitted (and (finite-list-p arguments)
+                                               (funcall validator arguments))))
+                            (unless (same-value-p before arguments) (stop-for-mutation))
+                            (if admitted
+                                (let ((candidate (observe-trial property arguments
+                                                                :context context)))
+                                  (when (trial-observation-arguments-mutated-p candidate)
+                                    (stop-for-mutation))
+                                  (cond
+                                    ((not (observation-failure-p candidate)) t)
+                                    ((failure-identities-match-p
+                                      (trial-observation-signature original)
+                                      (trial-observation-signature candidate))
+                                     (unless (same-value-p (trial-observation-arguments original)
+                                                           (trial-observation-arguments candidate))
+                                       (accept-native-candidate candidate))
+                                     nil)
+                                    (t (setf different t) t)))
+                                t))))
+                     (error () (setf different t) t)))))
+            (generation-budget-exhausted (condition)
+              (if (owned-generation-exhaustion-p condition :shrinking)
+                  (error condition)
+                  (progn (record-generation-interruption)
+                         (setf different t termination :shrinker-error))))
+            (error ()
+              (record-generation-interruption)
+              (setf different t termination :shrinker-error))))))
+    (values (check-it-progress-accepted progress) different
+            (shrink-progress-report termination))))
 
 (defmethod run-check-it-test ((backend check-it-backend) property options)
   "Generate trials and retain only admitted, observed reductions of the original failure.
@@ -585,15 +670,17 @@ target never produced is not a reduction of it."
                                             :single-value-p (not (eq custom generator)))))))
                                  (when (and (not custom) shrink-p (property-arguments property)
                                             (not (trial-observation-arguments-mutated-p original)))
-                                   (multiple-value-setq (accepted different)
+                                   (multiple-value-setq (accepted different report)
                                      (shrink-native-arguments generator property original
-                                                              whole-validator context))))
+                                                              whole-validator context
+                                                              (getf options :trial-timeout)))))
                              (generation-budget-exhausted (condition)
-                             (if (owned-generation-exhaustion-p condition :shrinking)
-                                 (when report
-                                   (setf (getf report :termination)
-                                         :generation-budget-exhausted))
-                                 (error condition))))))
+                              (if (owned-generation-exhaustion-p condition :shrinking)
+                                  (if report
+                                      (setf (getf report :termination) :generation-budget-exhausted)
+                                      (setf report
+                                            (shrink-progress-report :generation-budget-exhausted)))
+                                  (error condition))))))
                      (return
                        (list :status (trial-observation-status (or accepted original))
                              :trials trial :rejected (check-it-progress-rejected progress)
@@ -717,33 +804,45 @@ Lists can shrink in length even when their element generator cannot shrink."
              (error "Recipe shrinker exceeded the candidate budget"))
            (mapcar #'list candidates)))))))
 
-(defun shrink-fixture-arguments (generator property original validator context budget)
+(defun shrink-fixture-arguments (generator property original validator context budget trial-timeout)
   "Shrink recipes only, aborting at the first fixture lifecycle failure."
   (let ((custom (fixture-custom-shrinker generator budget)))
     (when custom
       (return-from shrink-fixture-arguments
         (shrink-custom-arguments custom property original validator context budget))))
-  (let ((accepted nil) (different nil) (count 0) (abort nil) (termination :exhausted))
-    (setf (check-it-progress-shrink-candidates *check-it-progress*) 0)
-    (with-native-shrink ((check-it-progress-trials *check-it-progress*))
-      (block search
-        (handler-case
-            (shrink generator
-                    (lambda (arguments)
-                      (when (>= count budget)
-                        (setf termination :budget-exhausted)
-                        (return-from search nil))
-                      (setf (check-it-progress-shrink-candidates *check-it-progress*) (incf count))
-                      (with-native-candidate
-                        (let ((before (snapshot-value arguments))
-                             (admitted (and (finite-list-p arguments)
-                                            (funcall validator arguments))))
-                        (unless (same-value-p before arguments)
-                          (setf termination :mutation)
-                          (return-from search nil))
+  (let ((progress *check-it-progress*) (different nil) (abort nil) (termination :exhausted))
+    (begin-shrink-search budget)
+    (block search
+      (flet ((ensure-budget ()
+               (when (>= (check-it-progress-shrink-candidates progress) budget)
+                 (setf termination :budget-exhausted)
+                 (return-from search nil)))
+             (stop-for-mutation ()
+               (setf termination :mutation)
+               (return-from search nil)))
+        (with-native-shrink ((check-it-progress-trials progress)
+                            (when trial-timeout
+                              (lambda (trial function)
+                                (ensure-budget)
+                                (call-with-counted-native-candidate
+                                 trial function #'stop-for-mutation))))
+          (handler-case
+              (shrink
+               generator
+               (lambda (arguments)
+                 (with-native-candidate
+                   (ensure-budget)
+                   (incf (check-it-progress-shrink-candidates progress))
+                   (call-with-native-argument-snapshot
+                    arguments
+                    (lambda (before)
+                      (let ((admitted (and (finite-list-p arguments)
+                                           (funcall validator arguments))))
+                        (unless (same-value-p before arguments) (stop-for-mutation))
                         (if (not admitted)
                             t
-                            (let ((observation (observe-trial property arguments :context context)))
+                            (let ((observation (observe-trial property arguments
+                                                              :context context)))
                               (when (eq :fixture (observation-failure-phase observation))
                                 (setf abort observation termination :fixture-error)
                                 (return-from search nil))
@@ -754,18 +853,16 @@ Lists can shrink in length even when their element generator cannot shrink."
                                   (trial-observation-signature observation))
                                  (unless (same-value-p (trial-observation-arguments original)
                                                        (trial-observation-arguments observation))
-                                   (setf (check-it-progress-accepted *check-it-progress*)
-                                         observation
-                                         accepted observation))
+                                   (accept-native-candidate observation))
                                  nil)
-                                (t (setf different t) t))))))))
-          (generation-budget-exhausted (condition)
-            (if (owned-generation-exhaustion-p condition :shrinking)
-                (setf termination :generation-budget-exhausted)
-                (error condition)))
-          (error () (setf termination :shrinker-error)))))
-    (values accepted different
-            (list :candidates count :budget budget :termination termination) abort)))
+                                (t (setf different t) t))))))))))
+            (generation-budget-exhausted (condition)
+              (if (owned-generation-exhaustion-p condition :shrinking)
+                  (setf termination :generation-budget-exhausted)
+                  (error condition)))
+            (error () (setf termination :shrinker-error))))))
+    (values (check-it-progress-accepted progress) different
+            (shrink-progress-report termination) abort)))
 
 (defmethod run-check-it-test ((backend check-it-backend) (property fixture-check-property)
                               options)
@@ -836,7 +933,8 @@ Lists can shrink in length even when their element generator cannot shrink."
                               (with-run-phase (:shrinking trial)
                                 (with-generation-phase (:shrinking)
                                   (shrink-fixture-arguments generator property original validator
-                                                            context shrink-budget)))
+                                                            context shrink-budget
+                                                            (getf options :trial-timeout))))
                             (return (finish trial :original original :accepted accepted
                                             :different different :report report :abort abort)))
                           (return
