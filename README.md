@@ -1093,6 +1093,13 @@ whose argument check timed out remains available as failure evidence.
 
 Time limits use current-thread timers on threaded SBCL with the check-it
 backend. Other Lisp implementations and backends reject time limit options.
+The runner arms the earlier of the applicable run and trial deadlines.
+Once an ordinary trial deadline starts an unwind, arbitrary application
+`unwind-protect` cleanup can run past the overall `:timeout` before the runner
+regains control. An application cleanup that performs its own non-local exit
+can replace the timeout transfer and let application execution continue. If
+control reaches the runner, the recorded timeout remains the result.
+
 Foreign calls and code that defers asynchronous interrupts can postpone
 delivery. Fixture hooks and wrapper unwind code still own application resource
 release. Use process supervision when a caller needs a hard bound on the
