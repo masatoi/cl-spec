@@ -8,7 +8,7 @@
                 #:fixture-check-result #:fixture-check-result-observation
                 #:fixture-check-result-definition #:fixture-check-result-name
                 #:check-fixture #:fixture-check-data #:function-spec-fixture)
-  (:import-from #:cl-spec/src/fixture #:fixture-version)
+  (:import-from #:cl-spec/src/fixture #:fixture-version #:fixture-isolation)
   (:import-from #:cl-spec/src/property-runner #:property-result-run-error)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:trial-observation-state)
@@ -252,7 +252,11 @@ and status."
 
 (defun completed-fixture-lifecycle-p (data)
   "Recognize a completed, released trial with a recorded target invocation."
-  (and (record-p data '(:setup :evaluation :cleanup :state :errors :completion :target-called))
+  (and (record-p data '(:setup :evaluation :cleanup :state :errors :completion :target-called)
+                 '(:isolation :around))
+       (case (getf data :isolation :fresh)
+         (:fresh (not (get-properties data '(:around))))
+         (:around (eq :completed (getf data :around))))
        (eq :completed (getf data :setup))
        (eq :completed (getf data :evaluation))
        (eq :completed (getf data :cleanup))
@@ -323,6 +327,8 @@ and status."
            (valid-fixture-evidence-p (getf data :original))
            (or (null (getf data :shrunk))
                (and (valid-fixture-evidence-p (getf data :shrunk))
+                    (eq (getf (getf (getf data :original) :lifecycle) :isolation :fresh)
+                        (getf (getf (getf data :shrunk) :lifecycle) :isolation :fresh))
                     (failure-identities-match-p
                      (getf (getf data :original) :signature)
                      (getf (getf data :shrunk) :signature))))
@@ -414,7 +420,9 @@ as :DETAIL rather than signalled, so a batch of rechecks reports every artifact.
                 (return-from recheck-fixture-artifact (result :incomparable-definition)))
               (unless (and (equal digest (getf data :definition-digest))
                            (= (fixture-version (function-spec-fixture definition))
-                              (getf data :fixture-version)))
+                              (getf data :fixture-version))
+                           (eq (fixture-isolation (function-spec-fixture definition))
+                               (getf (getf saved :lifecycle) :isolation :fresh)))
                 (return-from recheck-fixture-artifact (result :definition-mismatch))))
             (unless (eq state-policy :fixture)
               (return-from recheck-fixture-artifact (result :unsupported :state-unconfirmed)))

@@ -338,23 +338,28 @@ return names of a contract-level or case-level :POST-VALUES."
 
 (defun expand-fixture-clause (clause)
   "Validate an inline fixture and expand its compiled recipe hooks."
-  (let ((entries (rest clause)) (seen nil))
+  (let ((entries (rest clause))
+        (required '(:isolation :version :recipe :setup :cleanup))
+        (seen nil))
     (unless (and (proper-list-p entries) (finite-definition-form-p entries))
       (function-spec-error clause "fixture clauses must be finite"))
     (dolist (entry entries)
       (unless (and (proper-list-p entry) (consp entry)
-                   (member (first entry) '(:isolation :version :recipe :setup :cleanup))
+                   (or (member (first entry) required) (eq :around (first entry)))
                    (not (member (first entry) seen)))
         (function-spec-error entry "invalid or duplicate fixture clause"))
       (push (first entry) seen))
-    (unless (= (length seen) 5)
+    (unless (subsetp required seen)
       (function-spec-error clause "fixture requires isolation, version, recipe, setup and cleanup"))
-    (let ((isolation (assoc :isolation entries))
+    (let* ((isolation (assoc :isolation entries))
+           (mode (second isolation))
            (version (assoc :version entries))
            (recipe (assoc :recipe entries))
            (setup (assoc :setup entries))
-           (cleanup (assoc :cleanup entries)))
-      (unless (and (= 2 (length isolation)) (eq :fresh (second isolation))
+           (cleanup (assoc :cleanup entries))
+           (around (assoc :around entries)))
+      (unless (and (= 2 (length isolation))
+                   (if around (eq :around mode) (eq :fresh mode))
                    (= 2 (length version)) (typep (second version) '(integer 1 *))
                    (= 2 (length recipe)) (proper-list-p (second recipe))
                    (= 2 (length (second recipe))))
@@ -366,14 +371,14 @@ return names of a contract-level or case-level :POST-VALUES."
                       (not (lambda-list-keyword-name-p symbol)))))
           (unless (binding-p name)
             (function-spec-error recipe "invalid recipe binding"))
-          (dolist (hook (list setup cleanup))
+          (dolist (hook (if around (list setup cleanup around) (list setup cleanup)))
             (unless (and (>= (length hook) 3) (proper-list-p (second hook))
                          (= 1 (length (second hook)))
                          (binding-p (first (second hook)))
-                         (not (eq name (first (second hook)))))
-              (function-spec-error hook "hook requires one distinct context binding and body"))))
+                         (or (eq hook around) (not (eq name (first (second hook))))))
+              (function-spec-error hook "hook requires one binding and a body"))))
         `(make-instance 'trial-fixture
-                        :isolation :fresh :version ,(second version)
+                        :isolation ,mode :version ,(second version)
                         :recipe-name ',name :recipe-spec ',(second (second recipe))
                         :setup-forms ',(cddr setup) :cleanup-forms ',(cddr cleanup)
                         :setup-function
@@ -383,7 +388,13 @@ return names of a contract-level or case-level :POST-VALUES."
                         :cleanup-function
                         (lambda (,name ,@(second cleanup))
                           (declare (ignorable ,name ,@(second cleanup)))
-                          ,@(cddr cleanup)))))))
+                          ,@(cddr cleanup))
+                        ,@(when around
+                            `(:around-forms ',(rest around)
+                              :around-function
+                              (lambda ,(second around)
+                                (declare (ignorable ,@(second around)))
+                                ,@(cddr around)))))))))
 
 (defun parse-function-spec-clauses (name clauses)
   "Split clauses into documentation, arguments, pre/returns/post, generator, signals and post names.
@@ -862,7 +873,8 @@ read but never checked."
   "Attach a contract to the existing function NAME without redefining it.
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:CAPTURE (NAME FORM) ...),
+(:ARGS-GENERATOR NAME), (:FIXTURE SUBCLAUSE ...), (:PRE FORM ...),
+(:CAPTURE (NAME FORM) ...),
 (:RETURNS SPEC), (:POST FORM ...),
 (:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
@@ -917,11 +929,11 @@ Its failure identity is (:STATE-POSTCONDITION INDEX), or
 its position too.  The target was called for such a failure, so it keeps the raw
 outcome and counts as that case's call.
 
-A state-observing contract is checked by CHECK-FUNCTION but is not shrunk,
-replayed from a past result or persisted as a counterexample artifact in this
-version, because none of those can rebuild the same initial state.  A
-pure-looking use is not exempted, and this is a scope limit, not a claim that
-state constraints are inherently unreproducible.
+:FIXTURE declares recipe-backed state reconstruction, including setup and
+cleanup. :ISOLATION :AROUND requires (:AROUND (TRIAL) FORM ...), which calls
+TRIAL once with no arguments within the wrapper's dynamic extent. TRIAL runs
+setup, call checks and cleanup. A state-observing contract without a fixture
+cannot be shrunk, replayed from a past result or persisted as an artifact.
 
 :CASES names the behaviour required of each admitted input, instead of one
 outcome for all of them.  :CASES appears at most once and holds one or more
