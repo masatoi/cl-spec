@@ -202,30 +202,36 @@
     (setf (timed-phase-name *timed-phase*) phase)))
 
 #+(and sbcl sb-thread)
-(defun earliest-active-clock ()
+(defun earliest-active-clock (&optional excluded-phase)
   (let ((earliest nil))
     (dolist (clock *timer-scopes* earliest)
       (let ((phase (deadline-clock-phase clock)))
         (unless (or (member clock *paused-timers*)
-                    (and phase (run-limits-timeout (timed-phase-owner phase))))
+                    (and phase (or (eq phase excluded-phase)
+                                   (run-limits-timeout (timed-phase-owner phase)))))
           (when (or (null earliest)
                     (< (deadline-clock-deadline clock) (deadline-clock-deadline earliest)))
             (setf earliest clock)))))))
 
 #+(and sbcl sb-thread)
-(defun finish-timed-cleanup (function body-returned-p)
+(defun finish-timed-cleanup (function body-returned-p prior-timeouts)
   (let* ((frame *timed-phase*)
-         (pending (find-if #'run-limits-timeout *active-run-limits*))
+         ;; A pre-existing ancestor timeout belongs to its own cleanup.
+         (pending (find-if (lambda (limits)
+                             (and (run-limits-timeout limits)
+                                  (not (member limits prior-timeouts :test #'eq))))
+                           *active-run-limits*))
          (owner (or pending (timed-phase-owner frame)))
          (now (get-internal-real-time))
          (grace (+ now (min (run-limits-cleanup-ticks owner)
                             (run-limits-cleanup-ticks (timed-phase-owner frame)))))
          (clock (earliest-active-clock))
          (clock-phase (when clock (deadline-clock-phase clock)))
+         (enclosing-clock (if (eq clock-phase frame) (earliest-active-clock frame) clock))
          (deadline (when clock (deadline-clock-deadline clock)))
          (run-limit (if clock-phase (timed-phase-limit clock-phase) :cleanup))
          (already-due (and deadline (<= deadline now)))
-         (expires-in-cleanup (and deadline (not already-due) (< deadline grace)))
+         (expires-in-cleanup (and deadline (not already-due) (<= deadline grace)))
          (limit (if expires-in-cleanup run-limit :cleanup))
          (tag (list nil))
          (*paused-timers* *timer-scopes*)
@@ -234,16 +240,23 @@
                                          (lambda () (throw tag :timeout)) function)))
          (cleanup (if (eq :timeout status) (list :status :timeout :limit limit)
                       (list :status status)))
-         (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout)))))
+         (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout))))
+         ;; Deferred delivery can leave the enclosing deadline due after the private timer fires.
+         (expired-enclosing-clock
+           (cond
+             ((and underlying-expiry (eq clock enclosing-clock)) clock)
+             ((and enclosing-clock
+                   (<= (deadline-clock-deadline enclosing-clock) (get-internal-real-time)))
+              enclosing-clock))))
     (setf (timed-phase-cleanup frame) cleanup)
     (when pending (setf (getf (run-limits-timeout pending) :cleanup) cleanup))
     ;; An external transfer already unwinding continues after bounded cleanup.
     (when (or body-returned-p pending)
       (cond
-        ;; An enclosing timer can own the earlier deadline of a nested run.
-        ((and underlying-expiry (not (eq clock-phase frame)))
-         (when clock-phase (setf (timed-phase-cleanup clock-phase) cleanup))
-         (funcall (deadline-clock-expire clock)))
+        (expired-enclosing-clock
+         (let ((phase (deadline-clock-phase expired-enclosing-clock)))
+           (when phase (setf (timed-phase-cleanup phase) cleanup)))
+         (funcall (deadline-clock-expire expired-enclosing-clock)))
         ((and (not pending) (or already-due (eq status :timeout)))
          (abort-run-for-timeout owner (timed-phase-trial frame)
                                 (if (eq :shrinking (timed-phase-name frame))
@@ -255,13 +268,14 @@
   #+(and sbcl sb-thread)
   (when (and *timed-phase* (eq (timed-phase-owner *timed-phase*) *run-limits*))
     (return-from call-with-timed-fixture-cleanup
-      (let ((body-returned-p nil))
-        (sb-sys:without-interrupts
+      (sb-sys:without-interrupts
+        (let ((body-returned-p nil)
+              (prior-timeouts (remove-if-not #'run-limits-timeout *active-run-limits*)))
           (unwind-protect
                (sb-sys:with-local-interrupts
                  (multiple-value-prog1 (funcall function)
                    (setf body-returned-p t)))
             (mark-run-phase :fixture-cleanup)
             (sb-sys:allow-with-interrupts
-              (finish-timed-cleanup cleanup body-returned-p)))))))
+              (finish-timed-cleanup cleanup body-returned-p prior-timeouts)))))))
   (unwind-protect (funcall function) (funcall cleanup)))

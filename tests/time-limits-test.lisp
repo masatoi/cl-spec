@@ -337,6 +337,103 @@
       (ok (not cleanup-finished))
       (ok (= wrapper-exits 1)))))
 
+#+(and sbcl sb-thread)
+(deftest enclosing-cleanup-timeout-unwinds-an-untimed-around-fixture
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (events nil))
+    (cl-spec:defspec-function identity
+      (:args (value integer)) (:returns integer)
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe integer))
+        (:around (run) (unwind-protect (funcall run) (push :inner-wrapper events)))
+        (:setup (context) (declare (ignore context)) (list recipe))
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :inner-cleanup events)
+          (sleep 1/3)
+          (push :inner-finished events))))
+    (cl-spec:defspec-function list
+      (:args) (:returns (member nil))
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe integer))
+        (:around (run) (unwind-protect (funcall run) (push :outer-wrapper events)))
+        (:setup (context) (declare (ignore context recipe)) nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :outer-cleanup events)
+          (cl-spec:check-fixture 'identity 1)
+          (push :outer-finished events))))
+    (let* ((result (cl-spec:check-function 'list :trials 1 :seed 1
+                                          :options '(:cleanup-timeout 1/10)))
+           (data (cl-spec:result-data result))
+           (timeout (getf data :timeout)))
+      (ok (eq :timeout (getf data :status)))
+      (ok (eq :fixture-cleanup (getf timeout :phase)))
+      (ok (eq :cleanup (getf timeout :limit)))
+      (ok (equal '(:status :timeout :limit :cleanup) (getf timeout :cleanup)))
+      (ok (equal '(:outer-cleanup :inner-cleanup :inner-wrapper :outer-wrapper)
+                 (reverse events))))))
+
+#+(and sbcl sb-thread)
+(deftest pending-enclosing-timeout-keeps-separate-nested-cleanup-results
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (inner-result nil) (inner-cap nil) (inner-deadline nil)
+        (defer-cleanup-p nil) (events nil))
+    (cl-spec:defspec-function identity
+      (:args (value integer)) (:returns integer)
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe integer))
+        (:around (run) (unwind-protect (funcall run) (push :inner-wrapper events)))
+        (:setup (context) (declare (ignore context)) (list recipe))
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :inner-cleanup events)
+          (if defer-cleanup-p
+              (sb-sys:without-interrupts (sleep 1/6))
+              (sleep 1/4))
+          (push :inner-finished events))))
+    (cl-spec:defspec-function sleeping-target
+      (:args) (:returns (member t))
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe integer))
+        (:around (run) (unwind-protect (funcall run) (push :outer-wrapper events)))
+        (:setup (context) (declare (ignore context recipe)) nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :outer-cleanup events)
+          (setf inner-result (cl-spec:check-function 'identity :trials 1 :seed 1
+                              :options (list :cleanup-timeout inner-cap
+                                             :timeout inner-deadline)))
+          (push :outer-finished events))))
+    (loop for (outer-cap current-inner-cap current-inner-timeout defer-p inner-first-p)
+          in '((1 1/40 nil nil t)
+               (1/6 1 nil nil nil)
+               (1/10 1/25 nil t nil)
+               (1/10 1/25 3/40 t nil))
+          do (setf inner-cap current-inner-cap inner-deadline current-inner-timeout
+                   defer-cleanup-p defer-p inner-result nil events nil)
+             (let* ((result (cl-spec:check-function 'sleeping-target :trials 1 :seed 2
+                              :options (list :timeout 1/5 :cleanup-timeout outer-cap)))
+                    (data (cl-spec:result-data result))
+                    (timeout (getf data :timeout)))
+               (ok (eq :timeout (getf data :status)))
+               (ok (eq :target (getf timeout :phase)))
+               (ok (eq :run (getf timeout :limit)))
+               (ok (eql 1 (getf timeout :trial)))
+               (if inner-first-p
+                   (let* ((inner-data (when inner-result (cl-spec:result-data inner-result)))
+                          (inner-timeout (getf inner-data :timeout)))
+                     (ok (eq :timeout (getf inner-data :status)))
+                     (ok (eq :fixture-cleanup (getf inner-timeout :phase)))
+                     (ok (eq :cleanup (getf inner-timeout :limit)))
+                     (ok (equal '(:status :timeout :limit :cleanup)
+                                (getf inner-timeout :cleanup)))
+                     (ok (equal '(:status :completed) (getf timeout :cleanup)))
+                     (ok (equal '(:outer-cleanup :inner-cleanup :inner-wrapper
+                                  :outer-finished :outer-wrapper)
+                                (reverse events))))
+                   (progn
+                     (ok (null inner-result))
+                     (ok (equal '(:status :timeout :limit :cleanup) (getf timeout :cleanup)))
+                     (ok (equal '(:outer-cleanup :inner-cleanup :inner-wrapper :outer-wrapper)
+                                (reverse events)))))))))
+
 (deftest timing-options-are-refused-on-an-unparticipating-backend
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (cl-spec:*generator-backend* (make-instance 'legacy-time-backend)))
