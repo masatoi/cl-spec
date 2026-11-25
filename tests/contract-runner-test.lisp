@@ -97,7 +97,7 @@
 (deftest empty-missing-and-invalid-selections-cannot-pass
   (let ((*registry* (make-hash-table-registry)) (*calls* 0))
     (dolist (report (list (check-contracts) (check-contracts :names nil)
-                          (check-contracts :package "NO-SUCH-TEST-PACKAGE")
+                          (check-contracts :package (symbol-package 'runner-target))
                           (check-contracts :tag :absent)))
       (ok (eq :failed (getf report :status)))
       (ok (eq :empty-selection (getf (first (getf report :problems)) :kind))))
@@ -124,6 +124,73 @@
             (progn (check-contracts :seeds '(4 -1)) nil)
           (invalid-argument () t)))
     (ok (= 1 *calls*))))
+
+(deftest missing-package-is-reported-separately-from-an-empty-registry
+  (let ((*registry* (make-hash-table-registry)) (*calls* 0)
+        (name "CL-SPEC/TESTS/ABSENT-PACKAGE-171"))
+    (register-runner-definitions)
+    (let ((report (check-contracts :package name :trials 1 :seeds '(1))))
+      (ok (eq :failed (getf report :status)))
+      (ok (equal (list (list :kind :unknown-package :package name))
+                 (getf report :problems)))
+      (ok (null (getf report :entries)))
+      (ok (zerop *calls*)))))
+
+(deftest judge-contract-result-is-public
+  (let ((*registry* (make-hash-table-registry)))
+    (register-runner-definitions)
+    (multiple-value-bind (judge accessibility) (find-symbol "JUDGE-CONTRACT-RESULT" "CL-SPEC")
+      (ok (eq :external accessibility))
+      (when judge
+        (multiple-value-bind (verdict assessment problems)
+            (funcall judge (cl-spec:run-property 'runner-target :seed 1))
+          (ok (eq :passed verdict))
+          (ok (eq :satisfied (getf assessment :assessment)))
+          (ok (null problems)))))))
+
+(deftest suite-policy-can-require-stricter-evidence
+  (let ((*registry* (make-hash-table-registry)) (*calls* 0))
+    (register-runner-definitions)
+    (let* ((names '((:function-spec runner-target)))
+           (default (check-contracts :names names :seeds '(1) :trials 1))
+           (strict (handler-case
+                       (check-contracts :names names :seeds '(1) :trials 1
+                         :policy '(:policy-version 1
+                                   :requirements ((:kind :min-checked-trials :count 2)
+                                                  (:kind :requested-trials-completed))))
+                     (invalid-argument () nil)))
+           (entry (first (getf strict :entries)))
+           (assessment (getf entry :assessment)))
+      (ok (eq :passed (getf default :status)))
+      (ok (eq :failed (getf strict :status)))
+      (ok (eq :passed (getf entry :status)))
+      (ok (eq :insufficient (getf assessment :assessment)))
+      (ok (equal '(:checked-trials-below-minimum)
+                 (mapcar (lambda (row) (getf row :kind)) (getf assessment :gaps))))
+      (ok (member :requested-trials-completed (getf assessment :checks)
+                  :key (lambda (row) (getf (getf row :requirement) :kind)))))
+    (testing "explicit policies keep the suite's default case requirement"
+      (defspec-function runner-target
+        (:args (value (member 7)))
+        (:cases
+         (:positive (:when (plusp value)) (:returns integer))
+         (:negative (:when (minusp value)) (:signals (type runner-expected-error)))))
+      (let* ((report (handler-case
+                         (check-contracts :trials 1 :seeds '(1)
+                           :policy '(:policy-version 1
+                                     :requirements ((:kind :requested-trials-completed))))
+                       (invalid-argument () nil)))
+             (entry (first (getf report :entries)))
+             (gaps (getf (getf entry :assessment) :gaps)))
+        (ok (eq :failed (getf report :status)))
+        (ok (eq :negative (getf (first gaps) :case)))))
+    (testing "invalid policy is rejected before a target is called"
+      (setf *calls* 0)
+      (ok (handler-case
+              (progn (check-contracts :policy '(:policy-version 2 :requirements nil)) nil)
+            (cl-spec:invalid-evidence-policy () t)
+            (invalid-argument () nil)))
+      (ok (zerop *calls*)))))
 
 (deftest missing-execution-evidence-and-unreached-cases-fail
   (let ((*registry* (make-hash-table-registry)) (*calls* 0))

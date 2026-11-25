@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
+  (:import-from #:cl-spec/src/backends/generated-symbols #:*generated-ordinary-symbols*)
   (:import-from #:cl-spec/src/time-limits #:with-native-candidate #:with-native-shrink-draw)
   (:import-from #:cl-spec/src/backends/check-it-coverage #:planned-field #:planned-extra-key)
   (:import-from #:cl-spec/src/backends/check-it-numbers
@@ -460,6 +461,12 @@ before the type's own method does."
   '(:a :b :c :d :e :f :g :h :i :j :k :l :m :n :o :p :q :r :s :t :u :v :w :x :y :z)
   "Fixed set of already interned keywords used by the default symbol generators.")
 
+(defun default-symbol-values (type)
+  "Return the configured vocabulary in shrink order for KEYWORD or SYMBOL."
+  (ecase type
+    (keyword *generated-keywords*)
+    (symbol (append *generated-ordinary-symbols* *generated-keywords*))))
+
 (defclass symbol-generator (generator)
   ((values :initarg :values :reader symbol-generator-values))
   (:documentation "Draw from a fixed symbol set in order of increasing shrink preference."))
@@ -500,10 +507,7 @@ before the type's own method does."
          (string (make-instance 'string-generator))
          (null nil)
          (boolean (make-instance 'or-generator :sub-generators (list t nil)))
-         (keyword (make-instance 'symbol-generator :values *generated-keywords*))
-         (symbol (make-instance 'symbol-generator
-                                :values (append '(nil t car cdr list vector string integer)
-                                                *generated-keywords*)))
+         ((keyword symbol) (make-instance 'symbol-generator :values (default-symbol-values type)))
          (list (default-collection-generator nil))
          (vector (default-collection-generator t))
          (t (error 'generator-unavailable :spec spec :kind :unsupported-type
@@ -589,15 +593,20 @@ One of the limits is zero and the other check-it's open marker *, so the draw is
 yields values that differ in proportion to it, as a one-sided real range does.
 Handing check-it the bound itself instead made it draw from
 [min(|bound|, *SIZE*), *SIZE*], a single value once *SIZE* had been raised to
-|bound| (issue #77).  The size is widened for this draw only, so a one-sided
-range does not change the magnitude other generators draw.  Shrinking moves the
-value towards OFFSET."
-  (make-instance 'widened-generator
-                 :minimum-size (abs offset)
-                 :mapping (lambda (value) (+ value offset))
-                 :sub-generators (list (make-instance 'int-generator
-                                                      :lower-limit lower-limit
-                                                      :upper-limit upper-limit))))
+|bound| (issue #77). The size is widened for this draw only.
+Shrinking uses the magnitude of the shifted value if the range crosses zero."
+  (let ((source (make-instance 'widened-generator
+                               :minimum-size (abs offset)
+                               :mapping (lambda (value) (+ value offset))
+                               :sub-generators
+                               (list (make-instance 'int-generator
+                                                    :lower-limit lower-limit
+                                                    :upper-limit upper-limit))))
+        (lower (when (eql lower-limit 0) offset))
+        (upper (when (eql upper-limit 0) offset)))
+    (if (or (and lower (minusp lower)) (and upper (plusp upper)))
+        (make-shrinking-number-generator (lambda () (generate source)) lower upper #'truncate)
+        source)))
 
 (defun range-width (minimum maximum spec)
   "Return the finite width of the interval in a format that can represent it."
@@ -862,9 +871,8 @@ drawn near and is refused as :RANGE-TOO-WIDE."
 (defgeneric enumerable-values (spec context)
   (:documentation "Return (VALUES VALUES ENUMERABLE-P) for SPEC.
 
-VALUES is a finite list of the values SPEC admits and ENUMERABLE-P says whether
-that list is the whole domain -- so an empty domain is (VALUES NIL T) and stays
-distinguishable from a spec that cannot be enumerated at all.
+VALUES is a finite list of admitted values and ENUMERABLE-P says whether that
+list covers the generator's domain. An empty domain is (VALUES NIL T).
 
 UNIQUE generation draws distinct elements from this list; a spec without a finite
 enumeration refuses UNIQUE rather than retrying collisions forever through
@@ -879,10 +887,12 @@ check-it's guard generator, which recurses with no depth limit.")
 
 (defmethod enumerable-values ((spec type-spec) context)
   (declare (ignore context))
-  (case (type-spec-type-specifier spec)
-    ((null) (values (list nil) t))
-    ((boolean) (values (list t nil) t))
-    (t (enumerate-integer-range spec))))
+  (let ((type (type-spec-type-specifier spec)))
+    (case type
+      ((null) (values (list nil) t))
+      ((boolean) (values (list t nil) t))
+      ((keyword symbol) (values (copy-list (default-symbol-values type)) t))
+      (t (enumerate-integer-range spec)))))
 
 (defmethod enumerable-values ((spec nullable-spec) context)
   (multiple-value-bind (inner enumerable-p)

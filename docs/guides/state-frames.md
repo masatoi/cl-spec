@@ -29,6 +29,23 @@ A group with no keys requires the observer's entire scope to stay unchanged.
 Groups for the same observer share one pair of snapshots and their allowed
 keys are combined. Keys are compared with `equal`.
 
+Use `(:each form)` in a key group to allow every member of a list computed
+at runtime. The checker evaluates the form once before the call. It accepts
+a finite proper list, with `nil` contributing zero keys. A malformed value
+produces a contract error in the `:allowed-keys` stage. An ordinary key
+expression can still contribute a single list-valued key.
+
+```lisp
+(defun credit-all! (ids amount)
+  (dolist (id ids ids)
+    (incf (gethash id *accounts* 0) amount)))
+
+(cl-spec:defspec-function credit-all!
+  (:args (ids (list-of keyword)) (amount (range integer 1 10)))
+  (:returns (list-of keyword))
+  (:modifies (:accounts (:each ids))))
+```
+
 After preconditions and case selection, the checker evaluates the allowed keys
 and takes a snapshot immediately before the target. After a passing outcome
 (including an expected error), the checker compares state and then runs any

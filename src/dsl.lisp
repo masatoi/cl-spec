@@ -10,7 +10,8 @@
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
-  (:import-from #:cl-spec/src/state-frame #:make-state-frame #:valid-frame-clauses-p)
+  (:import-from #:cl-spec/src/state-frame #:make-state-frame #:valid-frame-clauses-p
+                #:frame-key-set-form-p #:check-frame-key-set)
   (:import-from #:cl-spec/src/fixture #:trial-fixture)
   (:import-from #:cl-spec/src/guard-references
                 #:guard-return-reference #:guard-free-variables #:return-value-symbol)
@@ -810,6 +811,17 @@ and the state-post may all read."
                                         state-post variables captures)
         :source-form ',(getf case :source-form)))))
 
+(defun expand-frame-key-group (group)
+  "Compile the scalar keys and explicit key lists for one observer group."
+  (let ((keys (rest group)))
+    (if (some #'frame-key-set-form-p keys)
+        `(append ,@(mapcar (lambda (form)
+                            (if (frame-key-set-form-p form)
+                                `(check-frame-key-set ,(second form))
+                                `(list ,form)))
+                          keys))
+        `(list ,@keys))))
+
 (defun expand-function-spec-definition (whole name clauses source-location environment)
   "Return the form DEFSPEC-FUNCTION expands into.
 
@@ -846,8 +858,7 @@ read but never checked."
                             ',modifies ',(append variables capture-names)
                             (lambda (,@variables ,@capture-names)
                               (declare (ignorable ,@variables ,@capture-names))
-                              (list ,@(mapcar (lambda (group) `(list ,@(rest group)))
-                                              modifies)))))
+                              (list ,@(mapcar #'expand-frame-key-group modifies)))))
                        :argument-specs
                        ',args
                        :argument-generator ',argument-generator

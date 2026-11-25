@@ -1099,6 +1099,13 @@ whose argument check timed out remains available as failure evidence.
 
 Time limits use current-thread timers on threaded SBCL with the check-it
 backend. Other Lisp implementations and backends reject time limit options.
+The runner arms the earlier of the applicable run and trial deadlines.
+Once an ordinary trial deadline starts an unwind, arbitrary application
+`unwind-protect` cleanup can run past the overall `:timeout` before the runner
+regains control. An application cleanup that performs its own non-local exit
+can replace the timeout transfer and let application execution continue. If
+control reaches the runner, the recorded timeout remains the result.
+
 Foreign calls and code that defers asynchronous interrupts can postpone
 delivery. Fixture hooks and wrapper unwind code still own application resource
 release. Use process supervision when a caller needs a hard bound on the
@@ -1217,12 +1224,16 @@ explain:
   float intervals such as `(type (integer 0 (10)))` generate within their bounds.
   A bound of `*` leaves that end unbounded and `(10)` excludes 10. Very large
   or tiny float endpoints can be refused with kind `:range-too-wide`.
-- Default keyword and symbol generators draw from a fixed vocabulary. Default
-  lists and vectors contain up to eight small integers. Use `(member ...)` for
-  application symbols and `list-of` or `vector-of` to describe the elements.
+- The default `keyword` generator draws from `:a` through `:z`. The default
+  `symbol` generator also draws eight writable symbols from its own package.
+  Unique collections and map counts use those finite vocabularies. Keywords
+  are constants. Use `(member ...)` for application symbols.
+- Default lists and vectors contain up to eight small integers. Use
+  `list-of` or `vector-of` to describe the elements.
 - The default rational generator draws with small numerators and denominators.
-  Rational, real and float shrinking tries simple numbers that still fail
-  within the declared domain.
+  Built-in numeric shrinking preserves the declared type and bounds and keeps
+  the magnitude within that of the original value. Real ranges preserve the
+  floating-point format of float candidates.
 - Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`
   signal `generator-unavailable` with kind `:unsupported-type` and name the
   type. Attach a custom generator with `defgenerator` and `(:generator NAME)`

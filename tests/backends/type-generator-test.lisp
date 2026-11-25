@@ -123,10 +123,8 @@
     (defproperty only-zero ((value float))
       (:trials (:normal 30))
       (zerop value))
-    (dolist (example '((wanted-integer rational nil)
-                       (avoids-middle real 1/2)
-                       (only-zero float nil)))
-      (destructuring-bind (name type minimum) example
+    (dolist (example '((wanted-integer rational) (avoids-middle real) (only-zero float)))
+      (destructuring-bind (name type) example
         (testing (format nil "~S saves and replays a simpler ~S counterexample" name type)
           (let ((reductions
                   (loop for seed from 1 to 8
@@ -140,14 +138,49 @@
                       (replay (replay-property name result)))
                   (ok (eq :failed (property-result-status result)))
                   (ok (typep value type))
+                  (ok (<= (abs (rational value))
+                          (abs (rational (second (property-result-counterexample result))))))
                   (ok (equalp shrunk (property-result-shrunk-counterexample replay)))
                   (case name
                     (wanted-integer
                      (ok (= 1 (abs (numerator value)))))
-                    (avoids-middle (ok (= value minimum)))
+                    (avoids-middle (ok (< 1/4 value 3/4)))
                     (only-zero
                      (ok (= 1 (abs value)))
                      (ok (/= value (second (property-result-counterexample result)))))))))))))))
+
+(deftest builtin-numeric-shrinks-stay-within-the-original-magnitude
+  (let ((*registry* (make-hash-table-registry)))
+    (defproperty below-half ((x (type (single-float (0f0) 1f0))))
+      (< x 1/2))
+    (defproperty small-float ((x float))
+      (< (abs x) 5/2))
+    (defproperty above-negative-third ((x rational))
+      (> x -1/3))
+    (defproperty one-sided-lower ((x (range integer -100 *)))
+      (= x (1+ x)))
+    (defproperty one-sided-upper ((x (range integer * 100)))
+      (= x (1+ x)))
+    (loop for (name seed) in '((below-half 1) (small-float 2) (above-negative-third 1)
+                               (one-sided-lower 1) (one-sided-upper 1))
+          for result = (run-property name :seed seed)
+          for original = (second (property-result-counterexample result))
+          for shrunk = (second (property-result-shrunk-counterexample result))
+          do (testing (format nil "~S with seed ~D" name seed)
+               (ok (eq :failed (property-result-status result)))
+               (ok (and (realp shrunk)
+                        (<= (abs (rational shrunk)) (abs (rational original)))))))))
+
+(deftest float-constrained-real-counterexamples-shrink-as-floats
+  (let ((*registry* (make-hash-table-registry))
+        (spec (normalize-spec-form '(and (range real 0 1) (satisfies floatp)))))
+    (defproperty float-below-half ((x (and (range real 0 1) (satisfies floatp))))
+      (< x 1/2))
+    (let* ((result (run-property 'float-below-half :seed 1))
+           (original (second (property-result-counterexample result)))
+           (shrunk (second (property-result-shrunk-counterexample result))))
+      (ok (eq :failed (property-result-status result)))
+      (ok (and (floatp shrunk) (validp spec shrunk) (<= 1/2 shrunk original))))))
 
 (deftest compound-integer-ranges-support-finite-distinct-sampling
   (dolist (form '((list-of (type (integer (20) 23)) :unique t :min-length 3 :max-length 3)
@@ -164,7 +197,9 @@
     (let* ((result (run-property 'needs-application-status :seed 143))
            (items (second (property-result-shrunk-counterexample result))))
       (ok (eq :failed (property-result-status result)))
-      (ok (equalp '(:a nil 0 nil #()) items)))))
+      (ok (equalp (list :a (find-symbol "VALUE-A" "CL-SPEC/SRC/BACKENDS/GENERATED-SYMBOLS")
+                          0 nil #())
+                  items)))))
 
 (deftest vector-keys-remain-distinct-when-shrunk-under-equal
   (let ((*registry* (make-hash-table-registry)))
@@ -179,3 +214,34 @@
       (ok (= 4 (length keys)))
       (ok (every (lambda (key) (zerop (length key))) keys))
       (ok (= 4 (length (remove-duplicates keys :test #'equal)))))))
+
+(deftest default-symbol-vocabularies-are-finite-domains
+  (dolist (form '((list-of keyword :unique t :min-length 26)
+                  (list-of symbol :unique t :min-length 34)
+                  (hash-table-of keyword integer :test eq :min-count 26)
+                  (hash-table-of symbol integer :test eq :min-count 34)))
+    (let* ((spec (normalize-spec-form form))
+           (draws (sample spec :count 2 :seed 173 :generation-budget 0)))
+      (ok (= 2 (length draws)))
+      (ok (every (lambda (value) (validp spec value)) draws))))
+  (dolist (form '((hash-table-of keyword integer :test eq :min-count 27)
+                  (hash-table-of symbol integer :test eq :min-count 35)))
+    (let ((condition (unavailable-for form)))
+      (ok (and condition (eq :empty-domain (generator-unavailable-kind condition)))))))
+
+(deftest default-symbol-generator-uses-writable-ordinary-symbols
+  (let* ((draws (sample (normalize-spec-form 'symbol) :count 200 :seed 173))
+         (ordinary (remove-if #'keywordp draws)))
+    (ok ordinary)
+    (ok (some #'keywordp draws))
+    (ok (every (lambda (name)
+                 (and (symbol-package name)
+                      (not (eq (symbol-package name) (find-package :common-lisp)))
+                      (not (constantp name))))
+               ordinary))
+    (let ((name (first ordinary)))
+      (when (and name (not (constantp name))
+                 (not (eq (symbol-package name) (find-package :common-lisp))))
+        (progv (list name) (list nil)
+          (set name :writable)
+          (ok (eq :writable (symbol-value name))))))))
