@@ -59,6 +59,10 @@ distinguish a missing entry via `(:present nil)` from a present value via
 An observer callback or data error produces `:contract-error` and names the
 operation that failed.
 
+To replace a counterexample during shrinking, a candidate must reproduce the
+same observer and a changed key equal to the original key. A candidate whose
+input changes the reported key cannot replace that counterexample.
+
 ## Register an observer for application state
 
 ```lisp
@@ -68,6 +72,8 @@ operation that failed.
  :compare 'changed-row-ids
  :project 'project-row)
 ```
+
+Both registration functions require a positive integer `:version`.
 
 - `snapshot ()` returns an independent view of the entire relevant scope.
   The snapshot can contain application-specific objects.
@@ -80,16 +86,20 @@ Observer operations must leave the snapshots and observed state intact.
 Keys must survive copying under `equal`. Each saved key and projected value
 must fit the bounded AV1 codec (2,048 nodes, depth 32, 16,384 characters).
 The supplied in-memory observer takes an `equal` hash table and snapshots
-its keys and values using the same bounds. It distinguishes absent keys from
-stored NIL values.
+its keys and values using the same bounds. The codec also refuses cycles and
+shared structure within an encoded value, including two references to the
+same string. The observer distinguishes absent keys from stored NIL values.
 
 The contract captures its registry's observer registrations when the
 contract is declared. To adopt a replacement observer, evaluate the
 `defspec-function` declaration again. The digest covers the frame expressions, the observer name,
 version and declared callback identities. For anonymous callbacks use
-`:source` to supply stable declaration data. With an anonymous callback
-and no source, the digest is incomplete. Bump the version when the behavior
-or scope of an observer changes, including changes in a helper it calls.
+`:source` to supply stable declaration data to `register-state-observer`.
+Without that descriptor, an anonymous callback registered there leaves the
+digest incomplete. The built-in hash-table observer supplies its own descriptor.
+It includes a symbolic reader's name. An anonymous reader is represented by
+the built-in descriptor alone. Bump the version when the behavior or scope of
+an observer changes, including changes to its reader or a helper it calls.
 
 A frame uses the ordinary state-observing contract rules. A recipe-backed
 fixture can provide independent state for shrinking, seed replay and saved

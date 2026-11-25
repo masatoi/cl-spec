@@ -38,10 +38,11 @@ inferring either from a condition's class, and such a state-observing contract
 without an explicit `:fixture` is not shrunk, replayed from a past result,
 persisted as a counterexample artifact or instrumented in this version. Capture
 observes a value and does not copy it, and this feature does not restore
-anything. A contract with `:fixture` (`:isolation :fresh` only) generates and
-shrinks a recipe, rebuilds fresh state for every trial and shrink candidate
-through its setup and cleanup, and its results and counterexample artifacts use
-schema version 2; `check-fixture` runs one recipe once. A direct one-shot check
+anything. A contract with `:fixture` generates and shrinks a recipe.
+`:isolation :fresh` rebuilds fresh state through its setup and cleanup.
+`:isolation :around` runs the fixture lifecycle within an application wrapper.
+Both use schema version 2 for results and counterexample artifacts.
+`check-fixture` runs one recipe once. A direct one-shot check
 (`check-call`, `call-check-result`, `call-check-data`) validates one
 caller-supplied raw argument list through the same single-trial path -- binding,
 `:pre`, `:capture`, exclusive case selection, one target call, outcome and
@@ -91,6 +92,7 @@ This project is developed with cl-mcp's tools:
 | `cl-spec` | Semantic IR, registry, validation, explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
+| `cl-spec/rove` | assertions using the shared contract verdict | `rove` |
 | `cl-spec/specs` | optional executable API contracts and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 | `cl-spec/examples/structured-data` | executable structured-data integration example (inferred subsystem) | `check-it` |

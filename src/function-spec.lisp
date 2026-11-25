@@ -2322,7 +2322,8 @@ INVALID-ARGUMENT."
 
 (defun check-fixture (function-designator recipe &rest keyword-arguments
                       &key coverage (registry *registry*) &allow-other-keys)
-  "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
+  "Check RECIPE once with the declared fixture, without generation, shrinking or replay.
+The fixture may use :FRESH or :AROUND isolation."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-fixture)
   (setf registry (check-registry registry 'check-fixture))
   ;; Keep enclosing deadlines armed while giving this one-shot call no local clock.
