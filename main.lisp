@@ -32,6 +32,9 @@
   (:export #:validate-definition #:definition-validation-slots)
   (:import-from #:cl-spec/src/state-machine #:defstate-machine #:check-state-machine)
   (:export #:defstate-machine #:check-state-machine)
+  (:import-from #:cl-spec/src/state-frame
+                #:register-state-observer #:register-hash-table-state-observer)
+  (:export #:register-state-observer #:register-hash-table-state-observer)
   (:import-from #:cl-spec/src/counterexample
                 #:counterexample-artifact #:make-counterexample-artifact
                 #:counterexample-artifact-data #:serialize-counterexample-artifact

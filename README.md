@@ -575,6 +575,10 @@ partial update, a changed identifier, a verification error and the first-version
 limits — see the
 [state observation walkthrough](docs/guides/state-observation-walkthrough.md).
 
+Use [state frames](docs/guides/state-frames.md) to declare which keys a
+function may change. Registered observers take snapshots, compare their keys
+and project before/after evidence for a violation.
+
 ### Reconstruct state for repeatable checks
 
 An explicit `:fixture` adds recipe-driven `:setup` / `:cleanup` to Function
