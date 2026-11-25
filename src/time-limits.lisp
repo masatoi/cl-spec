@@ -1,15 +1,18 @@
 ;;;; src/time-limits.lisp
 (defpackage #:cl-spec/src/time-limits
   (:use #:cl)
+  (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:export #:call-with-run-time-limits #:time-limits-requested-p #:time-limits-supported-p
            #:call-catching-run-timeout #:with-trial-clock #:with-run-phase
            #:mark-run-phase #:run-timeout-data #:timeout-unwinding-p
-           #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping))
+           #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
+           #:with-native-shrink #:with-native-candidate
+           #:call-with-run-limit-handoff #:run-clock-start))
 (in-package #:cl-spec/src/time-limits)
 
 (defstruct (run-limits (:copier nil))
   "The deadlines and private escape tag for one generated run."
-  deadline trial-ticks cleanup-ticks (tag (list nil)) timeout)
+  started deadline trial-ticks cleanup-ticks (tag (list nil)) timeout)
 
 (defstruct (timed-phase (:copier nil))
   "An operation's deadline and the location reached when it expires."
@@ -29,6 +32,15 @@
 (defvar *timer-scopes* nil)
 (defvar *paused-timers* nil)
 
+(defvar *backend-options-handoff* nil
+  "The exact backend option list carrying the current run clock.")
+
+(defvar *native-shrink-trial* nil
+  "The ordinary trial whose native shrink candidates are being evaluated.")
+
+(defvar *native-candidate-active-p* nil
+  "Whether this native candidate already has an active clock.")
+
 (defun time-limits-requested-p (options)
   "Return true when OPTIONS requests a run, trial or cleanup time limit."
   (some (lambda (key) (getf options key)) '(:timeout :trial-timeout :cleanup-timeout)))
@@ -46,20 +58,42 @@
 (defun seconds-to-ticks (seconds)
   (when seconds (ceiling (* (rational seconds) internal-time-units-per-second))))
 
-(defun call-with-run-time-limits (options function)
-  "Bind fresh deadlines for one checked backend invocation."
-  (let* ((ticks (seconds-to-ticks (getf options :timeout)))
-         (*run-limits*
-           (when (time-limits-requested-p options)
-             (make-run-limits :deadline (when ticks (+ (get-internal-real-time) ticks))
-                              :trial-ticks (seconds-to-ticks (getf options :trial-timeout))
-                              :cleanup-ticks (seconds-to-ticks
-                                              (or (getf options :cleanup-timeout) 1)))))
-         (*active-run-limits* (if *run-limits* (cons *run-limits* *active-run-limits*)
-                                 *active-run-limits*))
-         (*trial-deadline* nil)
-         (*trial-number* 1))
+(defun call-with-run-limit-handoff (options function)
+  "Transfer the current deadline to the backend invocation using OPTIONS."
+  (let ((*backend-options-handoff* options))
     (funcall function)))
+
+(defun run-clock-start ()
+  "Return this timed run's start tick, or the current tick outside a timed run."
+  (if *run-limits* (run-limits-started *run-limits*) (get-internal-real-time)))
+
+(defun call-with-run-time-limits (options function
+                                  &optional (operator 'call-with-run-time-limits))
+  "Bind a new run clock or consume a caller's exact backend handoff."
+  (when (and *backend-options-handoff* (eq options *backend-options-handoff*))
+    (return-from call-with-run-time-limits
+      (let ((*backend-options-handoff* nil))
+        (funcall function))))
+  (let* ((timed-p (time-limits-requested-p options))
+         (ticks (seconds-to-ticks (getf options :timeout)))
+         (started (when timed-p (get-internal-real-time))))
+    (when (and timed-p (not (time-limits-supported-p)))
+      (error 'invalid-argument :operator operator :argument :options
+             :datum options :expected-type '(not (satisfies time-limits-requested-p))
+             :reason "run time limits require threaded SBCL"))
+    (let* ((*run-limits*
+             (when timed-p
+               (make-run-limits :started started :deadline (when ticks (+ started ticks))
+                                :trial-ticks (seconds-to-ticks (getf options :trial-timeout))
+                                :cleanup-ticks (seconds-to-ticks
+                                                (or (getf options :cleanup-timeout) 1)))))
+           (*active-run-limits* (if *run-limits* (cons *run-limits* *active-run-limits*)
+                                   *active-run-limits*))
+           (*trial-deadline* nil)
+           (*trial-number* 1)
+           (*native-shrink-trial* nil)
+           (*native-candidate-active-p* nil))
+      (funcall function))))
 
 (defun run-timeout-data ()
   "Return the active run's owned timeout record, when expired."
@@ -140,6 +174,22 @@
   "Bound BODY by the earliest active run or trial deadline."
   `(call-with-run-phase ,phase (lambda () ,@body) ,trial))
 
+(defmacro with-native-shrink ((trial) &body body)
+  "Identify the ordinary trial before preparing native shrink candidates."
+  `(let ((*native-shrink-trial* (and *run-limits* ,trial)))
+     ,@body))
+
+(defun call-with-native-candidate (function)
+  (if (and *native-shrink-trial* (not *native-candidate-active-p*))
+      (let ((*native-candidate-active-p* t))
+        (with-trial-clock (*native-shrink-trial*)
+          (with-run-phase (:shrinking) (funcall function))))
+      (funcall function)))
+
+(defmacro with-native-candidate (&body body)
+  "Time one native candidate from its first preparation or validation step."
+  `(call-with-native-candidate (lambda () ,@body)))
+
 (defun mark-run-phase (phase)
   "Record a phase reached by a running trial. Shrinking keeps its own phase."
   (when (and *timed-phase* (eq *run-limits* (timed-phase-owner *timed-phase*))
@@ -163,7 +213,8 @@
          (pending (find-if #'run-limits-timeout *active-run-limits*))
          (owner (or pending (timed-phase-owner frame)))
          (now (get-internal-real-time))
-         (grace (+ now (run-limits-cleanup-ticks owner)))
+         (grace (+ now (min (run-limits-cleanup-ticks owner)
+                            (run-limits-cleanup-ticks (timed-phase-owner frame)))))
          (clock (earliest-active-clock))
          (clock-phase (when clock (deadline-clock-phase clock)))
          (deadline (when clock (deadline-clock-deadline clock)))

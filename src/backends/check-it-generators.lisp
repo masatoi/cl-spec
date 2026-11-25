@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:with-native-candidate)
   (:import-from #:cl-spec/src/backends/check-it-coverage #:planned-field #:planned-extra-key)
   (:import-from #:check-it
                 #:generator
@@ -185,7 +186,7 @@ shrink path only, which is why a sample and a passing run hid it (PR review)."))
 
 (defmethod generate ((generator custom-value-generator))
   "Draw one value from GENERATOR and cache it, as check-it's generators do."
-  (let ((value (funcall (custom-value-generator-function generator))))
+  (let ((value (with-native-candidate (funcall (custom-value-generator-function generator)))))
     (setf (cached-value generator) value)
     value))
 
@@ -238,15 +239,16 @@ it can validate and observe the complete candidate."
              ;; Only a value observed by the callback can replace this field.
              (shrink child
                      (lambda (value)
-                       (if (not (funcall validator value))
-                           t
-                           (let ((candidate (copy-list (cached-value generator))))
-                             (setf (getf candidate key) value)
-                             (if (funcall test candidate)
-                                 t
-                                 (progn
-                                   (setf (cached-value generator) candidate)
-                                   nil))))))))
+                       (with-native-candidate
+                         (if (not (funcall validator value))
+                             t
+                             (let ((candidate (copy-list (cached-value generator))))
+                               (setf (getf candidate key) value)
+                               (if (funcall test candidate)
+                                   t
+                                   (progn
+                                     (setf (cached-value generator) candidate)
+                                     nil)))))))))
   (cached-value generator))
 
 (defmethod spec-generator ((spec plist-spec) context)
@@ -350,19 +352,20 @@ valid and still failing."
                  ;; Only a value observed by the callback can replace this field.
                  (shrink child
                          (lambda (value)
-                           (if (not (funcall validator value))
-                               t
-                               (let* ((associations (decode-associations
-                                                     generator (cached-value generator)))
-                                      (candidate (encode-associations
-                                                  generator
-                                                  (acons key value
-                                                         (remove key associations
-                                                                 :key #'car :test test-name)))))
-                                 (if (funcall test candidate)
-                                     t
-                                     (progn (setf (cached-value generator) candidate)
-                                            nil))))))))))
+                           (with-native-candidate
+                             (if (not (funcall validator value))
+                                 t
+                                 (let* ((associations (decode-associations
+                                                       generator (cached-value generator)))
+                                        (candidate (encode-associations
+                                                    generator
+                                                    (acons key value
+                                                           (remove key associations
+                                                                   :key #'car :test test-name)))))
+                                   (if (funcall test candidate)
+                                       t
+                                       (progn (setf (cached-value generator) candidate)
+                                              nil)))))))))))
     (cached-value generator))
 
 (defun make-keyed-value-generator (class spec context)
@@ -997,16 +1000,17 @@ range's width).  Elements are drawn with *LIST-SIZE* decayed by
                                       ;; transformed value.  Only a value the callback
                                       ;; observed -- valid and still failing -- may
                                       ;; replace this element.
-                                      (if (and validator (not (funcall validator value)))
-                                          t
-                                          (let ((candidate (copy-seq (items))))
-                                            (setf (elt candidate index) value)
-                                            (if (or (and unique (eql-duplicates-p candidate))
-                                                    (funcall test (build candidate)))
-                                                t
-                                                (progn
-                                                  (setf (elt (items) index) value)
-                                                  nil)))))))
+                                      (with-native-candidate
+                                        (if (and validator (not (funcall validator value)))
+                                            t
+                                            (let ((candidate (copy-seq (items))))
+                                              (setf (elt candidate index) value)
+                                              (if (or (and unique (eql-duplicates-p candidate))
+                                                      (funcall test (build candidate)))
+                                                  t
+                                                  (progn
+                                                    (setf (elt (items) index) value)
+                                                    nil))))))))
                  (items)))
              (remove-wise ()
                (loop for index from 0 below (length (items))
@@ -1455,10 +1459,11 @@ collides with another under the key test, is refused before the callback runs."
                ;; REBUILD returns the entry list with the new part, or NIL to refuse it.
                (shrink child
                        (lambda (part)
-                         (if (and validator (not (funcall validator part)))
-                             t
-                             (let ((entries (funcall rebuild index part)))
-                               (if entries (try entries) t)))))))
+                         (with-native-candidate
+                           (if (and validator (not (funcall validator part)))
+                               t
+                               (let ((entries (funcall rebuild index part)))
+                                 (if entries (try entries) t))))))))
       (loop while (and (> (length (entries)) minimum) (remove-one)))
       (loop for index from 0 below (length (entries))
             for child = (map-entry-value-child (nth index (entries)))
@@ -1567,6 +1572,19 @@ readers the validator calls honor the non-destructive contract (§73.5
 \"validator non-destructiveness\"); this wrapper neither detects nor repairs a
 validator that mutates its input."))
 
+(defun draw-bounded-filter-value (generator)
+  "Draw bounded whole-AND candidates, timing each native redraw independently."
+  (loop
+    (multiple-value-bind (candidate admitted)
+        (with-native-candidate
+          (reserve-generation-candidate (bounded-filter-path generator)
+                                        (bounded-filter-spec generator))
+          (let ((candidate (generate (bounded-filter-sub-generator generator))))
+            (values candidate (funcall (bounded-filter-validator generator) candidate))))
+      (if admitted
+          (return (setf (cached-value generator) candidate))
+          (record-generation-rejection)))))
+
 (defmethod generate ((generator bounded-filter-generator))
   "Reserve a candidate, draw once, and validate against the whole AND.
 
@@ -1574,20 +1592,11 @@ Reservation precedes the source call, so a source error propagates without
 becoming a rejection.  The final permitted candidate may succeed; exhaustion is
 signalled only when another reservation is required, and consumes no extra draw
 or random number."
-  (let ((draw (lambda ()
-                (loop
-                  (reserve-generation-candidate (bounded-filter-path generator)
-                                                (bounded-filter-spec generator))
-                  (let ((candidate (generate (bounded-filter-sub-generator generator))))
-                    (if (funcall (bounded-filter-validator generator) candidate)
-                        (return (setf (cached-value generator) candidate))
-                        (record-generation-rejection)))))))
-    (if *generation-request*
-        (funcall draw)
-        ;; A bare draw outside every public boundary still gets a finite request,
-        ;; so a direct backend GENERATE call cannot loop forever.
-        (let ((*generation-request* (make-generation-request :planned 1)))
-          (funcall draw)))))
+  (if *generation-request*
+      (draw-bounded-filter-value generator)
+      ;; A bare draw outside every public boundary still has a bounded request.
+      (let ((*generation-request* (make-generation-request :planned 1)))
+        (draw-bounded-filter-value generator))))
 
 (defmethod shrink ((generator bounded-filter-generator) test)
   "Shrink the source, never adopting a candidate the whole AND rejects.
@@ -1602,10 +1611,11 @@ draw a nested bounded filter makes here is charged to :SHRINKING."
   (with-generation-phase (:shrinking)
     (shrink (bounded-filter-sub-generator generator)
             (lambda (candidate)
-              (cond
-                ((not (funcall (bounded-filter-validator generator) candidate)) t)
-                ((funcall test candidate) t)
-                (t (setf (cached-value generator) candidate) nil))))
+              (with-native-candidate
+                (cond
+                  ((not (funcall (bounded-filter-validator generator) candidate)) t)
+                  ((funcall test candidate) t)
+                  (t (setf (cached-value generator) candidate) nil)))))
     (cached-value generator)))
 
 (defmethod regenerate ((generator bounded-filter-generator))
@@ -1616,14 +1626,7 @@ returning, so a regenerated shrink candidate can never violate the AND.  A draw
 the filter rejects is counted as a shrinking rejection as well as an attempt, or
 the report would understate the work an exhaustion consumed."
   (with-generation-phase (:shrinking)
-    (setf (cached-value generator)
-          (loop
-            (reserve-generation-candidate (bounded-filter-path generator)
-                                          (bounded-filter-spec generator))
-            (let ((candidate (generate (bounded-filter-sub-generator generator))))
-              (if (funcall (bounded-filter-validator generator) candidate)
-                  (return candidate)
-                  (record-generation-rejection)))))))
+    (draw-bounded-filter-value generator)))
 
 (defun fold-and-children (children context spec base-type minimum maximum leftovers)
   "Return (VALUES BASE-TYPE MINIMUM MAXIMUM LEFTOVERS), folding CHILDREN into the

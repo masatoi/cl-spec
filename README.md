@@ -1049,10 +1049,12 @@ through `:options`.
   :options '(:timeout 5 :trial-timeout 1))
 ```
 
-- `:timeout` bounds the generated run, including generation and shrinking.
+- `:timeout` bounds preparation, generation and shrinking under one deadline.
+  Preparation includes registry lookup and metadata.
 - `:trial-timeout` starts a fresh deadline for each ordinary trial and each
   shrink candidate. It covers input generation, validation and the call for
-  an ordinary trial. A custom shrinker invocation also gets a fresh limit.
+  an ordinary trial, and preparation and evaluation of a shrink candidate.
+  A custom shrinker invocation also gets a fresh limit.
 - `:cleanup-timeout` bounds the fixture's cleanup hook. When any timeout is
   enabled and no cleanup limit is supplied, cleanup gets one second at most.
   If a run or trial deadline interrupts setup or evaluation, cleanup gets
@@ -1066,7 +1068,9 @@ reached can vary.
 
 On expiration, `result-data` reports `:status :timeout` and a `:timeout`
 record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
-and the `:phase` reached. A fixture's cleanup outcome is recorded under
+and the `:phase` reached. A timeout during `:preparation` records zero
+completed trials and leaves uncollected metadata unavailable. A fixture's
+cleanup outcome is recorded under
 `:timeout :cleanup`, separately from the primary timeout. Counts and coverage
 reflect completed ordinary trials. The original failure and any accepted
 reduction remain available if shrinking times out.

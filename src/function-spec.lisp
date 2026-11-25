@@ -6,7 +6,9 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
-  (:import-from #:cl-spec/src/time-limits #:mark-run-phase)
+  (:import-from #:cl-spec/src/time-limits
+                #:mark-run-phase #:call-with-run-time-limits #:run-clock-start
+                #:call-catching-run-timeout #:with-run-phase)
   (:import-from #:cl-spec/src/coverage
                 #:definition-coverage-schema #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options)
@@ -92,6 +94,7 @@
                 #:property-source-form #:property-trials #:property-metadata)
   (:import-from #:cl-spec/src/property-runner
                 #:prepare-property-run #:run-property-with-result-constructor
+                #:preparation-timeout-initargs #:property-result-options
                 #:property-result #:property-result-case-report #:property-result-entity-kind
                 #:check-replayed-result
                 #:property-result-budget #:property-result-property #:observation-data)
@@ -518,6 +521,7 @@ TAG is the clause family tag; CONDITION is the condition that stopped it, or
 NIL.  The compiled predicate reports a signalling form's position as a value, so
 no extra condition type is needed.  A hand-written programmatic predicate that
 returns one value yields an unknown position rather than a guessed one."
+  (mark-run-phase :state-post)
   (handler-case
       (multiple-value-bind (holds index tag condition)
           (apply predicate (append argument-values captures))
@@ -2262,12 +2266,16 @@ INVALID-ARGUMENT."
                                                         :context (list :registry registry))
                    :coverage (coverage-report-data *coverage-context*))))
 
-(defun check-function-arguments (operator keyword-arguments trials seed options registry)
-  "Validate the generated-check parameters for OPERATOR and return the effective registry."
+(defun check-function-run-options (operator keyword-arguments trials seed options)
+  "Validate arguments independent of registry lookup."
   (check-keyword-arguments keyword-arguments '(:trials :seed :options :registry) operator)
   (check-argument trials '(or null (integer 0 *)) operator :trials)
   (check-argument seed '(or null property-result (integer 0 *)) operator :seed)
-  (check-run-options options operator)
+  (check-run-options options operator))
+
+(defun check-function-arguments (operator keyword-arguments trials seed options registry)
+  "Validate the generated-check parameters for OPERATOR and return the effective registry."
+  (check-function-run-options operator keyword-arguments trials seed options)
   (check-registry registry operator))
 
 (defun check-function (function-designator &rest keyword-arguments
@@ -2311,39 +2319,57 @@ contract failure. Fixture results and artifacts use version 2.
 
 OPTIONS accepts :TIMEOUT, :TRIAL-TIMEOUT and :CLEANUP-TIMEOUT in wall clock
 seconds. The result retains these limits when replayed."
-  (setf registry (check-function-arguments 'check-function keyword-arguments
-                                           trials seed options registry))
-  (let* ((seed-result (and (typep seed 'property-result) seed))
-         (budget (or trials
-                     (when (typep seed-result 'function-check-result)
-                       (function-check-result-budget seed-result))
-                     (backend-default-trials (current-generator-backend))))
-         (contract (resolve-function-spec function-designator registry))
-         (name (function-spec-name contract))
-         (property (if (function-spec-fixture contract)
-                       (make-fixture-check-property contract :budget budget)
-                       (make-function-check-property contract :budget budget)))
-         (source (property-source-form property))
-         (case-run (make-case-run contract)))
-    ;; A result replays only the contract run it came from (#84).
-    (check-replayed-result seed-result :function-spec name 'check-function)
-    (let ((enclosing-case-run *case-run*)
-          (*case-run* case-run))
-      (apply #'run-property-with-result-constructor
-       property
-       (lambda (initargs failure-reason explanation)
-         ;; The final result is initialized in the caller's case context.
-         (let ((*case-run* enclosing-case-run))
-           (setf (getf initargs :property) name
-                 (getf initargs :budget) budget
-                 (getf initargs :source-form) source
-                 (getf initargs :failure-reason) failure-reason
-                 (getf initargs :explanation) explanation
-                 (getf initargs :case-report)
-                 (validate-case-trial-report (getf initargs :trial-report)
-                                             (case-run-report case-run)))
-           (apply #'make-instance 'function-check-result initargs)))
-       :seed seed :registry registry (when options-p (list :options options))))))
+  (when (and (not options-p) (typep seed 'property-result))
+    (setf options (property-result-options seed)))
+  (check-function-run-options 'check-function keyword-arguments trials seed options)
+  (call-with-run-time-limits
+   options
+   (lambda ()
+     (let* ((start (run-clock-start))
+            (seed-result (and (typep seed 'property-result) seed))
+            (budget (or trials
+                        (when (typep seed-result 'function-check-result)
+                          (function-check-result-budget seed-result))))
+            (prepared
+              (call-catching-run-timeout
+               (lambda ()
+                 (with-run-phase (:preparation)
+                   (setf registry (check-registry registry 'check-function))
+                   (unless budget
+                     (setf budget (backend-default-trials (current-generator-backend))))
+                   (let* ((contract (resolve-function-spec function-designator registry))
+                          (name (function-spec-name contract))
+                          (property (if (function-spec-fixture contract)
+                                        (make-fixture-check-property contract :budget budget)
+                                        (make-function-check-property contract :budget budget))))
+                     (check-replayed-result seed-result :function-spec name 'check-function)
+                     (list property name (property-source-form property)
+                           (make-case-run contract)))))
+               (lambda (timeout)
+                 (return-from check-function
+                   (apply #'make-instance 'function-check-result
+                          (preparation-timeout-initargs
+                           timeout (and (symbolp function-designator) function-designator)
+                           seed options start :budget budget)))))))
+       (destructuring-bind (property name source case-run) prepared
+         (let ((enclosing-case-run *case-run*)
+               (*case-run* case-run))
+           (run-property-with-result-constructor
+            property
+            (lambda (initargs failure-reason explanation)
+              ;; Initialize the result in the caller's case context.
+              (let ((*case-run* enclosing-case-run))
+                (setf (getf initargs :property) name
+                      (getf initargs :budget) budget
+                      (getf initargs :source-form) source
+                      (getf initargs :failure-reason) failure-reason
+                      (getf initargs :explanation) explanation
+                      (getf initargs :case-report)
+                      (validate-case-trial-report (getf initargs :trial-report)
+                                                  (case-run-report case-run)))
+                (apply #'make-instance 'function-check-result initargs)))
+            :seed seed :registry registry :options options)))))
+   'check-function))
 
 ;;; One concrete caller-supplied invocation (no generation).
 

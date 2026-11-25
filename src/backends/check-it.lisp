@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:with-native-candidate #:with-native-shrink)
   (:import-from #:cl-spec/src/time-limits
                 #:call-catching-run-timeout #:with-trial-clock #:with-run-phase)
   (:import-from #:cl-spec/src/generator #:backend-time-limit-protocol)
@@ -437,42 +438,43 @@ filter under an argument reports (:ARGS NAME ...) as where its budget ran out."
 (defun shrink-native-arguments (generator property original validator context)
   "Search native candidates and retain each observed reduction as it is accepted."
   (let ((accepted nil) (different nil))
-    (handler-case
-        (block search
-          (shrink
-           generator
-           (lambda (arguments)
-             (with-shrink-clock
-               (handler-case
-                   (let ((before (snapshot-value arguments))
-                         (admitted (and (finite-list-p arguments)
-                                        (funcall validator arguments))))
-                     (unless (same-value-p before arguments) (return-from search nil))
-                     (if admitted
-                         (let ((candidate (observe-trial property arguments :context context)))
-                           (when (trial-observation-arguments-mutated-p candidate)
-                             (return-from search nil))
-                           (cond
-                             ((not (observation-failure-p candidate)) t)
-                             ((failure-identities-match-p
-                               (trial-observation-signature original)
-                               (trial-observation-signature candidate))
-                              (unless (same-value-p (trial-observation-arguments original)
-                                                    (trial-observation-arguments candidate))
-                                (setf (check-it-progress-accepted *check-it-progress*) candidate
-                                      accepted candidate))
-                              nil)
-                             (t (setf different t) t)))
-                         t))
-                 (error () (setf different t) t))))))
-      (generation-budget-exhausted (condition)
-        (if (owned-generation-exhaustion-p condition :shrinking)
-            (error condition)
-            (progn (record-generation-interruption)
-                   (setf different t))))
-      (error ()
-        (record-generation-interruption)
-        (setf different t)))
+    (with-native-shrink ((check-it-progress-trials *check-it-progress*))
+      (handler-case
+          (block search
+            (shrink
+             generator
+             (lambda (arguments)
+               (with-native-candidate
+                 (handler-case
+                     (let ((before (snapshot-value arguments))
+                           (admitted (and (finite-list-p arguments)
+                                          (funcall validator arguments))))
+                       (unless (same-value-p before arguments) (return-from search nil))
+                       (if admitted
+                           (let ((candidate (observe-trial property arguments :context context)))
+                             (when (trial-observation-arguments-mutated-p candidate)
+                               (return-from search nil))
+                             (cond
+                               ((not (observation-failure-p candidate)) t)
+                               ((failure-identities-match-p
+                                 (trial-observation-signature original)
+                                 (trial-observation-signature candidate))
+                                (unless (same-value-p (trial-observation-arguments original)
+                                                      (trial-observation-arguments candidate))
+                                  (setf (check-it-progress-accepted *check-it-progress*) candidate
+                                        accepted candidate))
+                                nil)
+                               (t (setf different t) t)))
+                           t))
+                   (error () (setf different t) t))))))
+        (generation-budget-exhausted (condition)
+          (if (owned-generation-exhaustion-p condition :shrinking)
+              (error condition)
+              (progn (record-generation-interruption)
+                     (setf different t))))
+        (error ()
+          (record-generation-interruption)
+          (setf different t))))
     (values accepted different)))
 
 (defmethod run-check-it-test ((backend check-it-backend) property options)
@@ -723,43 +725,45 @@ Lists can shrink in length even when their element generator cannot shrink."
         (shrink-custom-arguments custom property original validator context budget))))
   (let ((accepted nil) (different nil) (count 0) (abort nil) (termination :exhausted))
     (setf (check-it-progress-shrink-candidates *check-it-progress*) 0)
-    (block search
-      (handler-case
-          (shrink generator
-                  (lambda (arguments)
-                    (when (>= count budget)
-                      (setf termination :budget-exhausted)
-                      (return-from search nil))
-                    (setf (check-it-progress-shrink-candidates *check-it-progress*) (incf count))
-                    (with-shrink-clock
-                      (let ((before (snapshot-value arguments))
-                           (admitted (and (finite-list-p arguments)
-                                          (funcall validator arguments))))
-                      (unless (same-value-p before arguments)
-                        (setf termination :mutation)
+    (with-native-shrink ((check-it-progress-trials *check-it-progress*))
+      (block search
+        (handler-case
+            (shrink generator
+                    (lambda (arguments)
+                      (when (>= count budget)
+                        (setf termination :budget-exhausted)
                         (return-from search nil))
-                      (if (not admitted)
-                          t
-                          (let ((observation (observe-trial property arguments :context context)))
-                            (when (eq :fixture (observation-failure-phase observation))
-                              (setf abort observation termination :fixture-error)
-                              (return-from search nil))
-                            (cond
-                              ((not (observation-failure-p observation)) t)
-                              ((failure-identities-match-p
-                                (trial-observation-signature original)
-                                (trial-observation-signature observation))
-                               (unless (same-value-p (trial-observation-arguments original)
-                                                     (trial-observation-arguments observation))
-                                 (setf (check-it-progress-accepted *check-it-progress*) observation
-                                       accepted observation))
-                               nil)
-                              (t (setf different t) t))))))))
-        (generation-budget-exhausted (condition)
-          (if (owned-generation-exhaustion-p condition :shrinking)
-              (setf termination :generation-budget-exhausted)
-              (error condition)))
-        (error () (setf termination :shrinker-error))))
+                      (setf (check-it-progress-shrink-candidates *check-it-progress*) (incf count))
+                      (with-native-candidate
+                        (let ((before (snapshot-value arguments))
+                             (admitted (and (finite-list-p arguments)
+                                            (funcall validator arguments))))
+                        (unless (same-value-p before arguments)
+                          (setf termination :mutation)
+                          (return-from search nil))
+                        (if (not admitted)
+                            t
+                            (let ((observation (observe-trial property arguments :context context)))
+                              (when (eq :fixture (observation-failure-phase observation))
+                                (setf abort observation termination :fixture-error)
+                                (return-from search nil))
+                              (cond
+                                ((not (observation-failure-p observation)) t)
+                                ((failure-identities-match-p
+                                  (trial-observation-signature original)
+                                  (trial-observation-signature observation))
+                                 (unless (same-value-p (trial-observation-arguments original)
+                                                       (trial-observation-arguments observation))
+                                   (setf (check-it-progress-accepted *check-it-progress*)
+                                         observation
+                                         accepted observation))
+                                 nil)
+                                (t (setf different t) t))))))))
+          (generation-budget-exhausted (condition)
+            (if (owned-generation-exhaustion-p condition :shrinking)
+                (setf termination :generation-budget-exhausted)
+                (error condition)))
+          (error () (setf termination :shrinker-error)))))
     (values accepted different
             (list :candidates count :budget budget :termination termination) abort)))
 

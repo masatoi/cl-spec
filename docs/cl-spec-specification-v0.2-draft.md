@@ -3727,7 +3727,8 @@ threaded SBCL上のcheck-it backendでは、`run-property`と`check-function`の
 (run-property 'foo :options '(:timeout 5 :trial-timeout 1 :cleanup-timeout 1/2))
 ```
 
-`:timeout`は生成と縮小を含む全体予算、`:trial-timeout`は各trialおよび
+`:timeout`はregistry解決などの準備、生成と縮小を含む全体予算、
+`:trial-timeout`は各trialおよび
 縮小候補の予算、`:cleanup-timeout`はfixture cleanupの上限である。
 setupや評価を中断してもcleanupを実行し、期限後はその上限までの猶予を取る。
 時間制限を有効にしてcleanupの上限を省略した場合は1秒とする。

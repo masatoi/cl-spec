@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/src/backends/call-generators
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:with-native-candidate)
   (:import-from #:check-it #:generator #:generate #:shrink #:cached-value)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:spec-generator #:with-declaration-steps)
@@ -183,19 +184,22 @@ than a condition thrown out of it.  An unconstrained keyword draw is left to the
 backend's initial argument validation, which refuses invalid custom output."
   (if (not (or (call-generator-rest-driven-p generator)
                (call-generator-rest-length generator)))
-      (setf (cached-value generator) (draw-call generator))
+      (setf (cached-value generator) (with-native-candidate (draw-call generator)))
       (flet ((draw ()
                (loop
-                 (reserve-generation-candidate (call-generator-path generator)
-                                               (call-generator-spec generator))
-                 (let ((arguments (draw-call generator)))
-                   (if (funcall (call-generator-validator generator) arguments)
+                 (multiple-value-bind (arguments admitted)
+                     (with-native-candidate
+                       (reserve-generation-candidate (call-generator-path generator)
+                                                     (call-generator-spec generator))
+                       (let ((arguments (draw-call generator)))
+                         (values arguments (funcall (call-generator-validator generator)
+                                                    arguments))))
+                   (if admitted
                        (return (setf (cached-value generator) arguments))
                        (record-generation-rejection))))))
         (if *generation-request*
             (draw)
-            ;; A bare draw outside every public boundary still gets a finite
-            ;; request, as a bounded filter's does.
+            ;; A bare draw outside every public boundary still has a bounded request.
             (let ((*generation-request* (make-generation-request :planned 1)))
               (draw))))))
 

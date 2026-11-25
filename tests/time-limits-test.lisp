@@ -179,6 +179,133 @@
             (progn (cl-spec:run-property 'unsupported-timer :options '(:timeout 1)) nil)
           (cl-spec:invalid-argument () t)))))
 
+#+(and sbcl sb-thread)
+(defclass slow-run-registry (cl-spec/src/registry::hash-table-registry) ())
+
+#+(and sbcl sb-thread)
+(defvar *lookup-delay* nil)
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/registry:registry-find-property :around ((registry slow-run-registry) name)
+  (declare (ignore name))
+  (when *lookup-delay* (sleep *lookup-delay*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/registry:registry-find-function-spec :around
+    ((registry slow-run-registry) name)
+  (declare (ignore name))
+  (when *lookup-delay* (sleep *lookup-delay*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest whole-run-limit-includes-registry-lookups
+  (let ((cl-spec:*registry* (make-instance 'slow-run-registry))
+        (property-ran nil) (function-ran nil))
+    (cl-spec:defproperty lookup-property ((x integer))
+      (declare (ignore x))
+      (setf property-ran t))
+    (cl-spec:defspec-function identity (:args (x integer)) (:returns integer)
+      (:post (progn (setf function-ran t) t)))
+    (let* ((*lookup-delay* 1/4)
+           (options '(:timeout 1/20))
+           (property (cl-spec:result-data
+                      (cl-spec:run-property 'lookup-property :seed 4 :options options)))
+           (function (cl-spec:result-data
+                      (cl-spec:check-function 'identity :trials 1 :seed 4 :options options))))
+      (dolist (data (list property function))
+        (ok (eq :timeout (getf data :status)))
+        (ok (equal '(:limit :run :trial 1 :phase :preparation) (getf data :timeout)))
+        (ok (zerop (getf data :trials)))
+        (ok (equal options (getf data :options)))
+        (ok (eql 4 (getf data :seed))))
+      (ok (eq :property (getf property :entity-kind)))
+      (ok (eq :function-spec (getf function :entity-kind)))
+      (ok (not (or property-ran function-ran))))))
+
+#+(and sbcl sb-thread)
+(deftest preparation-and-execution-share-the-run-deadline
+  (let ((cl-spec:*registry* (make-instance 'slow-run-registry))
+        (started nil) (finished nil))
+    (cl-spec:defproperty shared-deadline ((x integer))
+      (:trials (:normal 1))
+      (declare (ignore x))
+      (setf started t)
+      (sleep 1/4)
+      (setf finished t))
+    (let* ((*lookup-delay* 1/4)
+           (result (cl-spec:run-property 'shared-deadline :seed 4 :options '(:timeout 2/5)))
+           (data (cl-spec:result-data result)))
+      (ok started)
+      (ok (not finished))
+      (ok (equal '(:limit :run :trial 1 :phase :property) (getf data :timeout))))))
+
+#+(and sbcl sb-thread)
+(defvar *delay-shrink-filter* nil)
+
+#+(and sbcl sb-thread)
+(defun slow-first-shrink-filter (value)
+  (when *delay-shrink-filter*
+    (setf *delay-shrink-filter* nil)
+    (sleep 1/4))
+  (integerp value))
+
+#+(and sbcl sb-thread)
+(deftest trial-limit-includes-native-candidate-prefilters
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*delay-shrink-filter* nil))
+    (cl-spec:defproperty filtered-shrink ((x (and integer (satisfies slow-first-shrink-filter))))
+      (:trials (:normal 1))
+      (declare (ignore x))
+      (setf *delay-shrink-filter* t)
+      nil)
+    (let* ((result (cl-spec:run-property 'filtered-shrink :seed 42
+                                       :options '(:trial-timeout 1/20)))
+           (data (cl-spec:result-data result)))
+      (ok (eq :timeout (getf data :status)))
+      (ok (equal '(:limit :trial :trial 1 :phase :shrinking) (getf data :timeout)))
+      (ok (getf data :counterexample))
+      (ok (null (getf data :shrunk-counterexample))))))
+
+#+(and sbcl sb-thread)
+(deftest inner-cleanup-keeps-its-shorter-limit-during-outer-timeout
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (started nil) (finished nil))
+    (cl-spec:defspec-function sleeping-target
+      (:args) (:returns (member t))
+      (:fixture
+        (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+        (:setup (context) (declare (ignore recipe context)) nil)
+        (:cleanup (context) (declare (ignore recipe context))
+          (setf started t)
+          (sleep 1/5)
+          (setf finished t))))
+    (cl-spec:defproperty outer-run ((x integer))
+      (declare (ignore x))
+      (cl-spec:check-function 'sleeping-target :trials 1 :seed 3
+                             :options '(:cleanup-timeout 1/20))
+      t)
+    (let* ((result (cl-spec:run-property 'outer-run :seed 2
+                                       :options '(:timeout 1/10 :cleanup-timeout 1)))
+           (timeout (getf (cl-spec:result-data result) :timeout)))
+      (ok started)
+      (ok (not finished))
+      (ok (eq :run (getf timeout :limit)))
+      (ok (eq :property (getf timeout :phase)))
+      (ok (equal '(:status :timeout :limit :cleanup) (getf timeout :cleanup))))))
+
+#+(and sbcl sb-thread)
+(deftest state-post-deadline-reports-the-state-post-phase
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defspec-function identity
+      (:args (x integer)) (:returns integer)
+      (:state-post (progn (sleep 1/4) t)))
+    (let* ((result (cl-spec:check-function 'identity :trials 1 :seed 5
+                                         :options '(:trial-timeout 1/20)))
+           (data (cl-spec:result-data result)))
+      (ok (eq :timeout (getf data :status)))
+      (ok (equal '(:limit :trial :trial 1 :phase :state-post) (getf data :timeout))))))
+
 (deftest invalid-run-limits-are-refused
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defproperty timed ((value integer)) (integerp value))
