@@ -1236,8 +1236,9 @@ explain:
   and denominators. With at least one endpoint specified, the generator fills
   any missing endpoint and interpolates in steps of `1/2^24` of that finite
   interval's width. Denominators can grow with the endpoints and interval width.
-  Rational, real and float shrinking tries simple numbers that still fail
-  within the declared domain.
+- Built-in numeric shrinking preserves the declared type and bounds and keeps
+  the magnitude within that of the original value. Real ranges preserve the
+  floating-point format of float candidates.
 - Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`
   signal `generator-unavailable` with kind `:unsupported-type` and name the
   type. Attach a custom generator with `defgenerator` and `(:generator NAME)`
