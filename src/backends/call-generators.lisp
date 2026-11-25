@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/src/backends/call-generators
   (:use #:cl)
-  (:import-from #:cl-spec/src/time-limits #:with-native-candidate)
+  (:import-from #:cl-spec/src/time-limits #:with-native-shrink-draw)
   (:import-from #:check-it #:generator #:generate #:shrink #:cached-value)
   (:import-from #:cl-spec/src/backends/check-it-generators
                 #:spec-generator #:with-declaration-steps)
@@ -184,11 +184,11 @@ than a condition thrown out of it.  An unconstrained keyword draw is left to the
 backend's initial argument validation, which refuses invalid custom output."
   (if (not (or (call-generator-rest-driven-p generator)
                (call-generator-rest-length generator)))
-      (setf (cached-value generator) (with-native-candidate (draw-call generator)))
+      (setf (cached-value generator) (with-native-shrink-draw (draw-call generator)))
       (flet ((draw ()
                (loop
                  (multiple-value-bind (arguments admitted)
-                     (with-native-candidate
+                     (with-native-shrink-draw
                        (reserve-generation-candidate (call-generator-path generator)
                                                      (call-generator-spec generator))
                        (let ((arguments (draw-call generator)))

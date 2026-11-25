@@ -1064,7 +1064,13 @@ through `:options`.
 - `:trial-timeout` starts a fresh deadline for each ordinary trial and each
   shrink candidate. It covers input generation, validation and the call for
   an ordinary trial, and preparation and evaluation of a shrink candidate.
-  A custom shrinker invocation also gets a fresh limit.
+  A candidate that reaches its trial deadline is rejected after any required
+  fixture cleanup completes. Shrinking can continue with the best observed
+  failure. The shrink report counts these rejections in `:timed-out-candidates`.
+  A cleanup error or cleanup timeout still stops the run.
+  Plain native shrinking reports `:budget :unbounded` when collecting these
+  counts. A custom shrinker invocation also gets a fresh limit and stops the
+  run if that limit expires.
 - `:cleanup-timeout` bounds the fixture's cleanup hook. When any timeout is
   enabled and no cleanup limit is supplied, cleanup gets one second at most.
   If a run or trial deadline interrupts setup or evaluation, cleanup gets
@@ -1079,8 +1085,8 @@ The limits accept positive finite real numbers below 2³¹ seconds. A result's
 from the result. A replay uses fresh clocks, so elapsed times and the phase
 reached can vary.
 
-On expiration, `result-data` reports `:status :timeout` and a `:timeout`
-record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
+When a deadline stops the run, `result-data` reports `:status :timeout` and a
+`:timeout` record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
 and the `:phase` reached. A timeout during `:preparation` records zero
 completed trials and leaves uncollected metadata unavailable. A fixture's
 cleanup outcome is recorded under

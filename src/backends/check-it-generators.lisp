@@ -7,7 +7,7 @@
 
 (defpackage #:cl-spec/src/backends/check-it-generators
   (:use #:cl)
-  (:import-from #:cl-spec/src/time-limits #:with-native-candidate)
+  (:import-from #:cl-spec/src/time-limits #:with-native-candidate #:with-native-shrink-draw)
   (:import-from #:cl-spec/src/backends/check-it-coverage #:planned-field #:planned-extra-key)
   (:import-from #:cl-spec/src/backends/check-it-numbers
                 #:float-type-p #:compound-numeric-interval #:interval-endpoint
@@ -190,7 +190,7 @@ shrink path only, which is why a sample and a passing run hid it (PR review)."))
 
 (defmethod generate ((generator custom-value-generator))
   "Draw one value from GENERATOR and cache it, as check-it's generators do."
-  (let ((value (with-native-candidate (funcall (custom-value-generator-function generator)))))
+  (let ((value (with-native-shrink-draw (funcall (custom-value-generator-function generator)))))
     (setf (cached-value generator) value)
     value))
 
@@ -1704,7 +1704,7 @@ validator that mutates its input."))
   "Draw bounded whole-AND candidates, timing each native redraw independently."
   (loop
     (multiple-value-bind (candidate admitted)
-        (with-native-candidate
+        (with-native-shrink-draw
           (reserve-generation-candidate (bounded-filter-path generator)
                                         (bounded-filter-spec generator))
           (let ((candidate (generate (bounded-filter-sub-generator generator))))

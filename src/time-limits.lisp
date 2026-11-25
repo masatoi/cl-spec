@@ -7,7 +7,8 @@
            #:with-trial-clock #:with-run-phase
            #:mark-run-phase #:run-timeout-data
            #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
-           #:with-native-shrink #:with-native-candidate
+           #:call-with-shrink-candidate #:with-native-shrink
+           #:with-native-candidate #:with-native-shrink-draw
            #:call-with-run-limit-handoff #:run-clock-start))
 (in-package #:cl-spec/src/time-limits)
 
@@ -38,6 +39,9 @@
 
 (defvar *native-shrink-trial* nil
   "The ordinary trial whose native shrink candidates are being evaluated.")
+
+(defvar *native-candidate-runner* nil
+  "The backend's clock and rejection handler for a native candidate predicate.")
 
 (defvar *native-candidate-active-p* nil
   "Whether this native candidate already has an active clock.")
@@ -94,6 +98,7 @@
            (*trial-deadline* nil)
            (*trial-number* 1)
            (*native-shrink-trial* nil)
+           (*native-candidate-runner* nil)
            (*native-candidate-active-p* nil))
       (funcall function))))
 
@@ -180,21 +185,54 @@
      nil)
    #'identity))
 
-(defmacro with-native-shrink ((trial) &body body)
-  "Identify the ordinary trial before preparing native shrink candidates."
-  `(let ((*native-shrink-trial* (and *run-limits* ,trial)))
+(defun call-with-shrink-candidate (trial function on-timeout)
+  "Evaluate one candidate or call ON-TIMEOUT after its recoverable trial expiry."
+  (flet ((attempt ()
+           (with-trial-clock (trial)
+             (with-run-phase (:shrinking) (funcall function)))))
+    (let* ((run *run-limits*)
+           (ticks (when run (run-limits-trial-ticks run))))
+      (if (null ticks)
+          (attempt)
+          ;; The enclosing shrink phase owns the absolute run deadline. A separate
+          ;; owner keeps this attempt's timeout private until its cleanup finishes.
+          (let* ((*run-limits* (make-run-limits
+                               :started (run-limits-started run) :trial-ticks ticks
+                               :cleanup-ticks (run-limits-cleanup-ticks run)
+                               :enclosing-clocks *timer-scopes*))
+                 (*active-run-limits* (cons *run-limits* *active-run-limits*)))
+            (call-catching-run-timeout
+             #'attempt
+             (lambda (timeout)
+               (let ((cleanup (getf timeout :cleanup)))
+                 (if (and (eq :trial (getf timeout :limit))
+                          (or (null cleanup) (eq :completed (getf cleanup :status))))
+                     (funcall on-timeout)
+                     (abort-run-for-timeout run trial (getf timeout :phase)
+                                            (getf timeout :limit) cleanup))))))))))
+
+(defmacro with-native-shrink ((trial &optional candidate-runner) &body body)
+  "Identify the failing trial and the backend's native candidate clock boundary."
+  `(let ((*native-shrink-trial* (and *run-limits* ,trial))
+         (*native-candidate-runner* ,candidate-runner))
      ,@body))
 
-(defun call-with-native-candidate (function)
+(defun call-with-native-candidate (function rejectable-p)
   (if (and *native-shrink-trial* (not *native-candidate-active-p*))
       (let ((*native-candidate-active-p* t))
-        (with-trial-clock (*native-shrink-trial*)
-          (with-run-phase (:shrinking) (funcall function))))
+        (if (and rejectable-p *native-candidate-runner*)
+            (funcall *native-candidate-runner* *native-shrink-trial* function)
+            (with-trial-clock (*native-shrink-trial*)
+              (with-run-phase (:shrinking) (funcall function)))))
       (funcall function)))
 
 (defmacro with-native-candidate (&body body)
   "Time one native candidate from its first preparation or validation step."
-  `(call-with-native-candidate (lambda () ,@body)))
+  `(call-with-native-candidate (lambda () ,@body) t))
+
+(defmacro with-native-shrink-draw (&body body)
+  "Time a native draw that needs to return a generated value."
+  `(call-with-native-candidate (lambda () ,@body) nil))
 
 (defun mark-run-phase (phase)
   "Record a phase reached by a running trial. Shrinking keeps its own phase."
