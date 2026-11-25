@@ -20,8 +20,8 @@
   "Exclusive upper bound of the seeds MAKE-SEED draws.")
 
 (defun make-seed ()
-  "Return a fresh integer seed drawn from the current *RANDOM-STATE*."
-  (random +seed-limit+))
+  "Return a fresh integer seed from a newly randomized state."
+  (random +seed-limit+ (make-random-state t)))
 
 (defun seed->random-state (seed)
   "Return a fresh RANDOM-STATE derived deterministically from integer SEED.
