@@ -3,7 +3,7 @@
 (defpackage #:cl-spec/src/contract-runner
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions #:invalid-argument)
-  (:import-from #:cl-spec/src/evidence #:assess-evidence)
+  (:import-from #:cl-spec/src/evidence #:assess-evidence #:validate-evidence-policy)
   (:import-from #:cl-spec/src/execution #:snapshot-value)
   (:import-from #:cl-spec/src/function-examples #:check-case-example)
   (:import-from #:cl-spec/src/function-spec #:check-function #:call-check-data)
@@ -23,12 +23,31 @@
 
 (in-package #:cl-spec/src/contract-runner)
 
-(defun judge-contract-result (result &optional
-                                       (policy '(:policy-version 1
-                                                 :requirements
-                                                 ((:kind :min-checked-trials :count 1)
-                                                  (:kind :all-declared-cases :min-checked 1)))))
-  "Return the generated RESULT's verdict, evidence assessment and problems."
+(defparameter +default-contract-policy+
+  '(:policy-version 1
+    :requirements ((:kind :min-checked-trials :count 1)
+                   (:kind :all-declared-cases :min-checked 1)))
+  "Minimum evidence required for a contract suite verdict.")
+
+(defun suite-evidence-policy (policy)
+  "Validate POLICY and retain any omitted baseline evidence requirements."
+  (let* ((validated (validate-evidence-policy policy))
+         (requirements (getf validated :requirements)))
+    (setf (getf validated :requirements)
+          (append requirements
+                  (remove-if (lambda (baseline)
+                               (find (getf baseline :kind) requirements
+                                     :key (lambda (requirement) (getf requirement :kind))))
+                             (getf +default-contract-policy+ :requirements))))
+    validated))
+
+(defun judge-contract-result (result &optional (policy +default-contract-policy+))
+  "Return RESULT's CI verdict, evidence assessment and problems as three values.
+
+A passing verdict needs a passed execution status, no recorded condition and
+sufficient evidence. By default, require at least one checked trial and one
+checked trial per declared case. An explicit POLICY selects the version-one
+evidence requirements as in ASSESS-EVIDENCE."
   (let* ((status (property-result-status result))
          (condition (property-result-condition result))
          (assessment (assess-evidence result policy))
@@ -88,21 +107,23 @@
           (list (list :unresolved target condition))))))
 
 (defun select-contract-targets (names names-p package package-p tag tag-p registry)
-  "Return the ordered target designators for this suite."
-  (remove-duplicates
-   (cond (names-p (mapcan (lambda (target) (named-targets target registry)) names))
-         (tag-p (loop for name in (properties-with-tag tag registry)
-                      collect (list :property name)))
-         (t (let ((home (when package-p (find-package package))))
-              (when (or (not package-p) home)
-                (flet ((in-package-p (name)
-                         (or (not package-p) (eq home (symbol-package name)))))
-                  (append
-                   (loop for name in (list-function-specs registry)
-                         when (in-package-p name) collect (list :function-spec name))
-                   (loop for name in (list-properties registry)
-                         when (in-package-p name) collect (list :property name))))))))
-   :test #'equal :from-end t))
+  "Return the ordered suite targets and any selection problem."
+  (let ((home (when package-p (find-package package))))
+    (when (and package-p (null home))
+      (return-from select-contract-targets
+        (values nil (list :kind :unknown-package :package package))))
+    (remove-duplicates
+     (cond (names-p (mapcan (lambda (target) (named-targets target registry)) names))
+           (tag-p (loop for name in (properties-with-tag tag registry)
+                        collect (list :property name)))
+           (t (flet ((in-package-p (name)
+                       (or (not package-p) (eq home (symbol-package name)))))
+                (append
+                 (loop for name in (list-function-specs registry)
+                       when (in-package-p name) collect (list :function-spec name))
+                 (loop for name in (list-properties registry)
+                       when (in-package-p name) collect (list :property name))))))
+     :test #'equal :from-end t)))
 
 (defun failed-entry (status &rest details)
   "Return a failed entry for a check that produced no supported verdict."
@@ -116,19 +137,19 @@
        (eq kind (getf data :entity-kind))
        (eq name (getf data :name))))
 
-(defun generated-entry-data (result name kind seed)
+(defun generated-entry-data (result name kind seed policy)
   "Project and judge a generated RESULT with the expected identity."
   (let ((data (result-data result)))
     (if (and (supported-result-p data '(1 2) kind name) (eql seed (getf data :seed)))
         (multiple-value-bind (verdict assessment problems)
-            (judge-contract-result result)
+            (judge-contract-result result policy)
           (let ((condition (property-result-condition result)))
             (append (list :status (getf data :status) :verdict verdict :assessment assessment
                           :problems problems :result data)
                     (when condition (list :condition (condition-data condition))))))
         (failed-entry :unsupported-result :result data))))
 
-(defun run-suite-target (target seed profile trials options registry)
+(defun run-suite-target (target seed profile trials options registry policy)
   "Run and judge one selected TARGET under the chosen seed and settings."
   (destructuring-bind (kind name &optional selection-condition) target
     (let ((seed (if (eq seed :fresh) (make-seed) seed)))
@@ -154,7 +175,7 @@
                                                       :options options :registry registry))
                              (:function-spec (check-function definition :seed seed :trials trials
                                                             :options options :registry registry)))
-                           name kind seed)))))
+                           name kind seed policy)))))
                (reportable-condition (condition)
                  (failed-entry :condition-signalled :condition (condition-data condition))))))))
 
@@ -185,20 +206,23 @@
 (defun check-contracts (&rest keyword-arguments
                         &key (names nil names-p) (package nil package-p) (tag nil tag-p)
                           (seeds '(:fresh)) profile trials options examples (registry *registry*)
+                          (policy nil policy-p)
                         &allow-other-keys)
   "Run registered Function Specs and properties and return a CI verdict plist.
 
 Select at most one of :NAMES, :PACKAGE and :TAG. With none, run everything in
 REGISTRY. NAMES is a list of symbols or (:FUNCTION-SPEC NAME) and (:PROPERTY NAME)
 pairs. A bare symbol selects both kinds when registered under both. PACKAGE
-selects names whose home package it designates. TAG selects tagged properties.
+selects names whose home package it designates. A missing package reports
+:UNKNOWN-PACKAGE. TAG selects tagged properties.
 
 For each item in SEEDS, run each selected target once. Defaults to (:FRESH).
 Each :FRESH draws a seed per target. Fixed seeds are nonnegative integers.
 TRIALS sets the Function Spec budget. A non-NIL PROFILE must be declared by
 each selected property. With NIL, use the ordinary property budget. OPTIONS
-goes to both generated runners. EXAMPLES is a list of (NAME ARGS [EXPECTED-CASE])
-rows checked once after generation. Each row uses CHECK-CALL.
+goes to both generated runners. POLICY adds or strengthens generated evidence
+requirements using the version-one ASSESS-EVIDENCE format. EXAMPLES is a list
+of (NAME ARGS [EXPECTED-CASE]) rows checked once after generation with CHECK-CALL.
 
 The report has :STATUS, :ENTRIES, :EXAMPLES and suite-level :PROBLEMS. Each run
 entry records :KIND, :NAME, :SEED as decimal text, execution :STATUS and CI
@@ -212,12 +236,13 @@ results with measured checked trials and every declared case checked, and passin
 examples that reach any expected case. Unknown or missing results fail."
   (check-keyword-arguments keyword-arguments
                            '(:names :package :tag :seeds :profile :trials :options :examples
-                             :registry)
+                             :registry :policy)
                            'check-contracts)
   (check-contract-selection names names-p package package-p tag tag-p seeds examples)
   (check-profile profile 'check-contracts)
   (check-argument trials '(or null (integer 0 *)) 'check-contracts :trials)
   (check-run-options options 'check-contracts)
+  (setf policy (if policy-p (suite-evidence-policy policy) +default-contract-policy+))
   (setf registry (check-registry registry 'check-contracts))
   (setf seeds (copy-list seeds) examples (mapcar #'copy-list examples))
   (multiple-value-bind (targets selection-problem)
@@ -232,7 +257,7 @@ examples that reach any expected case. Unknown or missing results fail."
            (entries (loop for seed in seeds
                           append (loop for target in targets
                                        collect (run-suite-target
-                                                target seed profile trials options registry))))
+                                                target seed profile trials options registry policy))))
            (examples (let ((*random-state* (make-random-state *random-state*)))
                        (loop for example in examples collect (run-suite-example example registry))))
            (passed (and (null problems)
