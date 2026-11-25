@@ -1070,6 +1070,9 @@ through `:options`.
   If a run or trial deadline interrupts setup or evaluation, cleanup gets
   that bounded grace period even after the deadline. A timeout can therefore
   take longer than the requested run or trial limit.
+  Ordinary cleanup in an untimed nested fixture uses the enclosing clocks
+  already running. If an enclosing run or trial deadline interrupts the
+  nested setup or evaluation, the expired run supplies the cleanup grace.
 
 The limits accept positive finite real numbers below 2³¹ seconds. A result's
 `:options` records the supplied limits, which are inherited when replaying
