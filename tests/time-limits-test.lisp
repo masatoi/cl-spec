@@ -267,6 +267,76 @@
       (ok (eq :timeout (getf data :status)))
       (ok (eq :property (getf timeout :phase))))))
 
+#+(and sbcl sb-thread)
+(deftest nested-fixtures-use-their-own-cleanup-limits
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (nested-check nil) (nested-timeout nil)
+        (cleanup-delay 1/8) (cleanup-started nil) (cleanup-finished nil) (wrapper-exits 0))
+    (cl-spec:defspec-function identity
+      (:args (value integer))
+      (:fixture
+        (:isolation :around) (:version 1) (:recipe (recipe integer))
+        (:around (run) (unwind-protect (funcall run) (incf wrapper-exits)))
+        (:setup (context) (declare (ignore context)) (list recipe))
+        (:cleanup (context) (declare (ignore context recipe))
+          (setf cleanup-started t)
+          (sleep cleanup-delay)
+          (setf cleanup-finished t)))
+      (:returns integer))
+    (flet ((direct ()
+             (eq :passed (getf (cl-spec:fixture-check-data
+                                (cl-spec:check-fixture 'identity 1)) :status)))
+           (run-outer (options)
+             (cl-spec:result-data (cl-spec:run-property 'outer-fixture :seed 2
+                                                       :options options))))
+      (cl-spec:defproperty inner-fixture ()
+        (:trials (:normal 1))
+        (direct))
+      (cl-spec:defproperty outer-fixture ()
+        (:trials (:normal 1))
+        (funcall nested-check))
+      (let ((checks (list #'direct
+                          (lambda ()
+                            (eq :passed (cl-spec:property-result-status
+                                         (cl-spec:check-function 'identity :trials 1 :seed 3))))
+                          (lambda ()
+                            (eq :passed (cl-spec:property-result-status
+                                         (cl-spec:run-property 'inner-fixture :seed 4)))))))
+        (dolist (limit '(:timeout :trial-timeout))
+          (dolist (check checks)
+            (setf nested-check check cleanup-finished nil wrapper-exits 0)
+            (let ((data (run-outer (list limit 2 :cleanup-timeout 1/40))))
+              (ok (eq :passed (getf data :status)))
+              (ok (null (getf data :timeout)))
+              (ok cleanup-finished)
+              (ok (= wrapper-exits 1))))
+          (setf nested-check #'direct cleanup-started nil cleanup-finished nil
+                wrapper-exits 0 cleanup-delay 1/2)
+          (let* ((data (run-outer (list limit 1/5 :cleanup-timeout 1)))
+                 (timeout (getf data :timeout)))
+            (ok (eq :timeout (getf data :status)))
+            (ok (equal (list :limit (ecase limit (:timeout :run) (:trial-timeout :trial))
+                             :trial 1 :phase :property)
+                       timeout))
+            (ok cleanup-started)
+            (ok (not cleanup-finished))
+            (ok (= wrapper-exits 1)))
+          (setf cleanup-delay 1/8)))
+      (setf cleanup-finished nil wrapper-exits 0
+            nested-check
+            (lambda ()
+              (let ((data (cl-spec:result-data
+                           (cl-spec:check-function 'identity :trials 1 :seed 3
+                             :options '(:cleanup-timeout 1/40)))))
+                (setf nested-timeout (getf data :timeout))
+                (eq :timeout (getf data :status)))))
+      (ok (eq :passed (getf (run-outer '(:timeout 2)) :status)))
+      (ok (eq :fixture-cleanup (getf nested-timeout :phase)))
+      (ok (eq :cleanup (getf nested-timeout :limit)))
+      (ok (equal '(:status :timeout :limit :cleanup) (getf nested-timeout :cleanup)))
+      (ok (not cleanup-finished))
+      (ok (= wrapper-exits 1)))))
+
 (deftest timing-options-are-refused-on-an-unparticipating-backend
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (cl-spec:*generator-backend* (make-instance 'legacy-time-backend)))

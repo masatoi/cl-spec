@@ -2321,22 +2321,26 @@ INVALID-ARGUMENT."
   "Check RECIPE once using a fresh fixture, without generation, shrinking or replay."
   (check-keyword-arguments keyword-arguments '(:coverage :registry) 'check-fixture)
   (setf registry (check-registry registry 'check-fixture))
-  (let* ((coverage-options (normalize-coverage-options coverage :direct t))
-         (*coverage-trial* nil)
-         (contract (resolve-function-spec function-designator registry))
-         (property (make-fixture-check-property contract))
-         (*coverage-context* (when coverage-options
-                               (make-coverage-context-for property coverage-options registry
-                                                          :single-call nil nil)))
-         (metadata (definition-metadata
-                    contract :registry registry
-                    :capabilities '(:generation :unknown :shrinking :unknown))))
-    (make-instance 'fixture-check-result :name (function-spec-name contract)
-                   :definition metadata
-                   :declared-cases (snapshot-value (evidence-declared-cases property))
-                   :observation (observe-coverage-trial property (list recipe)
-                                                        :context (list :registry registry))
-                   :coverage (coverage-report-data *coverage-context*))))
+  ;; Keep enclosing deadlines armed while giving this one-shot call no local clock.
+  (call-with-run-time-limits
+   nil
+   (lambda ()
+     (let* ((coverage-options (normalize-coverage-options coverage :direct t))
+            (*coverage-trial* nil)
+            (contract (resolve-function-spec function-designator registry))
+            (property (make-fixture-check-property contract))
+            (*coverage-context* (when coverage-options
+                                  (make-coverage-context-for property coverage-options registry
+                                                             :single-call nil nil)))
+            (metadata (definition-metadata
+                       contract :registry registry
+                       :capabilities '(:generation :unknown :shrinking :unknown))))
+       (make-instance 'fixture-check-result :name (function-spec-name contract)
+                      :definition metadata
+                      :declared-cases (snapshot-value (evidence-declared-cases property))
+                      :observation (observe-coverage-trial property (list recipe)
+                                                           :context (list :registry registry))
+                      :coverage (coverage-report-data *coverage-context*))))))
 
 (defun check-function-run-options (operator keyword-arguments trials seed options)
   "Validate arguments independent of registry lookup."

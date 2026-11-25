@@ -253,9 +253,9 @@
                               (if already-due run-limit limit) cleanup)))))
 
 (defun call-with-timed-fixture-cleanup (function cleanup)
-  "Call FUNCTION and run CLEANUP even after a deadline, within its own bounded grace."
+  "Call FUNCTION and run CLEANUP, bounding grace for the current run's timed phase."
   #+(and sbcl sb-thread)
-  (when *timed-phase*
+  (when (and *timed-phase* (eq (timed-phase-owner *timed-phase*) *run-limits*))
     (return-from call-with-timed-fixture-cleanup
       (sb-sys:without-interrupts
         (unwind-protect (sb-sys:with-local-interrupts (funcall function))
