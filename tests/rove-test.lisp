@@ -4,7 +4,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/rove #:deftest-contract)
   (:import-from #:cl-spec/main
-                #:*registry* #:make-hash-table-registry #:defproperty #:definition-digest)
+                #:*registry* #:make-hash-table-registry #:defproperty #:definition-digest
+                #:defgenerator #:defspec)
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:rove #:deftest #:ok #:run-test #:remove-test #:*report-stream*))
 
@@ -30,3 +31,29 @@
              (ok (search "X 7)" output))))
       (remove-test 'pass-contract)
       (remove-test 'fail-contract))))
+
+(define-condition unprintable-counterexample (serious-condition) ())
+
+(defclass opaque-counterexample () ())
+
+(defmethod print-object ((object opaque-counterexample) stream)
+  (declare (ignore object stream))
+  (error 'unprintable-counterexample))
+
+(deftest opaque-counterexample-keeps-the-rove-replay-message
+  (let ((*registry* (make-hash-table-registry))
+        (*report-stream* (make-string-output-stream)))
+    (defgenerator opaque-generator () (make-instance 'opaque-counterexample))
+    (defspec opaque-value (type opaque-counterexample) (:generator opaque-generator))
+    (defproperty opaque-failure ((value opaque-value))
+      (:trials (:normal 1))
+      (not (typep value 'opaque-counterexample)))
+    (unwind-protect
+         (let ((digest (definition-digest 'opaque-failure :entity-kind :property)))
+           (deftest-contract fail-opaque-contract (:property opaque-failure) :seeds '(41))
+           (ok (null (run-test 'fail-opaque-contract)))
+           (let ((output (get-output-stream-string *report-stream*)))
+             (ok (search "seed 41" output))
+             (ok (search digest output))
+             (ok (search "counterexample <unavailable>" output))))
+      (remove-test 'fail-opaque-contract))))

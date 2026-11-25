@@ -15,7 +15,7 @@
       (with-bounded-printing (:one-line t)
         (let ((*print-readably* nil))
           (prin1-to-string (abbreviate-for-print value))))
-    (error () "<unavailable>")))
+    (serious-condition () "<unavailable>")))
 
 (defun verdict-message (report)
   "Return the Rove description containing the verdict and replay information."

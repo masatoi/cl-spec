@@ -15,6 +15,13 @@
 
 (define-condition runner-expected-error (error) ())
 
+(define-condition runner-secondary-condition (serious-condition) ())
+
+(define-condition runner-primary-condition (serious-condition) ()
+  (:report (lambda (condition stream)
+             (declare (ignore condition stream))
+             (error 'runner-secondary-condition))))
+
 (defun runner-target (value)
   (incf *calls*)
   (if (minusp value) (error 'runner-expected-error) value))
@@ -148,6 +155,24 @@
       (ok (eq :condition-signalled (getf entry :status)))
       (ok (eq 'cl-spec:no-generator-backend (getf (getf entry :condition) :type)))
       (ok (equal "7" (getf entry :seed))))))
+
+(deftest condition-printing-cannot-abort-the-suite
+  (let ((*registry* (make-hash-table-registry)))
+    (register-runner-definitions)
+    (defproperty signalling ((value (member 7)))
+      (:trials (:normal 1))
+      (when value (error 'runner-primary-condition)))
+    (let* ((report (check-contracts :names '((:property signalling) (:property runner-target))
+                                    :seeds '(37)))
+           (entries (getf report :entries))
+           (failed (first entries))
+           (condition (getf failed :condition)))
+      (ok (eq :failed (getf report :status)))
+      (ok (eq :condition-signalled (getf failed :status)))
+      (ok (eq 'runner-primary-condition (getf condition :type)))
+      (ok (search "report unavailable" (getf condition :report)))
+      (ok (equal "37" (getf failed :seed)))
+      (ok (eq :passed (getf (second entries) :verdict))))))
 
 (deftest unrecognised-backend-statuses-cannot-pass
   (let ((*registry* (make-hash-table-registry)))
