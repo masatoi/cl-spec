@@ -129,3 +129,132 @@
       (ok (getf data :definition-digest-complete))
       (ok (zerop *setups*))
       (ok (zerop *calls*)))))
+
+(defvar *around-active* nil)
+
+(defvar *around-balance* 100)
+
+(defvar *around-events* nil)
+
+(defun around-event (event)
+  (assert *around-active*)
+  (push event *around-events*))
+
+(defun around-withdraw (amount)
+  (around-event :target)
+  (when (eq *mode* :escape-in-trial) (throw 'target-escape :escaped))
+  (decf *around-balance* amount)
+  :receipt)
+
+(defun register-around-contract (&optional (result-form :ignored))
+  (funcall
+   (compile nil
+            `(lambda ()
+               (cl-spec:defspec-function around-withdraw
+                 (:args (amount (range integer 1 100)))
+                 (:fixture
+                   (:isolation :around)
+                   (:version 1)
+                   (:recipe (recipe (range integer 1 100)))
+                   (:around (trial)
+                     (let ((*around-active* t)
+                           (balance *around-balance*))
+                       (around-event :enter)
+                       (unwind-protect
+                            (case *mode*
+                              (:skip nil)
+                              (:signal (error "around error"))
+                              (:escape (throw 'escape :escaped))
+                              (:double
+                               (funcall trial)
+                               (handler-case (funcall trial) (error () nil)))
+                              (:escape-in-trial (catch 'target-escape (funcall trial)))
+                              (:escape-after
+                               (funcall trial)
+                               (throw 'escape :escaped))
+                              (otherwise (funcall trial)))
+                         (setf *around-balance* balance)
+                         (around-event :rollback)))
+                     ,result-form)
+                   (:setup (context)
+                     (around-event :setup)
+                     (list recipe))
+                   (:cleanup (context)
+                     (around-event :cleanup)))
+                 (:capture (before (progn (around-event :capture) *around-balance*)))
+                 (:returns keyword)
+                 (:state-post (progn
+                                (around-event :state-post)
+                                (and (eq *mode* :correct)
+                                     (= 100 before)
+                                     (= *around-balance* (- before amount))))))))))
+
+(defmacro with-around-contract (&body body)
+  `(let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+         (*around-balance* 100) (*around-events* nil) (*mode* :correct))
+     (register-around-contract)
+     ,@body))
+
+(deftest around-fixture-rolls-back-after-each-complete-trial
+  (with-around-contract
+    (dotimes (i 2)
+      (let* ((data (fixture-data (cl-spec:check-fixture 'around-withdraw 7)))
+             (lifecycle (getf data :lifecycle)))
+        (ok (eq :passed (getf data :status)))
+        (ok (eq :around (getf lifecycle :isolation)))
+        (ok (eq :completed (getf lifecycle :around)))
+        (ok (= 100 *around-balance*))
+        (ok (equal '(:enter :setup :capture :target :state-post :cleanup :rollback)
+                   (reverse *around-events*)))
+        (setf *around-events* nil)))))
+
+(deftest around-fixture-errors-cannot-pass-or-repeat-a-trial
+  (with-around-contract
+    (loop for (mode reason calls)
+            in '((:skip :fixture-around-thunk-not-called 0)
+                 (:signal :fixture-around-error 0)
+                 (:escape :fixture-around-nonlocal-exit 0)
+                 (:double :fixture-around-thunk-repeated 1)
+                 (:escape-in-trial :fixture-around-nonlocal-exit 1)
+                 (:escape-after :fixture-around-nonlocal-exit 1))
+          do (let* ((*mode* mode)
+                    (*around-events* nil)
+                    (result (catch 'escape (cl-spec:check-fixture 'around-withdraw 7)))
+                    (data (fixture-data result))
+                    (lifecycle (getf data :lifecycle)))
+               (ok (eq :error (getf data :status)))
+               (ok (eq reason (getf data :reason)))
+               (ok (eq :aborted (getf lifecycle :completion)))
+               (ok (eq :unknown (getf lifecycle :state)))
+               (ok (= calls (count :target *around-events*)))
+               (ok (= calls (count :cleanup *around-events*)))
+               (ok (= 100 *around-balance*))))))
+
+(deftest around-fixture-source-contributes-to-the-digest
+  (with-around-contract
+    (let ((before (cl-spec:function-spec-data 'around-withdraw)))
+      (register-around-contract :changed)
+      (let ((after (cl-spec:function-spec-data 'around-withdraw)))
+        (ok (getf before :definition-digest-complete))
+        (ok (getf after :definition-digest-complete))
+        (ok (not (equal (getf before :definition-digest)
+                        (getf after :definition-digest))))))))
+
+(deftest around-fixture-shrinks-replays-and-rechecks
+  (with-around-contract
+    (let* ((*mode* :broken)
+           (result (cl-spec:check-function 'around-withdraw :trials 20 :seed 41))
+           (artifact (cl-spec:make-counterexample-artifact result))
+           (wire (cl-spec:serialize-counterexample-artifact artifact))
+           (restored (cl-spec:deserialize-counterexample-artifact wire))
+           (replay (cl-spec:check-function 'around-withdraw :seed result))
+           (recheck (cl-spec:recheck-counterexample restored :state-policy :fixture)))
+      (ok (eq :failed (cl-spec:property-result-status result)))
+      (ok (cl-spec:property-result-shrunk-counterexample result))
+      (ok (equal (cl-spec:property-result-shrunk-counterexample result)
+                 (cl-spec:property-result-shrunk-counterexample replay)))
+      (ok (eq :same-failure (getf recheck :status)))
+      (ok (= 100 *around-balance*))
+      (ok (> (count :enter *around-events*) 3))
+      (ok (= (count :enter *around-events*) (count :cleanup *around-events*)
+             (count :rollback *around-events*) (count :target *around-events*))))))

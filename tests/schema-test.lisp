@@ -37,7 +37,7 @@
     (ok (eql 2 (getf fixture :result-schema-version)))
     (ok (eql 2 (getf fixture :artifact-version)))
     (ok (eq :fixture-recipe (getf fixture :input-kind)))
-    (ok (equal '(:fresh) (getf fixture :isolations)))))
+    (ok (equal '(:fresh :around) (getf fixture :isolations)))))
 
 (deftest schema-info-describes-evidence-policy-grammar
   (let ((protocol (getf (schema-info) :evidence-protocol)))

@@ -17,3 +17,9 @@
       (ok (eq :same-failure (getf data :recheck)))
       (ok (= 2 (getf data :artifact-version)))))
   (ok t))
+
+(deftest rollback-withdraw-example
+  (let ((registry (cl-spec/examples/reproducible-withdraw:make-example-registry)))
+    (cl-spec/examples/reproducible-withdraw:register-example! registry)
+    (ok (equal '(:status :passed :trials 2 :balance 100)
+               (cl-spec/examples/reproducible-withdraw:demo-rollback registry)))))

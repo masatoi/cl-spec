@@ -81,7 +81,7 @@
 | 名前付き条件別Function Spec | 実装済み | `defspec-function`の`:cases`。入力条件ごとに`:returns`か`:signals`を要求し、exclusiveに選択する。ケース別reportは`function-check-result-case-report`。ケース付きinstrumentationは非対応（§17.2） |
 | Custom generator DSL | 実装済み（最小範囲） | `defgenerator`（引数なしのみ）と`defspec`の`(:generator NAME)`節。パラメータ付きgeneratorは未対応、`defgenerator-for`は提供しない。生成値はspecに照らして再検証しない。ANDの生成元選択は§10・§73.4に従い、競合するcustom generator指定が一つだけならそれを優先してAND全体のvalidatorでfilterし、複数なら`generator-unavailable`とする。AND全体へのgenerator指定は可能 |
 | 事前観測・終了後の状態制約 | 実装済み | `defspec-function`の`:capture`と`:state-post`。`:fixture`を持たない状態観測契約は、縮小・過去の結果からのreplay・反例artifactとしての保存・instrumentationの対象外（§17.3） |
-| Fixture | 実装済み（`:isolation :fresh`のみ） | `defspec-function`の`:fixture`と`check-fixture`。recipeを生成・縮小し、試行ごとにsetup／cleanupで新しい状態を作る。fixtureを持つ契約は縮小され、結果と反例artifactはschema version 2になる。DB rollbackや外部サービスの復元は含まない（§73.5 addendum: reproducible fresh fixtures） |
+| Fixture | 実装済み（`:isolation :fresh` / `:around`） | `defspec-function`の`:fixture`と`check-fixture`。recipeを生成・縮小し、試行ごとにsetup／cleanupで新しい状態を作る。fixtureを持つ契約は縮小され、結果と反例artifactはschema version 2になる。呼び出し側のラッパーでトランザクションを適用できる（§73.5） |
 | 反例artifactと直接再検査 | 実装済み | `make-counterexample-artifact`、`serialize-counterexample-artifact`／`deserialize-counterexample-artifact`（reader を使わない有界codec）、`recheck-counterexample`。再生成によるreplayとは別の操作（§57、§73.5 addendum: counterexample artifacts） |
 | 検証の十分性評価 | 実装済み | `evidence-summary`、`assess-evidence`。`:passed`と、方針を満たした`:satisfied`を区別する（Evidence sufficiency addendum） |
 | Coverage | 実装済み（宣言から導ける範囲） | `coverage-schema`、`coverage-data`、実行関数の`:coverage`オプション。計測していない次元は未測定と明示する（`docs/superpowers/specs/2026-09-27-coverage-protocol-design.md`） |
@@ -5232,8 +5232,8 @@ replayはそれらを強制復元しない。実測では元の予算2を7へ変
 
 ### B. Fixture・中断・cleanup（D4/D5、副作用対象を広げる前）
 
-**状況：`:isolation :fresh`の範囲で実装済み**（§73.5 implementation addendum:
-reproducible fresh fixtures）。DB rollback、外部サービスの復元、worker kill時の監督は含まない。
+**状況：`:isolation :fresh` と `:isolation :around` を実装済み**（§73.5）。
+DB rollbackなどは呼び出し側がラッパーで実装する。
 
 cons/array snapshotとmutation検知は、初期状態の復元ではない。
 cl-mcpのホストtimeoutも、coreのtrial／縮小候補の独立性を保証しない。
@@ -5869,6 +5869,20 @@ non-participating backend answers `:not-collected`.
 構文、実行例、診断と制限は
 [reproducible-stateful-contracts guide](guides/reproducible-stateful-contracts.md)を参照。
 
+
+### §73.5 implementation addendum: dynamically scoped fixture isolation
+
+`:isolation :around` requires one `(:around (THUNK) FORM...)` clause. After
+recipe validation, the hook calls THUNK synchronously exactly once. The
+thunk runs setup, call checks and cleanup within the hook's dynamic extent.
+This applies to direct fixture checks, generated trials and shrink candidates.
+A signalling or escaping hook, or an omitted or repeated call, produces a
+fixture lifecycle error. The caller's wrapper supplies any rollback guarantee.
+
+Lifecycle records identify the isolation, and an around lifecycle records
+completion of the wrapper. The wrapper source and isolation participate in the
+definition digest. Earlier fixture v2 artifacts with implicit fresh isolation
+remain readable and recheckable.
 
 ## Evidence sufficiency implementation addendum (2026-09-26)
 
