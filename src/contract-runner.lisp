@@ -17,7 +17,7 @@
   (:import-from #:cl-spec/src/utils/arguments
                 #:check-argument #:check-keyword-arguments #:check-run-options)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:import-from #:cl-spec/src/utils/printing #:condition-report-text)
+  (:import-from #:cl-spec/src/utils/printing #:condition-report-text #:reportable-condition)
   (:import-from #:cl-spec/src/utils/random #:make-seed)
   (:export #:check-contracts #:judge-contract-result))
 
@@ -84,7 +84,7 @@
                       (when (nth-value 1 (find-property target registry))
                         (list (list :property target))))
               (list (list :unresolved target)))
-        (serious-condition (condition)
+        (reportable-condition (condition)
           (list (list :unresolved target condition))))))
 
 (defun select-contract-targets (names names-p package package-p tag tag-p registry)
@@ -155,7 +155,7 @@
                              (:function-spec (check-function definition :seed seed :trials trials
                                                             :options options :registry registry)))
                            name kind seed)))))
-               (serious-condition (condition)
+               (reportable-condition (condition)
                  (failed-entry :condition-signalled :condition (condition-data condition))))))))
 
 (defun run-suite-example (example registry)
@@ -179,7 +179,7 @@
                               (unless (eq status :passed)
                                 (list (list :kind (or reason :run-status) :status status))))
                         (when condition (list :condition (condition-data condition))))))
-               (serious-condition (condition)
+               (reportable-condition (condition)
                  (failed-entry :condition-signalled :condition (condition-data condition))))))))
 
 (defun check-contracts (&rest keyword-arguments
@@ -203,7 +203,9 @@ rows checked once after generation. Each row uses CHECK-CALL.
 The report has :STATUS, :ENTRIES, :EXAMPLES and suite-level :PROBLEMS. Each run
 entry records :KIND, :NAME, :SEED as decimal text, execution :STATUS and CI
 :VERDICT. It includes the RESULT-DATA record and evidence :ASSESSMENT when
-available. Example entries retain CALL-CHECK-DATA when available.
+available. Example entries retain CALL-CHECK-DATA when available. Run deadlines
+from OPTIONS yield timeout entries. On SBCL, caller deadlines and interrupts
+propagate out of the suite.
 
 The suite passes with a nonempty selection and seed list, passing generated
 results with measured checked trials and every declared case checked, and passing
@@ -221,7 +223,7 @@ examples that reach any expected case. Unknown or missing results fail."
   (multiple-value-bind (targets selection-problem)
       (handler-case
           (select-contract-targets names names-p package package-p tag tag-p registry)
-        (serious-condition (condition)
+        (reportable-condition (condition)
           (values nil (list :kind :selection-error :condition (condition-data condition)))))
     (let* ((problems (append (when selection-problem (list selection-problem))
                              (unless (or targets selection-problem)

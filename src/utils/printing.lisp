@@ -4,9 +4,17 @@
   (:use #:cl)
   (:export #:with-bounded-printing
            #:abbreviate-for-print
-           #:condition-report-text))
+           #:condition-report-text
+           #:reportable-condition))
 
 (in-package #:cl-spec/src/utils/printing)
+
+(deftype reportable-condition ()
+  "A serious condition that may be turned into a suite failure or diagnostic text."
+  '(and serious-condition
+        (not (or storage-condition
+                 #+sbcl sb-ext:timeout
+                 #+sbcl sb-sys:interactive-interrupt))))
 
 (defmacro with-bounded-printing ((&key one-line) &body body)
   "Run BODY with printer settings under which printing any value terminates.
@@ -172,14 +180,13 @@ returned as it is.  Call it within WITH-BOUNDED-PRINTING, which sets the limits.
 
 The report is printed under WITH-BOUNDED-PRINTING, because a condition caught
 while checking a value usually prints that value, which may be circular or very
-large.  A report that itself signals is replaced by the condition's type, so a
-printer the user supplied can neither stop nor unwind the caller.  The printer's
-limits do not bound a string a report quotes, so the text is also cut to
-+REPORT-TEXT-LIMIT+ characters.  NIL renders as NIL."
+large.  A report that signals a REPORTABLE-CONDITION falls back to the
+original condition's type. Caller deadlines and interruptions propagate.
+The text is cut to +REPORT-TEXT-LIMIT+ characters. NIL renders as NIL."
   (when condition
     (handler-case
         (truncate-text (with-bounded-printing ()
                          (princ-to-string condition))
                        +report-text-limit+)
-      (serious-condition ()
+      (reportable-condition ()
         (format nil "~S (condition report unavailable)" (type-of condition))))))

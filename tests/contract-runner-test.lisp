@@ -5,7 +5,7 @@
   (:import-from #:rove #:deftest #:ok #:testing)
   (:import-from #:cl-spec/main
                 #:*registry* #:make-hash-table-registry #:defproperty #:defspec-function
-                #:invalid-argument #:check-contracts)
+                #:invalid-argument #:check-contracts #:defgenerator #:defspec)
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:run-generated-test)
   (:import-from #:cl-spec/src/backends/check-it))
 
@@ -232,3 +232,133 @@
       (ok (eql 2 (getf result :schema-version)))
       (ok (eq :fixture-recipe (getf result :input-kind)))
       (ok (= 2 *calls* cleaned)))))
+
+(defvar *suite-action* nil
+  "Callback exercised inside the first suite target.")
+
+(defun runner-first (value)
+  (funcall *suite-action*)
+  value)
+
+(defun register-suite-action ()
+  (register-runner-definitions)
+  (defspec-function runner-first
+    (:args (value (member 7)))
+    (:returns integer)))
+
+(defun run-suite-action (route)
+  "Exercise the action during a generated target or a fixed example."
+  (ecase route
+    (:generated
+     (check-contracts :names '((:function-spec runner-first) (:function-spec runner-target))
+                      :seeds '(4) :trials 1))
+    (:example
+     (check-contracts :names '((:property runner-target)) :seeds '(4)
+                      :examples '((runner-first (7)) (runner-target (7)))))))
+
+(define-condition simulated-storage-exhaustion (storage-condition) ())
+
+#+(and sbcl sb-thread)
+(deftest caller-interruptions-stop-generated-and-example-checks
+  (let ((*registry* (make-hash-table-registry)))
+    (register-suite-action)
+    (dolist (route '(:generated :example))
+      (dolist (transfer '(:timeout :interrupt :storage))
+        (testing (format nil "~S escapes a ~S check" transfer route)
+          (let ((*calls* 0)
+                (*suite-action*
+                  (ecase transfer
+                    (:timeout (lambda () (sleep 1/4)))
+                    (:interrupt
+                     (lambda ()
+                       (sb-thread:interrupt-thread
+                        sb-thread:*current-thread*
+                        (lambda () (signal 'sb-sys:interactive-interrupt)))))
+                    (:storage (lambda () (error 'simulated-storage-exhaustion))))))
+            (ok (eq transfer
+                    (handler-case
+                        (progn
+                          (if (eq transfer :timeout)
+                              (sb-ext:with-timeout 1/20 (run-suite-action route))
+                              (run-suite-action route))
+                          :returned)
+                      (sb-ext:timeout () :timeout)
+                      (sb-sys:interactive-interrupt () :interrupt)
+                      (simulated-storage-exhaustion () :storage))))
+            (ok (zerop *calls*))))))))
+
+(define-condition slow-condition-report (error) ()
+  (:report (lambda (condition stream)
+             (declare (ignore condition))
+             (sleep 1/4)
+             (write-string "Slow condition" stream))))
+
+#+(and sbcl sb-thread)
+(deftest caller-deadline-stops-condition-reporting
+  (let ((*registry* (make-hash-table-registry))
+        (*calls* 0)
+        (*suite-action* (lambda () (error 'slow-condition-report))))
+    (register-suite-action)
+    (testing "the deadline interrupts the reporter and skips the next target"
+      (ok (eq :timeout
+              (handler-case
+                  (progn (sb-ext:with-timeout 1/20 (run-suite-action :generated)) :returned)
+                (sb-ext:timeout () :timeout))))
+      (ok (zerop *calls*)))))
+
+(deftest an-escaped-error-records-a-row-and-allows-the-next-target
+  (let ((*registry* (make-hash-table-registry))
+        (*calls* 0))
+    (register-runner-definitions)
+    (defgenerator failing-draw () (error "ordinary generator failure"))
+    (defspec failed-input integer (:generator failing-draw))
+    (defproperty broken-draw ((value failed-input))
+      (:trials (:normal 1))
+      (integerp value))
+    (let ((entries (getf (check-contracts :names '((:property broken-draw)
+                                                   (:function-spec runner-target))
+                                         :seeds '(4) :trials 1)
+                         :entries)))
+      (ok (equal '(:condition-signalled :passed)
+                 (mapcar (lambda (entry) (getf entry :status)) entries)))
+      (ok (eq 'simple-error (getf (getf (first entries) :condition) :type)))
+      (ok (= 1 *calls*)))))
+
+#+(and sbcl sb-thread)
+(deftest a-suite-owned-timeout-records-a-row-and-allows-the-next-target
+  (let ((*registry* (make-hash-table-registry))
+        (*calls* 0)
+        (*suite-action* (lambda () (sleep 1/4))))
+    (register-suite-action)
+    (let ((entries (getf (check-contracts
+                          :names '((:function-spec runner-first) (:function-spec runner-target))
+                          :seeds '(4) :trials 1 :options '(:trial-timeout 1/20))
+                         :entries)))
+      (ok (equal '(:timeout :passed) (mapcar (lambda (entry) (getf entry :status)) entries)))
+      (ok (eq :trial (getf (getf (getf (first entries) :result) :timeout) :limit)))
+      (ok (= 1 *calls*)))))
+
+(defclass interruptible-registry (cl-spec:hash-table-registry) ())
+
+(defmethod cl-spec:registry-find-function-spec :around ((registry interruptible-registry) name)
+  (declare (ignore name))
+  (when *suite-action* (funcall *suite-action*))
+  (call-next-method))
+
+(defmethod cl-spec:registry-list-function-specs :around ((registry interruptible-registry))
+  (when *suite-action* (funcall *suite-action*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest caller-deadline-stops-bare-name-and-package-selection
+  (let ((*registry* (make-instance 'interruptible-registry)))
+    (register-runner-definitions)
+    (let ((*suite-action* (lambda () (sleep 1/4))))
+      (dolist (selector (list '(:names (runner-target))
+                              (list :package (symbol-package 'runner-target))))
+        (ok (eq :timeout
+                (handler-case
+                    (progn
+                      (sb-ext:with-timeout 1/20 (apply #'check-contracts selector))
+                      :returned)
+                  (sb-ext:timeout () :timeout))))))))
