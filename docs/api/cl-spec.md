@@ -417,7 +417,8 @@ examples that reach any expected case. Unknown or missing results fail.
 
 *Function* · `(function-designator recipe &rest keyword-arguments &key coverage (registry *registry*) &allow-other-keys)`
 
-Check RECIPE once using a fresh fixture, without generation, shrinking or replay.
+Check RECIPE once with the declared fixture, without generation, shrinking or replay.
+The fixture may use :FRESH or :AROUND isolation.
 
 <a name="check-function"></a>
 ### check-function
@@ -1109,7 +1110,8 @@ Register GENERATOR in REGISTRY under its own name and return it.
 
 Register an in-memory observer for the EQUAL hash table returned by READER.
 Keys and values must be bounded AV1 data, with keys stable under EQUAL after
-copying. VERSION identifies the reader's scope and meaning.
+copying. VERSION is a required positive integer identifying the reader's scope
+and meaning.
 
 <a name="register-property"></a>
 ### register-property
@@ -1147,8 +1149,9 @@ Register three operations for NAME in REGISTRY.
 SNAPSHOT () returns an independent view of the observed state. COMPARE (BEFORE
 AFTER) returns a finite list of changed keys. PROJECT (SNAPSHOT KEY) returns a
 bounded AV1 value and a boolean presence flag. The functions are captured at
-registration. Supply SOURCE as stable declaration data for any anonymous
-operation, and increase VERSION when its meaning or observed scope changes.
+registration. VERSION is a required positive integer. Supply SOURCE as stable
+declaration data for any anonymous operation. Increase VERSION when an
+operation's meaning or observed scope changes.
 
 <a name="replay-property"></a>
 ### replay-property
