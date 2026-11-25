@@ -6,7 +6,7 @@
 An executable semantic IR and property framework for Common Lisp programs,
 designed for both humans and LLM coding agents.
 
-**1.0 release candidate.** The [1.x compatibility policy](docs/compatibility.md)
+**cl-spec 1.0.0.** The [1.x compatibility policy](docs/compatibility.md)
 defines the supported API, data formats, and replay guarantees.
 
 Normalization, validation, structured explain,
@@ -59,10 +59,10 @@ backend into `cl-spec:*generator-backend*`.
 
 ## Installation
 
-Clone the candidate and start a fresh Lisp session in the checkout.
+Clone the release tag and start a fresh Lisp session in the checkout.
 
 ```sh
-git clone --branch v1.0.0-rc.2 https://github.com/masatoi/cl-spec.git
+git clone --branch v1.0.0 https://github.com/masatoi/cl-spec.git
 cd cl-spec
 ```
 
