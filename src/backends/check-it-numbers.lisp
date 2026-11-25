@@ -182,12 +182,10 @@ Otherwise candidates retain the original float format or stay exact."
 (defun encode-like-number (number original)
   "Keep NUMBER exact or encode it in ORIGINAL's floating-point format."
   (if (floatp original)
-      (float-value number (float 0 original)
-                   (etypecase original
-                     (short-float least-positive-short-float)
-                     (single-float least-positive-single-float)
-                     (double-float least-positive-double-float)
-                     (long-float least-positive-long-float)))
+      (let ((format (find-if (lambda (type) (typep original type))
+                             '(short-float single-float double-float long-float))))
+        (float-value number (float 0 original)
+                     (nth-value 1 (float-format-bounds format))))
       number))
 
 (defun float-neighbor (number direction zero least normal greatest)
