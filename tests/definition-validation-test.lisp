@@ -141,6 +141,27 @@
 
 (defclass further-extended-property (extended-property) ())
 
+(define-condition restore-type-check-failed (error) ())
+
+(defun restorable-existing-p (value)
+  (when (eq value :original) (error 'restore-type-check-failed))
+  t)
+
+(defclass typed-extended-property (extended-property)
+  ((existing :type (satisfies restorable-existing-p))))
+
+(deftest change-class-preserves-refusal-when-a-restore-type-check-signals
+  (let* ((object (make-instance 'extended-property :name 'extended :function #'identity
+                                :arguments '((x integer))))
+         (arguments (property-arguments object)))
+    (ok (handler-case
+            (progn (change-class object 'typed-extended-property :extra :invalid
+                                 :existing :changed :arguments '((x string)))
+                   nil)
+          (invalid-extension-slot () t)
+          (restore-type-check-failed () nil)))
+    (ok (eq arguments (property-arguments object)))))
+
 (defmethod definition-validation-slots append ((object extended-property))
   '(extra existing))
 

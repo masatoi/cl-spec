@@ -90,6 +90,9 @@ values and changes to an object's class are outside this rollback boundary."
       (unless completed
         (dolist (entry omitted)
           (destructuring-bind (slot value) entry
-            ;; The destination class can narrow the slot's type.
-            (when (typep value (sb-mop:slot-definition-type slot))
-              (setf (slot-value current (sb-mop:slot-definition-name slot)) value))))))))
+            ;; A destination type check or custom slot writer can signal.
+            ;; Continue restoring other bindings and let the original refusal escape.
+            (handler-case
+                (when (typep value (sb-mop:slot-definition-type slot))
+                  (setf (slot-value current (sb-mop:slot-definition-name slot)) value))
+              (error () nil))))))))
