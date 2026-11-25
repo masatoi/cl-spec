@@ -38,6 +38,22 @@
 (defun run-verdict (report)
   (getf (first (getf report :entries)) :verdict))
 
+(deftest fresh-suite-seeds-use-independent-random-state
+  (let ((*registry* (make-hash-table-registry))
+        (initial-state (make-random-state *random-state*)))
+    (register-runner-definitions)
+    (flet ((fresh-seeds ()
+             (let ((*random-state* (make-random-state initial-state))
+                   (expected (make-random-state initial-state)))
+               (let ((report (check-contracts :names '((:property runner-target))
+                                              :seeds '(:fresh :fresh))))
+                 (ok (eq :passed (getf report :status)))
+                 (ok (loop repeat 4
+                           always (= (random 1000000 expected) (random 1000000))))
+                 (mapcar (lambda (entry) (getf entry :seed))
+                         (getf report :entries))))))
+      (ok (not (equal (fresh-seeds) (fresh-seeds)))))))
+
 (deftest selectors-run-registered-definitions-and-report-real-seeds
   (let ((*registry* (make-hash-table-registry)) (*calls* 0))
     (register-runner-definitions)

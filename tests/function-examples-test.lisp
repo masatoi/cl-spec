@@ -124,17 +124,17 @@
       (ok (eq :return-spec (trial-observation-reason
                            (call-check-result-observation (getf (first rows) :call))))))))
 
-(deftest fixed-calls-do-not-consume-the-generated-runs-implicit-seed
+(deftest fixed-examples-and-implicit-seeds-preserve-the-callers-random-state
   (let ((*registry* (make-hash-table-registry))
         (*calls* nil)
-        (initial-state (make-random-state t)))
+        (initial-state (make-random-state *random-state*)))
     (register-withdraw)
-    (let ((plain (let ((*random-state* (make-random-state initial-state)))
-                   (check-function 'withdraw :trials 3)))
-          (combined (let ((*random-state* (make-random-state initial-state)))
-                      (check-function-with-examples
-                       'withdraw '((:sufficient-funds (5 5))) :trials 3))))
-      (ok (= (property-result-seed plain) (property-result-seed (getf combined :generated)))))))
+    (let ((*random-state* (make-random-state initial-state)))
+      (ok (eq :passed (getf (check-function-with-examples
+                             'withdraw '((:sufficient-funds (5 5))) :trials 3)
+                            :status)))
+      (ok (loop repeat 4
+                always (= (random 1000000 initial-state) (random 1000000)))))))
 
 (defvar *generated-mode* :ok)
 
