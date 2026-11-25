@@ -6,7 +6,12 @@
 
 (defpackage #:cl-spec/src/property-runner
   (:use #:cl)
-  (:import-from #:cl-spec/src/property #:property-arguments)
+  (:import-from #:cl-spec/src/time-limits
+                #:call-with-run-time-limits #:call-with-run-limit-handoff
+                #:call-catching-run-timeout #:call-with-run-finalization
+                #:run-clock-start #:with-run-phase)
+  (:export #:preparation-timeout-initargs)
+  (:import-from #:cl-spec/src/call-schema #:call-layout #:call-layout-named-arguments)
   (:import-from #:cl-spec/src/coverage #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options #:backend-coverage-protocol
                 #:unsupported-coverage-operation)
@@ -25,8 +30,9 @@
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
                 #:property
-                #:property-name
+                #:property-name #:property-arguments
                 #:property-named-arguments
+                #:property-counterexample-layout
                 #:property-trials
                 #:+trial-profiles+)
   (:import-from #:cl-spec/src/conditions
@@ -89,6 +95,8 @@
    (declared-cases :initarg :declared-cases :initform :not-collected
                    :reader property-result-declared-cases
                    :documentation "Declared case names at execution start, NIL or :NOT-COLLECTED.")
+   (timeout :initarg :timeout :initform nil :reader property-result-timeout
+            :documentation "Owned run, trial or cleanup deadline evidence, when timed out.")
    (run-error :initarg :run-error :initform nil :reader property-result-run-error
               :documentation "Lifecycle failure retained separately from counterexamples.")
    (shrink-report :initarg :shrink-report :initform :not-collected
@@ -100,8 +108,8 @@
 or :NOT-COLLECTED when the backend did not collect one.")
    (failure-phase :initarg :failure-phase :initform nil
                   :reader property-result-failure-phase
-                  :documentation ":GENERATION when the run stopped in generation infrastructure rather
-than on a target observation, else NIL.")
+                  :documentation
+                  "The backend phase when a generation budget or deadline was exhausted.")
    (stored-failure-reason :initarg :failure-reason :initform nil
                           :reader property-result-stored-failure-reason
                           :documentation "Failure reason for a result with no target observation,
@@ -139,8 +147,7 @@ such as the generation-only error branch.")
    (status :initarg :status
            :initform :pending
            :reader property-result-status
-           :documentation "One of :PASSED, :FAILED, :ERROR, :SKIPPED or
-:PENDING.")
+           :documentation "One of :PASSED, :FAILED, :ERROR, :SKIPPED, :TIMEOUT or :PENDING.")
    (property :initarg :property
              :initform nil
              :reader property-result-property
@@ -340,6 +347,8 @@ results without captured metadata have an explicitly incomplete digest."
           (getf metadata :entity-kind) (property-result-entity-kind result))
     (snapshot-value
      (append metadata
+             (when (property-result-timeout result)
+               (list :timeout (property-result-timeout result)))
              (when (property-result-run-error result)
                (list :run-error (observation-data (property-result-run-error result))))
              (list :coverage (coverage-data result) :evidence (evidence-summary result)
@@ -464,26 +473,203 @@ or :RUN-OPTIONS-MISMATCH."
   (:documentation "Capture run-specific executable state before metadata and replay validation.")
   (:method ((property t)) property))
 
-(defvar *pending-result-constructor* nil
-  "One run's result constructor, paired with its property designator.")
+(defun preparation-timeout-initargs (timeout name seed options start &key profile budget)
+  "Capture available result data for a timeout before generated execution starts."
+  (list :status :timeout :timeout timeout :failure-reason :timeout
+        :failure-phase (getf timeout :phase) :property name :trials 0 :budget budget
+        :coverage '(:availability :not-collected :reason :preparation-timeout)
+        :seed (or (if (typep seed 'property-result) (property-result-seed seed) seed)
+                  (make-seed))
+        :profile (or profile :normal) :options (snapshot-value options)
+        :elapsed (/ (float (- (get-internal-real-time) start)) internal-time-units-per-second)))
+
+(defun prepare-property-execution (resolved name registry profile seed-result options function-p)
+  "Prepare the declaration and save the information needed by generated execution."
+  (let* ((property (prepare-property-run resolved))
+         (name (if (eq resolved property) name (property-name property))))
+    ;; CHECK-FUNCTION validates its own result's name and kind.
+    (unless function-p
+      (check-replayed-result seed-result :property name 'run-property))
+    (when seed-result
+      (validate-replay-state property seed-result options registry))
+    (let* ((backend (current-generator-backend))
+           (coverage-options (normalize-coverage-options (getf options :coverage)))
+           (*coverage-trial* nil)
+           (*coverage-context*
+             (when coverage-options
+               (let ((participating (eq :coverage-v1 (backend-coverage-protocol backend))))
+                 (when (and (eq :exercise (getf coverage-options :mode)) (not participating))
+                   (error 'unsupported-coverage-operation :reason :backend-not-participating))
+                 (make-coverage-context-for property coverage-options registry :single-run backend
+                                            (not (coverage-fixture-p property))
+                                            :deferred (not participating)))))
+           (trials (resolve-trials property profile backend)))
+      (when (and seed-result (definition-fixture-metadata property)
+                 (or (not (eql trials (property-result-budget seed-result)))
+                     (not (eq profile (property-result-profile seed-result)))))
+        (error 'unsupported-stateful-operation :operation :replay
+               :function name :reason :run-options-mismatch))
+      (list registry property name backend coverage-options *coverage-context* trials
+            (definition-metadata property :registry registry
+                                 :capabilities '(:generation :unknown :shrinking :unknown))
+            (snapshot-value (evidence-declared-cases property))
+            (snapshot-value options)
+            (capture-run-provenance backend options)
+            (when (getf options :timeout)
+              (property-counterexample-layout property))))))
+
+(defun project-saved-counterexample (layout arguments)
+  "Bind already observed arguments using a saved built-in layout."
+  (etypecase layout
+    (call-layout
+     (handler-case (call-layout-named-arguments layout arguments)
+       (program-error () nil)))
+    (list
+     (when (= (length layout) (length arguments))
+       (loop for name in layout for value in arguments append (list name value))))))
+
+(defun project-run-counterexamples (property outcome layout timed-p)
+  "Use completed projections, with saved evidence as a fallback."
+  (let* ((prior-timeout (getf outcome :timeout))
+         (execution-timeout-p (and prior-timeout (not (eq :finalization (getf prior-timeout :phase)))))
+         (unchecked (when prior-timeout (getf outcome :unchecked-counterexamples)))
+         (original (getf outcome :failure))
+         (shrunk (getf outcome :shrunk-failure))
+         (original-args (when original (trial-observation-arguments original)))
+         (shrunk-args (when shrunk (trial-observation-arguments shrunk))))
+    (labels ((fallback (arguments key)
+               (or (when (and layout execution-timeout-p)
+                     (project-saved-counterexample layout arguments))
+                   (unless (member key unchecked) arguments)))
+             (project (arguments)
+               (name-arguments property (if timed-p (snapshot-value arguments) arguments))))
+      (let ((first (when original (fallback original-args :failure)))
+            (second (when shrunk (fallback shrunk-args :shrunk-failure))))
+        (flet ((format-inputs ()
+                 (when (and original (not (member :failure unchecked)))
+                   (setf first (project original-args)))
+                 (when (and shrunk (not (member :shrunk-failure unchecked)))
+                   (setf second (project shrunk-args)))))
+          (let ((timeout
+                  (if timed-p
+                      (call-with-run-finalization (max 1 (getf outcome :trials)) #'format-inputs)
+                      (progn (format-inputs) prior-timeout))))
+            (list :counterexample first :shrunk-counterexample second :timeout timeout)))))))
+
+(defun execute-property-run (property-designator profile seed options registry
+                             &optional result-constructor)
+  "Prepare and execute a property using the caller's run clock."
+  (let* ((start (run-clock-start))
+         (requested-name (when (symbolp property-designator) property-designator))
+         (seed-result (and (typep seed 'property-result) seed))
+         (effective-profile (or profile :normal))
+         (effective-seed (or (if seed-result (property-result-seed seed-result) seed)
+                             (make-seed)))
+         (prepared
+           (call-catching-run-timeout
+            (lambda ()
+              (with-run-phase (:preparation)
+                (let* ((registry (check-registry registry 'run-property))
+                       (resolved (resolve-property property-designator registry)))
+                  (setf requested-name (property-name resolved))
+                  (prepare-property-execution
+                   resolved requested-name registry effective-profile
+                   seed-result options (not (null result-constructor))))))
+            (lambda (timeout)
+              (let ((initargs (preparation-timeout-initargs
+                               timeout requested-name effective-seed options start
+                               :profile effective-profile)))
+                (return-from execute-property-run
+                  (if result-constructor
+                      (funcall result-constructor initargs :timeout nil)
+                      (apply #'make-instance 'property-result initargs))))))))
+    (destructuring-bind (registry property name backend coverage-options
+                         *coverage-context* trials metadata declared-cases
+                         captured-options provenance counterexample-layout)
+        prepared
+      (let* ((*coverage-trial* nil)
+             (outcome (let ((*random-state* (seed->random-state effective-seed)))
+                        (let ((backend-options (list* :trials trials :registry registry options)))
+                          (call-with-run-limit-handoff
+                           backend-options
+                           (lambda ()
+                             (run-generated-test backend property :options backend-options))))))
+             (preparation-timeout-p (eq :preparation (getf (getf outcome :timeout) :phase)))
+             (coverage-validation
+               (unless preparation-timeout-p (validate-coverage-run *coverage-context* outcome)))
+             (projections (project-run-counterexamples property outcome counterexample-layout
+                                                       (getf options :timeout)))
+             (timeout (getf projections :timeout))
+             (elapsed (/ (float (- (get-internal-real-time) start))
+                         internal-time-units-per-second))
+             (original (getf outcome :failure))
+             (shrunk (getf outcome :shrunk-failure))
+             (selected (or shrunk original)))
+        (declare (ignore coverage-validation))
+        ;; Backends may report capabilities captured when they compiled the actual
+        ;; generator. Older backends leave the pre-run UNKNOWN metadata intact.
+        (when (getf outcome :capabilities)
+          (let ((capabilities (copy-list (getf outcome :capabilities))))
+            (when (eq :none (getf (getf metadata :capabilities) :shrinking))
+              (setf (getf capabilities :shrinking) :none))
+            (setf (getf capabilities :instrumentation)
+                  (getf (getf metadata :capabilities) :instrumentation)
+                  (getf metadata :capabilities) capabilities)))
+        (let ((initargs
+                (list
+                 ;; Zero trials or all preconditions rejected means no evidence.
+                 :status (cond (timeout :timeout)
+                               ((and (eq :passed (getf outcome :status))
+                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
+                                :skipped)
+                               (t (getf outcome :status)))
+                 :coverage (if preparation-timeout-p
+                               '(:availability :not-collected :reason :preparation-timeout)
+                               (coverage-report-data
+                                *coverage-context*
+                                (if coverage-options :unsupported-backend :disabled)))
+                 :trial-report (getf outcome :trial-report :not-collected)
+                 :declared-cases declared-cases
+                 :run-error (getf outcome :run-error)
+                 :timeout timeout
+                 :schema-metadata metadata :budget trials
+                 :options captured-options :provenance provenance
+                 :property name
+                 :trials (getf outcome :trials)
+                 :seed effective-seed
+                 :profile effective-profile
+                 :failure-evidence original :shrunk-evidence shrunk
+                 :shrunk-outcome (getf outcome :shrunk-outcome)
+                 :shrink-report (snapshot-value (or (getf outcome :shrink-report)
+                                                    :not-collected))
+                 :generation-report (snapshot-value
+                                     (or (getf outcome :generation-report) :not-collected))
+                 :failure-phase (if timeout (getf timeout :phase) (getf outcome :failure-phase))
+                 :failure-reason (if timeout :timeout (getf outcome :failure-reason))
+                 :rejected (getf outcome :rejected 0)
+                 :counterexample (getf projections :counterexample)
+                 :shrunk-counterexample (getf projections :shrunk-counterexample)
+                 :condition (or (and (getf outcome :run-error) (getf outcome :condition))
+                                (when selected (trial-observation-condition selected))
+                                (getf outcome :condition))
+                 :elapsed elapsed)))
+          (if result-constructor
+              (funcall result-constructor initargs
+                       (selected-evidence-reason (getf initargs :failure-reason) selected)
+                       (selected-evidence-explanation selected))
+              (apply #'make-instance 'property-result initargs)))))))
 
 (defun run-property-with-result-constructor
-    (property-designator result-constructor &rest run-arguments)
-  "Run PROPERTY-DESIGNATOR with a one-use PROPERTY-RESULT constructor.
-
-RESULT-CONSTRUCTOR receives captured initargs, the selected failure reason, and
-the selected explanation.  It must return a PROPERTY-RESULT.  Its coverage
-bindings are those enclosing the run, not the run's completed coverage context."
+    (property-designator result-constructor &key seed options registry)
+  "Execute PROPERTY-DESIGNATOR with RESULT-CONSTRUCTOR and the current run clock."
   (let ((enclosing-context *coverage-context*)
         (enclosing-trial *coverage-trial*))
-    (let ((*pending-result-constructor*
-            (cons property-designator
-                  (when result-constructor
-                    (lambda (initargs reason explanation)
-                      (let ((*coverage-context* enclosing-context)
-                            (*coverage-trial* enclosing-trial))
-                        (funcall result-constructor initargs reason explanation)))))))
-      (apply #'run-property property-designator run-arguments))))
+    (execute-property-run
+     property-designator nil seed options registry
+     (lambda (initargs reason explanation)
+       (let ((*coverage-context* enclosing-context)
+             (*coverage-trial* enclosing-trial))
+         (funcall result-constructor initargs reason explanation))))))
 
 (defun run-property (property-designator &rest keyword-arguments
                      &key (profile nil profile-p) seed (options nil options-p)
@@ -493,8 +679,10 @@ bindings are those enclosing the run, not the run's completed coverage context."
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend. With a result as SEED, omitted PROFILE and OPTIONS inherit their saved
-values. An explicit NIL selects profile :NORMAL or the empty option list.
+backend. :TIMEOUT and :TRIAL-TIMEOUT in OPTIONS are wall clock limits in seconds.
+:CLEANUP-TIMEOUT caps fixture cleanup. With a result as SEED, omitted PROFILE
+and OPTIONS inherit their saved values. An explicit NIL selects profile
+:NORMAL or the empty option list.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
 whose definition declares state constraints without a fixture refuses that with
@@ -514,123 +702,10 @@ nothing restores its state.  An integer SEED starts a new run and stays allowed.
     (unless options-p (setf options (property-result-options seed))))
   (check-profile profile 'run-property)
   (check-run-options options 'run-property)
-  (setf registry (check-registry registry 'run-property))
-  (let* ((result-constructor
-           (when (and *pending-result-constructor*
-                      (eq property-designator (car *pending-result-constructor*)))
-             ;; Consume before running user code so nested runs keep their own result type.
-             (prog1 (cdr *pending-result-constructor*)
-               (setf *pending-result-constructor* nil))))
-         (seed-result (and (typep seed 'property-result) seed))
-         (seed (if seed-result (property-result-seed seed-result) seed))
-         (property (let ((resolved (prepare-property-run
-                                    (resolve-property property-designator registry))))
-                     ;; A run made through CHECK-FUNCTION checks its own result's name and kind.
-                     (unless result-constructor
-                       (check-replayed-result seed-result :property
-                                              (property-name resolved) 'run-property))
-                     (when seed-result
-                       (validate-replay-state resolved seed-result options registry))
-                     resolved))
-         (backend (current-generator-backend))
-         (coverage-options (normalize-coverage-options (getf options :coverage)))
-         (*coverage-trial* nil)
-         (*coverage-context*
-           (when coverage-options
-             (when (and (eq :exercise (getf coverage-options :mode))
-                        (not (eq :coverage-v1 (backend-coverage-protocol backend))))
-               (error 'unsupported-coverage-operation :reason :backend-not-participating))
-             (make-coverage-context-for property coverage-options registry :single-run backend
-                                        (not (coverage-fixture-p property))
-                                        :deferred (not (eq :coverage-v1
-                                                           (backend-coverage-protocol backend))))))
-         (effective-seed (or seed (make-seed)))
-         ;; Recorded on the result as-is (not the raw PROFILE argument) so a result
-         ;; is self-describing -- :PROFILE :NORMAL tells an agent what ran, where NIL
-         ;; would not -- and so replaying from the result reproduces this run by
-         ;; construction rather than by both paths happening to default the same way.
-         (effective-profile (or profile :normal))
-         (trials (let ((count (resolve-trials property effective-profile backend)))
-                    (when (and seed-result (definition-fixture-metadata property)
-                               (or (not (eql count (property-result-budget seed-result)))
-                                   (not (eq effective-profile (property-result-profile seed-result)))))
-                      (error 'unsupported-stateful-operation :operation :replay
-                             :function (property-name property)
-                             :reason :run-options-mismatch))
-                    count))
-         (metadata (definition-metadata
-                    property :registry registry
-                    :capabilities '(:generation :unknown :shrinking :unknown)))
-         (declared-cases (snapshot-value (evidence-declared-cases property)))
-         (captured-options (snapshot-value options))
-         (provenance (capture-run-provenance backend options))
-         (start (get-internal-real-time))
-         ;; One binding covers generation and shrinking alike, because the whole
-         ;; trial loop lives inside this single call.
-         (outcome (let ((*random-state* (seed->random-state effective-seed)))
-                    (run-generated-test backend property
-                                        :options (list* :trials trials
-                                                        :registry registry
-                                                        options))))
-         (coverage-validation (validate-coverage-run *coverage-context* outcome))
-         (elapsed (/ (float (- (get-internal-real-time) start))
-                     internal-time-units-per-second))
-         (original (getf outcome :failure))
-         (shrunk (getf outcome :shrunk-failure))
-         (selected (or shrunk original)))
-    (declare (ignore coverage-validation))
-    ;; Backends may report capabilities captured when they compiled the actual
-    ;; generator. Older backends leave the pre-run UNKNOWN metadata intact.
-    (when (getf outcome :capabilities)
-      (let ((capabilities (copy-list (getf outcome :capabilities))))
-        (when (eq :none (getf (getf metadata :capabilities) :shrinking))
-          (setf (getf capabilities :shrinking) :none))
-        (setf (getf capabilities :instrumentation)
-              (getf (getf metadata :capabilities) :instrumentation)
-              (getf metadata :capabilities) capabilities)))
-    (let ((initargs
-            (list
-             ;; Zero trials or all preconditions rejected means no evidence.
-             :status (if (and (eq :passed (getf outcome :status))
-                              (= (getf outcome :trials) (getf outcome :rejected 0)))
-                         :skipped
-                         (getf outcome :status))
-             :coverage (coverage-report-data
-                        *coverage-context*
-                        (if coverage-options :unsupported-backend :disabled))
-             :trial-report (getf outcome :trial-report :not-collected)
-             :declared-cases declared-cases
-             :run-error (getf outcome :run-error)
-             :schema-metadata metadata :budget trials
-             :options captured-options :provenance provenance
-             :property (property-name property)
-             :trials (getf outcome :trials)
-             :seed effective-seed
-             :profile effective-profile
-             :failure-evidence original :shrunk-evidence shrunk
-             :shrunk-outcome (getf outcome :shrunk-outcome)
-             :shrink-report (snapshot-value (or (getf outcome :shrink-report)
-                                                :not-collected))
-             :generation-report (snapshot-value
-                                 (or (getf outcome :generation-report) :not-collected))
-             :failure-phase (getf outcome :failure-phase)
-             :failure-reason (getf outcome :failure-reason)
-             :rejected (getf outcome :rejected 0)
-             :counterexample (when original
-                               (name-arguments property
-                                               (trial-observation-arguments original)))
-             :shrunk-counterexample (when shrunk
-                                      (name-arguments property
-                                                      (trial-observation-arguments shrunk)))
-             :condition (or (and (getf outcome :run-error) (getf outcome :condition))
-                            (when selected (trial-observation-condition selected))
-                            (getf outcome :condition))
-             :elapsed elapsed)))
-      (if result-constructor
-          (funcall result-constructor initargs
-                   (selected-evidence-reason (getf initargs :failure-reason) selected)
-                   (selected-evidence-explanation selected))
-          (apply #'make-instance 'property-result initargs)))))
+  (call-with-run-time-limits
+   options
+   (lambda () (execute-property-run property-designator profile seed options registry))
+   'run-property))
 
 (defun run-properties (property-designators &rest keyword-arguments
                        &key profile options (registry *registry*) &allow-other-keys)

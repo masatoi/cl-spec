@@ -1,6 +1,8 @@
 ;;;; src/fixture-execution.lisp
 (defpackage #:cl-spec/src/fixture-execution
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:mark-run-phase #:timeout-unwinding-p
+                #:call-with-timed-fixture-cleanup)
   (:import-from #:cl-spec/src/fixture
                 #:fixture-recipe-spec #:fixture-setup-function #:fixture-cleanup-function
                 #:fixture-isolation #:fixture-around-function #:fixture-error)
@@ -44,7 +46,7 @@
                             (setf completed t))))
              (error (condition) (setf wrapper-error condition)))
            (setf returned t))
-      (unless returned
+      (unless (or returned (timeout-unwinding-p))
         (return-from invoke-fixture-around
           (values :fixture-around-nonlocal-exit
                   (make-condition 'fixture-error :reason :around-nonlocal-exit)))))
@@ -89,27 +91,33 @@ The callback owns call-schema validation and target outcome classification."
                  (record-error :recipe :fixture-recipe-mutation
                                (make-condition 'fixture-error :reason :recipe-mutation))))
              (run-trial ()
-               (unwind-protect
-                    (let ((arguments nil))
-                      (setf setup :interrupted state :unknown)
-                      (handler-case
-                          (setf arguments (funcall setup-function working context)
-                                setup :completed)
-                        (error (error)
-                          (setf setup :error)
-                          (record-error :setup :fixture-setup-error error)))
-                      (check-recipe-mutation)
-                      (unless reason
-                        (setf evaluation :interrupted)
-                        (setf value (funcall callback arguments)
-                              evaluation :completed)))
-                 (setf cleanup :interrupted)
-                 (handler-case
-                     (progn (funcall cleanup-function working context)
-                            (setf cleanup :completed state :released))
-                   (error (error)
-                     (setf cleanup :error state :unknown)
-                     (record-error :cleanup :fixture-cleanup-error error))))))
+               (call-with-timed-fixture-cleanup
+                (lambda ()
+                  (mark-run-phase :fixture-setup)
+                  (let ((arguments nil))
+                    (setf setup :interrupted state :unknown)
+                    (handler-case
+                        (setf arguments (funcall setup-function working context)
+                              setup :completed)
+                      (error (error)
+                        (setf setup :error)
+                        (record-error :setup :fixture-setup-error error)))
+                    (check-recipe-mutation)
+                    (unless reason
+                      (setf evaluation :interrupted)
+                      (setf value (funcall callback arguments)
+                            evaluation :completed))))
+                (lambda ()
+                  (setf cleanup :interrupted)
+                  (handler-case
+                      (progn (funcall cleanup-function working context)
+                             (setf cleanup :completed state :released))
+                    (error (error)
+                      (setf cleanup :error state :unknown)
+                      (record-error :cleanup :fixture-cleanup-error error)))
+                  cleanup))
+               (mark-run-phase :fixture-around)))
+      (mark-run-phase :fixture-recipe)
       (handler-case
           (progn
             (setf saved (copy-recipe recipe) working (copy-recipe recipe))
@@ -121,7 +129,9 @@ The callback owns call-schema validation and target outcome classification."
           (record-error :recipe :fixture-recipe-invalid error)
           (return-from call-with-fixture (result))))
       (if around-function
-          (multiple-value-bind (why error) (invoke-fixture-around around-function #'run-trial)
+          (multiple-value-bind (why error)
+              (progn (mark-run-phase :fixture-around)
+                     (invoke-fixture-around around-function #'run-trial))
             (if why
                 (progn
                   (setf around :error state :unknown)

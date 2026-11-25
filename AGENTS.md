@@ -166,8 +166,10 @@ system. Optional status self-contract registration is exposed by
 
 ## Reproducible fixture contracts
 
-Function Specs may declare inline `:fixture` with `:isolation :fresh`, positive
-`:version`, one `:recipe` binding and compiled `:setup` / `:cleanup` hooks.
+Function Specs may declare inline `:fixture` with `:isolation :fresh` or
+`:isolation :around`, a positive `:version`, one `:recipe` binding and compiled
+`:setup` / `:cleanup` hooks. Around isolation calls a one-shot thunk inside the
+caller's wrapper, including setup, call checks and cleanup.
 `src/fixture.lisp` owns definition validation; `src/fixture-execution.lisp` owns
 the callback lifecycle. `check-fixture` / `fixture-check-data` are core one-shot
 recipe checks. Generated trials and shrink candidates rebuild state independently.
@@ -175,9 +177,15 @@ Fixture results and counterexample artifacts use v2; stateless v1 is preserved.
 Recheck uses `:state-policy :fixture`. A cleanup failure aborts the run and
 retains prior counterexamples separately from its run error. `check-call` never
 runs fixture hooks. Fixtures remain unsupported by instrumentation.
-The scope is fresh in-memory state; worker supervision and external rollback
-remain separate. `examples/reproducible-withdraw.lisp` and its mirrored test
-exercise construction, shrinking, artifact roundtrip and generator-free recheck.
+Fresh isolation constructs in-memory state. Around isolation can use
+application-defined transaction and mocking macros.
+`examples/reproducible-withdraw.lisp` and its mirrored test exercise construction,
+rollback, shrinking, artifact roundtrip and generator-free recheck.
+
+The check-it runner on threaded SBCL supports the replayable run options
+`:timeout`, `:trial-timeout` and `:cleanup-timeout`. Timeout evidence records the
+trial and phase, keeps a retained counterexample, and records bounded fixture
+cleanup separately. Worker supervision is a host responsibility.
 
 ## Evidence sufficiency protocol
 

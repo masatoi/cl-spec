@@ -1046,6 +1046,55 @@ return count enforcement belongs to `:output`. Error records use the usual `:act
 Serialize installation/removal
 with function redefinition in concurrent applications.
 
+## Generated run time limits
+
+Pass wall-clock limits in seconds to either `run-property` or `check-function`
+through `:options`.
+
+```lisp
+(cl-spec:run-property 'addition-preserves-order :seed 42
+  :options '(:timeout 5 :trial-timeout 1 :cleanup-timeout 1/2))
+
+(cl-spec:check-function 'bounded-value :trials 100 :seed 42
+  :options '(:timeout 5 :trial-timeout 1))
+```
+
+- `:timeout` bounds preparation, generation, shrinking and finalization under
+  one deadline. Preparation includes registry lookup and metadata.
+- `:trial-timeout` starts a fresh deadline for each ordinary trial and each
+  shrink candidate. It covers input generation, validation and the call for
+  an ordinary trial, and preparation and evaluation of a shrink candidate.
+  A custom shrinker invocation also gets a fresh limit.
+- `:cleanup-timeout` bounds the fixture's cleanup hook. When any timeout is
+  enabled and no cleanup limit is supplied, cleanup gets one second at most.
+  If a run or trial deadline interrupts setup or evaluation, cleanup gets
+  that bounded grace period even after the deadline. A timeout can therefore
+  take longer than the requested run or trial limit.
+
+The limits accept positive finite real numbers below 2³¹ seconds. A result's
+`:options` records the supplied limits, which are inherited when replaying
+from the result. A replay uses fresh clocks, so elapsed times and the phase
+reached can vary.
+
+On expiration, `result-data` reports `:status :timeout` and a `:timeout`
+record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
+and the `:phase` reached. A timeout during `:preparation` records zero
+completed trials and leaves uncollected metadata unavailable. A fixture's
+cleanup outcome is recorded under
+`:timeout :cleanup`, separately from the primary timeout. Counts and coverage
+reflect completed ordinary trials. The original failure and any accepted
+reduction remain available if shrinking times out. A timeout in
+`:finalization` retains completed counterexample projections. Verified
+inputs whose naming timed out use their saved raw arguments. An observation
+whose argument check timed out remains available as failure evidence.
+
+Time limits use current-thread timers on threaded SBCL with the check-it
+backend. Other Lisp implementations and backends reject time limit options.
+Foreign calls and code that defers asynchronous interrupts can postpone
+delivery. Fixture hooks and wrapper unwind code still own application resource
+release. Use process supervision when a caller needs a hard bound on the
+entire image.
+
 ## Verification evidence
 
 Property and function checks record each failing invocation with its input,

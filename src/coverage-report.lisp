@@ -8,7 +8,8 @@
                 #:coverage-identity #:copy-coverage-data
                 #:backend-coverage-capabilities #:bounded-list-p)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
-  (:export #:deferred-coverage-p #:begin-core-coverage-report #:collect-deferred-coverage-trial
+  (:export #:deferred-coverage-p #:begin-core-coverage-report
+           #:collect-deferred-coverage-trial #:collect-coverage-trial
            #:*coverage-context* #:*coverage-trial* #:make-coverage-context-for
            #:coverage-report-data #:call-with-coverage-trial #:coverage-capture-input
            #:coverage-note-unavailable-input #:coverage-mark-stage

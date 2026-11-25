@@ -11,7 +11,7 @@
   (:import-from #:cl-spec/src/execution #:evaluate-trial #:observe-trial)
   (:import-from #:cl-spec/src/property
                 #:property #:property-function #:property-arguments #:property-kind #:property-source-form
-                #:register-property)
+                #:register-property #:property-counterexample-layout)
   (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/resolve #:resolve-property)
   (:import-from #:cl-spec/src/schema #:definition-description-complete-p)
@@ -25,6 +25,10 @@
 
 (defclass state-machine-property (property) ()
   (:documentation "One property binding holds the entire command sequence."))
+
+(defmethod property-counterexample-layout ((machine state-machine-property))
+  (when (eq (class-of machine) (find-class 'state-machine-property))
+    (mapcar #'first (property-arguments machine))))
 
 (defmethod validate-definition :after ((machine state-machine-property))
   "Check the machine's kind and single trace binding after ordinary property normalization."

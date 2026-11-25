@@ -2,7 +2,9 @@
 
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits #:with-run-phase #:mark-run-phase)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
+  (:import-from #:cl-spec/src/coverage-report #:collect-coverage-trial #:*coverage-context*)
   (:import-from #:cl-spec/src/coverage-report
                 #:*coverage-trial* #:deferred-coverage-p #:begin-core-coverage-report
                 #:collect-deferred-coverage-trial #:call-with-coverage-trial #:coverage-mark-stage #:coverage-implicit-pre)
@@ -309,6 +311,7 @@ Specializations must classify during this invocation, never by rerunning it."))
   "Evaluate an ordinary property once and classify false results and conditions."
   (declare (ignore context))
   (coverage-implicit-pre)
+  (mark-run-phase :property)
   (handler-case
       (let ((value (apply (property-function property) arguments)))
         (coverage-mark-stage :target-observed)
@@ -426,15 +429,22 @@ default keeps nothing: an ordinary PROPERTY has no per-case state to aggregate."
   (when (deferred-coverage-p)
     (when validator (funcall validator))
     (return-from observe-coverage-trial (observe-trial property arguments :context context)))
-  (call-with-coverage-trial
-   property arguments
-   (lambda ()
-     (when validator
-       (funcall validator)
-       (coverage-mark-stage :domain-valid))
-     (let ((observation (observe-trial property arguments :context context)))
-       (values observation (trial-observation-status observation))))
-   :generated generated :domain-valid domain-valid))
+  (multiple-value-bind (observation frame)
+      (with-run-phase (:validation)
+        (call-with-coverage-trial
+         property arguments
+         (lambda ()
+           (when validator
+             (funcall validator)
+             (coverage-mark-stage :domain-valid))
+           (mark-run-phase :trial)
+           (let ((observation (observe-trial property arguments :context context)))
+             (values observation (trial-observation-status observation))))
+         :generated generated :domain-valid domain-valid :defer t))
+    ;; A deadline may discard the in-flight observation. Publish coverage only
+    ;; after this operation has completed and its timer has been cancelled.
+    (when *coverage-context* (collect-coverage-trial *coverage-context* frame))
+    observation))
 
 (defmethod observe-trial ((property t) arguments &key context)
   "Refuse anything but a property, rather than fail with no applicable method."

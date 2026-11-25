@@ -16,6 +16,7 @@
   (:import-from #:cl-spec/tests/check-summary-test)
   (:import-from #:cl-spec/tests/evidence-run-test)
   (:import-from #:cl-spec/tests/trial-report-test)
+  (:import-from #:cl-spec/tests/time-limits-test)
   (:import-from #:cl-spec/tests/evidence-direct-test)
   (:import-from #:cl-spec/tests/fixture-test)
   (:import-from #:cl-spec/tests/fixture-function-test)

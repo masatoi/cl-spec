@@ -6,6 +6,9 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/time-limits
+                #:mark-run-phase #:call-with-run-time-limits #:run-clock-start
+                #:call-catching-run-timeout #:with-run-phase)
   (:import-from #:cl-spec/src/state-frame
                 #:state-frame #:state-frame-clauses #:state-frame-observers #:state-frame-variables
                 #:capture-state-frame #:check-state-frame #:state-frame-error
@@ -82,6 +85,7 @@
                 #:normalize-return-declaration #:return-values-spec #:call-declaration-variables
                 #:normalize-call-declarations #:call-layout-required-only-p
                 #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
+                #:call-layout-named-arguments
                 #:call-layout-shape-error
                 #:argument-binding-kind #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
                 #:call-arguments-spec)
@@ -91,10 +95,11 @@
                 #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
-                #:property-call-arguments-p #:property-named-arguments
+                #:property-call-arguments-p #:property-named-arguments #:property-counterexample-layout
                 #:property-source-form #:property-trials #:property-metadata)
   (:import-from #:cl-spec/src/property-runner
                 #:prepare-property-run #:run-property-with-result-constructor
+                #:preparation-timeout-initargs #:property-result-options
                 #:property-result #:property-result-case-report #:property-result-entity-kind
                 #:check-replayed-result
                 #:property-result-budget #:property-result-property #:observation-data)
@@ -522,6 +527,7 @@ TAG is the clause family tag; CONDITION is the condition that stopped it, or
 NIL.  The compiled predicate reports a signalling form's position as a value, so
 no extra condition type is needed.  A hand-written programmatic predicate that
 returns one value yields an unknown position rather than a guessed one."
+  (mark-run-phase :state-post)
   (handler-case
       (multiple-value-bind (holds index tag condition)
           (apply predicate (append argument-values captures))
@@ -1590,10 +1596,11 @@ as its reduction.  The shapes come from the nested errors instead."
   (call-layout-accepts-p (function-spec-call-layout (checked-contract property)) arguments))
 
 (defmethod property-named-arguments ((property function-check-property) arguments)
-  (loop for (name . value) in
-        (bound-call-bindings
-         (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
-        append (list name value)))
+  (call-layout-named-arguments (function-spec-call-layout (checked-contract property)) arguments))
+
+(defmethod property-counterexample-layout ((property function-check-property))
+  (when (eq (class-of property) (find-class 'function-check-property))
+    (make-call-layout (function-spec-argument-specs (checked-contract property)))))
 
 (defmethod coverage-bindings ((property function-check-property) arguments)
   (let* ((layout (function-spec-call-layout (checked-contract property)))
@@ -1721,8 +1728,10 @@ its classification. Nothing is re-run to build the evidence."
                                                               :contract-error)
                                             :state-case selected-case)))
              (evaluate ()
+               (mark-run-phase :binding)
                (let* ((bound (bind-call-arguments (function-spec-call-layout contract) arguments))
                       (argument-values (bound-call-values bound)))
+                 (mark-run-phase :pre)
                  (when (precondition-refuses-p pre argument-values)
                    (return-from evaluate
                      (make-trial-classification
@@ -1731,6 +1740,7 @@ its classification. Nothing is re-run to build the evidence."
                                                   :state-status :not-evaluated
                                                   :state-reason :precondition-rejected))))
                  (coverage-mark-stage :pre-admitted)
+                 (mark-run-phase :capture)
                  (multiple-value-bind (captures condition index)
                      (run-captures contract argument-values)
                    (setf captured-values captures
@@ -1759,6 +1769,7 @@ its classification. Nothing is re-run to build the evidence."
                                                       :capture-index index
                                                       :state-status :not-evaluated
                                                       :state-reason :capture-failed)))))
+                   (mark-run-phase :case-selection)
                    (multiple-value-bind (case selection-condition)
                        (if cases
                            (function-case-select cases argument-values
@@ -1771,12 +1782,16 @@ its classification. Nothing is re-run to build the evidence."
                            (returns signals post post-forms values-post-p
                             state-post-function state-post-forms)
                          (function-case-outcome-parts contract case)
-                        (let* ((state-frame
-                                 (capture-state-frame (function-spec-state-frame contract)
-                                                      argument-values captures))
+                        (let* ((frame-declaration (function-spec-state-frame contract))
+                               (state-frame
+                                 (when frame-declaration
+                                   (mark-run-phase :capture)
+                                   (capture-state-frame frame-declaration
+                                                        argument-values captures)))
                                (target-entry (getf context :fixture-target-entry))
                                (raw-outcome
                                  (progn
+                                   (mark-run-phase :target)
                                    (when target-entry (funcall target-entry))
                                    (invoke-target-once (checked-target property) arguments)))
                               (target-condition
@@ -1788,6 +1803,7 @@ its classification. Nothing is re-run to build the evidence."
                                         :kind (call-outcome-kind raw-outcome)
                                         :values (snapshot-value (call-outcome-values raw-outcome))
                                         :condition target-condition))
+                         (mark-run-phase :outcome)
                          (let ((classification
                                  (classify-target-outcome
                                   returns signals post post-forms values-post-p
@@ -1795,7 +1811,9 @@ its classification. Nothing is re-run to build the evidence."
                                (case-name (and case (function-case-name case))))
                            (if (eq :passed (trial-classification-status classification))
                                (let ((value (trial-classification-value classification))
-                                      (frame (when state-frame (check-state-frame state-frame))))
+                                      (frame (when state-frame
+                                               (mark-run-phase :state-post)
+                                               (check-state-frame state-frame))))
                                  (if (eq :violation (getf frame :status))
                                      (classify-frame-failure
                                       contract case captures value outcome frame)
@@ -2129,6 +2147,10 @@ closure reaches the digest."
 (defmethod property-named-arguments ((property fixture-check-property) arguments)
   (list (fixture-recipe-name (checked-fixture property)) (first arguments)))
 
+(defmethod property-counterexample-layout ((property fixture-check-property))
+  (when (eq (class-of property) (find-class 'fixture-check-property))
+    (list (fixture-recipe-name (checked-fixture property)))))
+
 (defmethod definition-shrink-enabled-p ((property fixture-check-property)) t)
 
 (defun fixture-call-data (observation)
@@ -2156,6 +2178,7 @@ closure reaches the digest."
             (lambda (raw)
               ;; A nested check can invoke the outer thunk within its wrapper.
               (let ((*coverage-context* coverage-context) (*coverage-trial* coverage-trial))
+                (mark-run-phase :fixture-arguments)
                 (handler-case
                     (progn
                       (coverage-capture-input inner raw)
@@ -2315,12 +2338,16 @@ INVALID-ARGUMENT."
                                                         :context (list :registry registry))
                    :coverage (coverage-report-data *coverage-context*))))
 
-(defun check-function-arguments (operator keyword-arguments trials seed options registry)
-  "Validate the generated-check parameters for OPERATOR and return the effective registry."
+(defun check-function-run-options (operator keyword-arguments trials seed options)
+  "Validate arguments independent of registry lookup."
   (check-keyword-arguments keyword-arguments '(:trials :seed :options :registry) operator)
   (check-argument trials '(or null (integer 0 *)) operator :trials)
   (check-argument seed '(or null property-result (integer 0 *)) operator :seed)
-  (check-run-options options operator)
+  (check-run-options options operator))
+
+(defun check-function-arguments (operator keyword-arguments trials seed options registry)
+  "Validate the generated-check parameters for OPERATOR and return the effective registry."
+  (check-function-run-options operator keyword-arguments trials seed options)
   (check-registry registry operator))
 
 (defun check-function (function-designator &rest keyword-arguments
@@ -2359,41 +2386,66 @@ not the initial object state, which the author must build.
 With :FIXTURE, the runner generates recipes and reconstructs fresh state for each
 trial and shrink candidate. A result supplied as :SEED requires matching complete
 declaration identity, options, profile and budget. Cleanup failures stop the run
-with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
-contract failure. Fixture results and artifacts use version 2."
-  (setf registry (check-function-arguments 'check-function keyword-arguments
-                                           trials seed options registry))
-  (let* ((seed-result (and (typep seed 'property-result) seed))
-         (budget (or trials
-                     (when (typep seed-result 'function-check-result)
-                       (function-check-result-budget seed-result))
-                     (backend-default-trials (current-generator-backend))))
-         (contract (resolve-function-spec function-designator registry))
-         (name (function-spec-name contract))
-         (property (if (function-spec-fixture contract)
-                       (make-fixture-check-property contract :budget budget)
-                       (make-function-check-property contract :budget budget)))
-         (source (property-source-form property))
-         (case-run (make-case-run contract)))
-    ;; A result replays only the contract run it came from (#84).
-    (check-replayed-result seed-result :function-spec name 'check-function)
-    (let ((enclosing-case-run *case-run*)
-          (*case-run* case-run))
-      (apply #'run-property-with-result-constructor
-       property
-       (lambda (initargs failure-reason explanation)
-         ;; The final result is initialized in the caller's case context.
-         (let ((*case-run* enclosing-case-run))
-           (setf (getf initargs :property) name
-                 (getf initargs :budget) budget
-                 (getf initargs :source-form) source
-                 (getf initargs :failure-reason) failure-reason
-                 (getf initargs :explanation) explanation
-                 (getf initargs :case-report)
-                 (validate-case-trial-report (getf initargs :trial-report)
-                                             (case-run-report case-run)))
-           (apply #'make-instance 'function-check-result initargs)))
-       :seed seed :registry registry (when options-p (list :options options))))))
+with phase :FIXTURE. :RUN-ERROR retains that evidence separately from any earlier
+contract failure. Fixture results and artifacts use version 2.
+
+OPTIONS accepts :TIMEOUT, :TRIAL-TIMEOUT and :CLEANUP-TIMEOUT in wall clock
+seconds. The result retains these limits when replayed."
+  (when (and (not options-p) (typep seed 'property-result))
+    (setf options (property-result-options seed)))
+  (check-function-run-options 'check-function keyword-arguments trials seed options)
+  (call-with-run-time-limits
+   options
+   (lambda ()
+     (let* ((start (run-clock-start))
+            (requested-name (when (symbolp function-designator) function-designator))
+            (seed-result (and (typep seed 'property-result) seed))
+            (budget (or trials
+                        (when (typep seed-result 'function-check-result)
+                          (function-check-result-budget seed-result))))
+            (prepared
+              (call-catching-run-timeout
+               (lambda ()
+                 (with-run-phase (:preparation)
+                   (when (typep function-designator 'function-spec)
+                     (setf requested-name (function-spec-name function-designator)))
+                   (setf registry (check-registry registry 'check-function))
+                   (unless budget
+                     (setf budget (backend-default-trials (current-generator-backend))))
+                   (let* ((contract (resolve-function-spec function-designator registry))
+                          (name (if (eq contract function-designator)
+                                    requested-name
+                                    (setf requested-name (function-spec-name contract))))
+                          (property (if (function-spec-fixture contract)
+                                        (make-fixture-check-property contract :budget budget)
+                                        (make-function-check-property contract :budget budget))))
+                     (check-replayed-result seed-result :function-spec name 'check-function)
+                     (list property name (property-source-form property)
+                           (make-case-run contract)))))
+               (lambda (timeout)
+                 (return-from check-function
+                   (apply #'make-instance 'function-check-result
+                          (preparation-timeout-initargs
+                           timeout requested-name seed options start :budget budget)))))))
+       (destructuring-bind (property name source case-run) prepared
+         (let ((enclosing-case-run *case-run*)
+               (*case-run* case-run))
+           (run-property-with-result-constructor
+            property
+            (lambda (initargs failure-reason explanation)
+              ;; Initialize the result in the caller's case context.
+              (let ((*case-run* enclosing-case-run))
+                (setf (getf initargs :property) name
+                      (getf initargs :budget) budget
+                      (getf initargs :source-form) source
+                      (getf initargs :failure-reason) failure-reason
+                      (getf initargs :explanation) explanation
+                      (getf initargs :case-report)
+                      (validate-case-trial-report (getf initargs :trial-report)
+                                                  (case-run-report case-run)))
+                (apply #'make-instance 'function-check-result initargs)))
+            :seed seed :registry registry :options options)))))
+   'check-function))
 
 ;;; One concrete caller-supplied invocation (no generation).
 

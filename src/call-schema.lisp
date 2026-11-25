@@ -16,6 +16,7 @@
            #:argument-binding-supplied-name #:call-layout-required-count
            #:call-layout-data #:call-layout-policy-data
            #:call-layout-accepts-p #:call-layout-required-only-p #:call-arguments-spec
+           #:call-layout-named-arguments
            #:call-arguments-spec-layout #:argument-binding #:call-layout
            #:bound-call #:return-schema
            #:make-call-layout #:call-layout-bindings #:argument-binding-name #:argument-binding-spec
@@ -218,6 +219,11 @@
           (push present-p values)
           (push (cons (argument-binding-supplied-name binding) present-p) bindings))))
     (%make-bound-call raw-arguments (nreverse values) (nreverse presence) (nreverse bindings))))
+
+(defun call-layout-named-arguments (layout arguments)
+  "Project ARGUMENTS to named bindings, including supplied-p flags."
+  (loop for (name . value) in (bound-call-bindings (bind-call-arguments layout arguments))
+        append (list name value)))
 
 (defclass return-values-spec (tuple-spec) ()
   (:documentation "An exact ordered list of returned values, including zero values."))
