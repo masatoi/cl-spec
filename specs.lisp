@@ -1621,36 +1621,55 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
     (:args (contract function-spec-definition))
     (:returns (instance-of cl-spec:spec)))
 
-  (defspec result-description-data
+  (defspec result-timeout-limit (member :run :trial :cleanup))
+
+  (defspec result-timeout-data
     (plist
      (:required
-      (:schema-version (member 1))
-      (:record-kind (member :result))
-      (:entity-kind (member :property :function-spec))
-      (:definition-digest (nullable string))
-      (:definition-digest-complete boolean)
-      (:definition-digest-covers (member :declaration-and-registered-dependencies))
-      (:digest-omissions (or (member :not-collected) (list-of t)))
-      (:digest-exclusions (or (member :not-collected) (list-of keyword)))
-      (:capabilities (plist (:required
-                             (:generation (member :available :unavailable :unknown :none))
-                             (:shrinking (member :available :unavailable :unknown :none))
-                             (:instrumentation (member :available :unavailable :unknown :none)))))
-      (:name symbol)
-      (:status (member :passed :failed :error :skipped :pending))
-      (:trials (range integer 0 *))
-      (:budget (nullable (range integer 0 *)))
-      (:rejected (range integer 0 *))
-      (:seed integer)
-      (:profile (member :smoke :normal))
-      (:shrunk-outcome (nullable (member :used :none :different-failure)))
-      (:elapsed (nullable number)))
+      (:limit result-timeout-limit)
+      (:trial (range integer 1 *))
+      (:phase keyword))
      (:optional
-      (:failure (nullable result-observation-data))
-      (:shrunk-failure (nullable result-observation-data))
-      (:failure-phase (nullable keyword))
-      (:failure-reason (nullable keyword))
-      (:case-report t))))
+      (:cleanup
+       (or (plist (:required (:status (member :completed :error))))
+           (plist (:required
+                   (:status (member :timeout))
+                   (:limit result-timeout-limit))))))))
+
+  (defspec result-description-data
+    (and
+     (plist
+      (:required
+       (:schema-version (member 1 2))
+       (:record-kind (member :result))
+       (:entity-kind (member :property :function-spec))
+       (:definition-digest (nullable string))
+       (:definition-digest-complete boolean)
+       (:definition-digest-covers (member :declaration-and-registered-dependencies))
+       (:digest-omissions (or (member :not-collected) (list-of t)))
+       (:digest-exclusions (or (member :not-collected) (list-of keyword)))
+       (:capabilities (plist (:required
+                              (:generation (member :available :unavailable :unknown :none))
+                              (:shrinking (member :available :unavailable :unknown :none))
+                              (:instrumentation (member :available :unavailable :unknown :none)))))
+       (:name symbol)
+       (:trials (range integer 0 *))
+       (:budget (nullable (range integer 0 *)))
+       (:rejected (range integer 0 *))
+       (:seed integer)
+       (:profile (member :smoke :normal))
+       (:shrunk-outcome (nullable (member :used :none :different-failure)))
+       (:elapsed (nullable number)))
+      (:optional
+       (:failure (nullable result-observation-data))
+       (:shrunk-failure (nullable result-observation-data))
+       (:failure-phase (nullable keyword))
+       (:failure-reason (nullable keyword))
+       (:case-report t)))
+     (or (plist (:required (:status (member :timeout))
+                           (:timeout result-timeout-data)))
+         (plist (:required (:status (member :passed :failed :error :skipped :pending)))
+                (:optional (:timeout (member nil)))))))
 
   (defspec recheck-record-data
     (plist
@@ -1667,7 +1686,7 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
       (:failure t))))
 
   (defspec-function cl-spec:result-data
-    "A result record carries the v1 result envelope and the run's evidence."
+    "A result record carries the versioned result envelope and the run's evidence."
     (:args (result passing-property-result))
     (:returns result-description-data))
 
