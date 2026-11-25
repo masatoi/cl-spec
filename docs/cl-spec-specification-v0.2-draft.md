@@ -5887,6 +5887,9 @@ non-participating backend answers `:not-collected`.
 `:isolation :around` requires one `(:around (THUNK) FORM...)` clause. After
 recipe validation, the hook calls THUNK synchronously exactly once. The
 thunk runs setup, call checks and cleanup within the hook's dynamic extent.
+Calling the thunk outside that extent returns `nil` and
+`:fixture-around-thunk-outside-extent`. A misuse observed during the hook is
+also recorded as a lifecycle error for that invocation.
 This applies to direct fixture checks, generated trials and shrink candidates.
 An error escaping the hook, an omitted or repeated thunk call, or a hook that
 returns after an incomplete trial produces a fixture lifecycle error. Control
