@@ -5,7 +5,8 @@
 
 (defpackage #:cl-spec/tests/backends/real-range-checks
   (:use #:cl)
-  (:import-from #:cl-spec/main #:normalize-spec-form #:sample #:validp)
+  (:import-from #:cl-spec/main #:normalize-spec-form #:sample #:validp
+                #:generator-unavailable #:generator-unavailable-kind)
   (:import-from #:cl-spec/src/backends/check-it)
   (:import-from #:cl-spec/src/backends/check-it-generators #:compile-spec-generator)
   (:import-from #:check-it #:generate #:shrink)
@@ -93,6 +94,18 @@
                         (and (= 4 (length values))
                              (every (lambda (value) (validp spec value)) values)))))))
 
+(defun check-rational-from-extreme-float-interval (report)
+  "Require a named refusal when an extreme long float cannot be converted economically."
+  (let ((extreme most-positive-long-float))
+    (when (> (nth-value 1 (decode-float extreme)) 32768)
+      (dolist (upper (list extreme '*))
+        (let* ((form `(and rational (range real ,extreme ,upper)))
+               (spec (normalize-spec-form form)))
+          (funcall report form :range-too-wide
+                   (handler-case (progn (sample spec :count 1) nil)
+                     (generator-unavailable (condition)
+                       (eq :range-too-wide (generator-unavailable-kind condition))))))))))
+
 (defun run-real-range-checks ()
   "Run every numerical check, signalling an error if any requirement fails."
   (flet ((require-check (form requirement passed)
@@ -100,5 +113,6 @@
     (check-draw-formats #'require-check)
     (check-smallest-double #'require-check)
     (check-tiny-intervals #'require-check)
-    (check-float-type-intervals #'require-check))
+    (check-float-type-intervals #'require-check)
+    (check-rational-from-extreme-float-interval #'require-check))
   t)

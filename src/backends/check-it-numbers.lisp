@@ -130,18 +130,19 @@ ENCODE converts proposed exact rational candidates to the generator's output for
   "Draw an exact random unit step including both endpoints."
   (/ (random (1+ (ash 1 24))) (ash 1 24)))
 
-(defun rational-range-generator (lower upper)
+(defun rational-range-generator (lower upper spec)
   "Generate exact rationals, using small numerators and denominators by default."
-  (if (and lower upper (= lower upper))
-      (rational lower)
-      (make-shrinking-number-generator
-       (if (or lower upper)
-           (multiple-value-bind (start end)
-               (relative-numeric-bounds (and lower (rational lower)) (and upper (rational upper)))
-             (lambda () (+ start (* (interval-fraction) (- end start)))))
-           (lambda () (/ (- (random (1+ (* 2 +default-type-size+))) +default-type-size+)
-                         (1+ (random +default-type-size+)))))
-       lower upper)))
+  (let ((lower (and lower (exact-float-endpoint lower spec)))
+        (upper (and upper (exact-float-endpoint upper spec))))
+    (if (and lower upper (= lower upper))
+        lower
+        (make-shrinking-number-generator
+         (if (or lower upper)
+             (multiple-value-bind (start end) (relative-numeric-bounds lower upper)
+               (lambda () (+ start (* (interval-fraction) (- end start)))))
+             (lambda () (/ (- (random (1+ (* 2 +default-type-size+))) +default-type-size+)
+                           (1+ (random +default-type-size+)))))
+         lower upper))))
 
 (defun float-format-bounds (type)
   "Return the format's zero, smallest positive, smallest normal and largest positive floats."
@@ -163,7 +164,11 @@ ENCODE converts proposed exact rational candidates to the generator's output for
   "Round a finite rational to the format of ZERO, treating underflow as zero."
   (if (< (abs number) least)
       zero
-      (handler-case (float number zero)
+      ;; SBCL can signal for a representable subnormal when callers enable
+      ;; underflow traps. Round with only that trap masked.
+      (handler-case
+          #+sbcl (sb-int:with-float-traps-masked (:underflow) (float number zero))
+          #-sbcl (float number zero)
         (floating-point-underflow () zero))))
 
 (defun float-neighbor (number direction zero least normal greatest)
@@ -171,7 +176,7 @@ ENCODE converts proposed exact rational candidates to the generator's output for
   (let ((magnitude (abs number))
          (toward-zero-p (= (signum number) (- direction))))
     (cond
-      ((zerop number) (* direction least))
+      ((zerop number) (if (plusp direction) least (- least)))
       ((and toward-zero-p (= magnitude least)) zero)
       ((and (not toward-zero-p) (= magnitude greatest)) nil)
       (t

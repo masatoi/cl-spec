@@ -491,7 +491,7 @@ before the type's own method does."
        (case type
          (integer (make-instance 'int-generator))
          (real (real-range-generator '* '* spec))
-         (rational (rational-range-generator nil nil))
+         (rational (rational-range-generator nil nil spec))
          (fixnum (default-fixnum-generator))
          (character (make-instance 'char-generator))
          (string (make-instance 'string-generator))
@@ -763,7 +763,7 @@ drawn near and is refused as :RANGE-TOO-WIDE."
          (when (infinite-bound-p lower)
            (error 'generator-unavailable :spec spec :kind :empty-domain
                   :reason "no rational can reach the infinite endpoint"))
-         (rational-range-generator lower upper))
+         (rational-range-generator lower upper spec))
         (t (error 'generator-unavailable :spec spec :kind :unsupported-type
                   :reason (format nil "~S cannot carry a numeric range" base-type)))))))
 

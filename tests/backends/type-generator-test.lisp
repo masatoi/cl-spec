@@ -64,6 +64,21 @@
   (handler-case (progn (sample (normalize-spec-form form) :count 1 :seed 143) nil)
     (generator-unavailable (condition) condition)))
 
+#+sbcl
+(deftest typed-float-intervals-honor-subnormal-bounds-with-underflow-traps
+  (let* ((unit (rational least-positive-single-float))
+         (spec (normalize-spec-form
+                `(and single-float (range real ,(* 61/2 unit) ,(* 97/2 unit)))))
+         (modes (sb-int:get-floating-point-modes)))
+    (unwind-protect
+         (progn
+           (sb-int:set-floating-point-modes :traps (adjoin :underflow (getf modes :traps)))
+           (let ((draws (sample spec :count 50 :seed 15)))
+             (ok (= 50 (length draws)))
+             (ok (every (lambda (value) (validp spec value)) draws))
+             (ok (> (length (remove-duplicates draws)) 1))))
+      (apply #'sb-int:set-floating-point-modes modes))))
+
 (deftest interval-types-refuse-empty-domains
   (let ((next (+ 1f0 single-float-epsilon)))
     (dolist (form `((type (integer (1) (2)))
