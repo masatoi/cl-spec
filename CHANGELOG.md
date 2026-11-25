@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.0
+
+The first stable release adopts the published 1.x compatibility policy for
+public APIs, structured data, counterexamples, and seed replay.
+[Compatibility policy](docs/compatibility.md)
+
+- The ASDF system versions and generated-run provenance report `1.0.0`.
+- Counterexample artifact loading rejects function-case signatures on property records.
+  [Issue #95](https://github.com/masatoi/cl-spec/issues/95)
+
 ## v1.0.0-rc.2
 
 - `run-property`, `run-properties`, `replay-property`, `check-function` and

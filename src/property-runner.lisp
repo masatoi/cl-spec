@@ -402,7 +402,7 @@ stays the way to borrow a random stream on purpose.  NIL is accepted."
   "Project raw counterexamples through the property's binding protocol."
   (property-named-arguments property values))
 
-(defparameter *cl-spec-version* "0.1.0"
+(defparameter *cl-spec-version* "1.0.0"
   "Implementation version recorded in provenance; keep in sync with cl-spec.asd.")
 
 (defun capture-run-provenance (backend options)

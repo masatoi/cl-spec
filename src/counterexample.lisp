@@ -138,21 +138,16 @@ the case-less shapes are read exactly as before."
                    (symbolp (second signature))))))))
 
 (defun valid-signature-p (data kind)
-  "Recognize the failure identities this artifact format accepts.
+  "Recognize the artifact failure identity for KIND.
 
-A function-spec case wraps the established identity as (:CASE NAME . INNER); NAME
-must be a keyword and INNER must be one of the shapes CASE-SIGNATURE-PARTS
-separates.  The wrapper is not a wildcard: evidence that names no case is never
-accepted as a case-carrying failure, and the validator is not relaxed to accept
-arbitrary signatures.  A case-selection error cannot be persisted at all -- it
-never reached the target -- and is refused before this point."
+Function-spec artifacts can wrap an outcome failure as (:CASE NAME . INNER),
+where NAME is a keyword. The inner identity must match the recorded reason
+and status."
   (multiple-value-bind (case-name inner wrapped-p)
       (case-signature-parts (getf data :signature))
     (and (finite-list-p (getf data :signature))
-         (if wrapped-p
-             (and (keywordp case-name) (consp inner) (finite-list-p inner)
-                  (not (eq :state-machine (first inner))))
-             t)
+         (or (not wrapped-p)
+             (and (eq kind :function-spec) (keywordp case-name)))
          (valid-signature-shape-p inner (getf data :reason) (getf data :status) kind))))
 
 (defun valid-evidence-p (data)

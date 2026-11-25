@@ -293,6 +293,17 @@
             (cl-spec/src/utils/artifact-values:serialize-artifact-value data))
            'invalid-counterexample-artifact)))))
 
+(deftest reject-function-case-signature-in-property-artifact
+  (let* ((result (fixture (make-registry)))
+         (data (counterexample-artifact-data (make-counterexample-artifact result))))
+    (setf (getf (getf data :original) :signature) '(:case :example :property-false))
+    (ok (eq :invalid-record
+            (handler-case
+                (deserialize-counterexample-artifact
+                 (cl-spec/src/utils/artifact-values:serialize-artifact-value data))
+              (invalid-counterexample-artifact (condition)
+                (invalid-counterexample-artifact-reason condition)))))))
+
 (deftest incomplete-and-mutating-evidence
   (let ((registry (make-registry)))
     (multiple-value-bind (result property) (fixture registry)
