@@ -1,7 +1,7 @@
 ;;;; src/fixture-execution.lisp
 (defpackage #:cl-spec/src/fixture-execution
   (:use #:cl)
-  (:import-from #:cl-spec/src/time-limits #:mark-run-phase #:timeout-unwinding-p
+  (:import-from #:cl-spec/src/time-limits #:mark-run-phase
                 #:call-with-timed-fixture-cleanup)
   (:import-from #:cl-spec/src/fixture
                 #:fixture-recipe-spec #:fixture-setup-function #:fixture-cleanup-function
@@ -29,27 +29,20 @@
          (called nil)
          (completed nil)
          (repeated nil)
-         (returned nil)
          (wrapper-error nil))
-    (unwind-protect
-         (progn
-           (handler-case
-               (funcall around
-                        (lambda ()
-                          (unless (member token *fixture-around-tokens* :test #'eq)
-                            (error 'fixture-error :reason :thunk-outside-around))
-                          (when called
-                            (setf repeated (make-condition 'fixture-error :reason :thunk-repeated))
-                            (error repeated))
-                          (setf called t)
-                          (multiple-value-prog1 (funcall trial)
-                            (setf completed t))))
-             (error (condition) (setf wrapper-error condition)))
-           (setf returned t))
-      (unless (or returned (timeout-unwinding-p))
-        (return-from invoke-fixture-around
-          (values :fixture-around-nonlocal-exit
-                  (make-condition 'fixture-error :reason :around-nonlocal-exit)))))
+    ;; Transfers past the wrapper belong to their original destination.
+    (handler-case
+        (funcall around
+                 (lambda ()
+                   (unless (member token *fixture-around-tokens* :test #'eq)
+                     (error 'fixture-error :reason :thunk-outside-around))
+                   (when called
+                     (setf repeated (make-condition 'fixture-error :reason :thunk-repeated))
+                     (error repeated))
+                   (setf called t)
+                   (multiple-value-prog1 (funcall trial)
+                     (setf completed t))))
+      (error (condition) (setf wrapper-error condition)))
     (cond
       (repeated (values :fixture-around-thunk-repeated repeated))
       (wrapper-error (values :fixture-around-error wrapper-error))

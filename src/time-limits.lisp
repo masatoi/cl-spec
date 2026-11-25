@@ -5,7 +5,7 @@
   (:export #:call-with-run-time-limits #:time-limits-requested-p #:time-limits-supported-p
            #:call-catching-run-timeout #:call-with-run-finalization
            #:with-trial-clock #:with-run-phase
-           #:mark-run-phase #:run-timeout-data #:timeout-unwinding-p
+           #:mark-run-phase #:run-timeout-data
            #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
            #:with-native-shrink #:with-native-candidate
            #:call-with-run-limit-handoff #:run-clock-start))
@@ -99,10 +99,6 @@
 (defun run-timeout-data ()
   "Return the active run's owned timeout record, when expired."
   (when *run-limits* (run-limits-timeout *run-limits*)))
-
-(defun timeout-unwinding-p ()
-  "Return true while a deadline escape is unwinding through application code."
-  (some #'run-limits-timeout *active-run-limits*))
 
 (defun call-catching-run-timeout (function on-timeout)
   "Call FUNCTION, or call ON-TIMEOUT with the owned record after its deadline escape."

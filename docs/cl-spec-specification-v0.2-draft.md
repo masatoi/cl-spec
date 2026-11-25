@@ -5890,8 +5890,10 @@ non-participating backend answers `:not-collected`.
 recipe validation, the hook calls THUNK synchronously exactly once. The
 thunk runs setup, call checks and cleanup within the hook's dynamic extent.
 This applies to direct fixture checks, generated trials and shrink candidates.
-A signalling or escaping hook, or an omitted or repeated call, produces a
-fixture lifecycle error. The caller's wrapper supplies any rollback guarantee.
+An error escaping the hook, an omitted or repeated thunk call, or a hook that
+returns after an incomplete trial produces a fixture lifecycle error. Control
+transfers to exits outside the check proceed after applicable cleanup, as in
+`:fresh` isolation. The caller's wrapper supplies any rollback guarantee.
 
 Lifecycle records identify the isolation, and an around lifecycle records
 completion of the wrapper. The wrapper source and isolation participate in the
