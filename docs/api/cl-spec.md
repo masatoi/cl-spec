@@ -401,7 +401,9 @@ rows checked once after generation. Each row uses CHECK-CALL.
 The report has :STATUS, :ENTRIES, :EXAMPLES and suite-level :PROBLEMS. Each run
 entry records :KIND, :NAME, :SEED as decimal text, execution :STATUS and CI
 :VERDICT. It includes the RESULT-DATA record and evidence :ASSESSMENT when
-available. Example entries retain CALL-CHECK-DATA when available.
+available. Example entries retain CALL-CHECK-DATA when available. Run deadlines
+from OPTIONS yield timeout entries. On SBCL, caller deadlines and interrupts
+propagate out of the suite.
 
 The suite passes with a nonempty selection and seed list, passing generated
 results with measured checked trials and every declared case checked, and passing
