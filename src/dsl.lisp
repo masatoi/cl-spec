@@ -700,13 +700,25 @@ Each is called once per trial and its primary value is the capture."
   #+ecl
   (unless (and (find-package "WALKER")
                (fboundp (find-symbol "MACROEXPAND-ALL" "WALKER")))
-    (require :cmp)))
+    (require :cmp))
+  #+sbcl
+  (unless (eq :external (nth-value 1 (find-symbol "MACROEXPAND-ALL" "SB-WALKER")))
+    (require :sb-cltl2)))
+
+#+sbcl
+(defun sbcl-macroexpand-all (form environment)
+  "Expand FORM with SB-WALKER:MACROEXPAND-ALL, or SB-CLTL2's where SBCL does not export it.
+Resolved by name, not read as SB-WALKER:MACROEXPAND-ALL, because older SBCL (2.1.10)
+exports it only from the SB-CLTL2 contrib and the file would not even read there."
+  (multiple-value-bind (walker status) (find-symbol "MACROEXPAND-ALL" "SB-WALKER")
+    (funcall (if (eq status :external) walker (find-symbol "MACROEXPAND-ALL" "SB-CLTL2"))
+             form environment)))
 
 (defun expand-guard-lambda (form environment)
   "Return the predicate to compile and whether its lexical macros have been expanded."
   #-(or sbcl ccl ecl abcl clisp) (declare (ignore environment))
   #+(or sbcl ccl abcl)
-  (values (#+sbcl sb-walker:macroexpand-all
+  (values (#+sbcl sbcl-macroexpand-all
            #+ccl ccl:macroexpand-all
            #+abcl ext:macroexpand-all
            form environment) t)
