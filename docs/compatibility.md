@@ -23,6 +23,7 @@ reserved for the implementation. [Generation and shrinking](../README.md#known-l
 | Sampling with the bundled backend | `sample`, `generator-for`, `current-generator-backend`, `*generator-backend*`, `backend-capabilities`, and `generate-value` on an opaque handle returned by `generator-for` for that backend |
 | Direct checks | `check-call`, `call-check-data`, `check-fixture`, `fixture-check-data`, `check-state-machine` |
 | Generated checks | `run-property`, `run-properties`, `replay-property`, `check-function`, `check-function-with-examples`, `result-data` |
+| Contract suites | `check-contracts` |
 | Saved evidence and coverage | `evidence-summary`, `assess-evidence`, `coverage-schema`, `coverage-data`, `format-check-summary` |
 | Counterexamples | `counterexample-artifact`, `make-counterexample-artifact`, `counterexample-artifact-data`, `serialize-counterexample-artifact`, `deserialize-counterexample-artifact`, `recheck-counterexample`, `observation-failure-p`, `failure-identities-match-p` |
 
@@ -82,6 +83,8 @@ and `format-check-summary` may change. [Core API reference](api/cl-spec.md)
 
 ## Optional systems
 
+- `cl-spec/rove` supports `deftest-contract` for Rove suites.
+  [Rove API reference](api/cl-spec-rove.md)
 - `cl-spec/instrument` supports `instrument-function`, `uninstrument-function`,
   `instrumented-function-p`, `instrumentation-status` and `refresh-instrumentation`.
   It supports `instrumentation-violation` and `unsupported-instrumentation-target`
@@ -119,6 +122,7 @@ dispatching. [Schema reference](api/cl-spec.md#schema-info)
 | `call-check-data` | Version 1, `:record-kind :result` and `:entity-kind :function-spec`, with `:arguments` and `:observation` for one direct invocation. A generated function check can share the same envelope, so retain the projection source. |
 | `fixture-check-data` | Version 2, `:record-kind :fixture-check` and `:input-kind :fixture-recipe`, with recipe and lifecycle evidence. |
 | `check-function-with-examples` | A combined report with `:examples` and `:generated`. Each fixed row retains its direct result under `:call` when one returned. Use `result-data` on the result under `:generated`. |
+| `check-contracts` | Version 1, `:record-kind :contract-suite`, with a suite `:status`, generated `:entries` and direct `:examples`. Each generated entry records its decimal seed and the saved result when available. |
 | `evidence-summary`, `assess-evidence`, `coverage-schema`, `coverage-data` | Separate protocols described by `schema-info`. The assessment policy input has its own version. |
 | `recheck-counterexample` | `:record-kind :recheck`, version 1 for ordinary saved input and version 2 for a saved fixture recipe. |
 
