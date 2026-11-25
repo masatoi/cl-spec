@@ -17,7 +17,7 @@
   (:import-from #:cl-spec/src/trial-report
                 #:*trial-report-context* #:make-trial-report-context #:completed-trial-report)
   (:export #:backend-trial-reporting)
-  (:import-from #:cl-spec/src/property #:property #:property-metadata #:property-arguments)
+  (:import-from #:cl-spec/src/property #:property #:property-metadata)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:observation-failure-phase #:trial-observation-reason)
   (:export #:backend-trial-lifecycle)
@@ -229,7 +229,7 @@ Relaxing evidence requirements is confined to this shape."
   outcome)
 
 (defun validate-backend-outcome
-    (outcome property budget &optional (fixture-p nil fixture-supplied-p) positional-count)
+    (outcome property budget &optional (fixture-p nil fixture-supplied-p))
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
            (error 'invalid-backend-result :reason reason)))
@@ -250,7 +250,7 @@ Relaxing evidence requirements is confined to this shape."
                                       fixture-p
                                       (getf (property-metadata property) :fixture)))
       (return-from validate-backend-outcome
-        (check-outcome-argument-shapes outcome property positional-count)))
+        (check-outcome-argument-shapes outcome property)))
     (let* ((status (getf outcome :status))
            (trials (getf outcome :trials :missing))
            (rejected (getf outcome :rejected 0))
@@ -311,7 +311,7 @@ Relaxing evidence requirements is confined to this shape."
            (refuse "shrunk evidence must preserve failure identity and change the input"))
          (unless (or (eq status :timeout) (eq status (trial-observation-status selected)))
            (refuse "status must describe the selected counterexample"))))
-      (check-outcome-argument-shapes outcome property positional-count))))
+      (check-outcome-argument-shapes outcome property))))
 
 (defgeneric backend-trial-reporting (backend)
   (:documentation "Return :TRIAL-REPORT-V1 when BACKEND measures every ordinary trial.")
@@ -347,17 +347,12 @@ report.  A backend that never calls the accounting hooks leaves the report
              :reason "run time limits require a participating backend"))
     (list fixture-p
           (eq :trial-report-v1 (backend-trial-reporting backend))
-          (backend-reports-generation backend)
-          (when (getf options :timeout)
-            (cond (fixture-p 1)
-                  ((eq (class-of property) (find-class 'property))
-                   (length (property-arguments property))))))))
+          (backend-reports-generation backend))))
 
-(defun check-outcome-argument-shapes (outcome property positional-count)
+(defun check-outcome-argument-shapes (outcome property)
   "Check saved counterexample shapes without losing prior observations on expiration."
   (let* ((keys (remove-if-not (lambda (key) (getf outcome key)) '(:failure :shrunk-failure)))
          (unchecked keys)
-         (earlier-timeout (getf outcome :timeout))
          (timeout
            (when keys
              (call-with-run-finalization
@@ -374,14 +369,6 @@ report.  A backend that never calls the accounting hooks leaves the report
             (getf outcome :timeout) timeout
             (getf outcome :failure-phase) (getf timeout :phase)
             (getf outcome :failure-reason) :timeout)
-      ;; A prior timeout may have left no time for the hook. Check the declaration
-      ;; captured for built-in positional or recipe inputs without dispatching.
-      (when (and earlier-timeout positional-count)
-        (setf unchecked
-              (remove-if (lambda (key)
-                           (= positional-count
-                              (length (trial-observation-arguments (getf outcome key)))))
-                         unchecked)))
       (setf (getf outcome :unchecked-counterexamples) unchecked))
     outcome))
 
@@ -410,7 +397,7 @@ the trial and precondition counts it collected; this boundary never fabricates
                         :failure-phase (getf timeout :phase) :trials 0 :rejected 0))))))
        (unless (and (integerp budget) (not (minusp budget)))
          (error 'type-error :datum budget :expected-type '(integer 0 *)))
-       (destructuring-bind (fixture-p trial-report-p generation-report-p positional-count) prepared
+       (destructuring-bind (fixture-p trial-report-p generation-report-p) prepared
          (let* ((explicit (getf options :generation-budget :missing))
                 (request (if (eq explicit :missing)
                              (make-generation-request :planned budget)
@@ -427,7 +414,7 @@ the trial and precondition counts it collected; this boundary never fabricates
            (when (run-timeout-data) (record-generation-interruption))
            (when generation-report-p
              (setf outcome (list* :generation-report (generation-request-report request) outcome)))
-           (validate-backend-outcome outcome property budget fixture-p positional-count)))))
+           (validate-backend-outcome outcome property budget fixture-p)))))
    'run-generated-test))
 
 (defgeneric backend-capabilities (backend spec &key registry)

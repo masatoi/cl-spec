@@ -85,6 +85,7 @@
                 #:normalize-return-declaration #:return-values-spec #:call-declaration-variables
                 #:normalize-call-declarations #:call-layout-required-only-p
                 #:call-layout-bindings #:call-layout-accepts-p #:bound-call-bindings
+                #:call-layout-named-arguments
                 #:call-layout-shape-error
                 #:argument-binding-kind #:argument-binding-name #:argument-binding-spec #:argument-binding-supplied-name
                 #:call-arguments-spec)
@@ -94,7 +95,7 @@
                 #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/property
                 #:property #:property-argument-schema #:validate-property-executable
-                #:property-call-arguments-p #:property-named-arguments
+                #:property-call-arguments-p #:property-named-arguments #:property-counterexample-layout
                 #:property-source-form #:property-trials #:property-metadata)
   (:import-from #:cl-spec/src/property-runner
                 #:prepare-property-run #:run-property-with-result-constructor
@@ -1595,10 +1596,11 @@ as its reduction.  The shapes come from the nested errors instead."
   (call-layout-accepts-p (function-spec-call-layout (checked-contract property)) arguments))
 
 (defmethod property-named-arguments ((property function-check-property) arguments)
-  (loop for (name . value) in
-        (bound-call-bindings
-         (bind-call-arguments (function-spec-call-layout (checked-contract property)) arguments))
-        append (list name value)))
+  (call-layout-named-arguments (function-spec-call-layout (checked-contract property)) arguments))
+
+(defmethod property-counterexample-layout ((property function-check-property))
+  (when (eq (class-of property) (find-class 'function-check-property))
+    (make-call-layout (function-spec-argument-specs (checked-contract property)))))
 
 (defmethod coverage-bindings ((property function-check-property) arguments)
   (let* ((layout (function-spec-call-layout (checked-contract property)))
@@ -2144,6 +2146,10 @@ closure reaches the digest."
 
 (defmethod property-named-arguments ((property fixture-check-property) arguments)
   (list (fixture-recipe-name (checked-fixture property)) (first arguments)))
+
+(defmethod property-counterexample-layout ((property fixture-check-property))
+  (when (eq (class-of property) (find-class 'fixture-check-property))
+    (list (fixture-recipe-name (checked-fixture property)))))
 
 (defmethod definition-shrink-enabled-p ((property fixture-check-property)) t)
 

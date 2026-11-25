@@ -25,6 +25,7 @@
            #:property-name
            #:property-arguments #:property-argument-schema #:property-arguments-spec
            #:property-call-arguments-p #:property-named-arguments
+           #:property-counterexample-layout
            #:property-targets
            #:property-kind
            #:property-tags
@@ -122,6 +123,15 @@ introspection can show the author's source.")
   (:method ((property property) arguments)
     (loop for (name nil) in (property-arguments property)
           for value in arguments append (list name value))))
+
+(defgeneric property-counterexample-layout (property)
+  (:documentation "Capture the built-in argument layout used after an execution timeout.
+
+Return positional variable names, a function call layout, or NIL when projection
+requires extension hooks. The runner captures this data before the backend runs.")
+  (:method ((property property))
+    (when (eq (class-of property) (find-class 'property))
+      (mapcar #'first (property-arguments property)))))
 
 (defmethod definition-validation-slots append ((object property))
   '(name arguments targets kind tags documentation-string property-function body

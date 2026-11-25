@@ -11,7 +11,7 @@
                 #:call-catching-run-timeout #:call-with-run-finalization
                 #:run-clock-start #:with-run-phase)
   (:export #:preparation-timeout-initargs)
-  (:import-from #:cl-spec/src/property #:property-arguments)
+  (:import-from #:cl-spec/src/call-schema #:call-layout #:call-layout-named-arguments)
   (:import-from #:cl-spec/src/coverage #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options #:backend-coverage-protocol
                 #:unsupported-coverage-operation)
@@ -30,8 +30,9 @@
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
                 #:property
-                #:property-name
+                #:property-name #:property-arguments
                 #:property-named-arguments
+                #:property-counterexample-layout
                 #:property-trials
                 #:+trial-profiles+)
   (:import-from #:cl-spec/src/conditions
@@ -514,33 +515,45 @@ or :RUN-OPTIONS-MISMATCH."
             (snapshot-value (evidence-declared-cases property))
             (snapshot-value options)
             (capture-run-provenance backend options)
-            (when (and (getf options :timeout)
-                       (or (eq (class-of property) (find-class 'property))
-                           (and function-p (coverage-fixture-p property))))
-              (mapcar #'first (property-arguments property)))))))
+            (when (getf options :timeout)
+              (property-counterexample-layout property))))))
 
-(defun project-run-counterexamples (property outcome names timed-p)
-  "Use completed projections, with saved raw inputs as a fallback."
-  (let* ((unchecked (when (getf outcome :timeout) (getf outcome :unchecked-counterexamples)))
-         (original (unless (member :failure unchecked) (getf outcome :failure)))
-         (shrunk (unless (member :shrunk-failure unchecked) (getf outcome :shrunk-failure)))
+(defun project-saved-counterexample (layout arguments)
+  "Bind already observed arguments using a saved built-in layout."
+  (etypecase layout
+    (call-layout
+     (handler-case (call-layout-named-arguments layout arguments)
+       (program-error () nil)))
+    (list
+     (when (= (length layout) (length arguments))
+       (loop for name in layout for value in arguments append (list name value))))))
+
+(defun project-run-counterexamples (property outcome layout timed-p)
+  "Use completed projections, with saved evidence as a fallback."
+  (let* ((prior-timeout (getf outcome :timeout))
+         (execution-timeout-p (and prior-timeout (not (eq :finalization (getf prior-timeout :phase)))))
+         (unchecked (when prior-timeout (getf outcome :unchecked-counterexamples)))
+         (original (getf outcome :failure))
+         (shrunk (getf outcome :shrunk-failure))
          (original-args (when original (trial-observation-arguments original)))
          (shrunk-args (when shrunk (trial-observation-arguments shrunk))))
-    (labels ((fallback (arguments)
-               (if (and timed-p names)
-                   (loop for name in names for value in arguments append (list name value))
-                   arguments))
+    (labels ((fallback (arguments key)
+               (or (when (and layout execution-timeout-p)
+                     (project-saved-counterexample layout arguments))
+                   (unless (member key unchecked) arguments)))
              (project (arguments)
                (name-arguments property (if timed-p (snapshot-value arguments) arguments))))
-      (let ((first (fallback original-args))
-            (second (fallback shrunk-args)))
+      (let ((first (when original (fallback original-args :failure)))
+            (second (when shrunk (fallback shrunk-args :shrunk-failure))))
         (flet ((format-inputs ()
-                 (when original (setf first (project original-args)))
-                 (when shrunk (setf second (project shrunk-args)))))
+                 (when (and original (not (member :failure unchecked)))
+                   (setf first (project original-args)))
+                 (when (and shrunk (not (member :shrunk-failure unchecked)))
+                   (setf second (project shrunk-args)))))
           (let ((timeout
                   (if timed-p
                       (call-with-run-finalization (max 1 (getf outcome :trials)) #'format-inputs)
-                      (progn (format-inputs) (getf outcome :timeout)))))
+                      (progn (format-inputs) prior-timeout))))
             (list :counterexample first :shrunk-counterexample second :timeout timeout)))))))
 
 (defun execute-property-run (property-designator profile seed options registry
@@ -572,7 +585,7 @@ or :RUN-OPTIONS-MISMATCH."
                       (apply #'make-instance 'property-result initargs))))))))
     (destructuring-bind (registry property name backend coverage-options
                          *coverage-context* trials metadata declared-cases
-                         captured-options provenance counterexample-names)
+                         captured-options provenance counterexample-layout)
         prepared
       (let* ((*coverage-trial* nil)
              (outcome (let ((*random-state* (seed->random-state effective-seed)))
@@ -584,7 +597,7 @@ or :RUN-OPTIONS-MISMATCH."
              (preparation-timeout-p (eq :preparation (getf (getf outcome :timeout) :phase)))
              (coverage-validation
                (unless preparation-timeout-p (validate-coverage-run *coverage-context* outcome)))
-             (projections (project-run-counterexamples property outcome counterexample-names
+             (projections (project-run-counterexamples property outcome counterexample-layout
                                                        (getf options :timeout)))
              (timeout (getf projections :timeout))
              (elapsed (/ (float (- (get-internal-real-time) start))

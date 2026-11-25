@@ -94,6 +94,74 @@
       (ok (= 1 (getf (property-result-trial-report result) :checked))))))
 
 #+(and sbcl sb-thread)
+(defun counterexample-target (&rest arguments)
+  (declare (ignore arguments))
+  0)
+
+#+(and sbcl sb-thread)
+(deftest function-shrink-timeout-preserves-original-and-accepted-bindings
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (calls 0))
+    (cl-spec:defspec-function counterexample-target
+      (:args (left integer) (right integer))
+      (:returns integer)
+      (:post (progn (when (> (incf calls) 2) (sleep 1)) nil)))
+    (let* ((result (cl-spec:check-function 'counterexample-target :trials 1 :seed 42
+                                          :options '(:timeout 1/5)))
+           (data (cl-spec:result-data result)))
+      (ok (equal '(:limit :run :trial 1 :phase :shrinking) (getf data :timeout)))
+      (ok (eq :used (getf data :shrunk-outcome)))
+      (ok (equal '(left -4 right 9) (getf data :counterexample)))
+      (ok (equal '(left -2 right 9) (getf data :shrunk-counterexample))))))
+
+#+(and sbcl sb-thread)
+(deftest function-shrink-timeout-preserves-optional-rest-and-key-bindings
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+    (cl-spec:defgenerator mixed-call-arguments ()
+      (:shrink (arguments)
+        (if (= (first arguments) 20)
+            (list (list 10))
+            (progn (sleep 1) nil)))
+      (list 20 11 :limit 3))
+    (cl-spec:defspec-function counterexample-target
+      (:args (required integer)
+             &optional (optional integer optional-p)
+             &rest (tail (list-of t))
+             &key ((:limit limit) integer limit-p))
+      (:args-generator mixed-call-arguments)
+      (:returns integer)
+      (:post nil))
+    (let* ((result (cl-spec:check-function 'counterexample-target :trials 1 :seed 42
+                                          :options '(:timeout 1/5)))
+           (data (cl-spec:result-data result)))
+      (ok (equal '(:limit :run :trial 1 :phase :shrinking) (getf data :timeout)))
+      (ok (eq :used (getf data :shrunk-outcome)))
+      (ok (equal '(required 20 optional 11 optional-p t tail (:limit 3) limit 3 limit-p t)
+                 (getf data :counterexample)))
+      (ok (equal '(required 10 optional nil optional-p nil tail nil limit nil limit-p nil)
+                 (getf data :shrunk-counterexample))))))
+
+#+(and sbcl sb-thread)
+(deftest state-machine-shrink-timeout-preserves-the-command-counterexample
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (calls 0))
+    (cl-spec:defstate-machine slow-meter
+        (commands (tuple (member :advance) (range integer 1 100)) :min-length 1 :max-length 5)
+      :model 0 :target 1
+      :model-step (lambda (state command) (declare (ignore command)) (values state state))
+      :target-step (lambda (state command)
+                     (declare (ignore command))
+                     (when (> (incf calls) 1) (sleep 1))
+                     (values state state))
+      :trials (:normal 1))
+    (let* ((result (cl-spec:run-property 'slow-meter :seed 42 :options '(:timeout 1/5)))
+           (data (cl-spec:result-data result))
+           (arguments (getf (getf data :failure) :arguments)))
+      (ok (equal '(:limit :run :trial 1 :phase :shrinking) (getf data :timeout)))
+      (ok arguments)
+      (ok (equal (list 'commands (first arguments)) (getf data :counterexample))))))
+
+#+(and sbcl sb-thread)
 (deftest fixture-cleanup-has-its-own-timeout-and-unwinds-the-wrapper
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (cleanups 0) (wrapper-exits 0) (slow-cleanup nil))
