@@ -1211,9 +1211,12 @@ explain:
   float intervals such as `(type (integer 0 (10)))` generate within their bounds.
   A bound of `*` leaves that end unbounded and `(10)` excludes 10. Very large
   or tiny float endpoints can be refused with kind `:range-too-wide`.
-- Default keyword and symbol generators draw from a fixed vocabulary. Default
-  lists and vectors contain up to eight small integers. Use `(member ...)` for
-  application symbols and `list-of` or `vector-of` to describe the elements.
+- The default `keyword` generator draws from `:a` through `:z`. The default
+  `symbol` generator also draws eight writable symbols from its own package.
+  Unique collections and map counts use those finite vocabularies. Keywords
+  are constants. Use `(member ...)` for application symbols.
+- Default lists and vectors contain up to eight small integers. Use
+  `list-of` or `vector-of` to describe the elements.
 - The default rational generator draws with small numerators and denominators.
   Rational, real and float shrinking tries simple numbers that still fail
   within the declared domain.
