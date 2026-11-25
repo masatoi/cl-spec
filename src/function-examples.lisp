@@ -12,7 +12,7 @@
   (:import-from #:cl-spec/src/registry #:*registry*)
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:export #:check-function-with-examples))
+  (:export #:check-function-with-examples #:check-case-example))
 
 (in-package #:cl-spec/src/function-examples)
 
@@ -29,7 +29,7 @@
           collect (copy-list row))))
 
 (defun check-case-example (contract row registry)
-  "Run one row and retain the ordinary result or the condition that escaped CHECK-CALL."
+  "Run one row with an optional expected case and retain its call result or error."
   (destructuring-bind (expected arguments) row
     (handler-case (check-call contract arguments :registry registry)
       (error (condition)
@@ -39,7 +39,7 @@
         (let* ((observation (call-check-result-observation call))
                (actual (trial-observation-case observation))
                (status (call-check-result-status call))
-               (mismatch (and (not (eq expected actual))
+               (mismatch (and expected (not (eq expected actual))
                               (or actual (consp (trial-observation-outcome observation))))))
           (list :expected-case expected :actual-case actual
                 :status (if (and mismatch (eq :passed status)) :failed status)

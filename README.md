@@ -39,6 +39,11 @@ for the REPL or a CI stream.
 See the [evidence sufficiency guide](docs/guides/evidence-sufficiency.md) for
 policies, direct checks and backend participation.
 
+`check-contracts` runs a selection of registered Function Specs and properties
+and returns a structured CI verdict with the decimal seed for every generated
+check. Load `cl-spec/rove` to turn a contract into a Rove test.
+[Contract runner guide](docs/guides/contract-runner.md)
+
 ## Systems
 
 | System | Contents | Extra dependency |
@@ -46,6 +51,7 @@ policies, direct checks and backend participation.
 | `cl-spec` | Semantic IR, registry, validation, structured explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
+| `cl-spec/rove` | assertions using the shared contract verdict | `rove` |
 | `cl-spec/specs` | executable specifications of cl-spec's own APIs and semantic laws | none |
 | `cl-spec/tests` | test suite | `rove` |
 | `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
