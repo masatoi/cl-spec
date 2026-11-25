@@ -5893,7 +5893,9 @@ This applies to direct fixture checks, generated trials and shrink candidates.
 An error escaping the hook, an omitted or repeated thunk call, or a hook that
 returns after an incomplete trial produces a fixture lifecycle error. Control
 transfers to exits outside the check proceed after applicable cleanup, as in
-`:fresh` isolation. The caller's wrapper supplies any rollback guarantee.
+`:fresh` isolation. A cl-spec cleanup deadline can end the cleanup attempt
+while the original transfer proceeds. The caller's wrapper supplies any
+rollback guarantee.
 
 Lifecycle records identify the isolation, and an around lifecycle records
 completion of the wrapper. The wrapper source and isolation participate in the

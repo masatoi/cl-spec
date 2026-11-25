@@ -318,6 +318,43 @@
         (ok (= 100 *around-balance*))))))
 
 #+(and sbcl sb-thread)
+(deftest bounded-around-cleanup-preserves-a-pending-caller-exit
+  (with-around-contract
+    (dolist (options '((:cleanup-timeout 1/10) (:timeout 1/2 :cleanup-timeout 2)))
+      (dolist (exit '(:deadline :restart))
+        (let* ((cleanup-completed nil)
+               (*around-events* nil)
+               (*around-event-hook*
+                 (lambda (phase)
+                   (case phase
+                     (:target
+                      (ecase exit
+                        (:deadline (sleep 3))
+                        (:restart (signal 'simple-condition :format-control "cancel"))))
+                     (:cleanup
+                      (sleep 3)
+                      (setf cleanup-completed t))))))
+          (flet ((check ()
+                   (cl-spec:check-function 'around-withdraw :trials 1 :seed 41
+                                           :options options)))
+            (ok (eq exit
+                    (ecase exit
+                      (:deadline
+                       (handler-case (sb-ext:with-timeout 1/5 (check))
+                         (sb-ext:timeout () :deadline)))
+                      (:restart
+                       (restart-case
+                           (handler-bind ((simple-condition
+                                            (lambda (condition)
+                                              (declare (ignore condition))
+                                              (invoke-restart :stop-fixture))))
+                             (check))
+                         (:stop-fixture () :restart)))))))
+          (ok (equal '(:enter :setup :capture :target :cleanup :rollback)
+                     (reverse *around-events*)))
+          (ok (not cleanup-completed)))))))
+
+#+(and sbcl sb-thread)
 (deftest around-fixture-propagates-interrupts-throughout-wrapper
   (with-around-contract
     (loop for (phase events)
