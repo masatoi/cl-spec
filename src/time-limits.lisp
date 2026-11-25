@@ -271,9 +271,10 @@
                        *timed-phase*))
               (prior-timeouts (remove-if-not #'run-limits-timeout *active-run-limits*)))
           (unwind-protect
-               (sb-sys:with-local-interrupts
-                 (multiple-value-prog1 (funcall function)
-                   (setf body-returned-p t)))
+               (multiple-value-prog1
+                   (sb-sys:with-local-interrupts (funcall function))
+                 ;; Mark completion with interrupts disabled.
+                 (setf body-returned-p t))
             (let ((pending (find-if (lambda (limits)
                                       (and (run-limits-timeout limits)
                                            (not (member limits prior-timeouts :test #'eq))))
