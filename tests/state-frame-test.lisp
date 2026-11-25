@@ -146,6 +146,10 @@
         (ok (eq :primary (getf observation :case)))
         (ok (equal (list :case :primary :state-frame :error observer stage 'simple-error)
                    (getf observation :signature)))
+        (ok (some (lambda (gap)
+                    (and (eq :case-never-called (getf gap :kind))
+                         (eq :primary (getf gap :case))))
+                  (getf (getf data :evidence) :gaps)))
         (ok (zerop *target-calls*))))))
 
 (deftest fixture-frame-evidence-survives-artifact-roundtrip

@@ -2257,7 +2257,9 @@ closure reaches the digest."
 (defun direct-evidence-facts (name metadata observation declared)
   "Describe a single saved observation and its pre-call declared case names."
   (let ((status (trial-observation-status observation))
-        (selected (trial-observation-case observation)))
+        (selected (trial-observation-case observation))
+        (phase (or (getf (trial-observation-call-evidence observation) :failure-phase)
+                   (observation-failure-phase observation))))
     (list :execution-status status :scope :single-call
           :subject (evidence-subject name metadata)
           :trial-report (single-observation-report status)
@@ -2266,7 +2268,9 @@ closure reaches the digest."
           (if (eq declared :not-collected) :not-collected
               (list :cases
                     (loop for case in declared
-                          for called = (and (eq case selected) (not (eq status :rejected)))
+                          for called = (and (eq case selected)
+                                            (not (eq status :rejected))
+                                            (not (member phase '(:capture :case-selection))))
                           collect (list :name case :called (if called 1 0)
                                         :passed (if (and called (eq status :passed)) 1 0)
                                         :failed (if (and called (eq status :failed)) 1 0)
