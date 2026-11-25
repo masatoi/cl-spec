@@ -792,7 +792,7 @@ outcome and the selected case, and neither is re-run for the report."
 
 (defun classify-frame-failure (contract case captures value outcome frame &optional condition)
   "Classify a forbidden change or failed observer operation at its actual phase."
-  (let ((case-name (and case outcome (function-case-name case)))
+  (let ((case-name (and case (function-case-name case)))
          (signature (if condition
                         (list :state-frame :error (getf frame :observer)
                               (getf frame :stage) (getf frame :condition-type))

@@ -11,6 +11,7 @@
   (:export #:observe-coverage-trial)
   (:import-from #:cl-spec/src/conditions #:invalid-backend-result)
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
+  (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:import-from #:cl-spec/src/utils/printing #:condition-report-text)
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
@@ -230,6 +231,16 @@ case-less failure."
        (eq :case (first signature))
        (keywordp (second signature))
        (consp (cddr signature))))
+
+(defun pre-call-frame-error-signature-p (signature selected-case)
+  "Recognize frame evidence from after case selection and before the target call."
+  (and (finite-list-p signature)
+       (= 7 (length signature))
+       (case-wrapped-signature-p signature)
+       (eq selected-case (second signature))
+       (eq :state-frame (third signature))
+       (eq :error (fourth signature))
+       (member (sixth signature) '(:allowed-keys :before))))
 
 (defun frame-violation-signature-p (signature)
   "Recognize a frame violation whose reported key is safe to compare with EQUAL."
@@ -473,11 +484,14 @@ case.  The optional tenth is the trial's state evidence, recorded as captured."
                    (or (null selected-case) (keywordp selected-case))
                    (or (null failure-phase)
                        (case failure-phase
-                         ;; A pre-target phase stops before any target call, so
-                         ;; it carries no case.  :STATE-POST is a post-target
-                         ;; phase: the target ran, and a selected case may own it.
-                         ((:case-selection :capture)
+                         (:case-selection
                           (and (eq status :error) (null selected-case)))
+                         (:capture
+                          (and (eq status :error)
+                               (or (null selected-case)
+                                   (and (null outcome) (eq reason :contract-error)
+                                        (pre-call-frame-error-signature-p
+                                         signature selected-case)))))
                          (:state-post
                           (member status '(:failed :error))))))
         (error 'invalid-backend-result
