@@ -19,9 +19,10 @@ Define a Rove test that runs TARGET and uses CHECK-CONTRACTS to judge it.
 
 ```text
 TARGET is a literal name or a (:FUNCTION-SPEC NAME) or (:PROPERTY NAME) pair.
-OPTIONS supplies the remaining CHECK-CONTRACTS arguments such as :SEEDS,
-:TRIALS or :REGISTRY. The test reports the seed used. On failure its assertion
-includes the saved counterexample and definition digest when available.
-On SBCL, caller deadlines and interrupts propagate out of the test.
+OPTIONS supplies non-selector CHECK-CONTRACTS arguments such as :SEEDS,
+:TRIALS, :POLICY or :REGISTRY. The macro rejects :NAMES, :PACKAGE and :TAG
+during expansion. The test reports the seed used. Its failure description
+includes the saved counterexample, definition digest and example conditions
+when available. On SBCL, caller deadlines and interrupts propagate out of the test.
 ```
 

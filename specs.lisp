@@ -2,7 +2,6 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
-  (:import-from #:cl-spec/src/contract-runner #:judge-contract-result)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
@@ -24,6 +23,7 @@
                 #:defspec-function
                 #:explain-data
                 #:find-spec
+                #:judge-contract-result
                 #:normalize-spec-form
                 #:invalid-spec-form #:invalid-spec-form-reason
                 #:properties-for

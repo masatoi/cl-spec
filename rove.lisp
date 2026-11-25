@@ -2,7 +2,7 @@
 
 (defpackage #:cl-spec/rove
   (:use #:cl)
-  (:import-from #:cl-spec/main #:check-contracts)
+  (:import-from #:cl-spec/main #:check-contracts #:invalid-argument)
   (:import-from #:cl-spec/src/utils/printing
                 #:with-bounded-printing #:abbreviate-for-print #:reportable-condition)
   (:import-from #:rove #:deftest #:ok #:diag)
@@ -45,7 +45,11 @@
       (unless (eq :passed (getf row :verdict))
         (format stream "~S example ~A failed ~A~%"
                 (getf row :name) (diagnostic-value (getf row :arguments))
-                (diagnostic-value (getf row :problems)))))
+                (diagnostic-value (getf row :problems)))
+        (let ((condition (or (getf row :condition)
+                             (getf (getf (getf row :result) :observation) :condition-report))))
+          (when condition
+            (format stream "  condition ~A~%" (diagnostic-value condition))))))
     (when (getf report :problems)
       (format stream "~A~%" (diagnostic-value (getf report :problems))))))
 
@@ -53,10 +57,17 @@
   "Define a Rove test that runs TARGET and uses CHECK-CONTRACTS to judge it.
 
 TARGET is a literal name or a (:FUNCTION-SPEC NAME) or (:PROPERTY NAME) pair.
-OPTIONS supplies the remaining CHECK-CONTRACTS arguments such as :SEEDS,
-:TRIALS or :REGISTRY. The test reports the seed used. On failure its assertion
-includes the saved counterexample and definition digest when available.
-On SBCL, caller deadlines and interrupts propagate out of the test."
+OPTIONS supplies non-selector CHECK-CONTRACTS arguments such as :SEEDS,
+:TRIALS, :POLICY or :REGISTRY. The macro rejects :NAMES, :PACKAGE and :TAG
+during expansion. The test reports the seed used. Its failure description
+includes the saved counterexample, definition digest and example conditions
+when available. On SBCL, caller deadlines and interrupts propagate out of the test."
+  (loop for (keyword) on options by #'cddr
+        when (member keyword '(:names :package :tag))
+          do (error 'invalid-argument :operator 'deftest-contract
+                   :argument keyword :datum keyword
+                   :expected-type '(not (member :names :package :tag))
+                   :reason "the literal target supplies the selector"))
   (let ((report (gensym "REPORT"))
         (message (gensym "MESSAGE"))
         (passed (gensym "PASSED")))
