@@ -1153,15 +1153,22 @@ rove cl-spec.asd
 `cl-spec/check-it` cannot generate values for every spec it can validate and
 explain:
 
-- Only six Common Lisp type names generate on their own: `integer`, `real`,
-  `character`, `string`, `null` and `boolean`. Every other type name — `keyword`,
-  `symbol`, `float`, `fixnum`, `rational`, `number`, `list`, `cons`, `vector`, `t`,
-  `hash-table` — and every compound `(type ...)` such as `(type (integer 0 10))`
-  signals `generator-unavailable` with kind `:unsupported-type`. Write a
-  generatable spec instead (`(range integer 0 10)`, `(member :a :b)`,
-  `(list-of integer)`), constrain a generatable base (`(and real (satisfies
-  floatp))`), or attach a custom generator with `defgenerator` and
-  `(:generator NAME)`.
+- The built-in type generators cover `integer`, `fixnum`, `rational`, `real`,
+  `float` and its four standard formats, `character`, `string`, `null`,
+  `boolean`, `keyword`, `symbol`, `list` and `vector`. Compound integer and
+  float intervals such as `(type (integer 0 (10)))` generate within their bounds.
+  A bound of `*` leaves that end unbounded and `(10)` excludes 10. Very large
+  or tiny float endpoints can be refused with kind `:range-too-wide`.
+- Default keyword and symbol generators draw from a fixed vocabulary. Default
+  lists and vectors contain up to eight small integers. Use `(member ...)` for
+  application symbols and `list-of` or `vector-of` to describe the elements.
+- The default rational generator draws with small numerators and denominators.
+  Rational, real and float shrinking tries simple numbers that still fail
+  within the declared domain.
+- Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`
+  signal `generator-unavailable` with kind `:unsupported-type` and name the
+  type. Attach a custom generator with `defgenerator` and `(:generator NAME)`
+  to generate values for those specs.
 - `(not ...)`, a bare `(satisfies ...)`, `(instance-of ...)`, and a spec that
   refers back to itself (directly, or through `list-of`/`vector-of`/`tuple`)
   have no generator; `sample`/`generator-for` signal `generator-unavailable`.
