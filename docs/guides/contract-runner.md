@@ -21,8 +21,9 @@ Omit the selector to run every registered Function Spec and property. Pass
 `:registry` to choose a registry.
 
 The suite runs each target once per `:seeds` item. A nonnegative integer selects
-a fixed seed. A `:fresh` item draws a seed per target, and the default is
-`(:fresh)`. `:trials` sets the Function Spec budget. A property uses its own
+a fixed seed. A `:fresh` item draws a seed per target from a newly randomized
+state and preserves the caller's `*random-state*`. The default is `(:fresh)`.
+`:trials` sets the Function Spec budget. A property uses its own
 budget, with the usual backend default when the normal budget is absent. An
 explicit non-`nil` `:profile` requires that the property declare that profile.
 `:options` goes to both generated runners.

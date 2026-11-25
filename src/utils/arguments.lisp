@@ -55,8 +55,11 @@ with."
 
 (defun time-limit-seconds-p (seconds)
   "Whether SECONDS is a timer duration safely representable on supported hosts."
-  (handler-case (and (realp seconds) (< 0 (rational seconds) (expt 2 31)))
-    (arithmetic-error () nil)))
+  (when (realp seconds)
+    ;; Conversion of IEEE infinity or NaN may signal an error outside ARITHMETIC-ERROR.
+    (let ((duration (handler-case (rational seconds)
+                      (error () nil))))
+      (and duration (< 0 duration (expt 2 31))))))
 
 (defun check-run-options (options operator)
   "Return OPTIONS after refusing a malformed runner options plist for OPERATOR.
@@ -74,5 +77,9 @@ fail first (issue #79)."
     (when key
       (check-argument budget '(integer 0 100000) operator key)))
   (dolist (key '(:timeout :trial-timeout :cleanup-timeout))
-    (check-argument (getf options key) '(or null (satisfies time-limit-seconds-p)) operator key))
+    (let ((seconds (getf options key)))
+      ;; Dynamic TYPEP on an OR type can compare a NaN before calling its predicate.
+      (unless (or (null seconds) (time-limit-seconds-p seconds))
+        (error 'invalid-argument :datum seconds :operator operator :argument key
+               :expected-type '(or null (satisfies time-limit-seconds-p))))))
   options)
