@@ -123,7 +123,8 @@ Attach a contract to the existing function NAME without redefining it.
 
 ```text
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
-(:ARGS-GENERATOR NAME), (:PRE FORM ...), (:CAPTURE (NAME FORM) ...),
+(:ARGS-GENERATOR NAME), (:FIXTURE SUBCLAUSE ...), (:PRE FORM ...),
+(:CAPTURE (NAME FORM) ...),
 (:RETURNS SPEC), (:POST FORM ...),
 (:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper
@@ -178,11 +179,11 @@ Its failure identity is (:STATE-POSTCONDITION INDEX), or
 its position too.  The target was called for such a failure, so it keeps the raw
 outcome and counts as that case's call.
 
-A state-observing contract is checked by CHECK-FUNCTION but is not shrunk,
-replayed from a past result or persisted as a counterexample artifact in this
-version, because none of those can rebuild the same initial state.  A
-pure-looking use is not exempted, and this is a scope limit, not a claim that
-state constraints are inherently unreproducible.
+:FIXTURE declares recipe-backed state reconstruction, including setup and
+cleanup. :ISOLATION :AROUND requires (:AROUND (TRIAL) FORM ...), which calls
+TRIAL once with no arguments within the wrapper's dynamic extent. TRIAL runs
+setup, call checks and cleanup. A state-observing contract without a fixture
+cannot be shrunk, replayed from a past result or persisted as an artifact.
 
 :CASES names the behaviour required of each admitted input, instead of one
 outcome for all of them.  :CASES appears at most once and holds one or more
