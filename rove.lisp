@@ -3,7 +3,8 @@
 (defpackage #:cl-spec/rove
   (:use #:cl)
   (:import-from #:cl-spec/main #:check-contracts)
-  (:import-from #:cl-spec/src/utils/printing #:with-bounded-printing #:abbreviate-for-print)
+  (:import-from #:cl-spec/src/utils/printing
+                #:with-bounded-printing #:abbreviate-for-print #:reportable-condition)
   (:import-from #:rove #:deftest #:ok #:diag)
   (:export #:deftest-contract))
 
@@ -15,7 +16,7 @@
       (with-bounded-printing (:one-line t)
         (let ((*print-readably* nil))
           (prin1-to-string (abbreviate-for-print value))))
-    (serious-condition () "<unavailable>")))
+    (reportable-condition () "<unavailable>")))
 
 (defun verdict-message (report)
   "Return the Rove description containing the verdict and replay information."
@@ -54,7 +55,8 @@
 TARGET is a literal name or a (:FUNCTION-SPEC NAME) or (:PROPERTY NAME) pair.
 OPTIONS supplies the remaining CHECK-CONTRACTS arguments such as :SEEDS,
 :TRIALS or :REGISTRY. The test reports the seed used. On failure its assertion
-includes the saved counterexample and definition digest when available."
+includes the saved counterexample and definition digest when available.
+On SBCL, caller deadlines and interrupts propagate out of the test."
   (let ((report (gensym "REPORT"))
         (message (gensym "MESSAGE"))
         (passed (gensym "PASSED")))

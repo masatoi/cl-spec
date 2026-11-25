@@ -163,9 +163,13 @@ target outcome cannot turn a failed cleanup into a passed run.
 Lifecycle `:state` is `:not-acquired`, `:released`, or `:unknown`.
 `:released` means the declared cleanup completed, not that cl-spec inspected
 all reachable state or verified a rollback. `:unknown` is used when cleanup
-failed or the wrapper aborted. In `:fresh` mode an outward control transfer
-propagates after cleanup. In `:around` mode, the wrapper boundary records it
-as a lifecycle error.
+failed or the wrapper aborted. With either isolation, a transfer to a caller's
+exit (for example, a timeout handler, restart or catch) proceeds after
+applicable cleanup. When a cl-spec time limit ends the cleanup attempt,
+an outward transfer already in progress still proceeds. If the wrapper
+resumes after an incomplete trial and returns, the check records
+`:fixture-around-nonlocal-exit`. An error escaping the wrapper or a missing
+or repeated thunk call also records a lifecycle error.
 
 A process kill or crash can bypass Lisp cleanup entirely. This core feature
 cannot return a record from a dead process; host supervision remains separate.

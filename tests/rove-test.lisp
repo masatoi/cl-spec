@@ -57,3 +57,61 @@
              (ok (search digest output))
              (ok (search "counterexample <unavailable>" output))))
       (remove-test 'fail-opaque-contract))))
+
+#+(and sbcl sb-thread)
+(deftest contract-tests-propagate-caller-timeouts-and-interrupts
+  (let ((*registry* (make-hash-table-registry))
+        (*report-stream* (make-string-output-stream)))
+    (unwind-protect
+         (dolist (transfer '(:timeout :interrupt))
+           (defproperty intercepted ((x (member 7)))
+             (:trials (:normal 1))
+             (declare (ignore x))
+             (ecase transfer
+               (:timeout (sleep 1/4))
+               (:interrupt
+                (sb-thread:interrupt-thread
+                 sb-thread:*current-thread*
+                 (lambda () (signal 'sb-sys:interactive-interrupt)))))
+             t)
+           (deftest-contract intercepted-contract (:property intercepted) :seeds '(41))
+           (ok (eq transfer
+                   (handler-case
+                       (progn
+                         (if (eq transfer :timeout)
+                             (sb-ext:with-timeout 1/20 (run-test 'intercepted-contract))
+                             (run-test 'intercepted-contract))
+                         :returned)
+                     (sb-ext:timeout () :timeout)
+                     (sb-sys:interactive-interrupt () :interrupt)))))
+      (remove-test 'intercepted-contract))))
+
+(defclass slow-printed-counterexample () ())
+
+(defmethod print-object ((object slow-printed-counterexample) stream)
+  (declare (ignore object))
+  (sleep 1/4)
+  (write-string "Slow counterexample" stream))
+
+#+(and sbcl sb-thread)
+(deftest caller-deadline-stops-rove-counterexample-reporting
+  (let ((*registry* (make-hash-table-registry))
+        (*report-stream* (make-string-output-stream)))
+    (defgenerator slow-printed-generator () (make-instance 'slow-printed-counterexample))
+    (defspec slow-printed-value (type slow-printed-counterexample)
+      (:generator slow-printed-generator))
+    (defproperty slow-printed-failure ((value slow-printed-value))
+      (:trials (:normal 1))
+      (declare (ignore value))
+      nil)
+    (unwind-protect
+         (progn
+           (deftest-contract slow-printed-contract (:property slow-printed-failure)
+             :seeds '(41))
+           (ok (eq :timeout
+                   (handler-case
+                       (progn
+                         (sb-ext:with-timeout 1/20 (run-test 'slow-printed-contract))
+                         :returned)
+                     (sb-ext:timeout () :timeout)))))
+      (remove-test 'slow-printed-contract))))

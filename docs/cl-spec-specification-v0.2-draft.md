@@ -5024,13 +5024,11 @@ properties-forが1146件しか返さなかった実測は修正前の履歴で�
 回帰テストと4000/4000の修正後実測は§73.4 #8に記録した。
 他処理系では単一writerを前提とし、汎用の並行更新保証とはしない。
 
-`make-seed`はprocess共有の`*random-state*`から引く。スレッドは`*random-state*`を
-共有するので、これは同期されないread-modify-writeであり、衝突率は系の性質では
-なく呼び出しの詰まり方で決まる。実測では、8スレッドが密なループで各5000回引くと
-40000件中の相異なる値は14277件（重複64%）、一方で各スレッドが1回だけ引いて
-joinする形では衝突0だった。判定が誤るわけではないが、並行な掃引では別の実行が
-既に試した入力を黙って引き直すことになる。`run-properties`が無条件に謳う
-「各実行が自分のseedを引く」は、その分弱い。
+`make-seed`は呼び出しごとに`(make-random-state t)`で初期化した状態から引く。
+seedの生成状態は呼び出し間で独立し、呼び出し側の`*random-state*`の系列を保つ。
+修正前のprocess共有状態では、8スレッドが密なループで各5000回引くと
+40000件中の相異なる値は14277件（重複64%）だった。各スレッドが1回だけ引いて
+joinする形での重複は0件だった。
 
 ### 1〜3の実測（2026-09-10）
 
@@ -5890,8 +5888,12 @@ non-participating backend answers `:not-collected`.
 recipe validation, the hook calls THUNK synchronously exactly once. The
 thunk runs setup, call checks and cleanup within the hook's dynamic extent.
 This applies to direct fixture checks, generated trials and shrink candidates.
-A signalling or escaping hook, or an omitted or repeated call, produces a
-fixture lifecycle error. The caller's wrapper supplies any rollback guarantee.
+An error escaping the hook, an omitted or repeated thunk call, or a hook that
+returns after an incomplete trial produces a fixture lifecycle error. Control
+transfers to exits outside the check proceed after applicable cleanup, as in
+`:fresh` isolation. A cl-spec cleanup deadline can end the cleanup attempt
+while the original transfer proceeds. The caller's wrapper supplies any
+rollback guarantee.
 
 Lifecycle records identify the isolation, and an around lifecycle records
 completion of the wrapper. The wrapper source and isolation participate in the
