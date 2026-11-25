@@ -15,6 +15,7 @@
   ;; they are not dead names.
   (:import-from #:cl-spec/src/instrument
                 #:instrumentation-status)
+  (:import-from #:cl-spec/rove #:deftest-contract)
   (:import-from #:cl-spec/specs
                 #:register-specifications)
   (:import-from #:cl-spec/src/backends/check-it
@@ -39,6 +40,8 @@
      "Semantic IR, validation, structured explain, introspection, registry and the DSL.")
     ("cl-spec/instrument" "CL-SPEC/INSTRUMENT" "cl-spec/instrument"
      "Runtime instrumentation that checks registered contracts at call sites.")
+    ("cl-spec/rove" "CL-SPEC/ROVE" "cl-spec/rove"
+     "Optional Rove tests backed by the contract suite verdict.")
     ("cl-spec/specs" "CL-SPEC/SPECS" "cl-spec/specs"
      "Optional executable specifications of cl-spec's own APIs and semantic laws.")
     ("cl-spec/check-it" "CL-SPEC/SRC/BACKENDS/CHECK-IT" "cl-spec/check-it"
@@ -63,7 +66,7 @@ Each plist has :TITLE, :PACKAGE, :SYSTEM and :DESCRIPTION."
 
 (defun public-systems-loaded-p ()
   "Return true when every system whose API this bundle documents is loaded."
-  (every #'fboundp '(instrumentation-status
+  (every #'fboundp '(deftest-contract instrumentation-status
                      register-specifications
                      install-check-it-backend)))
 

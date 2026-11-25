@@ -8,6 +8,7 @@
                 #:function-spec-cases #:function-case-name #:function-case-outcome-spec)
   (:import-from #:cl-spec/main
                 #:*registry*
+                #:check-contracts
                 #:check-function
                 #:clear-registry
                 #:explain-data
@@ -21,9 +22,7 @@
                 #:normalize-spec-form
                 #:properties-for
                 #:property-data
-                #:property-result-rejected
                 #:property-result-status
-                #:property-result-trials
                 #:property-targets
                 #:property-trials
                 #:result-data
@@ -334,44 +333,33 @@
       (setf (getf data :digest-exclusions) :unknown)
       (ok (not (validp spec data))))))
 
-(defun evidence-satisfied-p (result budget)
-  "True when RESULT's saved evidence satisfies the bundle's policy for BUDGET trials.
-
-A :PASSED status alone does not say every declared case was reached; the
-assessment is the separate claim that it was."
-  (eq :satisfied
-      (getf (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy budget))
-            :assessment)))
-
-(defun evidence-gaps (result budget)
-  "Describe why RESULT's evidence misses the bundle's policy, for a failing assertion."
-  (let ((assessment (cl-spec:assess-evidence result (cl-spec/specs:evidence-policy budget))))
-    (prin1-to-string (list (getf assessment :assessment)
-                           (getf assessment :gaps)
-                           (getf assessment :unknowns)))))
-
 (deftest executable-specifications-pass-generated-checks
-  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
+  (let ((*registry* (make-hash-table-registry))
+        (seeds '(1 42 2026))
+        (contract-budget 50))
     (cl-spec/specs:register-specifications)
-    (dolist (seed '(1 42 2026))
-      (dolist (name (cl-spec/specs:contract-names))
-        (testing (format nil "contract ~S, seed ~D" name seed)
-          (let ((result (cl-spec:check-function name :trials 50 :seed seed)))
-            (ok (eq :passed (cl-spec:property-result-status result))
-                (prin1-to-string (cl-spec:result-data result)))
-            (ok (= 50 (cl-spec:property-result-trials result)))
-            (ok (zerop (cl-spec:property-result-rejected result)))
-            (ok (evidence-satisfied-p result 50) (evidence-gaps result 50)))))
-      (dolist (name (cl-spec/specs:property-names))
-        (testing (format nil "property ~S, seed ~D" name seed)
-          (let* ((property (cl-spec:find-property name))
-                 (budget (getf (cl-spec:property-trials property) :normal))
-                 (result (cl-spec:run-property name :seed seed)))
-            ;; A property's :NORMAL budget is its own declaration: the suite
-            ;; compares the run against it instead of assuming one shared count.
-            (ok (and (integerp budget) (plusp budget))
+    (let* ((names (append (mapcar (lambda (name) (list :function-spec name))
+                                (cl-spec/specs:contract-names))
+                          (mapcar (lambda (name) (list :property name))
+                                  (cl-spec/specs:property-names))))
+           (report (check-contracts :names names :seeds seeds :trials contract-budget))
+           (entries (getf report :entries)))
+      (ok (eq :passed (getf report :status))
+          (prin1-to-string (getf report :problems)))
+      (ok (= (* (length names) (length seeds)) (length entries)))
+      (dolist (entry entries)
+        (let* ((name (getf entry :name))
+               (kind (getf entry :kind))
+               (result (getf entry :result))
+               (budget (if (eq kind :function-spec)
+                           contract-budget
+                           (getf (property-trials (find-property name)) :normal)))
+               (checked (find :checked-trials (getf (getf result :evidence) :dimensions)
+                              :key (lambda (row) (getf row :kind)))))
+          (testing (format nil "~S ~S, seed ~A" kind name (getf entry :seed))
+            (ok (eq :passed (getf entry :verdict)) (prin1-to-string entry))
+            (ok (typep budget '(integer 1 *))
                 (format nil "~S declares no positive :normal budget" name))
-            (ok (eq :passed (cl-spec:property-result-status result))
-                (prin1-to-string (cl-spec:result-data result)))
-            (ok (= budget (cl-spec:property-result-trials result)))
-            (ok (evidence-satisfied-p result budget) (evidence-gaps result budget))))))))
+            (ok (eql budget (getf result :trials)))
+            (ok (eql 0 (getf result :rejected)))
+            (ok (eql budget (getf checked :value)))))))))
