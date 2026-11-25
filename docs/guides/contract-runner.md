@@ -73,7 +73,8 @@ current definition when checking that the declarations match.
 
 ## Rove
 
-Add `cl-spec/rove` to the ASDF dependencies of your test suite. Use
+Add `cl-spec/rove` and a generator backend such as `cl-spec/check-it` to
+the ASDF dependencies of your test suite. Use
 `deftest-contract` with a Rove test name followed by a literal target and
 runner keywords.
 

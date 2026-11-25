@@ -378,7 +378,11 @@ return names of a contract-level or case-level :POST-VALUES."
                          (= 1 (length (second hook)))
                          (binding-p (first (second hook)))
                          (or (eq hook around) (not (eq name (first (second hook))))))
-              (function-spec-error hook "hook requires one binding and a body"))))
+              (function-spec-error
+               hook
+               (if (eq hook around)
+                   "around requires one trial binding and a body"
+                   "setup and cleanup require a body and a context binding distinct from the recipe")))))
         `(make-instance 'trial-fixture
                         :isolation ,mode :version ,(second version)
                         :recipe-name ',name :recipe-spec ',(second (second recipe))

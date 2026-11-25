@@ -41,7 +41,8 @@ policies, direct checks and backend participation.
 
 `check-contracts` runs a selection of registered Function Specs and properties
 and returns a structured CI verdict with the decimal seed for every generated
-check. Load `cl-spec/rove` to turn a contract into a Rove test.
+check. Load `cl-spec/rove` and a generator backend such as `cl-spec/check-it`
+to turn a contract into a Rove test.
 [Contract runner guide](docs/guides/contract-runner.md)
 
 ## Systems
@@ -1085,6 +1086,9 @@ The limits accept positive finite real numbers below 2³¹ seconds. A result's
 from the result. A replay uses fresh clocks, so elapsed times and the phase
 reached can vary.
 
+`run-properties` and `check-contracts` apply `:options` to each generated run.
+Each property or generated suite entry gets its own `:timeout`.
+
 When a deadline stops the run, `result-data` reports `:status :timeout` and a
 `:timeout` record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
 and the `:phase` reached. A timeout during `:preparation` records zero
@@ -1224,14 +1228,21 @@ explain:
   float intervals such as `(type (integer 0 (10)))` generate within their bounds.
   A bound of `*` leaves that end unbounded and `(10)` excludes 10. Very large
   or tiny float endpoints can be refused with kind `:range-too-wide`.
+  Bare `rational` and `real` are supported. The compound type forms
+  `(rational a b)` and `(real a b)` have no built-in generator. Use
+  `(range real a b)` for a real interval and
+  `(and (type rational) (range real a b))` for a rational interval.
 - The default `keyword` generator draws from `:a` through `:z`. The default
   `symbol` generator also draws eight writable symbols from its own package.
   Unique collections and map counts use those finite vocabularies. Keywords
   are constants. Use `(member ...)` for application symbols.
 - Default lists and vectors contain up to eight small integers. Use
   `list-of` or `vector-of` to describe the elements.
-- The default rational generator draws with small numerators and denominators.
-  Built-in numeric shrinking preserves the declared type and bounds and keeps
+- With neither endpoint specified, rational generation uses small numerators
+  and denominators. With at least one endpoint specified, the generator fills
+  any missing endpoint and interpolates in steps of `1/2^24` of that finite
+  interval's width. Denominators can grow with the endpoints and interval width.
+- Built-in numeric shrinking preserves the declared type and bounds and keeps
   the magnitude within that of the original value. Real ranges preserve the
   floating-point format of float candidates.
 - Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`
