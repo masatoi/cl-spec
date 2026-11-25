@@ -747,6 +747,79 @@
               (ok (equal '(19 20) cleanups))))))))
 
 #+(and sbcl sb-thread)
+(deftest candidate-timeout-preserves-a-fixture-rollback-failure
+  (dolist (native-p '(nil t))
+    (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+          (setups 0) (cleanups 0) (exits 0) (initial-recipe nil))
+      (if native-p
+          (cl-spec:defspec rollback-input integer)
+          (progn
+            (cl-spec:defgenerator rollback-recipe ()
+              (:shrink (value) (when (= value 20) (list 19 10)))
+              20)
+            (cl-spec:defspec rollback-input integer (:generator rollback-recipe))))
+      (cl-spec:defspec-function identity
+        (:args (value integer)) (:returns string)
+        (:fixture
+          (:isolation :around) (:version 1) (:recipe (recipe rollback-input))
+          (:around (trial)
+            (unwind-protect (funcall trial)
+              (incf exits)
+              (when (= setups 2) (error "Around rollback failed"))))
+          (:setup (context) (declare (ignore context))
+            (case (incf setups)
+              (1 (setf initial-recipe recipe))
+              (2 (sleep 1/4)))
+            (list recipe))
+          (:cleanup (context) (declare (ignore context recipe)) (incf cleanups))))
+      (let* ((result (cl-spec:check-function 'identity :trials 1 :seed 42
+                       :options '(:trial-timeout 1/20 :cleanup-timeout 1/10 :timeout 2)))
+             (data (cl-spec:result-data result))
+             (report (getf data :shrink-report)))
+        (ok (eq :error (getf data :status)))
+        (ok (eq :fixture (getf data :failure-phase)))
+        (ok (null (getf data :timeout)))
+        (ok (eq :fixture-around-error (getf (getf data :run-error) :reason)))
+        (ok (equal (list 'recipe initial-recipe) (getf data :counterexample)))
+        (ok (null (getf data :shrunk-counterexample)))
+        (ok (eq :fixture-error (getf report :termination)))
+        (ok (eql 1 (getf report :candidates)))
+        (ok (eql 0 (getf report :timed-out-candidates)))
+        (ok (= 2 setups cleanups exits))))))
+
+#+(and sbcl sb-thread)
+(deftest timed-native-mutation-stops-search-before-reusing-the-mutated-value
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (options '(:trial-timeout 1/20 :timeout 2))
+        (calls 0) (transfer :deadline))
+    (cl-spec:defproperty mutating-native-candidate
+        ((number (range integer 1 100))
+         (cells (list-of (range integer 10 99) :min-length 1 :max-length 1)))
+      (:trials (:normal 1))
+      (declare (ignore number))
+      (when (= 2 (incf calls))
+        (setf (car cells) 99)
+        (ecase transfer
+          (:deadline (sleep 1/4))
+          (:caller (throw 'caller-cancels-mutation :caller))))
+      nil)
+    (let* ((result (cl-spec:run-property 'mutating-native-candidate :seed 42 :options options))
+           (data (cl-spec:result-data result))
+           (report (getf data :shrink-report)))
+      (ok (= 2 calls))
+      (ok (eq :failed (getf data :status)))
+      (ok (null (getf data :timeout)))
+      (ok (eq :mutation (getf report :termination)))
+      (ok (eql 1 (getf report :timed-out-candidates)))
+      (ok (equal '(number 52 cells (24)) (getf data :counterexample)))
+      (ok (null (getf data :shrunk-counterexample))))
+    (setf calls 0 transfer :caller)
+    (ok (eq :caller (catch 'caller-cancels-mutation
+                      (cl-spec:run-property 'mutating-native-candidate :seed 42
+                                            :options options))))
+    (ok (= 2 calls))))
+
+#+(and sbcl sb-thread)
 (deftest inner-cleanup-keeps-its-shorter-limit-during-outer-timeout
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (started nil) (finished nil))
