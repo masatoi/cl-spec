@@ -17,13 +17,13 @@
   "Copy a bounded, reader-free recipe, refusing opaque, shared and cyclic values."
   (deserialize-artifact-value (serialize-artifact-value recipe)))
 
-(defvar *fixture-around-token* nil
-  "Identifies the active wrapper extent for its one-shot trial thunk.")
+(defvar *fixture-around-tokens* nil
+  "Identities of one-shot trial thunks whose wrapper extents are active.")
 
 (defun invoke-fixture-around (around trial)
   "Run AROUND with a synchronous one-shot TRIAL, returning any lifecycle error."
   (let* ((token (list nil))
-         (*fixture-around-token* token)
+         (*fixture-around-tokens* (cons token *fixture-around-tokens*))
          (called nil)
          (completed nil)
          (repeated nil)
@@ -34,7 +34,7 @@
            (handler-case
                (funcall around
                         (lambda ()
-                          (unless (eq *fixture-around-token* token)
+                          (unless (member token *fixture-around-tokens* :test #'eq)
                             (error 'fixture-error :reason :thunk-outside-around))
                           (when called
                             (setf repeated (make-condition 'fixture-error :reason :thunk-repeated))
