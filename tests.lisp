@@ -105,6 +105,7 @@
   (:import-from #:cl-spec/tests/withdraw-cancellation-example-test)
   (:import-from #:cl-spec/tests/stateful-withdraw-example-test)
   (:import-from #:cl-spec/tests/state-observation-test)
+  (:import-from #:cl-spec/tests/state-frame-test)
   (:import-from #:cl-spec/tests/check-call-test)
   (:import-from #:cl-spec/tests/instrument-status-integration-test)
   (:import-from #:cl-spec/tests/instrument-test)

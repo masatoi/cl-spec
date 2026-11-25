@@ -5884,6 +5884,20 @@ completion of the wrapper. The wrapper source and isolation participate in the
 definition digest. Earlier fixture v2 artifacts with implicit fresh isolation
 remain readable and recheckable.
 
+### §17.3 implementation addendum: state frames
+
+A top-level `(:modifies (OBSERVER KEY-FORM ...) ...)` adds a frame
+condition to a Function Spec. Observers are registered in the contract's
+registry and captured when it is declared. The declaration digest includes
+the frame and its observer descriptors. Allowed keys use the argument and
+capture bindings. Observer snapshots before the target and after the passing
+outcome define the change set. A forbidden change records its observer, key
+and bounded before/after projections with reason `:state-postcondition`.
+Frame checks use the existing state-observing rules for fixture restoration,
+shrinking, artifacts and instrumentation.
+
+[State frame guide](guides/state-frames.md)
+
 ## Evidence sufficiency implementation addendum (2026-09-26)
 
 Execution status and sufficiency of evidence are separate core protocols.

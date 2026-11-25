@@ -6,6 +6,10 @@
 
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
+  (:import-from #:cl-spec/src/state-frame
+                #:state-frame #:state-frame-clauses #:state-frame-observers
+                #:capture-state-frame #:check-state-frame #:state-frame-error
+                #:state-frame-error-data)
   (:import-from #:cl-spec/src/coverage
                 #:definition-coverage-schema #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
                 #:normalize-coverage-options)
@@ -125,6 +129,7 @@
            #:function-spec-cases
            #:function-spec-capture-bindings
            #:function-spec-capture-functions
+           #:function-spec-state-frame
            #:function-spec-state-postconditions
            #:function-spec-state-postcondition-function
            #:function-case
@@ -680,15 +685,16 @@ hold or that signalled."
                                        capture-index
                                        state-status state-reason state-case
                                        state-index state-form state-condition)
-  "Build one trial's state evidence, or NIL when the contract declares neither clause."
+  "Build state evidence for the observations declared by CONTRACT."
   (let ((capture (capture-evidence contract capture-status captured
                                    capture-condition capture-index))
         (state (state-post-evidence contract state-case state-status
                                     :reason state-reason :index state-index
                                     :form state-form :condition state-condition)))
-    (when (or capture state)
-      (append (when capture (list :capture capture))
-              (when state (list :state-post state))))))
+    (append (when capture (list :capture capture))
+            (when state (list :state-post state))
+            (when (function-spec-state-frame contract)
+              (list :frame (list :status :not-evaluated))))))
 
 (defstruct (trial-classification (:copier nil))
   "Named evidence returned by the function-spec trial classifier."
@@ -777,9 +783,31 @@ outcome and the selected case, and neither is re-run for the report."
                                             :state-index index :state-form form
                                             :state-case case)))))))))
 
+(defun classify-frame-failure (contract case captures value outcome frame &optional condition)
+  "Classify a forbidden change or failed observer operation at its actual phase."
+  (let ((case-name (and case outcome (function-case-name case)))
+         (signature (if condition
+                        (list :state-frame :error (getf frame :observer)
+                              (getf frame :stage) (getf frame :condition-type))
+                        (list :state-frame (getf frame :observer) (getf frame :key))))
+         (state (make-state-evidence contract :capture-status :completed :captured captures
+                                    :state-status :not-evaluated :state-case case
+                                    :state-reason (if condition :frame-error :frame-violation))))
+    (setf (getf state :frame) frame)
+    (make-trial-classification
+     :status (if condition :error :failed)
+     :reason (if condition :contract-error :state-postcondition)
+     :signature (if case-name (list* :case case-name signature) signature)
+     :explanation (list* :kind :state-frame :function (function-spec-name contract)
+                         :case case-name frame)
+     :condition condition :value value :outcome outcome :selected-case case-name
+     :failure-phase (if outcome :state-post :capture) :state state)))
+
 (defclass function-spec ()
   ((fixture :initarg :fixture :initform nil :reader function-spec-fixture
-            :documentation "Explicit fresh-state recipe fixture, or NIL.")
+            :documentation "Explicit recipe fixture, or NIL.")
+   (state-frame :initarg :state-frame :initform nil :reader function-spec-state-frame
+                :documentation "Observed state and declared changes for this contract.")
    (call-layout-cache :initform nil)
    (call-layout-declarations :initform nil)
    (call-layout-bindings-snapshot :initform nil)
@@ -915,7 +943,7 @@ The function is never redefined, so an existing codebase adopts cl-spec one
 function at a time (specification §3.2)."))
 
 (defparameter *function-spec-slot-names*
-  '(fixture name argument-specs argument-generator return-spec signal-spec preconditions postconditions
+  '(fixture state-frame name argument-specs argument-generator return-spec signal-spec preconditions postconditions
     precondition-function postcondition-function post-value-variables documentation-string
     source-form source-location case-guard-package metadata cases
     capture-bindings capture-functions state-postconditions state-postcondition-function
@@ -1049,6 +1077,7 @@ replay of a past result and counterexample artifacts remain unsupported.
 The decision is structural: a pure-looking use is not exempted by inspecting
 the target or the predicate bodies."
   (or (function-spec-fixture contract)
+      (function-spec-state-frame contract)
       (function-spec-capture-bindings contract)
       (function-spec-state-postconditions contract)
       (some (lambda (case) (function-case-state-postconditions case))
@@ -1112,6 +1141,8 @@ would run while introspection reported no such clause"
       (when (function-spec-argument-generator contract)
         (refuse :fixture "fixture and argument-generator are exclusive"))
       (validate-definition (function-spec-fixture contract)))
+    (unless (typep (function-spec-state-frame contract) '(or null state-frame))
+      (refuse :state-frame "expected a compiled state frame"))
     (unless (and (symbolp (function-spec-name contract))
                  (function-spec-name contract)
                  (not (keywordp (function-spec-name contract)))
@@ -1628,10 +1659,10 @@ CAPTURES follow BOUND-VALUES as arguments to the postcondition."
 The common :PRE admits the input first.  :CAPTURE runs next, once per trial and
 in declaration order; a capture that signals stops the trial before the target
 and is a contract-side error.  Exclusive case selection follows, then the
-target's single invocation, then the existing outcome classification.  Only a
-:passed outcome runs the selected :STATE-POST; an outcome that failed first
-keeps its existing classification and leaves state-post explicitly
-:not-evaluated.  Nothing is re-run to build the evidence."
+target's single invocation, then outcome classification. An optional frame
+snapshots state just before calling the target. A passing outcome runs the
+frame comparison and then the selected :STATE-POST. An earlier failure keeps
+its classification. Nothing is re-run to build the evidence."
   (let* ((contract (checked-contract property))
          (registry (getf context :registry))
          (cases (function-spec-cases contract))
@@ -1725,7 +1756,10 @@ keeps its existing classification and leaves state-post explicitly
                            (returns signals post post-forms values-post-p
                             state-post-function state-post-forms)
                          (function-case-outcome-parts contract case)
-                       (let* ((raw-outcome (invoke-target-once (checked-target property) arguments))
+                       (let* ((state-frame
+                                (capture-state-frame (function-spec-state-frame contract)
+                                                     argument-values captures))
+                              (raw-outcome (invoke-target-once (checked-target property) arguments))
                               (target-condition
                                 (when (eq :signaled (call-outcome-kind raw-outcome))
                                   (call-outcome-condition raw-outcome))))
@@ -1741,10 +1775,21 @@ keeps its existing classification and leaves state-post explicitly
                                   argument-values captures raw-outcome registry))
                                (case-name (and case (function-case-name case))))
                            (if (eq :passed (trial-classification-status classification))
-                               (classify-state-post
-                                contract case argument-values captures
-                                (trial-classification-value classification) outcome
-                                state-post-function state-post-forms)
+                               (let ((value (trial-classification-value classification))
+                                      (frame (when state-frame (check-state-frame state-frame))))
+                                 (if (eq :violation (getf frame :status))
+                                     (classify-frame-failure
+                                      contract case captures value outcome frame)
+                                     (let ((state-classification
+                                             (classify-state-post
+                                              contract case argument-values captures
+                                              value outcome
+                                              state-post-function state-post-forms)))
+                                       (when frame
+                                         (setf (getf (trial-classification-state
+                                                       state-classification) :frame)
+                                               frame))
+                                       state-classification)))
                                (progn
                                  (when (and case (consp (trial-classification-signature
                                                          classification)))
@@ -1764,6 +1809,9 @@ keeps its existing classification and leaves state-post explicitly
                                  classification))))))))))
       (trial-classification-values
        (handler-case (evaluate)
+         (state-frame-error (condition)
+           (classify-frame-failure contract selected-case captured-values nil outcome
+                                   (state-frame-error-data condition) condition))
          ((and error (not undefined-function) (not program-error)) (condition)
            (contract-failure condition)))))))
 
@@ -1943,6 +1991,8 @@ closure reaches the digest."
    (append
     (when (function-spec-fixture contract)
       (list :fixture (fixture-data (function-spec-fixture contract))))
+    (when (function-spec-state-frame contract)
+      (list :modifies (state-frame-clauses (function-spec-state-frame contract))))
     (unless (eq :primary (function-spec-post-value-variables contract))
       (list :post-value-variables (function-spec-post-value-variables contract)))
     ;; Capture names, order and source, and the case-less state-post forms, are
@@ -1977,7 +2027,10 @@ closure reaches the digest."
            ;; by DEFINITION-DESCRIPTION ((CASE FUNCTION-CASE)) and contributes no
            ;; executable closure to the record.
            (function-spec-cases contract)
-           (when (function-spec-fixture contract) (list (function-spec-fixture contract))))
+           (when (function-spec-fixture contract) (list (function-spec-fixture contract)))
+           (when (function-spec-state-frame contract)
+             (remove-duplicates (state-frame-observers (function-spec-state-frame contract))
+                                :from-end t)))
    (when (function-spec-argument-generator contract)
      (list (cons :generator (function-spec-argument-generator contract))))
    (and (eq (class-name (class-of contract)) 'function-spec)

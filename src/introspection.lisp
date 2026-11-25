@@ -7,6 +7,7 @@
 
 (defpackage #:cl-spec/src/introspection
   (:use #:cl)
+  (:import-from #:cl-spec/src/state-frame #:state-frame-clauses)
   (:import-from #:cl-spec/src/function-spec #:function-spec-fixture)
   (:import-from #:cl-spec/src/fixture #:fixture-data #:fixture-recipe-spec)
   (:import-from #:cl-spec/src/call-schema
@@ -74,7 +75,7 @@
                 #:function-spec-metadata
                 #:function-spec-cases
                 #:function-spec-capture-bindings
-                #:function-spec-state-postconditions
+                #:function-spec-state-postconditions #:function-spec-state-frame
                 #:function-case-name #:function-case-documentation
                 #:function-case-when-forms #:function-case-outcome-kind
                 #:function-case-outcome-spec #:function-case-postconditions
@@ -275,6 +276,7 @@ change the registered property."
    :source-location (:file <string> :package <string>) :metadata <plist>
    [:capture ((:name <symbol> :form <form>) ...)]
    [:state-post (<form> ...)]
+   [:modifies ((<observer> <key-form> ...) ...)]
    [:case-selection :exclusive
     :cases ((:name <keyword> :documentation <string-or-nil> :when <form>
              :outcome :returns-or-:signals
@@ -324,6 +326,8 @@ registered contract, whose compiled functions could not follow the change."
                                   (spec->data (fixture-recipe-spec
                                                (function-spec-fixture contract))
                                               registry)))))
+            (when (function-spec-state-frame contract)
+              (list :modifies (state-frame-clauses (function-spec-state-frame contract))))
             (unless (eq :primary (function-spec-post-value-variables contract))
               (list :post-value-variables (function-spec-post-value-variables contract)))
             (when (function-spec-cases contract)

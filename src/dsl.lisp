@@ -10,6 +10,7 @@
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
+  (:import-from #:cl-spec/src/state-frame #:make-state-frame #:valid-frame-clauses-p)
   (:import-from #:cl-spec/src/fixture #:trial-fixture)
   (:import-from #:cl-spec/src/guard-references
                 #:guard-return-reference #:guard-free-variables #:return-value-symbol)
@@ -129,7 +130,7 @@ anything else signals INVALID-SPEC-FORM when the macro expands."
                                          :source-location ',location))))
 
 (defparameter *function-spec-clause-keywords*
-  '(:args :args-generator :fixture :pre :capture :returns :post :post-values :signals
+  '(:args :args-generator :fixture :pre :capture :modifies :returns :post :post-values :signals
     :state-post :cases)
   "Clause heads DEFSPEC-FUNCTION accepts (specification §17, §73.1 D1).")
 
@@ -419,7 +420,8 @@ cannot be confused."
         (state-post nil)
         (case-clauses nil)
         (argument-generator nil)
-        (fixture nil))
+        (fixture nil)
+        (modifies nil))
     ;; No "and there is more after it" guard, unlike PARSE-PROPERTY-BODY: a
     ;; lone string there is the predicate, so consuming it would leave the
     ;; property with no body.  DEFSPEC-FUNCTION has no body forms and a string
@@ -454,6 +456,10 @@ cannot be confused."
            (setf argument-generator (second clause)))
           (:pre (setf pre (rest clause)))
           (:capture (setf capture (parse-capture-bindings clause)))
+          (:modifies
+           (unless (valid-frame-clauses-p (rest clause))
+             (function-spec-error clause ":modifies needs (observer key-form ...) groups"))
+           (setf modifies (rest clause)))
           (:state-post
            (unless (rest clause)
              (function-spec-error clause ":state-post requires at least one form"))
@@ -514,7 +520,7 @@ cannot be confused."
     (let ((cases (parse-function-cases case-clauses args)))
       (check-capture-collisions capture args post-values cases)
       (values documentation args pre returns post argument-generator signals post-values
-              capture state-post cases fixture))))
+              capture state-post cases fixture modifies))))
 
 (defun parse-required-spec-arguments (args)
   "Return ARGS unchanged after refusing the :ARGS syntax §17 defers.
@@ -812,7 +818,7 @@ Like DEFPROPERTY's expander this runs at macroexpansion time, because the :PRE,
 functions: §60 forbids runtime EVAL, so a contract kept only as a list could be
 read but never checked."
   (multiple-value-bind (documentation args pre returns post argument-generator signals
-                        post-values capture state-post cases fixture)
+                        post-values capture state-post cases fixture modifies)
       (parse-function-spec-clauses name clauses)
     (parse-function-spec-arguments args)
     (let* ((variables (call-declaration-variables args))
@@ -834,6 +840,14 @@ read but never checked."
         (make-instance 'function-spec
                        :name ',name
                        :fixture ,fixture
+                       :state-frame
+                       ,(when modifies
+                          `(make-state-frame
+                            ',modifies
+                            (lambda (,@variables ,@capture-names)
+                              (declare (ignorable ,@variables ,@capture-names))
+                              (list ,@(mapcar (lambda (group) `(list ,@(rest group)))
+                                              modifies)))))
                        :argument-specs
                        ',args
                        :argument-generator ',argument-generator
@@ -874,7 +888,7 @@ read but never checked."
 
 CLAUSES may start with a docstring, then any of (:ARGS (PARAMETER SPEC) ...),
 (:ARGS-GENERATOR NAME), (:FIXTURE SUBCLAUSE ...), (:PRE FORM ...),
-(:CAPTURE (NAME FORM) ...),
+(:CAPTURE (NAME FORM) ...), (:MODIFIES (OBSERVER KEY-FORM ...) ...),
 (:RETURNS SPEC), (:POST FORM ...),
 (:POST-VALUES (NAME ...) FORM ...), (:SIGNALS SPEC), or (:STATE-POST FORM ...),
 each at most once. :ARGS-GENERATOR names a DEFGENERATOR returning the whole proper

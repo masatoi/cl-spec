@@ -30,6 +30,8 @@
            #:registry-find-function-spec
            #:registry-register-function-spec
            #:registry-list-function-specs
+           #:registry-find-state-observer
+           #:registry-register-state-observer
            #:registry-find-generator
            #:registry-register-generator
            #:registry-list-generators
@@ -143,6 +145,13 @@ previous definition.  Returns GENERATOR."))
 
 (defgeneric registry-list-generators (registry)
   (:documentation "Return the names of every custom generator in REGISTRY, sorted."))
+
+(defgeneric registry-find-state-observer (registry name)
+  (:documentation "Return the state observer registered under NAME, or NIL when absent.")
+  (:method (registry name) (declare (ignore registry name)) nil))
+
+(defgeneric registry-register-state-observer (registry name observer)
+  (:documentation "Register OBSERVER under NAME in REGISTRY and return OBSERVER."))
 
 (defgeneric registry-find-property (registry name)
   (:documentation "Return the property registered in REGISTRY under NAME.
@@ -276,6 +285,9 @@ and a synchronized table without it only covers single operations."
    (function-specs :initform (make-registry-table)
                    :reader registry-function-specs
                    :documentation "Symbol -> function spec.")
+   (state-observers :initform (make-registry-table)
+                    :reader registry-state-observers
+                    :documentation "Symbol -> state observer.")
    (generators :initform (make-registry-table)
                :reader registry-generators
                :documentation "Symbol -> CUSTOM-GENERATOR (specification §11).")
@@ -382,6 +394,13 @@ A NIL designator selects the current dynamic value of *REGISTRY* (§21)."
 (defmethod registry-list-function-specs ((registry hash-table-registry))
   (hash-table-keys-sorted (registry-function-specs registry)))
 
+(defmethod registry-find-state-observer ((registry hash-table-registry) name)
+  (gethash name (registry-state-observers registry)))
+
+(defmethod registry-register-state-observer ((registry hash-table-registry) name observer)
+  (validate-definition observer)
+  (setf (gethash name (registry-state-observers registry)) observer))
+
 (defmethod registry-find-generator ((registry hash-table-registry) name)
   (gethash name (registry-generators registry)))
 
@@ -453,6 +472,7 @@ Index keys that end up empty are dropped so that lookups return NIL."
     (clrhash (registry-specs registry))
     (clrhash (registry-function-specs registry))
     (clrhash (registry-generators registry))
+    (clrhash (registry-state-observers registry))
     (clrhash (registry-properties registry))
     (clrhash (registry-properties-by-target registry))
     (clrhash (registry-properties-by-tag registry))

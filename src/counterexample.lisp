@@ -278,7 +278,7 @@ and status."
                 :state (snapshot-value (trial-observation-state observation)))))
 
 (defun valid-fixture-signature-p (data)
-  "Recognize legacy function failures and explicit state-post failures for v2."
+  "Recognize function, state-post and frame failure identities for version two."
   (or (valid-signature-p data :function-spec)
       (multiple-value-bind (case-name signature wrapped)
           (case-signature-parts (getf data :signature))
@@ -287,14 +287,27 @@ and status."
              (case (getf data :reason)
                (:state-postcondition
                 (and (eq :failed (getf data :status))
-                     (= 2 (length signature)) (eq :state-postcondition (first signature))
-                     (typep (second signature) '(integer 0 *))))
+                     (case (first signature)
+                       (:state-postcondition
+                        (and (= 2 (length signature))
+                             (typep (second signature) '(integer 0 *))))
+                       (:state-frame
+                        (and (= 3 (length signature)) (second signature)
+                             (symbolp (second signature)))))))
                (:contract-error
                 (and (eq :error (getf data :status))
-                     (= 4 (length signature)) (eq :state-post (first signature))
-                     (typep (second signature) '(integer 0 *))
-                     (eq :contract-error (third signature))
-                     (symbolp (fourth signature)))))))))
+                     (case (first signature)
+                       (:state-post
+                        (and (= 4 (length signature))
+                             (typep (second signature) '(integer 0 *))
+                             (eq :contract-error (third signature))
+                             (symbolp (fourth signature))))
+                       (:state-frame
+                        (and (= 5 (length signature)) (eq :error (second signature))
+                             (third signature) (symbolp (third signature))
+                             (member (fourth signature)
+                                     '(:after :compare :key :project-before :project-after))
+                             (symbolp (fifth signature))))))))))))
 
 (defun valid-fixture-evidence-p (data)
   "Validate one persisted recipe observation independently of live definitions."
