@@ -10,13 +10,14 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits
                 #:call-with-run-time-limits #:time-limits-requested-p
-                #:time-limits-supported-p #:run-timeout-data)
+                #:run-timeout-data #:with-run-phase
+                #:call-catching-run-timeout #:call-with-run-finalization)
   (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:export #:backend-time-limit-protocol)
   (:import-from #:cl-spec/src/trial-report
                 #:*trial-report-context* #:make-trial-report-context #:completed-trial-report)
   (:export #:backend-trial-reporting)
-  (:import-from #:cl-spec/src/property #:property #:property-metadata)
+  (:import-from #:cl-spec/src/property #:property #:property-metadata #:property-arguments)
   (:import-from #:cl-spec/src/execution
                 #:trial-observation-lifecycle #:observation-failure-phase #:trial-observation-reason)
   (:export #:backend-trial-lifecycle)
@@ -178,14 +179,14 @@ Relaxing evidence requirements is confined to this shape."
          (null (getf outcome :shrunk-failure))
          (null (getf outcome :shrunk-outcome)))))
 
-(defun validate-fixture-run-error (outcome property budget)
+(defun validate-fixture-run-error (outcome property budget fixture-p)
   "Check lifecycle abort evidence independently of any earlier counterexamples."
   (let ((abort (getf outcome :run-error))
         (original (getf outcome :failure))
         (shrunk (getf outcome :shrunk-failure))
         (trials (getf outcome :trials))
         (rejected (getf outcome :rejected 0)))
-    (unless (and (getf (property-metadata property) :fixture)
+    (unless (and fixture-p
                  (eq :error (getf outcome :status))
                  (integerp trials) (<= 1 trials budget)
                  (integerp rejected) (<= 0 rejected trials)
@@ -201,7 +202,7 @@ Relaxing evidence requirements is confined to this shape."
       (unless (and (observation-from-current-run-p observation property)
                    (observation-failure-p observation)
                    (finite-signature-p (trial-observation-signature observation))
-                   (property-call-arguments-p property (trial-observation-arguments observation))
+                   (proper-list-p (trial-observation-arguments observation))
                    (eq :completed (getf (trial-observation-lifecycle observation) :completion)))
         (error 'invalid-backend-result :reason "invalid retained fixture counterexample")))
     (when (and shrunk
@@ -227,7 +228,8 @@ Relaxing evidence requirements is confined to this shape."
              (setf tail (cddr tail))))
   outcome)
 
-(defun validate-backend-outcome (outcome property budget)
+(defun validate-backend-outcome
+    (outcome property budget &optional (fixture-p nil fixture-supplied-p) positional-count)
   "Reject missing counts, contradictory statuses and unsupported shrink evidence."
   (flet ((refuse (reason)
            (error 'invalid-backend-result :reason reason)))
@@ -243,7 +245,12 @@ Relaxing evidence requirements is confined to this shape."
     (when (getf outcome :run-error)
       (when (or (getf outcome :timeout) (run-timeout-data))
         (refuse "a timeout cannot be disguised as a fixture error"))
-      (return-from validate-backend-outcome (validate-fixture-run-error outcome property budget)))
+      (validate-fixture-run-error outcome property budget
+                                  (if fixture-supplied-p
+                                      fixture-p
+                                      (getf (property-metadata property) :fixture)))
+      (return-from validate-backend-outcome
+        (check-outcome-argument-shapes outcome property positional-count)))
     (let* ((status (getf outcome :status))
            (trials (getf outcome :trials :missing))
            (rejected (getf outcome :rejected 0))
@@ -287,8 +294,6 @@ Relaxing evidence requirements is confined to this shape."
                         (finite-signature-p (trial-observation-signature observation))
                         (proper-list-p (trial-observation-arguments observation))
                         (observation-from-current-run-p observation property)
-                        (property-call-arguments-p property
-                                                   (trial-observation-arguments observation))
                         (if (eq :error (trial-observation-status observation))
                             (typep (trial-observation-condition observation) 'error)
                             (null (trial-observation-condition observation))))
@@ -306,7 +311,7 @@ Relaxing evidence requirements is confined to this shape."
            (refuse "shrunk evidence must preserve failure identity and change the input"))
          (unless (or (eq status :timeout) (eq status (trial-observation-status selected)))
            (refuse "status must describe the selected counterexample"))))
-      outcome)))
+      (check-outcome-argument-shapes outcome property positional-count))))
 
 (defgeneric backend-trial-reporting (backend)
   (:documentation "Return :TRIAL-REPORT-V1 when BACKEND measures every ordinary trial.")
@@ -330,6 +335,56 @@ report.  A backend that never calls the accounting hooks leaves the report
     (declare (ignore backend))
     nil))
 
+(defun prepare-backend-run (backend property options)
+  "Read extension capabilities before opening reports or invoking the backend."
+  (let ((fixture-p (and (typep property 'property) (getf (property-metadata property) :fixture))))
+    (when (and fixture-p (not (eq :fixture-v1 (backend-trial-lifecycle backend))))
+      (error 'invalid-backend-result :reason "backend does not support fixture trials"))
+    (when (and (time-limits-requested-p options)
+               (not (eq :time-limits-v1 (backend-time-limit-protocol backend))))
+      (error 'invalid-argument :operator 'run-generated-test :argument :options
+             :datum options :expected-type '(not (satisfies time-limits-requested-p))
+             :reason "run time limits require a participating backend"))
+    (list fixture-p
+          (eq :trial-report-v1 (backend-trial-reporting backend))
+          (backend-reports-generation backend)
+          (when (getf options :timeout)
+            (cond (fixture-p 1)
+                  ((eq (class-of property) (find-class 'property))
+                   (length (property-arguments property))))))))
+
+(defun check-outcome-argument-shapes (outcome property positional-count)
+  "Check saved counterexample shapes without losing prior observations on expiration."
+  (let* ((keys (remove-if-not (lambda (key) (getf outcome key)) '(:failure :shrunk-failure)))
+         (unchecked keys)
+         (earlier-timeout (getf outcome :timeout))
+         (timeout
+           (when keys
+             (call-with-run-finalization
+              (max 1 (getf outcome :trials))
+              (lambda ()
+                (dolist (key keys)
+                  (unless (property-call-arguments-p
+                           property (trial-observation-arguments (getf outcome key)))
+                    (error 'invalid-backend-result :reason "counterexample arguments do not fit"))
+                  (pop unchecked)))))))
+    (when timeout
+      (setf outcome (copy-list outcome))
+      (setf (getf outcome :status) :timeout
+            (getf outcome :timeout) timeout
+            (getf outcome :failure-phase) (getf timeout :phase)
+            (getf outcome :failure-reason) :timeout)
+      ;; A prior timeout may have left no time for the hook. Check the declaration
+      ;; captured for built-in positional or recipe inputs without dispatching.
+      (when (and earlier-timeout positional-count)
+        (setf unchecked
+              (remove-if (lambda (key)
+                           (= positional-count
+                              (length (trial-observation-arguments (getf outcome key)))))
+                         unchecked)))
+      (setf (getf outcome :unchecked-counterexamples) unchecked))
+    outcome))
+
 (defmethod run-generated-test :around (backend property &key options)
   "Own one generation request and enforce the backend outcome protocol.
 
@@ -340,32 +395,29 @@ attached to the outcome before validation.  A participating backend converts its
 own request-owned exhaustion into the narrow generation-only error branch with
 the trial and precondition counts it collected; this boundary never fabricates
 `:trials 0` for an exhaustion that generated roots."
-  (when (and (typep property 'property)
-             (getf (property-metadata property) :fixture)
-             (not (eq :fixture-v1 (backend-trial-lifecycle backend))))
-    (error 'invalid-backend-result :reason "backend does not support fixture trials"))
-  (when (and (time-limits-requested-p options)
-             (not (and (time-limits-supported-p)
-                       (eq :time-limits-v1 (backend-time-limit-protocol backend)))))
-    (error 'invalid-argument :operator 'run-generated-test :argument :options
-           :datum options :expected-type '(not (satisfies time-limits-requested-p))
-           :reason "run time limits require threaded SBCL and a participating backend"))
-  (let ((budget (getf options :trials :missing))
-        (*trial-observations* (list nil))
-         (*trial-report-context*
-           (when (eq :trial-report-v1 (backend-trial-reporting backend))
-             (make-trial-report-context property))))
-    (unless (and (integerp budget) (not (minusp budget)))
-      (error 'type-error :datum budget :expected-type '(integer 0 *)))
-    (let* ((explicit (getf options :generation-budget :missing))
-           (request (if (eq explicit :missing)
-                        (make-generation-request :planned budget)
-                        (make-generation-request :planned budget :budget explicit)))
-           (*generation-request* request))
-      (call-with-run-time-limits
-       options
-       (lambda ()
-         (let ((outcome (call-next-method)))
+  (call-with-run-time-limits
+   options
+   (lambda ()
+     (let ((budget (getf options :trials :missing))
+           (*trial-observations* (list nil))
+           (prepared
+             (call-catching-run-timeout
+              (lambda ()
+                (with-run-phase (:preparation) (prepare-backend-run backend property options)))
+              (lambda (timeout)
+                (return-from run-generated-test
+                  (list :status :timeout :timeout timeout :failure-reason :timeout
+                        :failure-phase (getf timeout :phase) :trials 0 :rejected 0))))))
+       (unless (and (integerp budget) (not (minusp budget)))
+         (error 'type-error :datum budget :expected-type '(integer 0 *)))
+       (destructuring-bind (fixture-p trial-report-p generation-report-p positional-count) prepared
+         (let* ((explicit (getf options :generation-budget :missing))
+                (request (if (eq explicit :missing)
+                             (make-generation-request :planned budget)
+                             (make-generation-request :planned budget :budget explicit)))
+                (*generation-request* request)
+                (*trial-report-context* (when trial-report-p (make-trial-report-context property)))
+                (outcome (call-next-method)))
            (validate-outcome-plist outcome)
            (when (loop for key in outcome by #'cddr thereis (eq key :trial-report))
              (error 'invalid-backend-result :reason "trial-report is owned by the runner"))
@@ -373,11 +425,10 @@ the trial and precondition counts it collected; this boundary never fabricates
              (setf outcome (list* :trial-report
                                   (completed-trial-report property outcome) outcome)))
            (when (run-timeout-data) (record-generation-interruption))
-           (validate-backend-outcome
-            (if (backend-reports-generation backend)
-                (list* :generation-report (generation-request-report request) outcome)
-                outcome)
-            property budget)))))))
+           (when generation-report-p
+             (setf outcome (list* :generation-report (generation-request-report request) outcome)))
+           (validate-backend-outcome outcome property budget fixture-p positional-count)))))
+   'run-generated-test))
 
 (defgeneric backend-capabilities (backend spec &key registry)
   (:documentation "Describe generation and shrinking with the spec object SPEC as the root.

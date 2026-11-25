@@ -8,7 +8,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits
                 #:call-with-run-time-limits #:call-with-run-limit-handoff
-                #:call-catching-run-timeout #:run-clock-start #:with-run-phase)
+                #:call-catching-run-timeout #:call-with-run-finalization
+                #:run-clock-start #:with-run-phase)
   (:export #:preparation-timeout-initargs)
   (:import-from #:cl-spec/src/property #:property-arguments)
   (:import-from #:cl-spec/src/coverage #:coverage-inputs #:coverage-bindings #:coverage-identity #:coverage-identity-from-metadata #:coverage-data #:copy-coverage-data
@@ -481,11 +482,10 @@ or :RUN-OPTIONS-MISMATCH."
         :profile (or profile :normal) :options (snapshot-value options)
         :elapsed (/ (float (- (get-internal-real-time) start)) internal-time-units-per-second)))
 
-(defun prepare-property-execution (designator registry profile seed-result options function-p)
-  "Resolve the declaration and save the information needed by generated execution."
-  (let* ((registry (check-registry registry 'run-property))
-         (property (prepare-property-run (resolve-property designator registry)))
-         (name (property-name property)))
+(defun prepare-property-execution (resolved name registry profile seed-result options function-p)
+  "Prepare the declaration and save the information needed by generated execution."
+  (let* ((property (prepare-property-run resolved))
+         (name (if (eq resolved property) name (property-name property))))
     ;; CHECK-FUNCTION validates its own result's name and kind.
     (unless function-p
       (check-replayed-result seed-result :property name 'run-property))
@@ -513,12 +513,41 @@ or :RUN-OPTIONS-MISMATCH."
                                  :capabilities '(:generation :unknown :shrinking :unknown))
             (snapshot-value (evidence-declared-cases property))
             (snapshot-value options)
-            (capture-run-provenance backend options)))))
+            (capture-run-provenance backend options)
+            (when (and (getf options :timeout)
+                       (or (eq (class-of property) (find-class 'property))
+                           (and function-p (coverage-fixture-p property))))
+              (mapcar #'first (property-arguments property)))))))
+
+(defun project-run-counterexamples (property outcome names timed-p)
+  "Use completed projections, with saved raw inputs as a fallback."
+  (let* ((unchecked (when (getf outcome :timeout) (getf outcome :unchecked-counterexamples)))
+         (original (unless (member :failure unchecked) (getf outcome :failure)))
+         (shrunk (unless (member :shrunk-failure unchecked) (getf outcome :shrunk-failure)))
+         (original-args (when original (trial-observation-arguments original)))
+         (shrunk-args (when shrunk (trial-observation-arguments shrunk))))
+    (labels ((fallback (arguments)
+               (if (and timed-p names)
+                   (loop for name in names for value in arguments append (list name value))
+                   arguments))
+             (project (arguments)
+               (name-arguments property (if timed-p (snapshot-value arguments) arguments))))
+      (let ((first (fallback original-args))
+            (second (fallback shrunk-args)))
+        (flet ((format-inputs ()
+                 (when original (setf first (project original-args)))
+                 (when shrunk (setf second (project shrunk-args)))))
+          (let ((timeout
+                  (if timed-p
+                      (call-with-run-finalization (max 1 (getf outcome :trials)) #'format-inputs)
+                      (progn (format-inputs) (getf outcome :timeout)))))
+            (list :counterexample first :shrunk-counterexample second :timeout timeout)))))))
 
 (defun execute-property-run (property-designator profile seed options registry
                              &optional result-constructor)
   "Prepare and execute a property using the caller's run clock."
   (let* ((start (run-clock-start))
+         (requested-name (when (symbolp property-designator) property-designator))
          (seed-result (and (typep seed 'property-result) seed))
          (effective-profile (or profile :normal))
          (effective-seed (or (if seed-result (property-result-seed seed-result) seed)
@@ -527,19 +556,23 @@ or :RUN-OPTIONS-MISMATCH."
            (call-catching-run-timeout
             (lambda ()
               (with-run-phase (:preparation)
-                (prepare-property-execution property-designator registry effective-profile
-                                            seed-result options (not (null result-constructor)))))
+                (let* ((registry (check-registry registry 'run-property))
+                       (resolved (resolve-property property-designator registry)))
+                  (setf requested-name (property-name resolved))
+                  (prepare-property-execution
+                   resolved requested-name registry effective-profile
+                   seed-result options (not (null result-constructor))))))
             (lambda (timeout)
               (let ((initargs (preparation-timeout-initargs
-                               timeout (and (symbolp property-designator) property-designator)
-                               effective-seed options start :profile effective-profile)))
+                               timeout requested-name effective-seed options start
+                               :profile effective-profile)))
                 (return-from execute-property-run
                   (if result-constructor
                       (funcall result-constructor initargs :timeout nil)
                       (apply #'make-instance 'property-result initargs))))))))
     (destructuring-bind (registry property name backend coverage-options
                          *coverage-context* trials metadata declared-cases
-                         captured-options provenance)
+                         captured-options provenance counterexample-names)
         prepared
       (let* ((*coverage-trial* nil)
              (outcome (let ((*random-state* (seed->random-state effective-seed)))
@@ -548,7 +581,12 @@ or :RUN-OPTIONS-MISMATCH."
                            backend-options
                            (lambda ()
                              (run-generated-test backend property :options backend-options))))))
-             (coverage-validation (validate-coverage-run *coverage-context* outcome))
+             (preparation-timeout-p (eq :preparation (getf (getf outcome :timeout) :phase)))
+             (coverage-validation
+               (unless preparation-timeout-p (validate-coverage-run *coverage-context* outcome)))
+             (projections (project-run-counterexamples property outcome counterexample-names
+                                                       (getf options :timeout)))
+             (timeout (getf projections :timeout))
              (elapsed (/ (float (- (get-internal-real-time) start))
                          internal-time-units-per-second))
              (original (getf outcome :failure))
@@ -567,17 +605,20 @@ or :RUN-OPTIONS-MISMATCH."
         (let ((initargs
                 (list
                  ;; Zero trials or all preconditions rejected means no evidence.
-                 :status (if (and (eq :passed (getf outcome :status))
-                                  (= (getf outcome :trials) (getf outcome :rejected 0)))
-                             :skipped
-                             (getf outcome :status))
-                 :coverage (coverage-report-data
-                            *coverage-context*
-                            (if coverage-options :unsupported-backend :disabled))
+                 :status (cond (timeout :timeout)
+                               ((and (eq :passed (getf outcome :status))
+                                     (= (getf outcome :trials) (getf outcome :rejected 0)))
+                                :skipped)
+                               (t (getf outcome :status)))
+                 :coverage (if preparation-timeout-p
+                               '(:availability :not-collected :reason :preparation-timeout)
+                               (coverage-report-data
+                                *coverage-context*
+                                (if coverage-options :unsupported-backend :disabled)))
                  :trial-report (getf outcome :trial-report :not-collected)
                  :declared-cases declared-cases
                  :run-error (getf outcome :run-error)
-                 :timeout (getf outcome :timeout)
+                 :timeout timeout
                  :schema-metadata metadata :budget trials
                  :options captured-options :provenance provenance
                  :property name
@@ -590,15 +631,11 @@ or :RUN-OPTIONS-MISMATCH."
                                                     :not-collected))
                  :generation-report (snapshot-value
                                      (or (getf outcome :generation-report) :not-collected))
-                 :failure-phase (getf outcome :failure-phase)
-                 :failure-reason (getf outcome :failure-reason)
+                 :failure-phase (if timeout (getf timeout :phase) (getf outcome :failure-phase))
+                 :failure-reason (if timeout :timeout (getf outcome :failure-reason))
                  :rejected (getf outcome :rejected 0)
-                 :counterexample (when original
-                                   (name-arguments property
-                                                   (trial-observation-arguments original)))
-                 :shrunk-counterexample (when shrunk
-                                          (name-arguments property
-                                                          (trial-observation-arguments shrunk)))
+                 :counterexample (getf projections :counterexample)
+                 :shrunk-counterexample (getf projections :shrunk-counterexample)
                  :condition (or (and (getf outcome :run-error) (getf outcome :condition))
                                 (when selected (trial-observation-condition selected))
                                 (getf outcome :condition))

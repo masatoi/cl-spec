@@ -2392,6 +2392,7 @@ seconds. The result retains these limits when replayed."
    options
    (lambda ()
      (let* ((start (run-clock-start))
+            (requested-name (when (symbolp function-designator) function-designator))
             (seed-result (and (typep seed 'property-result) seed))
             (budget (or trials
                         (when (typep seed-result 'function-check-result)
@@ -2400,11 +2401,15 @@ seconds. The result retains these limits when replayed."
               (call-catching-run-timeout
                (lambda ()
                  (with-run-phase (:preparation)
+                   (when (typep function-designator 'function-spec)
+                     (setf requested-name (function-spec-name function-designator)))
                    (setf registry (check-registry registry 'check-function))
                    (unless budget
                      (setf budget (backend-default-trials (current-generator-backend))))
                    (let* ((contract (resolve-function-spec function-designator registry))
-                          (name (function-spec-name contract))
+                          (name (if (eq contract function-designator)
+                                    requested-name
+                                    (setf requested-name (function-spec-name contract))))
                           (property (if (function-spec-fixture contract)
                                         (make-fixture-check-property contract :budget budget)
                                         (make-function-check-property contract :budget budget))))
@@ -2415,8 +2420,7 @@ seconds. The result retains these limits when replayed."
                  (return-from check-function
                    (apply #'make-instance 'function-check-result
                           (preparation-timeout-initargs
-                           timeout (and (symbolp function-designator) function-designator)
-                           seed options start :budget budget)))))))
+                           timeout requested-name seed options start :budget budget)))))))
        (destructuring-bind (property name source case-run) prepared
          (let ((enclosing-case-run *case-run*)
                (*case-run* case-run))

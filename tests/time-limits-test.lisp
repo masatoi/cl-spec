@@ -336,6 +336,148 @@
       (ok (eq :timeout (getf data :status)))
       (ok (equal '(:limit :trial :trial 1 :phase :state-post) (getf data :timeout))))))
 
+#+(and sbcl sb-thread)
+(defclass slow-counterexample-property (cl-spec:property) ())
+
+#+(and sbcl sb-thread)
+(defvar *slow-projection-value* nil)
+
+#+(and sbcl sb-thread)
+(defvar *counterexample-projections* nil)
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/property:property-named-arguments :around
+    ((property slow-counterexample-property) arguments)
+  (push (first arguments) *counterexample-projections*)
+  (when (eql *slow-projection-value* (first arguments))
+    (sleep 1/4))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest run-limit-includes-counterexample-projection
+  (let* ((*slow-projection-value* 7)
+         (*counterexample-projections* nil)
+         (property (make-instance 'slow-counterexample-property
+                                  :name 'slow-projection :arguments '((x (member 7)))
+                                  :function (constantly nil) :trials '(:normal 1)
+                                  :metadata '(:shrink nil)))
+         (data (cl-spec:result-data
+                (cl-spec:run-property property :seed 2 :options '(:timeout 1/10)))))
+    (ok (eq :timeout (getf data :status)))
+    (ok (equal '(:limit :run :trial 1 :phase :finalization) (getf data :timeout)))
+    (ok (eql 1 (getf data :trials)))
+    (ok (equal '(7) *counterexample-projections*))
+    (ok (equal '(7) (getf data :counterexample)))
+    (ok (equal '(7) (getf (getf data :failure) :arguments)))
+    (ok (>= (getf data :elapsed) 1/20))))
+
+#+(and sbcl sb-thread)
+(deftest projection-timeout-preserves-an-earlier-named-counterexample
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*slow-projection-value* 10)
+        (*counterexample-projections* nil))
+    (cl-spec:defgenerator projected-integer ()
+      (:shrink (value) (when (= value 20) (list 10)))
+      20)
+    (cl-spec:defspec projected-input integer (:generator projected-integer))
+    (let* ((property (make-instance 'slow-counterexample-property
+                                    :name 'projected-shrink :arguments '((x projected-input))
+                                    :function (constantly nil) :trials '(:normal 1)))
+           (data (cl-spec:result-data
+                  (cl-spec:run-property property :seed 2 :options '(:timeout 1/10)))))
+      (ok (eq :timeout (getf data :status)))
+      (ok (eq :finalization (getf (getf data :timeout) :phase)))
+      (ok (equal '(10 20) *counterexample-projections*))
+      (ok (equal '(x 20) (getf data :counterexample)))
+      (ok (equal '(10) (getf data :shrunk-counterexample)))
+      (ok (equal '(10) (getf (getf data :shrunk-failure) :arguments))))))
+
+#+(and sbcl sb-thread)
+(defvar *argument-check-delay* nil)
+
+#+(and sbcl sb-thread)
+(defvar *argument-check-count* 0)
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/property:property-call-arguments-p :around
+    ((property slow-counterexample-property) arguments)
+  (declare (ignore arguments))
+  (incf *argument-check-count*)
+  (when *argument-check-delay* (sleep *argument-check-delay*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest run-limit-includes-counterexample-argument-verification
+  (let* ((*argument-check-delay* 1/4)
+         (*argument-check-count* 0)
+         (*counterexample-projections* nil)
+         (property (make-instance 'slow-counterexample-property
+                                  :name 'slow-argument-check :arguments '((x (member 7)))
+                                  :function (constantly nil) :trials '(:normal 1)
+                                  :metadata '(:shrink nil)))
+         (data (cl-spec:result-data
+                (cl-spec:run-property property :seed 4 :options '(:timeout 1/10)))))
+    (ok (eq :timeout (getf data :status)))
+    (ok (eq :finalization (getf (getf data :timeout) :phase)))
+    (ok (eql 1 (getf data :trials)))
+    (ok (eql 1 *argument-check-count*))
+    (ok (null *counterexample-projections*))
+    (ok (null (getf data :counterexample)))
+    (ok (equal '(7) (getf (getf data :failure) :arguments)))))
+
+#+(and sbcl sb-thread)
+(defvar *definition-description-delay* nil)
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/schema:definition-description :around
+    ((property slow-counterexample-property))
+  (when *definition-description-delay* (sleep *definition-description-delay*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest suite-preserves-the-identity-of-an-early-timeout
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (property (make-instance 'slow-counterexample-property
+                                 :name 'slow-description :arguments '((x (member 7)))
+                                 :function (constantly t) :trials '(:normal 1))))
+    (cl-spec:register-property property)
+    (let* ((*definition-description-delay* 1/4)
+           (suite (cl-spec:check-contracts :names '((:property slow-description)) :seeds '(4)
+                                           :options '(:timeout 1/10)))
+           (entry (first (getf suite :entries)))
+           (result (getf entry :result)))
+      (ok (eq :timeout (getf entry :status)))
+      (ok (eq :failed (getf entry :verdict)))
+      (ok (eq 'slow-description (getf result :name)))
+      (ok (eq :preparation (getf (getf result :timeout) :phase)))
+      (ok (eql 0 (getf result :trials))))))
+
+#+(and sbcl sb-thread)
+(defvar *trial-reporting-delay* nil)
+
+#+(and sbcl sb-thread)
+(defmethod cl-spec/src/generator:backend-trial-reporting :around
+    ((backend cl-spec/src/backends/check-it::check-it-backend))
+  (when *trial-reporting-delay* (sleep *trial-reporting-delay*))
+  (call-next-method))
+
+#+(and sbcl sb-thread)
+(deftest backend-capability-timeout-precedes-measurement
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (calls 0))
+    (cl-spec:defproperty delayed-capability ((x (member 7)))
+      (declare (ignore x))
+      (incf calls))
+    (let* ((*trial-reporting-delay* 1/4)
+           (result (cl-spec:run-property 'delayed-capability :seed 4
+                     :options '(:timeout 1/10 :coverage (:mode :observe))))
+           (data (cl-spec:result-data result)))
+      (ok (eq :timeout (getf data :status)))
+      (ok (eq :preparation (getf (getf data :timeout) :phase)))
+      (ok (= 0 calls (getf data :trials)))
+      (ok (eq :not-collected (getf (getf data :coverage) :availability)))
+      (ok (eq :not-collected (property-result-trial-report result))))))
+
 (deftest invalid-run-limits-are-refused
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry)))
     (cl-spec:defproperty timed ((value integer)) (integerp value))

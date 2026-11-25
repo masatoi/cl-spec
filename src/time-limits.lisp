@@ -3,7 +3,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:export #:call-with-run-time-limits #:time-limits-requested-p #:time-limits-supported-p
-           #:call-catching-run-timeout #:with-trial-clock #:with-run-phase
+           #:call-catching-run-timeout #:call-with-run-finalization
+           #:with-trial-clock #:with-run-phase
            #:mark-run-phase #:run-timeout-data #:timeout-unwinding-p
            #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
            #:with-native-shrink #:with-native-candidate
@@ -173,6 +174,14 @@
 (defmacro with-run-phase ((phase &optional trial) &body body)
   "Bound BODY by the earliest active run or trial deadline."
   `(call-with-run-phase ,phase (lambda () ,@body) ,trial))
+
+(defun call-with-run-finalization (trial function)
+  "Run a finalization hook under the remaining deadline and return any timeout."
+  (call-catching-run-timeout
+   (lambda ()
+     (with-run-phase (:finalization trial) (funcall function))
+     nil)
+   #'identity))
 
 (defmacro with-native-shrink ((trial) &body body)
   "Identify the ordinary trial before preparing native shrink candidates."

@@ -1059,8 +1059,8 @@ through `:options`.
   :options '(:timeout 5 :trial-timeout 1))
 ```
 
-- `:timeout` bounds preparation, generation and shrinking under one deadline.
-  Preparation includes registry lookup and metadata.
+- `:timeout` bounds preparation, generation, shrinking and finalization under
+  one deadline. Preparation includes registry lookup and metadata.
 - `:trial-timeout` starts a fresh deadline for each ordinary trial and each
   shrink candidate. It covers input generation, validation and the call for
   an ordinary trial, and preparation and evaluation of a shrink candidate.
@@ -1083,7 +1083,10 @@ completed trials and leaves uncollected metadata unavailable. A fixture's
 cleanup outcome is recorded under
 `:timeout :cleanup`, separately from the primary timeout. Counts and coverage
 reflect completed ordinary trials. The original failure and any accepted
-reduction remain available if shrinking times out.
+reduction remain available if shrinking times out. A timeout in
+`:finalization` retains completed counterexample projections. Verified
+inputs whose naming timed out use their saved raw arguments. An observation
+whose argument check timed out remains available as failure evidence.
 
 Time limits use current-thread timers on threaded SBCL with the check-it
 backend. Other Lisp implementations and backends reject time limit options.
