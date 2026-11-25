@@ -843,7 +843,7 @@ read but never checked."
                        :state-frame
                        ,(when modifies
                           `(make-state-frame
-                            ',modifies
+                            ',modifies ',(append variables capture-names)
                             (lambda (,@variables ,@capture-names)
                               (declare (ignorable ,@variables ,@capture-names))
                               (list ,@(mapcar (lambda (group) `(list ,@(rest group)))

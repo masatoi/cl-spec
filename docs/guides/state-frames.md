@@ -67,8 +67,8 @@ its keys and values using the same bounds. It distinguishes absent keys from
 stored NIL values.
 
 The contract captures its registry's observer registrations when the
-contract is registered. To adopt a replacement observer, also re-register the
-contract. The digest covers the frame expressions, the observer name,
+contract is declared. To adopt a replacement observer, evaluate the
+`defspec-function` declaration again. The digest covers the frame expressions, the observer name,
 version and declared callback identities. For anonymous callbacks use
 `:source` to supply stable declaration data. With an anonymous callback
 and no source, the digest is incomplete. Bump the version when the behavior

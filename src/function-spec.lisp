@@ -7,7 +7,7 @@
 (defpackage #:cl-spec/src/function-spec
   (:use #:cl)
   (:import-from #:cl-spec/src/state-frame
-                #:state-frame #:state-frame-clauses #:state-frame-observers
+                #:state-frame #:state-frame-clauses #:state-frame-observers #:state-frame-variables
                 #:capture-state-frame #:check-state-frame #:state-frame-error
                 #:state-frame-error-data)
   (:import-from #:cl-spec/src/coverage
@@ -1234,6 +1234,14 @@ would run while introspection reported no such clause"
     (validate-capture-bindings contract)
     (setf (slot-value contract 'argument-specs)
           (normalize-call-declarations (function-spec-argument-specs contract)))
+    (let ((frame (function-spec-state-frame contract)))
+      (when (and frame
+                 (not (equal (state-frame-variables frame)
+                             (append (call-declaration-variables
+                                      (function-spec-argument-specs contract))
+                                     (mapcar #'first
+                                             (function-spec-capture-bindings contract))))))
+        (refuse :state-frame "changed bindings require a newly compiled frame")))
     (let ((generator (function-spec-argument-generator contract)))
       (unless (or (null generator)
                   (and (symbolp generator) (not (keywordp generator))))

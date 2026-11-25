@@ -3,6 +3,7 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/main)
+  (:import-from #:cl-spec/src/execution #:failure-identities-match-p)
   (:import-from #:cl-spec/src/backends/check-it))
 (in-package #:cl-spec/tests/state-frame-test)
 
@@ -143,3 +144,69 @@
       (ok (eq :same-failure (getf recheck :status)))
       (ok (equal '(:present nil) (getf frame :before)))
       (ok (equal '(:present t :value (:balance 9)) (getf frame :after))))))
+
+(deftest capture-rebinding-refuses-a-stale-compiled-frame
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*rows* (make-hash-table :test #'equal)))
+    (register-table-observer 1)
+    (let ((contract
+            (cl-spec:defspec-function frame-target
+              (:args (key (member :account)))
+              (:capture (allowed key) (other :locked))
+              (:modifies (:rows allowed))
+              (:returns keyword))))
+      (ok (eq :failed (getf (checked-frame :account) :status)))
+      (ok (handler-case
+              (progn
+                (reinitialize-instance
+                 contract :capture-bindings '((other :locked) (allowed key))
+                 :capture-functions (list (lambda (key) (declare (ignore key)) :locked)
+                                          (lambda (key other) (declare (ignore other)) key)))
+                nil)
+            (cl-spec:invalid-function-spec-form () t)))
+      ;; Change it again so a fresh check would detect the forbidden row.
+      (remhash :locked *rows*)
+      (ok (eq :failed (getf (checked-frame :account) :status))))))
+
+(deftest argument-rebinding-refuses-a-stale-compiled-frame
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*rows* (make-hash-table :test #'equal)))
+    (register-table-observer 1)
+    (let ((contract
+            (cl-spec:defspec-function frame-target
+              (:args (key (member :account)))
+              (:modifies (:rows key))
+              (:returns keyword))))
+      (ok (handler-case
+              (progn
+                (reinitialize-instance contract :argument-specs '((renamed (member :account))))
+                nil)
+            (cl-spec:invalid-function-spec-form () t))))))
+
+(deftest frame-failures-use-observer-key-equality
+  (let ((base-key (make-array 6 :element-type 'base-char :initial-contents "locked"))
+        (char-key (make-array 6 :element-type 'character :initial-contents "locked")))
+    (ok (equal base-key char-key))
+    (ok (failure-identities-match-p (list :state-frame :rows base-key)
+                                    (list :state-frame :rows char-key)))
+    (ok (not (failure-identities-match-p (list :state-frame :rows base-key)
+                                         (list :state-frame :other char-key))))))
+
+(deftest observer-projection-must-report-presence-explicitly
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*rows* (make-hash-table :test #'equal)))
+    (setf (gethash :amount *rows*) 10)
+    (cl-spec:register-state-observer
+     :opaque :version 1 :source 'missing-presence :snapshot 'opaque-row-snapshot
+     :compare 'opaque-row-changes
+     :project (lambda (snapshot key)
+                (declare (ignore key))
+                (list :balance (row-balance snapshot))))
+    (cl-spec:defspec-function update-opaque-row
+      (:args) (:returns integer) (:modifies (:opaque)))
+    (let* ((data (cl-spec:call-check-data (cl-spec:check-call 'update-opaque-row nil)))
+           (observation (getf data :observation))
+           (frame (getf (getf observation :state) :frame)))
+      (ok (eq :error (getf data :status)))
+      (ok (eq :contract-error (getf observation :reason)))
+      (ok (eq :project-before (getf frame :stage))))))

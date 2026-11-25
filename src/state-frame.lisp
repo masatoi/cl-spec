@@ -14,6 +14,7 @@
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
   (:export #:register-state-observer #:register-hash-table-state-observer
            #:state-frame #:make-state-frame #:state-frame-clauses #:state-frame-observers
+           #:state-frame-variables
            #:valid-frame-clauses-p #:capture-state-frame #:check-state-frame
            #:state-frame-error #:state-frame-error-data #:state-frame-error-condition))
 (in-package #:cl-spec/src/state-frame)
@@ -129,10 +130,11 @@ copying. VERSION identifies the reader's scope and meaning."
                              :compare 'changed-table-keys :project 'project-table-value
                              :source (list :equal-hash-table (and (symbolp reader) reader)))))
 
-(defstruct (state-frame (:constructor %make-state-frame (clauses key-function observers))
+(defstruct (state-frame (:constructor %make-state-frame (clauses variables key-function observers))
                         (:copier nil))
   "One frame declaration with captured observer registrations."
   (clauses nil :read-only t)
+  (variables nil :read-only t)
   (key-function nil :read-only t)
   (observers nil :read-only t))
 
@@ -143,13 +145,13 @@ copying. VERSION identifies the reader's scope and meaning."
                 (and (consp entry) (finite-list-p entry) (observer-name-p (first entry))))
               clauses)))
 
-(defun make-state-frame (clauses key-function &optional (registry *registry*))
+(defun make-state-frame (clauses variables key-function &optional (registry *registry*))
   "Resolve the observer registrations used by the compiled frame."
   (check-argument clauses '(satisfies valid-frame-clauses-p) 'make-state-frame :clauses)
   (check-argument key-function 'function 'make-state-frame :key-function)
   (let ((resolved (make-hash-table :test #'eq)))
     (%make-state-frame
-     (snapshot-value clauses) key-function
+     (snapshot-value clauses) (copy-list variables) key-function
      (loop for (name) in clauses
            collect (or (gethash name resolved)
                        (let ((observer (registry-find-state-observer registry name)))
@@ -208,8 +210,8 @@ copying. VERSION identifies the reader's scope and meaning."
   (call-frame-operation
    observer stage
    (lambda ()
-     (multiple-value-bind (value present) (funcall (state-observer-project observer)
-                                                   snapshot key)
+     (destructuring-bind (value present)
+         (multiple-value-list (funcall (state-observer-project observer) snapshot key))
        (check-type present boolean)
        (if present
            (list :present t :value (copy-state-data value))
