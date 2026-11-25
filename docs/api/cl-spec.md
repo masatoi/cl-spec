@@ -454,8 +454,11 @@ not the initial object state, which the author must build.
 With :FIXTURE, the runner generates recipes and reconstructs fresh state for each
 trial and shrink candidate. A result supplied as :SEED requires matching complete
 declaration identity, options, profile and budget. Cleanup failures stop the run
-with phase :FIXTURE; :RUN-ERROR retains that evidence separately from any earlier
+with phase :FIXTURE. :RUN-ERROR retains that evidence separately from any earlier
 contract failure. Fixture results and artifacts use version 2.
+
+OPTIONS accepts :TIMEOUT, :TRIAL-TIMEOUT and :CLEANUP-TIMEOUT in wall clock
+seconds. The result retains these limits when replayed.
 ```
 
 <a name="check-function-with-examples"></a>
@@ -1195,8 +1198,10 @@ Run the property named by PROPERTY-DESIGNATOR and return a PROPERTY-RESULT.
 PROFILE selects a trial count from the property's :TRIALS table (§33).  SEED, when
 supplied, reproduces an earlier run; when omitted a fresh seed is drawn and
 recorded so the run can be replayed later.  OPTIONS is passed through to the
-backend. With a result as SEED, omitted PROFILE and OPTIONS inherit their saved
-values. An explicit NIL selects profile :NORMAL or the empty option list.
+backend. :TIMEOUT and :TRIAL-TIMEOUT in OPTIONS are wall clock limits in seconds.
+:CLEANUP-TIMEOUT caps fixture cleanup. With a result as SEED, omitted PROFILE
+and OPTIONS inherit their saved values. An explicit NIL selects profile
+:NORMAL or the empty option list.
 
 A PROPERTY-RESULT supplied as SEED asks to re-apply a past run.  A property
 whose definition declares state constraints without a fixture refuses that with
@@ -1805,8 +1810,9 @@ definition.  Returns SPEC.
 
 Run PROPERTY and return a validated backend outcome plist.
 OPTIONS must contain :TRIALS, a nonnegative integer budget, and may carry :REGISTRY.
-The outcome requires :STATUS (:passed, :failed, :error or :skipped) and :TRIALS,
-the nonnegative count actually generated, never greater than the budget.
+The outcome requires :STATUS (:passed, :failed, :error, :skipped or :timeout)
+and :TRIALS, the count of completed ordinary trials, at most the budget.
+An owned :TIMEOUT record identifies an unfinished phase and the trial reached.
 :REJECTED counts precondition refusals in generated trials, excluding shrinking.
 Optional :CAPABILITIES reports :GENERATION and :SHRINKING from the actual compiled
 generator, captured before trials; absent/NIL leaves result capabilities unknown.
@@ -2589,8 +2595,7 @@ Observation from the original failing trial.
 
 *Accessor* of `property-result` · `(object)`
 
-:GENERATION when the run stopped in generation infrastructure rather
-than on a target observation, else NIL.
+The backend phase when a generation budget or deadline was exhausted.
 
 <a name="property-result-generation-report"></a>
 ### property-result-generation-report
@@ -2688,8 +2693,7 @@ Observed accepted shrink, or NIL.
 
 *Accessor* of `property-result` · `(object)`
 
-One of :PASSED, :FAILED, :ERROR, :SKIPPED or
-:PENDING.
+One of :PASSED, :FAILED, :ERROR, :SKIPPED, :TIMEOUT or :PENDING.
 
 <a name="property-result-trials"></a>
 ### property-result-trials
