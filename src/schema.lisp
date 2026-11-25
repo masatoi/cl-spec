@@ -105,7 +105,8 @@ Every call returns a fresh copy, so a caller may change what it is given."
          :fixture-protocol
          '(:result-schema-version 2 :artifact-version 2
            :record-kinds (:result :fixture-check) :input-kind :fixture-recipe
-           :isolations (:fresh) :lifecycle-states (:not-acquired :released :unknown))
+           :isolations (:fresh :around) :lifecycle-states (:not-acquired :released :unknown)
+           :around-states (:not-started :completed :error))
          :capture-value-states '(:collected :unavailable)
          :capture-value-keys '(:name :availability :value :reason :type)
          :capture-value-type-forms '(:named :anonymous-class :unknown)

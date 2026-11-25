@@ -4,9 +4,9 @@ A function contract can declare an explicit `:fixture` to reconstruct its initia
 state for every trial and shrink candidate. The runner generates and persists a
 **recipe**, not the mutable object the target receives.
 
-The first implementation supports `:isolation :fresh`: fixture-owned in-memory
-state, built anew for each call. It does not restore a caller's existing object,
-roll back a database, or supervise a killed worker.
+With `:isolation :fresh`, setup constructs fixture-owned state for each call.
+With `:isolation :around`, a caller-supplied wrapper establishes an extent for
+the entire trial, such as a transaction or a dynamically scoped mock.
 
 ## Run the executable example
 
@@ -57,8 +57,9 @@ The mirrored suite is `tests/reproducible-withdraw-example-test.lisp`.
 ```
 
 The target increments the integer stored in the cell and returns its new value.
-All five fixture clauses are required and unique. `:version` is a positive
-integer. Change it when helper changes alter the meaning of state construction.
+The five clauses shown here are required for both isolation modes and appear
+once each. `:version` is a positive integer. Change it when helper changes
+alter the meaning of state construction or isolation.
 
 `:recipe` binds one name to a value matching its spec. Setup and cleanup each
 receive that recipe and a context with their declared name. Context is a fresh
@@ -81,6 +82,37 @@ state. Capture is still observation, not automatic copying or rollback.
 Clocks, ambient randomness, global objects and external services are not
 checkpointed. Dependency implementations and closure state are excluded from
 declaration digests, so fixture version discipline matters.
+
+## Wrap a trial in a transaction
+
+Choose `(:isolation :around)` and add one wrapper clause. Its body receives
+a zero-argument function and calls it synchronously exactly once.
+
+```lisp
+(:around (trial)
+  (with-rolled-back-transaction ()
+    (funcall trial)))
+```
+
+Here `with-rolled-back-transaction` is supplied by the application. The trial
+function runs setup, the same call checks as `check-call`, evidence capture and
+cleanup while the transaction is active. The wrapper's return values are
+ignored. Both generation and shrinking use this lifecycle for each recipe
+that passes recipe validation. An error, an outward transfer of control, or a
+missing or repeated trial call aborts the run with an `:around` lifecycle error.
+A repeated call cannot rerun setup or the target.
+
+The executable example uses `unwind-protect` to roll back withdrawals from
+one shared ledger. Each trial checks that it started at 100.
+
+```lisp
+(cl-spec/examples/reproducible-withdraw:demo-rollback *example-registry*)
+;; => (:STATUS :PASSED :TRIALS 2 :BALANCE 100)
+```
+
+The fixture lifecycle records `:isolation`. For `:around`, it also records
+the wrapper status. The declaration digest includes the isolation and wrapper
+source. Setup, cleanup and the wrapper are captured for the whole run.
 
 ## Three execution modes
 
@@ -131,12 +163,13 @@ target outcome cannot turn a failed cleanup into a passed run.
 Lifecycle `:state` is `:not-acquired`, `:released`, or `:unknown`.
 `:released` means the declared cleanup completed, not that cl-spec inspected
 all reachable state or verified a rollback. `:unknown` is used when cleanup
-failed. Arbitrary outward control transfers propagate after cleanup; they do not
-produce fabricated successful results. Cleanup itself must not escape outward.
+failed or the wrapper aborted. In `:fresh` mode an outward control transfer
+propagates after cleanup. In `:around` mode, the wrapper boundary records it
+as a lifecycle error.
 
 A process kill or crash can bypass Lisp cleanup entirely. This core feature
 cannot return a record from a dead process; host supervision remains separate.
-Database isolation, asynchronous tasks and external I/O are outside `:fresh`.
+The application's wrapper owns any database or external rollback guarantee.
 
 ## Save and recheck a counterexample
 

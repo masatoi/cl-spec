@@ -9,6 +9,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sbcl: ['2.1.10', '2.5.0']
+    env:
+      CL_SPEC_CI_SBCL_VERSION: ${{ matrix.sbcl }}
 
     steps:
       - name: Checkout
@@ -16,6 +22,7 @@ jobs:
 
       - name: Install Roswell
         env:
+          # Roswell's current dump code needs newer SBCL internals.
           LISP: sbcl-bin/2.5.0
         run: |
           curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
@@ -25,12 +32,19 @@ jobs:
         run: |
           ros --version
           ros install rove
+          if [ "$CL_SPEC_CI_SBCL_VERSION" != 2.5.0 ]; then
+            ros install "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION"
+          fi
+          ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" run \
+              --eval '(assert (string= (lisp-implementation-version)
+                                        (uiop:getenv "CL_SPEC_CI_SBCL_VERSION")))' \
+              --eval '(uiop:quit 0)'
 
       - name: Assert the core system does not pull in check-it
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
-          ros run --eval '(sb-ext:disable-debugger)' \
+          ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" run --eval '(sb-ext:disable-debugger)' \
                   --eval '(ql:quickload :cl-spec :silent t)' \
                   --eval '(uiop:quit (if (find-package "CHECK-IT") 1 0))'
 
@@ -46,26 +60,27 @@ jobs:
           # REDEFINITION-WITH-DEFGENERIC/DEFMETHOD ones. ASDF resolves
           # cl-spec through CL_SOURCE_REGISTRY on its own, so compile-system
           # here compiles straight into a fresh, cold fasl cache.
-          ros run --eval '(sb-ext:disable-debugger)' \
+          ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" run --eval '(sb-ext:disable-debugger)' \
                   --eval '(asdf:compile-system :cl-spec :force :all)' \
                   --eval '(uiop:quit 0)'
 
       - name: Run tests
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
-        run: rove cl-spec.asd
+        run: ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" "$HOME/.roswell/bin/rove" cl-spec.asd
 
       - name: Check ASDF propagates a failed test
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
         run: |
-          ros run --eval '(sb-ext:disable-debugger)' \
+          ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" run --eval '(sb-ext:disable-debugger)' \
                   --eval '(ql:quickload :cl-spec/tests :silent t)' \
                   --eval '(asdf:test-system :cl-spec)' \
                   --load ci/asdf-test-failure.lisp \
                   --eval '(uiop:quit 0)'
 
       - name: Run the real-range tests on CLISP
+        if: matrix.sbcl == '2.5.0'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y clisp
@@ -84,6 +99,7 @@ jobs:
           run_ranges ansi -ansi
 
       - name: Run the function case guard regressions on ECL
+        if: matrix.sbcl == '2.5.0'
         run: |
           sudo apt-get install -y ecl
           ql_dir="$HOME/.roswell/lisp/quicklisp"

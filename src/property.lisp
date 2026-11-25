@@ -9,7 +9,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/definition-validation
                 #:validate-definition #:definition-validation-slots
-                #:call-with-definition-rollback #:finite-definition-form-p
+                #:call-with-definition-rollback #+sbcl #:call-with-class-update-rollback
+                #:finite-definition-form-p
                 #:definition-keyword-plist-p)
   (:import-from #:cl-spec/src/conditions #:invalid-property-form)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
@@ -125,6 +126,12 @@ introspection can show the author's source.")
 (defmethod definition-validation-slots append ((object property))
   '(name arguments targets kind tags documentation-string property-function body
     source-form source-location trials metadata))
+
+#+sbcl
+(defmethod update-instance-for-different-class :around
+    ((previous standard-object) (current property) &rest initargs)
+  (declare (ignore initargs))
+  (call-with-class-update-rollback previous current (lambda () (call-next-method))))
 
 (defgeneric validate-property-executable (property)
   (:documentation "Validate executable behavior; evaluator subclasses may specialize this hook."))

@@ -12,6 +12,7 @@
   (:export #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
            #:fixture-version #:fixture-isolation #:fixture-setup-function
            #:fixture-cleanup-function #:fixture-setup-forms #:fixture-cleanup-forms
+           #:fixture-around-function #:fixture-around-forms
            #:fixture-data #:snapshot-fixture #:fixture-error #:fixture-error-reason))
 (in-package #:cl-spec/src/fixture)
 
@@ -29,12 +30,14 @@
    (setup-function :initarg :setup-function :reader fixture-setup-function)
    (cleanup-function :initarg :cleanup-function :reader fixture-cleanup-function)
    (setup-forms :initarg :setup-forms :initform nil :reader fixture-setup-forms)
-   (cleanup-forms :initarg :cleanup-forms :initform nil :reader fixture-cleanup-forms))
-  (:documentation "A recipe schema and explicit fresh-state construction and cleanup hooks."))
+   (cleanup-forms :initarg :cleanup-forms :initform nil :reader fixture-cleanup-forms)
+   (around-function :initarg :around-function :initform nil :reader fixture-around-function)
+   (around-forms :initarg :around-forms :initform nil :reader fixture-around-forms))
+  (:documentation "A recipe schema and explicit trial isolation hooks."))
 
 (defmethod definition-validation-slots append ((fixture trial-fixture))
   '(recipe-name recipe-spec version isolation setup-function cleanup-function
-    setup-forms cleanup-forms))
+    setup-forms cleanup-forms around-function around-forms))
 
 (defmethod shared-initialize :around ((fixture trial-fixture) slots &rest initargs)
   (declare (ignore slots))
@@ -43,7 +46,8 @@
      fixture
      (lambda ()
        (dolist (pair '((:setup-forms :setup-function setup-forms)
-                       (:cleanup-forms :cleanup-function cleanup-forms)))
+                       (:cleanup-forms :cleanup-function cleanup-forms)
+                       (:around-forms :around-function around-forms)))
          (destructuring-bind (forms-key function-key slot) pair
            (when (and (or (getf initargs forms-key)
                           (and (slot-boundp fixture slot) (slot-value fixture slot)))
@@ -64,12 +68,16 @@
     (unless (and name (symbolp name) (not (keywordp name)) (not (constantp name))
                  (not (char= #\& (char (symbol-name name) 0))))
       (error 'fixture-error :reason :invalid-recipe-binding)))
-  (unless (and (eq :fresh (fixture-isolation fixture))
-               (typep (fixture-version fixture) '(integer 1 *))
+  (unless (and (typep (fixture-version fixture) '(integer 1 *))
                (functionp (fixture-setup-function fixture))
                (functionp (fixture-cleanup-function fixture)))
     (error 'fixture-error :reason :invalid-definition))
-  (dolist (forms (list (fixture-setup-forms fixture) (fixture-cleanup-forms fixture)))
+  (unless (case (fixture-isolation fixture)
+            (:fresh (not (or (fixture-around-function fixture) (fixture-around-forms fixture))))
+            (:around (functionp (fixture-around-function fixture))))
+    (error 'fixture-error :reason :invalid-isolation))
+  (dolist (forms (list (fixture-setup-forms fixture) (fixture-cleanup-forms fixture)
+                       (fixture-around-forms fixture)))
     (unless (and (finite-list-p forms) (finite-definition-form-p forms))
       (error 'fixture-error :reason :invalid-hook-forms)))
   (unless (typep (fixture-recipe-spec fixture) 'spec)
@@ -89,17 +97,23 @@
                  :setup-function (fixture-setup-function fixture)
                  :cleanup-function (fixture-cleanup-function fixture)
                  :setup-forms (copy-tree (fixture-setup-forms fixture))
-                 :cleanup-forms (copy-tree (fixture-cleanup-forms fixture))))
+                 :cleanup-forms (copy-tree (fixture-cleanup-forms fixture))
+                 :around-function (fixture-around-function fixture)
+                 :around-forms (copy-tree (fixture-around-forms fixture))))
 
 (defun fixture-data (fixture)
   "Return the fixture declaration without invoking its hooks."
-  (list :isolation (fixture-isolation fixture)
-        :version (fixture-version fixture)
-        :recipe-name (fixture-recipe-name fixture)
-        :setup (fixture-setup-forms fixture)
-        :cleanup (fixture-cleanup-forms fixture)))
+  (append (list :isolation (fixture-isolation fixture)
+                :version (fixture-version fixture)
+                :recipe-name (fixture-recipe-name fixture)
+                :setup (fixture-setup-forms fixture)
+                :cleanup (fixture-cleanup-forms fixture))
+          (when (eq :around (fixture-isolation fixture))
+            (list :around (fixture-around-forms fixture)))))
 
 (defmethod definition-description ((fixture trial-fixture))
   (values (fixture-data fixture) (list (fixture-recipe-spec fixture)) nil
           (and (not (null (fixture-setup-forms fixture)))
-               (not (null (fixture-cleanup-forms fixture))))))
+               (not (null (fixture-cleanup-forms fixture)))
+               (or (eq :fresh (fixture-isolation fixture))
+                   (not (null (fixture-around-forms fixture)))))))

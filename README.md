@@ -51,7 +51,7 @@ policies, direct checks and backend participation.
 | `cl-spec/examples/structured-data` | executable structured-data integration example | `check-it` |
 | `cl-spec/examples/function-spec-cases` | executable named-case Function Spec example | `check-it` |
 | `cl-spec/examples/stateful-withdraw` | executable capture/state-post Function Spec example | `check-it` |
-| `cl-spec/examples/reproducible-withdraw` | fresh-state shrinking and artifact recheck example | `check-it` |
+| `cl-spec/examples/reproducible-withdraw` | fresh-state shrinking, artifact recheck and rollback example | `check-it` |
 | `cl-spec/examples/withdraw-cancellation` | model-based checks for a double cancellation | `check-it` |
 
 `cl-spec` never loads `check-it`. Load `cl-spec/check-it` to install a generator
@@ -578,9 +578,10 @@ in-memory state. `check-fixture` checks one recipe without a generator;
 recipe and rechecks it with `recheck-counterexample :state-policy :fixture`.
 Cleanup failures stop the run and remain separate from target failure evidence.
 
-This does not change `check-call`: caller-owned raw arguments are checked once
-without executing fixture hooks. Database rollback and worker-kill supervision
-remain outside the core feature. See the
+With `:isolation :around`, a caller-supplied `:around` hook wraps each
+setup, call and cleanup in a dynamic extent such as a rollback transaction.
+`check-call` checks caller-owned raw arguments without executing fixture hooks.
+See the
 [reproducible stateful contract guide](docs/guides/reproducible-stateful-contracts.md)
 and [executable example](examples/reproducible-withdraw.lisp).
 
