@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
+  (:import-from #:cl-spec/src/contract-runner #:judge-contract-result)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
@@ -504,7 +505,8 @@ backend such as CL-SPEC/CHECK-IT to be loaded."
   (let ((*registry-constructor* constructor)
         (cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (names (registry-conformance-names))
-        (records '()))
+        (records '())
+        (passed t))
     (register-specifications)
     ;; A budget below the widest case list can never satisfy EVIDENCE-POLICY, so
     ;; it would report even a correct registry as nonconforming.
@@ -518,13 +520,15 @@ backend such as CL-SPEC/CHECK-IT to be loaded."
         (error 'type-error :datum sample
                            :expected-type '(satisfies registry-implementation-p))))
     (flet ((record (kind name seed result budget)
-             (push (list :kind kind :name name :seed seed
-                         :status (cl-spec:property-result-status result)
-                         :assessment (getf (cl-spec:assess-evidence
-                                            result (evidence-policy budget))
-                                           :assessment)
-                         :result result)
-                   records)))
+             (multiple-value-bind (verdict assessment)
+                 (judge-contract-result result (evidence-policy budget))
+               (unless (eq verdict :passed)
+                 (setf passed nil))
+               (push (list :kind kind :name name :seed seed
+                           :status (cl-spec:property-result-status result)
+                           :assessment (getf assessment :assessment)
+                           :result result)
+                     records))))
       (dolist (seed seeds)
         (dolist (name (getf names :contracts))
           ;; The registration contract's cases are reached through its scenario
@@ -536,12 +540,7 @@ backend such as CL-SPEC/CHECK-IT to be loaded."
         (dolist (name (getf names :properties))
           (record :property name seed (cl-spec:run-property name :seed seed)
                   (getf (cl-spec:property-trials (cl-spec:find-property name)) :normal)))))
-    (let ((records (nreverse records)))
-      (values (every (lambda (record)
-                       (and (eq :passed (getf record :status))
-                            (eq :satisfied (getf record :assessment))))
-                     records)
-              records))))
+    (values passed (nreverse records))))
 
 (defun register-instrumentation-specifications ()
   "Register the optional instrumentation API contracts after CL-SPEC/INSTRUMENT is loaded.

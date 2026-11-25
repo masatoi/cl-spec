@@ -7,6 +7,8 @@
 (defpackage #:cl-spec/tests
   (:use #:cl)
   (:import-from #:rove)
+  (:import-from #:cl-spec/tests/contract-runner-test)
+  (:import-from #:cl-spec/tests/rove-test)
   (:import-from #:cl-spec/tests/coverage-test)
   (:import-from #:cl-spec/tests/coverage-direct-test)
   (:import-from #:cl-spec/tests/coverage-run-test)

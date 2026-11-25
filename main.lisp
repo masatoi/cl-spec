@@ -7,6 +7,8 @@
   (:use #:cl)
   (:import-from #:cl-spec/src/function-examples #:check-function-with-examples)
   (:export #:check-function-with-examples)
+  (:import-from #:cl-spec/src/contract-runner #:check-contracts)
+  (:export #:check-contracts)
   (:import-from #:cl-spec/src/coverage
                 #:coverage-schema #:coverage-data #:invalid-coverage-options
                 #:invalid-coverage-options-reason #:unsupported-coverage-operation
