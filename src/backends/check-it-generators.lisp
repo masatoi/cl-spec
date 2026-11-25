@@ -589,15 +589,20 @@ One of the limits is zero and the other check-it's open marker *, so the draw is
 yields values that differ in proportion to it, as a one-sided real range does.
 Handing check-it the bound itself instead made it draw from
 [min(|bound|, *SIZE*), *SIZE*], a single value once *SIZE* had been raised to
-|bound| (issue #77).  The size is widened for this draw only, so a one-sided
-range does not change the magnitude other generators draw.  Shrinking moves the
-value towards OFFSET."
-  (make-instance 'widened-generator
-                 :minimum-size (abs offset)
-                 :mapping (lambda (value) (+ value offset))
-                 :sub-generators (list (make-instance 'int-generator
-                                                      :lower-limit lower-limit
-                                                      :upper-limit upper-limit))))
+|bound| (issue #77). The size is widened for this draw only.
+Shrinking uses the magnitude of the shifted value if the range crosses zero."
+  (let ((source (make-instance 'widened-generator
+                               :minimum-size (abs offset)
+                               :mapping (lambda (value) (+ value offset))
+                               :sub-generators
+                               (list (make-instance 'int-generator
+                                                    :lower-limit lower-limit
+                                                    :upper-limit upper-limit))))
+        (lower (when (eql lower-limit 0) offset))
+        (upper (when (eql upper-limit 0) offset)))
+    (if (or (and lower (minusp lower)) (and upper (plusp upper)))
+        (make-shrinking-number-generator (lambda () (generate source)) lower upper #'truncate)
+        source)))
 
 (defun range-width (minimum maximum spec)
   "Return the finite width of the interval in a format that can represent it."
