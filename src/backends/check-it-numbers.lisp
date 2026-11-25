@@ -62,9 +62,10 @@ exclusivity until the final sampling format is known."
    (encode :initarg :encode :reader encode-number))
   (:documentation "Draw real values and try a finite set of simpler numeric candidates."))
 
-(defun make-shrinking-number-generator (draw lower upper &optional (encode #'identity))
-  "Wrap DRAW with finite numeric shrinking between LOWER and UPPER, either of which may be NIL.
-ENCODE converts proposed exact rational candidates to the generator's output format."
+(defun make-shrinking-number-generator (draw lower upper &optional encode)
+  "Wrap DRAW with finite numeric shrinking between LOWER and UPPER, which may be NIL.
+ENCODE, when supplied, converts exact rational candidates to the output format.
+Otherwise candidates retain the original float format or stay exact."
   (make-instance 'shrinking-number-generator :draw draw :lower lower :upper upper :encode encode))
 
 (defmethod generate ((generator shrinking-number-generator))
@@ -90,30 +91,37 @@ ENCODE converts proposed exact rational candidates to the generator's output for
         (and (= new-complexity complexity) (rationalp candidate) (floatp original)))))
 
 (defmethod shrink ((generator shrinking-number-generator) test)
-  "Try small fractions, then rounded values and endpoints, preserving the observed failure."
+  "Try simpler values without increasing magnitude or losing the observed failure."
   (let ((original (cached-value generator))
         (lower (number-lower-bound generator))
         (upper (number-upper-bound generator))
+        (encode (encode-number generator))
         (seen (make-hash-table :test #'eql)))
     (unless (practical-float-exponent-p original)
       (return-from shrink original))
-    (let ((exact (rational original))
-          (direction (if (minusp original) -1 1))
-          (complexity (rational-complexity (rationalize original))))
+    (let* ((exact (rational original))
+           (magnitude (abs exact))
+           (direction (if (minusp exact) -1 1))
+           (complexity (rational-complexity (rationalize original))))
       (labels ((admitted-p (number)
-                 (and (or (null lower) (<= lower number))
+                 (and (<= (abs number) magnitude)
+                      (or (null lower) (<= lower number))
                       (or (null upper) (<= number upper))))
                (try (number)
-                 (when (and number (practical-float-exponent-p number) (admitted-p number))
-                   (let ((candidate (funcall (encode-number generator) number)))
-                     (unless (gethash candidate seen)
-                       (setf (gethash candidate seen) t)
-                       (when (and (not (eql candidate original))
-                                  (admitted-p candidate)
-                                  (practical-float-exponent-p candidate)
-                                  (simple-number-p candidate original complexity)
-                                  (not (funcall test candidate)))
-                         (return-from shrink (setf (cached-value generator) candidate))))))))
+                 (unless (and number (practical-float-exponent-p number))
+                   (return-from try nil))
+                 (let ((proposal (rational number)))
+                   (when (admitted-p proposal)
+                     (let ((candidate (if encode (funcall encode proposal)
+                                          (encode-like-number proposal original))))
+                       (unless (gethash candidate seen)
+                         (setf (gethash candidate seen) t)
+                         (when (and (not (eql candidate original))
+                                    (practical-float-exponent-p candidate)
+                                    (admitted-p (rational candidate))
+                                    (simple-number-p candidate original complexity)
+                                    (not (funcall test candidate)))
+                           (return-from shrink (setf (cached-value generator) candidate)))))))))
         (loop for cost from 1 to 12
               do (loop for denominator from 1 to cost
                        for numerator = (* direction (- cost denominator))
@@ -170,6 +178,15 @@ ENCODE converts proposed exact rational candidates to the generator's output for
           #+sbcl (sb-int:with-float-traps-masked (:underflow) (float number zero))
           #-sbcl (float number zero)
         (floating-point-underflow () zero))))
+
+(defun encode-like-number (number original)
+  "Keep NUMBER exact or encode it in ORIGINAL's floating-point format."
+  (if (floatp original)
+      (let ((format (find-if (lambda (type) (typep original type))
+                             '(short-float single-float double-float long-float))))
+        (float-value number (float 0 original)
+                     (nth-value 1 (float-format-bounds format))))
+      number))
 
 (defun float-neighbor (number direction zero least normal greatest)
   "Step one representable value from NUMBER in DIRECTION, or return NIL at the limit."

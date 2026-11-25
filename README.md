@@ -1225,8 +1225,9 @@ explain:
 - Default lists and vectors contain up to eight small integers. Use
   `list-of` or `vector-of` to describe the elements.
 - The default rational generator draws with small numerators and denominators.
-  Rational, real and float shrinking tries simple numbers that still fail
-  within the declared domain.
+  Built-in numeric shrinking preserves the declared type and bounds and keeps
+  the magnitude within that of the original value. Real ranges preserve the
+  floating-point format of float candidates.
 - Other types such as `number`, `cons`, `t`, `hash-table` and `(vector integer 2)`
   signal `generator-unavailable` with kind `:unsupported-type` and name the
   type. Attach a custom generator with `defgenerator` and `(:generator NAME)`
