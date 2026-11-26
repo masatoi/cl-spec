@@ -11,6 +11,7 @@
                 #:check-contracts
                 #:check-function
                 #:clear-registry
+                #:defproperty
                 #:explain-data
                 #:find-function-spec
                 #:find-property
@@ -317,6 +318,23 @@
            (fields (getf (first (getf data :children)) :fields)))
       (ok (eq :and (getf data :kind)))
       (ok (find :schema-version fields :key (lambda (field) (getf field :key)))))))
+
+(deftest result-self-spec-checks-trial-profiles
+  (let ((*registry* (make-hash-table-registry)))
+    (cl-spec/specs:register-specifications)
+    (defproperty profile-result-property ((value (member 1)))
+      (:trials (:smoke 1 :normal 1 :extended 1 :stress 1))
+      (= value 1))
+    (let ((return-spec (function-spec-return-spec (find-function-spec 'result-data))))
+      (dolist (profile '(:smoke :normal :extended :stress))
+        (testing (format nil "Result for profile ~S" profile)
+          (let ((data (result-data (run-property 'profile-result-property
+                                                 :seed 1 :profile profile))))
+            (ok (eq profile (getf data :profile)))
+            (ok (eq :passed (getf data :status)))
+            (ok (validp return-spec data))
+            (setf (getf data :profile) :unknown)
+            (ok (not (validp return-spec data)) "An unknown profile is rejected")))))))
 
 (deftest executable-digest-details-refuse-inconsistent-metadata
   (let ((*registry* (make-hash-table-registry)))
