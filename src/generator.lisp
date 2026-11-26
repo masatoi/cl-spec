@@ -242,7 +242,8 @@ Relaxing evidence requirements is confined to this shape."
            (error 'invalid-backend-result :reason reason)))
     (validate-outcome-plist outcome)
     (unless (shrink-report-p (getf outcome :shrink-report))
-      (refuse ":shrink-report requires consistent candidate counts, budget and a termination keyword"))
+      (refuse
+       ":shrink-report requires consistent candidate counts, budget and a termination keyword"))
     (when (and (getf outcome :generation-report)
                (not (generation-report-p (getf outcome :generation-report))))
       (refuse ":generation-report requires a coherent bounded-filter report"))
