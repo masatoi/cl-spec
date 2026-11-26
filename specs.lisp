@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/specs
   (:use #:cl)
+  (:import-from #:cl-spec/src/property #:trial-profile-p)
   (:import-from #:cl-spec/src/registry #:registry-find-spec #:registry-refusal-method-p)
   (:import-from #:cl-spec/src/resolve #:resolve-spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
@@ -1657,7 +1658,7 @@ that RECHECK-COUNTEREXAMPLE with :STATE-POLICY :FIXTURE reconstructs once."
        (:budget (nullable (range integer 0 *)))
        (:rejected (range integer 0 *))
        (:seed integer)
-       (:profile (member :smoke :normal))
+       (:profile (satisfies trial-profile-p))
        (:shrunk-outcome (nullable (member :used :none :different-failure)))
        (:elapsed (nullable number)))
       (:optional
