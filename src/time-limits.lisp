@@ -117,16 +117,15 @@
         (if (run-timeout-data) (funcall on-timeout (run-timeout-data)) outcome))
       (funcall function)))
 
-(defun retain-candidate-cleanup (owner previous cleanup)
-  "Keep the first incomplete cleanup on a candidate that is unwinding."
-  (if (and previous (not (eq :completed (getf previous :status)))
-           (member owner *shrink-candidate-owners* :test #'eq))
+(defun retain-incomplete-cleanup (previous cleanup)
+  "Keep the first incomplete cleanup recorded for a cancellation."
+  (if (and previous (not (eq :completed (getf previous :status))))
       previous
       cleanup))
 
 (defun record-timeout-cleanup (owner cleanup)
   (setf (getf (run-limits-timeout owner) :cleanup)
-        (retain-candidate-cleanup owner (getf (run-limits-timeout owner) :cleanup) cleanup)))
+        (retain-incomplete-cleanup (getf (run-limits-timeout owner) :cleanup) cleanup)))
 
 (defun abort-run-for-timeout (owner trial phase limit cleanup)
   (unless (run-limits-timeout owner)
@@ -277,7 +276,7 @@
 #+(and sbcl sb-thread)
 (defun record-phase-cleanup (phase cleanup)
   (setf (timed-phase-cleanup phase)
-        (retain-candidate-cleanup (timed-phase-owner phase) (timed-phase-cleanup phase) cleanup)))
+        (retain-incomplete-cleanup (timed-phase-cleanup phase) cleanup)))
 
 #+(and sbcl sb-thread)
 (defun finish-timed-cleanup (function frame pending body-returned-p)

@@ -1124,7 +1124,8 @@ through `:options`.
   cleanup, the remaining trial time also bounds the hook.
   Ordinary cleanup in an untimed nested fixture uses the enclosing clocks
   already running. If an enclosing run or trial deadline interrupts the
-  nested setup or evaluation, the expired run supplies the cleanup grace.
+  nested setup or evaluation, the expired run supplies the cleanup grace for
+  each hook. Several hooks can take more than one cleanup period in total.
 
 The limits accept positive finite real numbers below 2³¹ seconds. A result's
 `:options` records the supplied limits, which are inherited when replaying
@@ -1138,10 +1139,11 @@ When a deadline stops the run, `result-data` reports `:status :timeout` and a
 `:timeout` record with `:limit` (`:run`, `:trial` or `:cleanup`), a one-based `:trial`
 and the `:phase` reached. A timeout during `:preparation` records zero
 completed trials and leaves uncollected metadata unavailable. A fixture's
-cleanup outcome is recorded under
-`:timeout :cleanup`, separately from the primary timeout. Counts and coverage
-reflect completed ordinary trials. The original failure and any accepted
-reduction remain available if shrinking times out. A timeout in
+cleanup outcome is recorded under `:timeout :cleanup`, separately from the
+primary timeout. When several hooks run for one cancellation, the record
+keeps the first incomplete cleanup or `:completed` if all hooks complete.
+Counts and coverage reflect completed ordinary trials. The original failure and
+any accepted reduction remain available if shrinking times out. A timeout in
 `:finalization` retains completed counterexample projections. Verified
 inputs whose naming timed out use their saved raw arguments. An observation
 whose argument check timed out remains available as failure evidence.
@@ -1156,9 +1158,10 @@ can replace the timeout transfer and let application execution continue. If
 control reaches the runner, the recorded timeout remains the result.
 
 Foreign calls and code that defers asynchronous interrupts can postpone
-delivery. Fixture hooks and wrapper unwind code still own application resource
-release. Use process supervision when a caller needs a hard bound on the
-entire image.
+delivery. An application transfer that crosses an inner timed cleanup and is
+caught within the enclosing run can leave its expired timer undelivered.
+Fixture hooks and wrapper unwind code still own application resource release.
+Use process supervision when a caller needs a hard bound on the entire image.
 
 ## Verification evidence
 

@@ -428,6 +428,46 @@
     (ok (equal '(:setup :cleanup :cleanup-finished :rollback) (reverse events)))))
 
 #+(and sbcl sb-thread)
+(defun nested-cancellation-target ()
+  (cl-spec:check-fixture 'sleeping-target 0)
+  t)
+
+#+(and sbcl sb-thread)
+(deftest nested-cancellation-keeps-incomplete-cleanup-evidence
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (cleanup-mode nil) (events nil))
+    (cl-spec:defspec-function sleeping-target
+      (:args) (:returns (member t))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe (member 0)))
+        (:setup (context) (declare (ignore context recipe)) nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :inner-cleanup events)
+          (case cleanup-mode
+            (:error (error "Inner cleanup failed"))
+            (:timeout (sleep 1/3)))
+          (push :inner-finished events))))
+    (cl-spec:defspec-function nested-cancellation-target
+      (:args) (:returns (member t))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe (member 0)))
+        (:setup (context) (declare (ignore context recipe)) nil)
+        (:cleanup (context) (declare (ignore context recipe))
+          (push :outer-cleanup events))))
+    (dolist (expected '((:status :timeout :limit :cleanup)
+                        (:status :error) (:status :completed)))
+      (setf cleanup-mode (getf expected :status) events nil)
+      (let* ((result (cl-spec:check-function 'nested-cancellation-target :trials 1 :seed 1
+                         :options '(:timeout 1/6 :cleanup-timeout 1/20)))
+             (data (cl-spec:result-data result))
+             (timeout (getf data :timeout)))
+        (ok (eq :timeout (getf data :status)))
+        (ok (eq :target (getf timeout :phase)))
+        (ok (equal (if (eq cleanup-mode :completed)
+                       '(:inner-cleanup :inner-finished :outer-cleanup)
+                       '(:inner-cleanup :outer-cleanup))
+                   (reverse events)))
+        (ok (equal expected (getf timeout :cleanup)))))))
+
+#+(and sbcl sb-thread)
 (deftest enclosing-cancellation-cleanup-ignores-descendant-deadlines
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (middle-budget nil) (events nil))
@@ -818,26 +858,28 @@
             (sleep 1/5)
             (when fail-cleanup-p (error "delegated cleanup failed")))
           (push recipe outer-cleanups))))
-    (loop for (options expected-cleanup) in
+    (loop for (options expected-cleanup run-timeout) in
             '((nil nil)
               ((:cleanup-timeout 1/20) nil)
               (nil (:status :error))
               ((:cleanup-timeout 1/20) (:status :error))
               ((:timeout 4/25) (:status :timeout :limit :run))
-              ((:trial-timeout 4/25) (:status :timeout :limit :trial)))
+              ((:trial-timeout 4/25) (:status :timeout :limit :trial))
+              (nil (:status :timeout :limit :run) 4/25))
           do (setf child-options options
                    fail-cleanup-p (eq :error (getf expected-cleanup :status))
                    outer-cleanups nil inner-cleanups 0)
              (let* ((data (cl-spec:result-data
                            (cl-spec:check-function 'identity :trials 1 :seed 1
-                             :options '(:trial-timeout 1/10 :cleanup-timeout 1/2 :timeout 3))))
+                             :options (list :trial-timeout 1/10 :cleanup-timeout 1/2
+                                            :timeout (or run-timeout 3)))))
                     (timeout (getf data :timeout))
                     (report (getf data :shrink-report)))
                (ok (equal '(recipe 20) (getf data :counterexample)))
                (if expected-cleanup
                    (progn
                      (ok (eq :timeout (getf data :status)))
-                     (ok (eq :trial (getf timeout :limit)))
+                     (ok (eq (if run-timeout :run :trial) (getf timeout :limit)))
                      (ok (equal expected-cleanup (getf timeout :cleanup)))
                      (ok (eql 0 (getf report :timed-out-candidates)))
                      (ok (equal '(20) outer-cleanups))
