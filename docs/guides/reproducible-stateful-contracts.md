@@ -49,7 +49,6 @@ The mirrored suite is `tests/reproducible-withdraw-example-test.lisp`.
         (setf (gethash :cell context) cell)
         (list cell)))
     (:cleanup (context)
-      (declare (ignore recipe))
       (clrhash context)))
   (:capture (before (car cell)))
   (:returns integer)
