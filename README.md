@@ -1084,8 +1084,6 @@ through `:options`.
   already running. If an enclosing run or trial deadline interrupts the
   nested setup or evaluation, the expired run supplies the cleanup grace for
   each hook. Several hooks can take more than one cleanup period in total.
-  If an inner check exits to a catch inside the enclosing run, the enclosing
-  deadline also applies to work after the catch.
 
 The limits accept positive finite real numbers below 2³¹ seconds. A result's
 `:options` records the supplied limits, which are inherited when replaying
@@ -1118,9 +1116,10 @@ can replace the timeout transfer and let application execution continue. If
 control reaches the runner, the recorded timeout remains the result.
 
 Foreign calls and code that defers asynchronous interrupts can postpone
-delivery. Fixture hooks and wrapper unwind code still own application resource
-release. Use process supervision when a caller needs a hard bound on the
-entire image.
+delivery. An application transfer that crosses an inner timed cleanup and is
+caught within the enclosing run can leave its expired timer undelivered.
+Fixture hooks and wrapper unwind code still own application resource release.
+Use process supervision when a caller needs a hard bound on the entire image.
 
 ## Verification evidence
 

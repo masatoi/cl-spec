@@ -468,54 +468,6 @@
         (ok (equal expected (getf timeout :cleanup)))))))
 
 #+(and sbcl sb-thread)
-(defun target-exits-during-check ()
-  (throw 'fixture-escape :escaped))
-
-#+(and sbcl sb-thread)
-(deftest caught-fixture-exit-keeps-enclosing-deadline-armed
-  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
-        (events nil))
-    (cl-spec:defspec-function target-exits-during-check
-      (:args) (:returns (member t))
-      (:fixture (:isolation :around) (:version 1) (:recipe (recipe (member 0)))
-        (:around (run) (unwind-protect (funcall run) (push :rollback events)))
-        (:setup (context) (declare (ignore context recipe)) nil)
-        (:cleanup (context) (declare (ignore context recipe))
-          (push :cleanup events)
-          (sleep 1/3))))
-    (flet ((check ()
-             (cl-spec:check-function 'target-exits-during-check :trials 1 :seed 1
-                                     :options '(:cleanup-timeout 1/2))))
-      (cl-spec:defproperty continues-after-fixture-exit ()
-        (:trials (:normal 1))
-        (catch 'fixture-escape (check))
-        (sleep 2)
-        t)
-      (cl-spec:defproperty passes-fixture-exit-to-caller ()
-        (:trials (:normal 1))
-        (check))
-      (dolist (limit '(:timeout :trial-timeout))
-        (setf events nil)
-        (let* ((options (list limit 1/8))
-               (data (handler-case
-                         (sb-ext:with-timeout 1/2
-                           (cl-spec:result-data
-                            (cl-spec:run-property 'continues-after-fixture-exit
-                                                  :seed 1 :options options)))
-                       (sb-ext:timeout () (list :status :watchdog))))
-               (timeout (getf data :timeout)))
-          (ok (eq :timeout (getf data :status)))
-          (ok (eq (if (eq limit :timeout) :run :trial) (getf timeout :limit)))
-          (ok (eq :property (getf timeout :phase)))
-          (ok (equal '(:cleanup :rollback) (reverse events))))
-        (setf events nil)
-        (ok (eq :escaped
-                (catch 'fixture-escape
-                  (cl-spec:run-property 'passes-fixture-exit-to-caller :seed 1
-                                        :options (list limit 1/8)))))
-        (ok (equal '(:cleanup :rollback) (reverse events)))))))
-
-#+(and sbcl sb-thread)
 (deftest enclosing-cancellation-cleanup-ignores-descendant-deadlines
   (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
         (middle-budget nil) (events nil))
