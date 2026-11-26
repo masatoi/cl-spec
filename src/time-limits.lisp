@@ -6,7 +6,8 @@
            #:call-catching-run-timeout #:call-with-run-finalization
            #:with-trial-clock #:with-run-phase
            #:mark-run-phase #:run-timeout-data
-           #:call-with-timed-fixture-cleanup #:with-timer-bookkeeping
+           #:call-with-timed-fixture-cleanup #:current-shrink-candidate-phase
+           #:with-timer-bookkeeping
            #:call-with-shrink-candidate #:with-native-shrink
            #:with-native-candidate #:with-native-shrink-draw
            #:call-with-run-limit-handoff #:run-clock-start))
@@ -36,6 +37,9 @@
 
 (defvar *backend-options-handoff* nil
   "The exact backend option list carrying the current run clock.")
+
+(defvar *shrink-candidate-owners* nil
+  "Active owners of recoverable shrink-candidate trial deadlines.")
 
 (defvar *native-shrink-trial* nil
   "The ordinary trial whose native shrink candidates are being evaluated.")
@@ -113,11 +117,22 @@
         (if (run-timeout-data) (funcall on-timeout (run-timeout-data)) outcome))
       (funcall function)))
 
+(defun retain-candidate-cleanup (owner previous cleanup)
+  "Keep the first incomplete cleanup on a candidate that is unwinding."
+  (if (and previous (not (eq :completed (getf previous :status)))
+           (member owner *shrink-candidate-owners* :test #'eq))
+      previous
+      cleanup))
+
+(defun record-timeout-cleanup (owner cleanup)
+  (setf (getf (run-limits-timeout owner) :cleanup)
+        (retain-candidate-cleanup owner (getf (run-limits-timeout owner) :cleanup) cleanup)))
+
 (defun abort-run-for-timeout (owner trial phase limit cleanup)
   (unless (run-limits-timeout owner)
     (setf (run-limits-timeout owner)
           (list :limit limit :trial trial :phase phase)))
-  (when cleanup (setf (getf (run-limits-timeout owner) :cleanup) cleanup))
+  (when cleanup (record-timeout-cleanup owner cleanup))
   (throw (run-limits-tag owner) nil))
 
 (defun call-before-deadline (deadline on-timeout function &optional phase)
@@ -200,6 +215,7 @@
                                :started (run-limits-started run) :trial-ticks ticks
                                :cleanup-ticks (run-limits-cleanup-ticks run)
                                :enclosing-clocks *timer-scopes*))
+                 (*shrink-candidate-owners* (cons *run-limits* *shrink-candidate-owners*))
                  (*active-run-limits* (cons *run-limits* *active-run-limits*)))
             (call-catching-run-timeout
              #'attempt
@@ -234,6 +250,12 @@
   "Time a native draw that needs to return a generated value."
   `(call-with-native-candidate (lambda () ,@body) nil))
 
+(defun current-shrink-candidate-phase ()
+  "Capture the phase owned by the current recoverable shrink candidate."
+  (when (and *timed-phase* (eq (timed-phase-owner *timed-phase*) *run-limits*)
+             (member *run-limits* *shrink-candidate-owners* :test #'eq))
+    *timed-phase*))
+
 (defun mark-run-phase (phase)
   "Record a phase reached by a running trial. Shrinking keeps its own phase."
   (when (and *timed-phase* (eq *run-limits* (timed-phase-owner *timed-phase*))
@@ -253,15 +275,26 @@
             (setf earliest clock)))))))
 
 #+(and sbcl sb-thread)
+(defun record-phase-cleanup (phase cleanup)
+  (setf (timed-phase-cleanup phase)
+        (retain-candidate-cleanup (timed-phase-owner phase) (timed-phase-cleanup phase) cleanup)))
+
+#+(and sbcl sb-thread)
 (defun finish-timed-cleanup (function frame pending body-returned-p)
   (let* ((owner (or pending (timed-phase-owner frame)))
          (now (get-internal-real-time))
          (grace (+ now (min (run-limits-cleanup-ticks owner)
                             (run-limits-cleanup-ticks
                              (if frame (timed-phase-owner frame) owner)))))
+         ;; The candidate's own trial deadline rejects it after cleanup. Keep
+         ;; the original cleanup cap and the clocks that enclose the candidate.
+         (candidate-deadline
+           (when (and frame (not pending) (eq :trial (timed-phase-limit frame))
+                      (member owner *shrink-candidate-owners* :test #'eq))
+             (timed-phase-deadline frame)))
          ;; An in-flight timeout can yield to a clock enclosing its owner.
          (clocks (if pending (run-limits-enclosing-clocks pending) *timer-scopes*))
-         (clock (earliest-active-clock clocks))
+         (clock (earliest-active-clock clocks (when candidate-deadline frame)))
          (clock-phase (when clock (deadline-clock-phase clock)))
          (enclosing-clock (if (and frame (eq clock-phase frame))
                               (earliest-active-clock clocks frame)
@@ -278,38 +311,48 @@
                                          (lambda () (throw tag :timeout)) function)))
          (cleanup (if (eq :timeout status) (list :status :timeout :limit limit)
                       (list :status status)))
+         (finished (get-internal-real-time))
+         (candidate-expired-p
+           (and candidate-deadline (<= candidate-deadline (min grace finished))))
          (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout))))
          ;; Deferred delivery can leave the enclosing deadline due after the private timer fires.
          (expired-enclosing-clock
            (cond
              ((and underlying-expiry (eq clock enclosing-clock)) clock)
              ((and enclosing-clock
-                   (<= (deadline-clock-deadline enclosing-clock) (get-internal-real-time)))
+                   (<= (deadline-clock-deadline enclosing-clock) finished))
               enclosing-clock))))
-    (when frame (setf (timed-phase-cleanup frame) cleanup))
-    (when pending (setf (getf (run-limits-timeout pending) :cleanup) cleanup))
+    (when frame (record-phase-cleanup frame cleanup))
+    (when pending (record-timeout-cleanup pending cleanup))
     ;; An external transfer already unwinding continues after bounded cleanup.
     (when (or body-returned-p pending)
       (cond
         (expired-enclosing-clock
          (let ((phase (deadline-clock-phase expired-enclosing-clock)))
-           (when phase (setf (timed-phase-cleanup phase) cleanup)))
+           (when phase (record-phase-cleanup phase cleanup)))
          (funcall (deadline-clock-expire expired-enclosing-clock)))
-        ((and (not pending) (or already-due (eq status :timeout)))
+        ((and (not pending) (or already-due candidate-expired-p (eq status :timeout)))
          (abort-run-for-timeout owner (timed-phase-trial frame)
                                 (if (eq :shrinking (timed-phase-name frame))
                                     :shrinking :fixture-cleanup)
-                                (if already-due run-limit limit) cleanup))))))
+                                (cond (already-due run-limit)
+                                      (candidate-expired-p :trial)
+                                      (t limit))
+                                cleanup))))))
 
-(defun call-with-timed-fixture-cleanup (function cleanup)
-  "Run FUNCTION and CLEANUP, with bounded grace for local timing or an enclosing cancellation."
+(defun call-with-timed-fixture-cleanup (function cleanup &optional candidate-phase)
+  "Run FUNCTION and CLEANUP with active deadlines and an optional CANDIDATE-PHASE."
+  #-(and sbcl sb-thread) (declare (ignore candidate-phase))
   #+(and sbcl sb-thread)
   (when *active-run-limits*
     (return-from call-with-timed-fixture-cleanup
       (sb-sys:without-interrupts
-        (let ((body-returned-p nil)
-              (frame (when (and *timed-phase* (eq (timed-phase-owner *timed-phase*) *run-limits*))
-                       *timed-phase*))
+        (let ((frame (or candidate-phase
+                         (when (and *timed-phase*
+                                    (eq (timed-phase-owner *timed-phase*) *run-limits*))
+                           *timed-phase*)))
+              (*timed-phase* (or candidate-phase *timed-phase*))
+              (body-returned-p nil)
               (prior-timeouts (remove-if-not #'run-limits-timeout *active-run-limits*)))
           (unwind-protect
                (multiple-value-prog1
