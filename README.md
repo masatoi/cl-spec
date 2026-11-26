@@ -940,10 +940,7 @@ Both forms of custom shrinking accept `:options '(:shrink-budget 100)` on the ru
 The default is 100 and the supported range is 0–100000. Candidate batches must be
 finite proper lists within the remaining budget. An oversized batch stops the
 search before invoking its candidates. Duplicates and rejected candidates consume
-budget. `property-result-shrink-report` and `result-data` expose `:candidates`,
-`:budget`, and `:termination`, separately from generated `:trials`; artifacts retain
-this report. Built-in shrinking and older backends/artifacts use `:not-collected` when they
-do not collect this report.
+budget.
 
 Malformed candidate lists, shrinker errors, and detected cons/array mutation stop
 the search while preserving previous evidence. User shrinker code must terminate;
@@ -954,6 +951,52 @@ it on a source-backed generator requires matching source and draw-function updat
 The source declaration participates in the definition digest. A custom value in
 a multi-argument property, an individual function-spec `:args` binding, a field,
 a collection element or an AND conjunct is held fixed during shrinking.
+
+### Shrink reports
+
+For a fresh generated run, `property-result-shrink-report` and the
+`:shrink-report` key of `result-data` return `:not-collected` or a plist with
+required keys `:candidates`, `:budget` and `:termination`, and optional
+`:timed-out-candidates`. Each key occurs at most once. The counts are
+nonnegative integers, and `:timed-out-candidates` cannot exceed
+`:candidates`. The budget is an integer from 0 to 100000 or `:unbounded`.
+With an integer budget, `:candidates` cannot exceed it.
+Termination is a keyword and can be backend-specific. `:budget-exhausted`
+requires an integer budget.
+
+Check-it reports an integer budget for custom and fixture shrinking and for
+zero-candidate reports that explain why it skipped a search, such as
+`:disabled`, `:no-shrinker`, `:not-a-target-failure` and
+`:state-restoration-unavailable`. A native search outside a fixture reports
+`:budget :unbounded` when `:trial-timeout` is set. It reports `:not-collected`
+without `:trial-timeout`, including when only the whole-run `:timeout` is set.
+
+When a search runs with `:trial-timeout`, check-it includes
+`:timed-out-candidates`, even if the count of candidates rejected after a
+recoverable trial timeout is zero. Check-it omits the key on skipped-search
+reports and on searches without `:trial-timeout`. An absent key means the
+count was unmeasured.
+
+Check-it tracks `:candidates` separately from ordinary `:trials`:
+
+- Custom shrinking counts each candidate it considers, including duplicates
+  and candidates rejected by schema validation or a precondition. If the
+  search refuses a candidate list during its proper-list and remaining-budget
+  check, the inspected prefix counts against that budget. For a fixture recipe
+  shrinker, check-it first requires the raw recipe batch to be a proper list
+  within the full configured budget. A refusal at this stage ends the search
+  with `:shrinker-error` and adds zero candidates. A list that passes then
+  proceeds to the remaining-budget check.
+- Native shrinking counts each candidate the backend starts testing as a
+  whole input, including candidates the test rejects before invoking the
+  target. A recoverable trial timeout before that test starts also adds one
+  candidate. Generator-internal prefilter rejections that complete before
+  the trial deadline are excluded. Native shrinking for fixtures stops
+  at its integer budget before counting another candidate.
+
+Counterexample artifacts retain the report as historical metadata when
+available, including stored combinations that fresh backend validation would
+refuse. Older artifacts that omit the report project `:not-collected`.
 
 ## Runtime instrumentation
 
@@ -1068,12 +1111,11 @@ through `:options`.
   A candidate that reaches its trial deadline is rejected after any required
   fixture cleanup completes. If the deadline arrives during its cleanup hook,
   the hook can finish within its cleanup budget and any enclosing deadlines.
-  Shrinking can continue with the best observed failure. The shrink report
-  counts these rejections in `:timed-out-candidates`.
-  A cleanup error or cleanup timeout still stops the run.
-  Plain native shrinking reports `:budget :unbounded` when collecting these
-  counts. A custom shrinker invocation also gets a fresh limit and stops the
-  run if that limit expires.
+  Shrinking can continue with the best observed failure. The
+  [shrink report](#shrink-reports) counts these rejections in
+  `:timed-out-candidates`. A cleanup error or cleanup timeout still stops the
+  run. A custom shrinker invocation also gets a fresh limit and stops the run
+  if that limit expires.
 - `:cleanup-timeout` bounds the fixture's cleanup hook. When any timeout is
   enabled and no cleanup limit is supplied, cleanup gets one second at most.
   If a run or trial deadline interrupts setup or evaluation, cleanup gets

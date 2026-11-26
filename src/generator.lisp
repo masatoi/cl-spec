@@ -155,6 +155,7 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
       (and (proper-list-p report) (member (length report) '(6 8))
            (let ((keys (loop for key in report by #'cddr collect key))
                  (budget (getf report :budget))
+                 (termination (getf report :termination))
                  (candidates (getf report :candidates))
                  (timed-out (getf report :timed-out-candidates 0)))
              (and (= (length keys) (length (remove-duplicates keys)))
@@ -162,11 +163,12 @@ untested shrink return value as a counterexample. :PASSED consumes the full budg
                            (member key '(:candidates :budget :termination :timed-out-candidates)))
                          keys)
                   (typep candidates '(integer 0 *))
-                  (or (eq :unbounded budget)
+                  (or (and (eq :unbounded budget)
+                           (not (eq :budget-exhausted termination)))
                       (and (typep budget '(integer 0 100000)) (<= candidates budget)))
                   (typep timed-out '(integer 0 *))
                   (<= timed-out candidates)
-                  (keywordp (getf report :termination)))))))
+                  (keywordp termination))))))
 
 (defun generation-only-outcome-p (outcome)
   "Recognize the narrow generation-only error branch with no target evidence.
