@@ -58,7 +58,7 @@
             (let ((account (make-account :balance balance :id id)))
               (setf (gethash :account context) account)
               (list account amount))))
-        (:cleanup (context) (declare (ignore recipe)) (clrhash context)))
+        (:cleanup (context) (clrhash context)))
       (:pre (<= amount (account-balance account)))
       (:capture (balance-before (account-balance account))
                 (id-before (account-id account)))
