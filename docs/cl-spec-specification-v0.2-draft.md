@@ -3745,7 +3745,13 @@ threaded SBCL上のcheck-it backendでは、`run-property`と`check-function`の
 setupや評価を中断してもcleanupを実行し、期限後はその上限までの猶予を取る。
 時間制限を有効にしてcleanupの上限を省略した場合は1秒とする。
 
-結果のstatusは`:timeout`となり、`:timeout`レコードに制限の種類、1始まりの
+縮小候補が試行期限に達したとき、必要なfixture cleanupが完了すれば候補を棄却し、
+`:timed-out-candidates`に加算する。期限がcleanup中に来た場合、フックは
+開始時からのcleanup予算と外側の期限の範囲で続行できる。通常trialでは試行期限も
+実行中のcleanupを中断する。
+
+実行を停止する期限切れでは、結果のstatusは`:timeout`となり、
+`:timeout`レコードに制限の種類、1始まりの
 trial番号、到達phase、該当する場合はcleanupの結果を記録する。既に観測した反例と
 採用済みの縮小結果を保持する。replayは保存したoptionで新しい時計を開始する。
 割り込みを遅延するコードには実行ホストでの監督が必要である。

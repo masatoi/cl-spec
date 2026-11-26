@@ -1066,8 +1066,10 @@ through `:options`.
   shrink candidate. It covers input generation, validation and the call for
   an ordinary trial, and preparation and evaluation of a shrink candidate.
   A candidate that reaches its trial deadline is rejected after any required
-  fixture cleanup completes. Shrinking can continue with the best observed
-  failure. The shrink report counts these rejections in `:timed-out-candidates`.
+  fixture cleanup completes. If the deadline arrives during its cleanup hook,
+  the hook can finish within its cleanup budget and any enclosing deadlines.
+  Shrinking can continue with the best observed failure. The shrink report
+  counts these rejections in `:timed-out-candidates`.
   A cleanup error or cleanup timeout still stops the run.
   Plain native shrinking reports `:budget :unbounded` when collecting these
   counts. A custom shrinker invocation also gets a fresh limit and stops the
@@ -1076,7 +1078,8 @@ through `:options`.
   enabled and no cleanup limit is supplied, cleanup gets one second at most.
   If a run or trial deadline interrupts setup or evaluation, cleanup gets
   that bounded grace period even after the deadline. A timeout can therefore
-  take longer than the requested run or trial limit.
+  take longer than the requested run or trial limit. During ordinary trial
+  cleanup, the remaining trial time also bounds the hook.
   Ordinary cleanup in an untimed nested fixture uses the enclosing clocks
   already running. If an enclosing run or trial deadline interrupts the
   nested setup or evaluation, the expired run supplies the cleanup grace.
