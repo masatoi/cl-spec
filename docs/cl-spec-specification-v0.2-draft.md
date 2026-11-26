@@ -3226,6 +3226,12 @@ my-project/property-test
 
 Production runtimeに `check-it` を要求しない構成を可能にする。
 
+`cl-spec/definitions` は宣言マクロ、定義の検証、登録と検索を提供する。
+アプリケーションはこの ASDF system に依存し、
+`cl-spec/definitions` package の公開シンボルで契約を定義できる。
+同じ image で `cl-spec` を追加でロードすると、登録済みの定義を
+共通の registry から取得して検査できる。
+
 例：
 
 ```text
@@ -3838,10 +3844,14 @@ production runtimeとgenerative testing backendを分離する。
 推奨ASDF system構成：
 
 ```text
-cl-spec
+cl-spec/definitions
+  declaration macros
   semantic IR
+  normalization and definition validation
   registry protocol
-  normalization
+
+cl-spec
+  cl-spec/definitions
   validation
   structured explain
   introspection

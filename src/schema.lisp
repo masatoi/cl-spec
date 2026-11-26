@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/src/schema
   (:use #:cl)
+  (:import-from #:cl-spec/src/definition-description #:definition-description)
   (:export #:definition-fixture-metadata)
   (:import-from #:cl-spec/src/conditions #:invalid-argument)
   (:import-from #:cl-spec/src/call-schema
@@ -199,15 +200,6 @@ now complete; until it does, its digest stays incomplete rather than trusted."))
 
 (defmethod definition-constraints ((definition bounded-collection-spec))
   (collection-constraint-plist definition))
-
-(defgeneric definition-description (definition)
-  (:documentation "Return values: declaration data, ordered child definitions,
-registry links as (KIND . NAME) pairs, and whether the stored description is complete.
-Do not invoke user code. Source locations and capabilities are excluded."))
-
-(defmethod definition-description ((definition t))
-  (declare (ignore definition))
-  (values nil nil nil nil))
 
 (defgeneric definition-description-complete-p (definition)
   (:documentation "Return true when DEFINITION's class is fully described by DEFINITION-DESCRIPTION.

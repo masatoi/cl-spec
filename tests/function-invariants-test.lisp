@@ -28,7 +28,7 @@
          (old (make-instance 'function-spec :name 'sample :return-spec 'integer))
          (new (make-instance 'function-spec :name 'sample :return-spec 'string)))
     (register-function-spec old registry)
-    (setf (slot-value new 'cl-spec/src/function-spec::preconditions) '(t))
+    (setf (slot-value new 'cl-spec/src/function-spec-definition::preconditions) '(t))
     (ok (refused-p (lambda () (register-function-spec new registry))))
     (ok (eq old (find-function-spec 'sample registry)))))
 

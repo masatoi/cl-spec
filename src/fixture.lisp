@@ -8,7 +8,7 @@
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
   (:import-from #:cl-spec/src/ir #:spec)
   (:import-from #:cl-spec/src/utils/lists #:finite-list-p)
-  (:import-from #:cl-spec/src/schema #:definition-description)
+  (:import-from #:cl-spec/src/definition-description #:definition-description)
   (:export #:trial-fixture #:fixture-recipe-name #:fixture-recipe-spec
            #:fixture-version #:fixture-isolation #:fixture-setup-function
            #:fixture-cleanup-function #:fixture-setup-forms #:fixture-cleanup-forms

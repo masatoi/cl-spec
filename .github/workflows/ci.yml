@@ -40,6 +40,15 @@ jobs:
                                         (uiop:getenv "CL_SPEC_CI_SBCL_VERSION")))' \
               --eval '(uiop:quit 0)'
 
+      - name: Load contract definitions before the checker
+        env:
+          CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"
+        run: |
+          ros -L "sbcl-bin/$CL_SPEC_CI_SBCL_VERSION" run --eval '(sb-ext:disable-debugger)' \
+                  --eval '(asdf:load-system "cl-spec/ci/definitions-smoke")' \
+                  --eval '(cl-spec/ci/definitions-smoke:check-definitions)' \
+                  --eval '(uiop:quit 0)'
+
       - name: Assert the core system does not pull in check-it
         env:
           CL_SOURCE_REGISTRY: "${{ github.workspace }}//:"

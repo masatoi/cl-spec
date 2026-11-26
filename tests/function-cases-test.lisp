@@ -630,7 +630,7 @@ decides whether they pass."
                                    :postcondition-function (constantly t))))
           (let ((contract (make-instance 'function-spec :name 'identity
                                          :argument-specs '((x integer)) :cases (list case))))
-            (setf (slot-value case 'cl-spec/src/function-spec::when-forms)
+            (setf (slot-value case 'cl-spec/src/function-spec-definition::when-forms)
                   (list `(handler-case (plusp ,name) (error () nil))))
             (ok (refuses (make-instance 'function-spec :name 'identity
                                         :argument-specs '((x integer)) :cases (list case))))

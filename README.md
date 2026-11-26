@@ -49,6 +49,7 @@ to turn a contract into a Rove test.
 
 | System | Contents | Extra dependency |
 |---|---|---|
+| `cl-spec/definitions` | declaration macros, definition validation, semantic IR, registry | none |
 | `cl-spec` | Semantic IR, registry, validation, structured explain, introspection, DSL | none |
 | `cl-spec/check-it` | generator compilation, property execution, shrinking | `check-it` |
 | `cl-spec/instrument` | runtime function instrumentation | none |
@@ -91,6 +92,31 @@ For generation and shrinking, install `check-it` and load
 | Clozure CL 1.12.2 | Core load, range validation, and a direct multiple-value contract check |
 | CLISP | Real-range checks in default and ANSI modes |
 | ECL | Function-spec case-guard regressions |
+
+## Load contract definitions
+
+Applications can depend on `cl-spec/definitions` for declaring and registering
+specs, function contracts, properties, and generators alongside their code.
+Import the declaration macros and registry operations from the
+`cl-spec/definitions` package.
+
+```lisp
+(asdf:load-system "cl-spec/definitions")
+(cl-spec/definitions:defspec positive-count (range integer 1 *))
+```
+
+Load `cl-spec` in the same image to check the registered definitions. The full
+system uses the same definition objects and registry. For generated checks,
+load `cl-spec/check-it` in the image running the checks.
+
+In one fresh Roswell SBCL 2.1.10 image on Linux, these were the retained
+increments from the ASDF and Quicklisp startup baseline after a full GC at
+each stage, using cached FASLs.
+
+| Loaded system | `CODE` increment | Immobile space increment |
+|---|---:|---:|
+| `cl-spec/definitions` | 0.31 MiB | 0.33 MiB |
+| `cl-spec`, including definitions | 0.86 MiB | 0.93 MiB |
 
 ## Usage
 
