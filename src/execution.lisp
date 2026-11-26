@@ -2,6 +2,7 @@
 
 (defpackage #:cl-spec/src/execution
   (:use #:cl)
+  (:import-from #:cl-spec/src/utils/value-snapshot #:snapshot-value)
   (:import-from #:cl-spec/src/time-limits #:with-run-phase #:mark-run-phase)
   (:import-from #:cl-spec/src/definition-validation #:finite-definition-form-p)
   (:import-from #:cl-spec/src/coverage-report #:collect-coverage-trial #:*coverage-context*)
@@ -151,41 +152,6 @@ A contract that declares neither clause records NIL, so a featureless run's
 evidence is unchanged.  The plist carries :CAPTURE and :STATE-POST entries with
 the statuses and details fixed by the specification; capture values are copied
 with the same evidence snapshot as the other fields.")
-
-(defun snapshot-value (value)
-  "Copy conses and arrays iteratively, preserving cycles and sharing within VALUE.
-Other objects retain identity; arbitrary application state is not checkpointed."
-  (let ((copies (make-hash-table :test #'eq))
-        (pending nil))
-    (labels ((allocate (item)
-               (cond
-                 ((gethash item copies))
-                 ((or (consp item) (arrayp item))
-                  (let ((copy
-                          (if (consp item)
-                              (cons nil nil)
-                              (make-array
-                               (array-dimensions item)
-                               :element-type (array-element-type item)
-                               :adjustable (adjustable-array-p item)
-                               :fill-pointer (when (array-has-fill-pointer-p item)
-                                               (fill-pointer item))))))
-                    (setf (gethash item copies) copy)
-                    (push (cons item copy) pending)
-                    copy))
-                 (t item))))
-      (let ((result (allocate value)))
-        (loop while pending
-              for pair = (pop pending)
-              for source = (car pair)
-              for copy = (cdr pair)
-              do (if (consp source)
-                     (setf (car copy) (allocate (car source))
-                           (cdr copy) (allocate (cdr source)))
-                     (dotimes (i (array-total-size source))
-                       (setf (row-major-aref copy i)
-                             (allocate (row-major-aref source i))))))
-        result))))
 
 (defun same-value-p (left right)
   "Compare graphs iteratively, preserving sharing and numeric and array types."

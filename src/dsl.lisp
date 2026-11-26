@@ -10,7 +10,7 @@
 
 (defpackage #:cl-spec/src/dsl
   (:use #:cl)
-  (:import-from #:cl-spec/src/state-frame #:make-state-frame #:valid-frame-clauses-p
+  (:import-from #:cl-spec/src/state-frame-definition #:make-state-frame #:valid-frame-clauses-p
                 #:frame-key-set-form-p #:check-frame-key-set)
   (:import-from #:cl-spec/src/fixture #:trial-fixture)
   (:import-from #:cl-spec/src/guard-references
@@ -36,7 +36,7 @@
                 #:register-property
                 #:+trial-profiles+
                 #:trial-profile-p)
-  (:import-from #:cl-spec/src/function-spec
+  (:import-from #:cl-spec/src/function-spec-definition
                 #:function-spec
                 #:make-function-case-with-guard
                 #:register-function-spec #:validate-post-value-variables)

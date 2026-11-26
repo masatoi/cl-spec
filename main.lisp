@@ -309,7 +309,7 @@
                 #:property-data
                 #:function-spec-data
                 #:semantic-data)
-  (:import-from #:cl-spec/src/dsl
+  (:import-from #:cl-spec/definitions
                 #:defspec
                 #:defspec-function
                 #:defproperty
