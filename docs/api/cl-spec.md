@@ -879,7 +879,7 @@ The result is opaque to everything but the backend and GENERATE-VALUE.
 <a name="judge-contract-result"></a>
 ### judge-contract-result
 
-*Function* · `(result &optional (policy +default-contract-policy+))`
+*Function* · `(result &optional (policy *default-contract-policy*))`
 
 Return RESULT's CI verdict, evidence assessment and problems as three values.
 

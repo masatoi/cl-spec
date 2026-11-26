@@ -23,7 +23,7 @@
 
 (in-package #:cl-spec/src/contract-runner)
 
-(defparameter +default-contract-policy+
+(defparameter *default-contract-policy*
   '(:policy-version 1
     :requirements ((:kind :min-checked-trials :count 1)
                    (:kind :all-declared-cases :min-checked 1)))
@@ -38,10 +38,10 @@
                   (remove-if (lambda (baseline)
                                (find (getf baseline :kind) requirements
                                      :key (lambda (requirement) (getf requirement :kind))))
-                             (getf +default-contract-policy+ :requirements))))
+                             (getf *default-contract-policy* :requirements))))
     validated))
 
-(defun judge-contract-result (result &optional (policy +default-contract-policy+))
+(defun judge-contract-result (result &optional (policy *default-contract-policy*))
   "Return RESULT's CI verdict, evidence assessment and problems as three values.
 
 A passing verdict needs a passed execution status, no recorded condition and
@@ -242,7 +242,7 @@ examples that reach any expected case. Unknown or missing results fail."
   (check-profile profile 'check-contracts)
   (check-argument trials '(or null (integer 0 *)) 'check-contracts :trials)
   (check-run-options options 'check-contracts)
-  (setf policy (if policy-p (suite-evidence-policy policy) +default-contract-policy+))
+  (setf policy (if policy-p (suite-evidence-policy policy) *default-contract-policy*))
   (setf registry (check-registry registry 'check-contracts))
   (setf seeds (copy-list seeds) examples (mapcar #'copy-list examples))
   (multiple-value-bind (targets selection-problem)
@@ -257,7 +257,8 @@ examples that reach any expected case. Unknown or missing results fail."
            (entries (loop for seed in seeds
                           append (loop for target in targets
                                        collect (run-suite-target
-                                                target seed profile trials options registry policy))))
+                                                target seed profile trials
+                                                options registry policy))))
            (examples (let ((*random-state* (make-random-state *random-state*)))
                        (loop for example in examples collect (run-suite-example example registry))))
            (passed (and (null problems)

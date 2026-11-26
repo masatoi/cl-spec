@@ -382,7 +382,8 @@ return names of a contract-level or case-level :POST-VALUES."
                hook
                (if (eq hook around)
                    "around requires one trial binding and a body"
-                   "setup and cleanup require a body and a context binding distinct from the recipe")))))
+                   (format nil "setup and cleanup require a body and a context binding ~
+                                distinct from the recipe"))))))
         `(make-instance 'trial-fixture
                         :isolation ,mode :version ,(second version)
                         :recipe-name ',name :recipe-spec ',(second (second recipe))
