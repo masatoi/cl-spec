@@ -25,7 +25,7 @@
 (defstruct (deadline-clock (:constructor make-deadline-clock (deadline expire phase))
                            (:copier nil))
   "An armed clock in the current thread."
-  deadline expire phase)
+  deadline expire phase timer deferred-p)
 
 (defvar *run-limits* nil)
 (defvar *active-run-limits* nil)
@@ -117,16 +117,15 @@
         (if (run-timeout-data) (funcall on-timeout (run-timeout-data)) outcome))
       (funcall function)))
 
-(defun retain-candidate-cleanup (owner previous cleanup)
-  "Keep the first incomplete cleanup on a candidate that is unwinding."
-  (if (and previous (not (eq :completed (getf previous :status)))
-           (member owner *shrink-candidate-owners* :test #'eq))
+(defun retain-incomplete-cleanup (previous cleanup)
+  "Keep the first incomplete cleanup recorded for a cancellation."
+  (if (and previous (not (eq :completed (getf previous :status))))
       previous
       cleanup))
 
 (defun record-timeout-cleanup (owner cleanup)
   (setf (getf (run-limits-timeout owner) :cleanup)
-        (retain-candidate-cleanup owner (getf (run-limits-timeout owner) :cleanup) cleanup)))
+        (retain-incomplete-cleanup (getf (run-limits-timeout owner) :cleanup) cleanup)))
 
 (defun abort-run-for-timeout (owner trial phase limit cleanup)
   (unless (run-limits-timeout owner)
@@ -145,8 +144,12 @@
              (active t)
              (timer (sb-ext:make-timer
                      (lambda ()
-                       (when (and active (not (member scope *paused-timers*)))
-                         (funcall on-timeout))))))
+                       (when (and active
+                                  (not (and phase (run-limits-timeout (timed-phase-owner phase)))))
+                         (if (member scope *paused-timers* :test #'eq)
+                             (setf (deadline-clock-deferred-p scope) t)
+                             (funcall on-timeout)))))))
+        (setf (deadline-clock-timer scope) timer)
         (sb-sys:without-interrupts
           (unwind-protect
                (let ((remaining (- deadline (get-internal-real-time))))
@@ -277,7 +280,23 @@
 #+(and sbcl sb-thread)
 (defun record-phase-cleanup (phase cleanup)
   (setf (timed-phase-cleanup phase)
-        (retain-candidate-cleanup (timed-phase-owner phase) (timed-phase-cleanup phase) cleanup)))
+        (retain-incomplete-cleanup (timed-phase-cleanup phase) cleanup)))
+
+#+(and sbcl sb-thread)
+(defun call-with-paused-timers (resumable function)
+  "Pause the active timers and restore deferred delivery in scopes that can resume."
+  (unwind-protect
+       (let ((*paused-timers* *timer-scopes*))
+         (funcall function))
+    (sb-sys:without-interrupts
+      (dolist (clock resumable)
+        (let ((phase (deadline-clock-phase clock)))
+          (when (and (deadline-clock-deferred-p clock)
+                     (member clock *timer-scopes* :test #'eq)
+                     (not (member clock *paused-timers* :test #'eq))
+                     (not (and phase (run-limits-timeout (timed-phase-owner phase)))))
+            (setf (deadline-clock-deferred-p clock) nil)
+            (sb-ext:schedule-timer (deadline-clock-timer clock) 0)))))))
 
 #+(and sbcl sb-thread)
 (defun finish-timed-cleanup (function frame pending body-returned-p)
@@ -304,41 +323,43 @@
          (already-due (and deadline (<= deadline now)))
          (expires-in-cleanup (and deadline (not already-due) (<= deadline grace)))
          (limit (if expires-in-cleanup run-limit :cleanup))
-         (tag (list nil))
-         (*paused-timers* *timer-scopes*)
-         (status (catch tag
-                   (call-before-deadline (if expires-in-cleanup deadline grace)
-                                         (lambda () (throw tag :timeout)) function)))
-         (cleanup (if (eq :timeout status) (list :status :timeout :limit limit)
-                      (list :status status)))
-         (finished (get-internal-real-time))
-         (candidate-expired-p
-           (and candidate-deadline (<= candidate-deadline (min grace finished))))
-         (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout))))
-         ;; Deferred delivery can leave the enclosing deadline due after the private timer fires.
-         (expired-enclosing-clock
+         (tag (list nil)))
+    (call-with-paused-timers
+     clocks
+     (lambda ()
+       (let* ((status (catch tag
+                        (call-before-deadline (if expires-in-cleanup deadline grace)
+                                              (lambda () (throw tag :timeout)) function)))
+              (cleanup (if (eq :timeout status) (list :status :timeout :limit limit)
+                           (list :status status)))
+              (finished (get-internal-real-time))
+              (candidate-expired-p
+                (and candidate-deadline (<= candidate-deadline (min grace finished))))
+              (underlying-expiry (or already-due (and expires-in-cleanup (eq status :timeout))))
+              ;; Deferred delivery can leave the enclosing deadline due after the private timer fires.
+              (expired-enclosing-clock
+                (cond
+                  ((and underlying-expiry (eq clock enclosing-clock)) clock)
+                  ((and enclosing-clock
+                        (<= (deadline-clock-deadline enclosing-clock) finished))
+                   enclosing-clock))))
+         (when frame (record-phase-cleanup frame cleanup))
+         (when pending (record-timeout-cleanup pending cleanup))
+         ;; An external transfer already unwinding continues after bounded cleanup.
+         (when (or body-returned-p pending)
            (cond
-             ((and underlying-expiry (eq clock enclosing-clock)) clock)
-             ((and enclosing-clock
-                   (<= (deadline-clock-deadline enclosing-clock) finished))
-              enclosing-clock))))
-    (when frame (record-phase-cleanup frame cleanup))
-    (when pending (record-timeout-cleanup pending cleanup))
-    ;; An external transfer already unwinding continues after bounded cleanup.
-    (when (or body-returned-p pending)
-      (cond
-        (expired-enclosing-clock
-         (let ((phase (deadline-clock-phase expired-enclosing-clock)))
-           (when phase (record-phase-cleanup phase cleanup)))
-         (funcall (deadline-clock-expire expired-enclosing-clock)))
-        ((and (not pending) (or already-due candidate-expired-p (eq status :timeout)))
-         (abort-run-for-timeout owner (timed-phase-trial frame)
-                                (if (eq :shrinking (timed-phase-name frame))
-                                    :shrinking :fixture-cleanup)
-                                (cond (already-due run-limit)
-                                      (candidate-expired-p :trial)
-                                      (t limit))
-                                cleanup))))))
+             (expired-enclosing-clock
+              (let ((phase (deadline-clock-phase expired-enclosing-clock)))
+                (when phase (record-phase-cleanup phase cleanup)))
+              (funcall (deadline-clock-expire expired-enclosing-clock)))
+             ((and (not pending) (or already-due candidate-expired-p (eq status :timeout)))
+              (abort-run-for-timeout owner (timed-phase-trial frame)
+                                     (if (eq :shrinking (timed-phase-name frame))
+                                         :shrinking :fixture-cleanup)
+                                     (cond (already-due run-limit)
+                                           (candidate-expired-p :trial)
+                                           (t limit))
+                                     cleanup)))))))))
 
 (defun call-with-timed-fixture-cleanup (function cleanup &optional candidate-phase)
   "Run FUNCTION and CLEANUP with active deadlines and an optional CANDIDATE-PHASE."
