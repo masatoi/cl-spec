@@ -954,12 +954,13 @@ a collection element or an AND conjunct is held fixed during shrinking.
 
 ### Shrink reports
 
-`property-result-shrink-report` and the `:shrink-report` key of `result-data`
-return `:not-collected` or a plist with required keys `:candidates`, `:budget`
-and `:termination`, and optional `:timed-out-candidates`. Each key occurs
-at most once. The counts are nonnegative integers, and `:timed-out-candidates`
-cannot exceed `:candidates`. The budget is an integer from 0 to 100000 or
-`:unbounded`. With an integer budget, `:candidates` cannot exceed it.
+For a fresh generated run, `property-result-shrink-report` and the
+`:shrink-report` key of `result-data` return `:not-collected` or a plist with
+required keys `:candidates`, `:budget` and `:termination`, and optional
+`:timed-out-candidates`. Each key occurs at most once. The counts are
+nonnegative integers, and `:timed-out-candidates` cannot exceed
+`:candidates`. The budget is an integer from 0 to 100000 or `:unbounded`.
+With an integer budget, `:candidates` cannot exceed it.
 Termination is a keyword and can be backend-specific. `:budget-exhausted`
 requires an integer budget.
 
@@ -980,8 +981,12 @@ Check-it tracks `:candidates` separately from ordinary `:trials`:
 
 - Custom shrinking counts each candidate it considers, including duplicates
   and candidates rejected by schema validation or a precondition. If the
-  search refuses a candidate list during its bounded list check, the
-  inspected prefix counts against the remaining budget.
+  search refuses a candidate list during its proper-list and remaining-budget
+  check, the inspected prefix counts against that budget. For a fixture recipe
+  shrinker, check-it first requires the raw recipe batch to be a proper list
+  within the full configured budget. A refusal at this stage ends the search
+  with `:shrinker-error` and adds zero candidates. A list that passes then
+  proceeds to the remaining-budget check.
 - Native shrinking counts each candidate the backend starts testing as a
   whole input, including candidates the test rejects before invoking the
   target. A recoverable trial timeout before that test starts also adds one
@@ -989,8 +994,9 @@ Check-it tracks `:candidates` separately from ordinary `:trials`:
   the trial deadline are excluded. Native shrinking for fixtures stops
   at its integer budget before counting another candidate.
 
-Counterexample artifacts retain the report as metadata when available.
-Older artifacts that omit it project `:not-collected`.
+Counterexample artifacts retain the report as historical metadata when
+available, including stored combinations that fresh backend validation would
+refuse. Older artifacts that omit the report project `:not-collected`.
 
 ## Runtime instrumentation
 

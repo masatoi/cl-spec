@@ -1579,9 +1579,10 @@ identity不明、縮小時のerrorにより一致を確認できず、採用し�
 
 ## 16.1 縮小レポート
 
-`property-result-shrink-report` と `result-data` の `:shrink-report` は、
-未収集なら `:not-collected`、収集済みなら必須キー `:candidates`、`:budget`、
-`:termination` と省略可能な `:timed-out-candidates` からなる plist を返す。
+新規の生成 run の `property-result-shrink-report` と `result-data` の
+`:shrink-report` は、未収集なら `:not-collected`、収集済みなら必須キー
+`:candidates`、`:budget`、`:termination` と省略可能な `:timed-out-candidates`
+からなる plist を返す。
 各キーは高々1回現れる。候補数と期限切れ候補数は非負整数で、後者は候補数以下とする。
 `:budget` は0〜100000の整数または `:unbounded`。整数予算の場合、候補数は予算以下とする。
 `:termination` は keyword で、backend 固有の値も使える。
@@ -1602,14 +1603,19 @@ fixture を使わない組み込み縮小の探索では `:trial-timeout` が指
 check-it では `:candidates` を通常試行数 `:trials` と別に数える。
 
 - custom 縮小は評価対象とした候補を数え、重複や引数 schema、precondition による棄却も
-  含める。候補リストを構造・予算の検査で拒否した場合は、残予算内で調べた候補数を加える。
+  含める。探索が候補リストを proper list 構造と残予算の検査で拒否した場合は、残予算内で
+  調べた候補数を加える。fixture の recipe shrinker を使うときは、check-it が返された
+  recipe のリストを先に proper list 構造と当初の予算全体に照らして検査する。この段階で
+  拒否すると候補数を増やさず `:shrinker-error` で停止する。通過したリストは残予算の
+  検査に進む。
 - 組み込み縮小は backend が入力全体の検査を始めた候補を数える。検査で target を呼ぶ前に
   拒否した候補も含める。検査開始前でも、試行期限で棄却して探索を続行できる候補は
   1件加える。generator 内部の prefilter による期限内の棄却は数えない。
   fixture の組み込み縮小は整数予算に達した時点で次の候補を数えずに停止する。
 
-反例 artifact は保存可能なレポートを同名の metadata に残す。旧 record にキーがない場合は
-`:not-collected` として投影する。
+反例 artifact は保存可能なレポートを同名の metadata に残す。新規の backend outcome なら
+拒否される組み合わせでも、artifact に保存済みであれば履歴としてそのまま投影する。
+旧 record にキーがない場合は `:not-collected` として投影する。
 
 ---
 
