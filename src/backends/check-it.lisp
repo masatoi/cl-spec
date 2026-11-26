@@ -810,26 +810,24 @@ Lists can shrink in length even when their element generator cannot shrink."
     (when custom
       (return-from shrink-fixture-arguments
         (shrink-custom-arguments custom property original validator context budget))))
-  (let ((progress *check-it-progress*) (different nil) (abort nil) (termination :exhausted))
+  (let ((progress *check-it-progress*) (different nil) (abort nil) (termination :exhausted)
+        (pass-starts (when (and (typep generator 'tuple-generator)
+                                (typep (first (sub-generators generator)) 'tuple-generator))
+                       (make-hash-table :test #'eql))))
     (begin-shrink-search budget)
     (block search
-      (flet ((ensure-budget ()
-               (when (>= (check-it-progress-shrink-candidates progress) budget)
-                 (setf termination :budget-exhausted)
-                 (return-from search nil)))
-             (stop-for-mutation ()
-               (setf termination :mutation)
-               (return-from search nil)))
-        (with-native-shrink ((check-it-progress-trials progress)
-                            (when trial-timeout
-                              (lambda (trial function)
-                                (ensure-budget)
-                                (call-with-counted-native-candidate
-                                 trial function #'stop-for-mutation))))
-          (handler-case
-              (shrink
-               generator
-               (lambda (arguments)
+      (labels ((ensure-budget ()
+                 (when (>= (check-it-progress-shrink-candidates progress) budget)
+                   (setf termination :budget-exhausted)
+                   (return-from search nil)))
+               (stop-for-mutation ()
+                 (setf termination :mutation)
+                 (return-from search nil))
+               (earlier-pass-start-p (arguments)
+                 (and pass-starts
+                      (some (lambda (prior) (same-value-p prior arguments))
+                            (gethash (candidate-bucket-key arguments) pass-starts))))
+               (consider (arguments)
                  (with-native-candidate
                    (ensure-budget)
                    (incf (check-it-progress-shrink-candidates progress))
@@ -851,11 +849,34 @@ Lists can shrink in length even when their element generator cannot shrink."
                                 ((failure-identities-match-p
                                   (trial-observation-signature original)
                                   (trial-observation-signature observation))
-                                 (unless (same-value-p (trial-observation-arguments original)
-                                                       (trial-observation-arguments observation))
-                                   (accept-native-candidate observation))
+                                 (let ((input (trial-observation-arguments observation)))
+                                   ;; A prior recipe can still fail. Keep the newer evidence.
+                                   (unless (or (same-value-p
+                                                (trial-observation-arguments original) input)
+                                               (earlier-pass-start-p input))
+                                     (accept-native-candidate observation)))
                                  nil)
                                 (t (setf different t) t))))))))))
+        (with-native-shrink ((check-it-progress-trials progress)
+                            (when trial-timeout
+                              (lambda (trial function)
+                                (ensure-budget)
+                                (call-with-counted-native-candidate
+                                 trial function #'stop-for-mutation))))
+          (handler-case
+              (loop for current = original then (check-it-progress-accepted progress)
+                    for input = (trial-observation-arguments current)
+                    do (when pass-starts
+                         (push input (gethash (candidate-bucket-key input) pass-starts)))
+                       (shrink generator #'consider)
+                    ;; Check-it makes one ordered sweep of a tuple. Start another
+                    ;; sweep only from a new, observed recipe in its cache.
+                    while (and pass-starts
+                               (let ((accepted (check-it-progress-accepted progress)))
+                                 (when accepted
+                                   (let ((next (trial-observation-arguments accepted)))
+                                     (and (same-value-p next (cached-value generator))
+                                          (not (earlier-pass-start-p next))))))))
             (generation-budget-exhausted (condition)
               (if (owned-generation-exhaustion-p condition :shrinking)
                   (setf termination :generation-budget-exhausted)

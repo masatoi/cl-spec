@@ -33,6 +33,89 @@
       (ok (> *setups* 1))
       (ok (eq :released (getf (getf (getf data :failure) :lifecycle) :state))))))
 
+(deftest native-tuple-fixture-revisits-dependent-fields
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (*mode* :missing-update) (*calls* 0) (*objects* nil)
+        (setups nil) (cleanups nil) (delay-minimum-p nil))
+    (cl-spec:defspec-function withdraw
+      (:args (account (list-of integer)) (amount (range integer 1 10000)))
+      (:fixture
+        (:isolation :fresh) (:version 1)
+        (:recipe (recipe (tuple (range integer 1 10000)
+                                (member 1 3562)
+                                (member :payment))))
+        (:setup (context)
+          (push context setups)
+          (when (and delay-minimum-p (equal recipe '(1 1 :payment)))
+            (sleep 1/4))
+          (list (list (first recipe)) (second recipe)))
+        (:cleanup (context) (push context cleanups)))
+      (:pre (>= (car account) amount))
+      (:capture (before (car account)))
+      (:returns keyword)
+      (:state-post (= (car account) (- before amount))))
+    (dolist (budget '(27 100))
+      (setf setups nil cleanups nil)
+      (let* ((result (cl-spec:check-function 'withdraw :trials 20 :seed 2
+                       :options (list :shrink-budget budget)))
+             (report (cl-spec:property-result-shrink-report result))
+             (candidates (getf report :candidates)))
+        (ok (eq :failed (cl-spec:property-result-status result)))
+        (ok (equal '(:state-postcondition 0)
+                   (cl-spec:property-result-failure-signature result)))
+        (ok (equal '(recipe (7337 3562 :payment))
+                   (cl-spec:property-result-counterexample result)))
+        (ok (eql budget (getf report :budget)))
+        (ok (equal setups cleanups))
+        (ok (= (length setups) (length (remove-duplicates setups :test #'eq))))
+        (ok (< 1 (length setups) (1+ candidates)))
+        (if (= budget 27)
+            (progn
+              (ok (equal '(recipe (3562 1 :payment))
+                         (cl-spec:property-result-shrunk-counterexample result)))
+              (ok (= budget candidates))
+              (ok (eq :budget-exhausted (getf report :termination))))
+            (progn
+              (ok (equal '(recipe (1 1 :payment))
+                         (cl-spec:property-result-shrunk-counterexample result)))
+              (ok (< 27 candidates budget))
+              (ok (eq :exhausted (getf report :termination)))))))
+    #+(and sbcl sb-thread)
+    (testing "a timed-out revisit runs cleanup and keeps the failure"
+      (setf setups nil cleanups nil delay-minimum-p t)
+      (let* ((result (cl-spec:check-function 'withdraw :trials 20 :seed 2
+                       :options '(:trial-timeout 1/20 :timeout 4)))
+             (report (cl-spec:property-result-shrink-report result)))
+        (ok (eq :failed (cl-spec:property-result-status result)))
+        (ok (equal '(recipe (2 1 :payment))
+                   (cl-spec:property-result-shrunk-counterexample result)))
+        (ok (plusp (getf report :timed-out-candidates 0)))
+        (ok (equal setups cleanups))))))
+
+(deftest native-tuple-fixture-stops-at-a-repeated-recipe
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (setups nil) (cleanups nil))
+    (cl-spec:defspec-function identity
+      (:args (state keyword))
+      (:returns string)
+      (:fixture
+        (:isolation :fresh) (:version 1)
+        (:recipe (recipe (tuple (member :open :closed :broken) (member :tag))))
+        (:setup (context)
+          (push recipe setups)
+          (list (first recipe)))
+        (:cleanup (context) (push recipe cleanups))))
+    (let* ((result (cl-spec:check-function 'identity :trials 1 :seed 2))
+           (report (cl-spec:property-result-shrink-report result)))
+      (ok (eq :failed (cl-spec:property-result-status result)))
+      (ok (equal '(recipe (:broken :tag)) (cl-spec:property-result-counterexample result)))
+      (ok (equal '(recipe (:closed :tag)) (cl-spec:property-result-shrunk-counterexample result)))
+      ;; After visiting :OPEN and then :CLOSED, the shrinker returns to :OPEN.
+      (ok (equal '((:open :tag) (:closed :tag) (:open :tag) (:broken :tag)) setups))
+      (ok (equal setups cleanups))
+      (ok (eql 3 (getf report :candidates)))
+      (ok (eq :exhausted (getf report :termination))))))
+
 (deftest generated-cleanup-error-stops-run
   (with-contract
     (let* ((*mode* :cleanup-error)
