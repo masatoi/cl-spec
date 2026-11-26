@@ -2,7 +2,7 @@
 (defpackage #:cl-spec/src/fixture-execution
   (:use #:cl)
   (:import-from #:cl-spec/src/time-limits #:mark-run-phase
-                #:call-with-timed-fixture-cleanup)
+                #:call-with-timed-fixture-cleanup #:current-shrink-candidate-phase)
   (:import-from #:cl-spec/src/fixture
                 #:fixture-recipe-spec #:fixture-setup-function #:fixture-cleanup-function
                 #:fixture-isolation #:fixture-around-function #:fixture-error)
@@ -71,6 +71,8 @@ The callback owns call-schema validation and target outcome classification."
         (cleanup-function (fixture-cleanup-function fixture))
         (around-function (fixture-around-function fixture))
         (isolation (fixture-isolation fixture))
+        ;; The wrapper can invoke this fixture's trial through a nested check.
+        (candidate-phase (current-shrink-candidate-phase))
         (saved nil) (working nil) (context (make-hash-table :test #'eq))
         (setup :not-started) (evaluation :not-started) (cleanup :not-started)
         (around :not-started)
@@ -116,8 +118,9 @@ The callback owns call-schema validation and target outcome classification."
                     (error (error)
                       (setf cleanup :error state :unknown)
                       (record-error :cleanup :fixture-cleanup-error error)))
-                  cleanup))
-               (mark-run-phase :fixture-around)))
+                  cleanup)
+                candidate-phase)
+               (unless candidate-phase (mark-run-phase :fixture-around))))
       (mark-run-phase :fixture-recipe)
       (handler-case
           (progn

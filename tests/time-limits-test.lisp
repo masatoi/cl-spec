@@ -787,6 +787,69 @@
         (ok (= (if (eq target '1+) 3 0) rollbacks))))))
 
 #+(and sbcl sb-thread)
+(deftest delegated-candidate-cleanup-keeps-its-owner-and-outcome
+  (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
+        (outer-trial nil) (child-options nil) (fail-cleanup-p nil)
+        (outer-cleanups nil) (inner-cleanups 0))
+    (cl-spec:defgenerator delegated-recipes ()
+      (:shrink (recipe) (when (= recipe 20) (list 19 10)))
+      20)
+    (cl-spec:defspec delegated-recipe integer (:generator delegated-recipes))
+    (cl-spec:defspec-function 1-
+      (:args (value integer)) (:returns integer)
+      (:post (progn (funcall outer-trial) t))
+      (:fixture (:isolation :fresh) (:version 1) (:recipe (recipe integer))
+        (:setup (context) (declare (ignore context)) (list recipe))
+        (:cleanup (context) (declare (ignore context recipe)) (incf inner-cleanups))))
+    (cl-spec:defspec-function identity
+      (:args (value integer)) (:returns string)
+      (:fixture (:isolation :around) (:version 1) (:recipe (recipe delegated-recipe))
+        (:around (trial)
+          (unwind-protect
+               (progn
+                 (setf outer-trial trial)
+                 (if child-options
+                     (cl-spec:check-function '1- :trials 1 :seed 1 :options child-options)
+                     (cl-spec:check-fixture '1- 0)))
+            (setf outer-trial nil)))
+        (:setup (context) (declare (ignore context)) (list recipe))
+        (:cleanup (context) (declare (ignore context))
+          (when (= recipe 19)
+            (sleep 1/5)
+            (when fail-cleanup-p (error "delegated cleanup failed")))
+          (push recipe outer-cleanups))))
+    (loop for (options expected-cleanup) in
+            '((nil nil)
+              ((:cleanup-timeout 1/20) nil)
+              (nil (:status :error))
+              ((:cleanup-timeout 1/20) (:status :error))
+              ((:timeout 4/25) (:status :timeout :limit :run))
+              ((:trial-timeout 4/25) (:status :timeout :limit :trial)))
+          do (setf child-options options
+                   fail-cleanup-p (eq :error (getf expected-cleanup :status))
+                   outer-cleanups nil inner-cleanups 0)
+             (let* ((data (cl-spec:result-data
+                           (cl-spec:check-function 'identity :trials 1 :seed 1
+                             :options '(:trial-timeout 1/10 :cleanup-timeout 1/2 :timeout 3))))
+                    (timeout (getf data :timeout))
+                    (report (getf data :shrink-report)))
+               (ok (equal '(recipe 20) (getf data :counterexample)))
+               (if expected-cleanup
+                   (progn
+                     (ok (eq :timeout (getf data :status)))
+                     (ok (eq :trial (getf timeout :limit)))
+                     (ok (equal expected-cleanup (getf timeout :cleanup)))
+                     (ok (eql 0 (getf report :timed-out-candidates)))
+                     (ok (equal '(20) outer-cleanups))
+                     (ok (= 2 inner-cleanups)))
+                   (progn
+                     (ok (eq :failed (getf data :status)))
+                     (ok (equal '(recipe 10) (getf data :shrunk-counterexample)))
+                     (ok (eql 1 (getf report :timed-out-candidates)))
+                     (ok (equal '(10 19 20) outer-cleanups))
+                     (ok (= 3 inner-cleanups))))))))
+
+#+(and sbcl sb-thread)
 (deftest candidate-timeout-preserves-a-fixture-rollback-failure
   (dolist (native-p '(nil t))
     (let ((cl-spec:*registry* (cl-spec:make-hash-table-registry))
