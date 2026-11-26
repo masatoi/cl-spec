@@ -994,6 +994,11 @@ Check-it tracks `:candidates` separately from ordinary `:trials`:
   the trial deadline are excluded. Native shrinking for fixtures stops
   at its integer budget before counting another candidate.
 
+For a fixture recipe that uses native tuple shrinking, check-it can revisit
+earlier fields after a later field has shrunk. The passes share the candidate
+budget and the run deadline. A pass can continue from a newly observed matching
+failure. An unchanged or previously visited starting recipe ends the revisits.
+
 Counterexample artifacts retain the report as historical metadata when
 available, including stored combinations that fresh backend validation would
 refuse. Older artifacts that omit the report project `:not-collected`.

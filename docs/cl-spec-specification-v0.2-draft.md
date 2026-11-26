@@ -1613,6 +1613,11 @@ check-it では `:candidates` を通常試行数 `:trials` と別に数える。
   1件加える。generator 内部の prefilter による期限内の棄却は数えない。
   fixture の組み込み縮小は整数予算に達した時点で次の候補を数えずに停止する。
 
+fixture の recipe が組み込みの tuple 縮小を使う場合、後の要素を縮小した後に
+前の要素を再検討できる。探索全体で候補予算と run の期限を共有する。
+同じ失敗を再現した新しい recipe から次の一巡を始める。
+開始時の recipe に戻るか、以前に探索を始めた recipe に達したら再検討を終える。
+
 反例 artifact は保存可能なレポートを同名の metadata に残す。新規の backend outcome なら
 拒否される組み合わせでも、artifact に保存済みであれば履歴としてそのまま投影する。
 旧 record にキーがない場合は `:not-collected` として投影する。
