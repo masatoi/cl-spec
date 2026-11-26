@@ -66,12 +66,23 @@
     (setf (getf *report* :candidates) 9)
     (ok (= 7 (getf (getf (result-data result) :shrink-report) :candidates)))))
 
+(deftest valid-backend-shrink-reports-are-preserved
+  (let ((*generator-backend* (make-instance 'report-backend))
+        (property (make-instance 'property :name 'false :arguments '((x integer))
+                                 :function (constantly nil))))
+    (dolist (*report* '((:candidates 5 :budget 5 :termination :budget-exhausted)
+                       (:candidates 5 :budget :unbounded :termination :exhausted
+                        :timed-out-candidates 1)
+                       (:termination :backend-specific :candidates 0 :budget :unbounded)))
+      (ok (equal *report* (getf (result-data (run-property property :seed 42)) :shrink-report))))))
+
 (deftest malformed-backend-shrink-reports-are-rejected
   (let ((*generator-backend* (make-instance 'report-backend))
         (property (make-instance 'property :name 'false :arguments '((x integer))
                                  :function (constantly nil))))
     (dolist (*report* '((:candidates -1 :budget 10 :termination :exhausted)
                        (:candidates 11 :budget 10 :termination :exhausted)
+                       (:candidates 5 :budget :unbounded :termination :budget-exhausted)
                        (:candidates 0 :budget 100001 :termination :exhausted)
                        (:candidates 1 :budget 10 :termination "wrong")
                        (:candidates 1 :budget 10)

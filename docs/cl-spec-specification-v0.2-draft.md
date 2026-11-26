@@ -1577,6 +1577,40 @@ identity不明、縮小時のerrorにより一致を確認できず、採用し�
 大域的な最小性を保証しない。縮小の完了・予算切れ・中断を区別し、元の失敗理由を保持する
 要件は§72.4に定める。概念JSONの`minimal_counterexample`もこの意味で読む。
 
+## 16.1 縮小レポート
+
+`property-result-shrink-report` と `result-data` の `:shrink-report` は、
+未収集なら `:not-collected`、収集済みなら必須キー `:candidates`、`:budget`、
+`:termination` と省略可能な `:timed-out-candidates` からなる plist を返す。
+各キーは高々1回現れる。候補数と期限切れ候補数は非負整数で、後者は候補数以下とする。
+`:budget` は0〜100000の整数または `:unbounded`。整数予算の場合、候補数は予算以下とする。
+`:termination` は keyword で、backend 固有の値も使える。
+`:budget-exhausted` は整数予算の場合に限り有効である。
+
+check-it は custom・fixture の縮小と、探索を開始しなかった理由
+（`:disabled`、`:no-shrinker`、`:not-a-target-failure`、
+`:state-restoration-unavailable` など）を示す候補数0のレポートに整数予算を記録する。
+fixture を使わない組み込み縮小の探索では `:trial-timeout` が指定された場合に限り
+収集し、予算を `:unbounded` とする。全体の `:timeout` だけを指定した場合も含め、
+`:trial-timeout` を指定しない組み込み縮小の探索では `:not-collected` を返す。
+
+`:trial-timeout` を指定して探索した場合、試行期限により棄却して探索を続行できる候補を
+`:timed-out-candidates` に記録する。該当候補が0件でもキーを含める。
+探索を開始しなかった場合と `:trial-timeout` を指定しない探索ではこのキーを省く。
+キーの欠落は期限切れ候補数の未計測を表す。
+
+check-it では `:candidates` を通常試行数 `:trials` と別に数える。
+
+- custom 縮小は評価対象とした候補を数え、重複や引数 schema、precondition による棄却も
+  含める。候補リストを構造・予算の検査で拒否した場合は、残予算内で調べた候補数を加える。
+- 組み込み縮小は backend が入力全体の検査を始めた候補を数える。検査で target を呼ぶ前に
+  拒否した候補も含める。検査開始前でも、試行期限で棄却して探索を続行できる候補は
+  1件加える。generator 内部の prefilter による期限内の棄却は数えない。
+  fixture の組み込み縮小は整数予算に達した時点で次の候補を数えずに停止する。
+
+反例 artifact は保存可能なレポートを同名の metadata に残す。旧 record にキーがない場合は
+`:not-collected` として投影する。
+
 ---
 
 # 17. Function Spec
@@ -2429,11 +2463,7 @@ shrinkerはコピーされた現在の全引数listを受け、優先順の有�
 
 custom全引数縮小では`:options '(:shrink-budget N)`で候補予算を指定する（既定100、整数0〜100000）。
 生成前に予算を検証する。候補batch全体のproper-list検査も残予算内で行い、超過batchは実行しない。
-候補数には重複・schema不適合・pre棄却も含む。生成試行数`:trials`と区別し、
-`property-result-shrink-report` / `result-data`の`:shrink-report`へ
-`(:candidates N :budget B :termination KEYWORD)`を保存する。
-artifact v1には同名の省略可能なmetadataを追加し、旧recordの欠落は`:not-collected`と解釈する。
-縮小を観測しない旧backendにも同じ値を用いる。
+候補数には重複・schema不適合・pre棄却も含む。縮小レポートの形式と候補の数え方は§16.1を参照。
 
 候補列の不正、shrinker error、検出したcons/配列変更は探索を停止し、元の証拠とそれ以前の採用証拠を
 保持する。任意のユーザーコード自体の停止・外部状態復元・大域的最小性は保証しない。
@@ -3746,7 +3776,7 @@ setupや評価を中断してもcleanupを実行し、期限後はその上限�
 時間制限を有効にしてcleanupの上限を省略した場合は1秒とする。
 
 縮小候補が試行期限に達したとき、必要なfixture cleanupが完了すれば候補を棄却し、
-`:timed-out-candidates`に加算する。期限がcleanup中に来た場合、フックは
+縮小レポート（§16.1）の`:timed-out-candidates`に加算する。期限がcleanup中に来た場合、フックは
 開始時からのcleanup予算と外側の期限の範囲で続行できる。通常trialでは試行期限も
 実行中のcleanupを中断する。
 
