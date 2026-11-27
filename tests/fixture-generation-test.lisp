@@ -136,6 +136,19 @@
       (ok (equal (cl-spec:property-result-shrunk-counterexample first)
                  (cl-spec:property-result-shrunk-counterexample second))))))
 
+(deftest fixture-replay-accepts-a-saved-v1-digest
+  (with-contract
+    (let* ((first (cl-spec:check-function 'withdraw :trials 1 :seed 41))
+           (definition (cl-spec:find-function-spec 'withdraw))
+           (metadata (cl-spec:property-result-schema-metadata first)))
+      (setf (getf metadata :definition-digest)
+            (cl-spec/src/schema::canonical-digest
+             (cl-spec/src/schema:definition-graph definition) :fnv1a64-v1))
+      (reinitialize-instance first :schema-metadata metadata)
+      (ok (eq :passed (cl-spec:property-result-status
+                       (cl-spec:check-function 'withdraw :seed first))))
+      (ok (= 2 *setups* *cleanups* *calls*)))))
+
 (deftest fixture-replay-refuses-changed-budget-before-setup
   (with-contract
     (let* ((first (cl-spec:check-function 'withdraw :trials 4 :seed 41))

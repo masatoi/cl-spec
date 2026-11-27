@@ -1401,7 +1401,7 @@ Reference checks can signal VALIDATION-DEPTH-EXCEEDED, INVALID-SPEC-FORM or UNKN
       (:capture-value-states (list-of keyword))
       (:capture-value-keys (list-of keyword))
       (:capture-value-type-forms (list-of keyword))
-      (:digest-algorithm (member :fnv1a64-v1))
+      (:digest-algorithm (member :fnv1a64-v2))
       (:digest-covers (member :declaration-and-registered-dependencies))
       (:digest-excludes (list-of keyword))
       (:capability-states (list-of keyword)))))

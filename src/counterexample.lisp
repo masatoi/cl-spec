@@ -32,7 +32,7 @@
                 #:snapshot-value #:same-value-p)
   (:import-from #:cl-spec/src/registry #:*registry* #:check-registry)
   (:import-from #:cl-spec/src/utils/arguments #:check-argument)
-  (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest
+  (:import-from #:cl-spec/src/schema #:resolve-definition #:definition-digest-for-comparison
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property #:property-argument-schema)
   (:import-from #:cl-spec/src/function-spec #:make-function-check-property)
@@ -429,7 +429,9 @@ as :DETAIL rather than signalled, so a batch of rechecks reports every artifact.
             (unless definition (return-from recheck-fixture-artifact (result :definition-missing)))
             (unless (function-spec-fixture definition)
               (return-from recheck-fixture-artifact (result :definition-mismatch)))
-            (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
+            (multiple-value-bind (digest complete)
+                (definition-digest-for-comparison definition (getf data :definition-digest)
+                                                  registry)
               (unless complete
                 (return-from recheck-fixture-artifact (result :incomparable-definition)))
               (unless (and (equal digest (getf data :definition-digest))
@@ -589,7 +591,9 @@ anything runs rather than recorded as :CONTRACT-ERROR."
             (when (definition-state-constraints definition)
               (return-from recheck-counterexample
                 (outcome :unsupported :stateful-contract-unsupported)))
-            (multiple-value-bind (digest complete) (definition-digest definition :registry registry)
+            (multiple-value-bind (digest complete)
+                (definition-digest-for-comparison definition (getf data :definition-digest)
+                                                  registry)
               (unless (and complete (getf data :definition-digest-complete))
                 (return-from recheck-counterexample (outcome :incomparable-definition)))
               (unless (equal digest (getf data :definition-digest))

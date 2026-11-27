@@ -3,12 +3,14 @@
 (defpackage #:cl-spec/tests/schema-test
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok #:testing)
+  (:import-from #:uiop #:with-temporary-file)
   (:import-from #:cl-spec/src/dsl #:defspec #:defproperty #:defgenerator #:defspec-function)
-  (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry)
+  (:import-from #:cl-spec/src/registry #:*registry* #:make-hash-table-registry #:find-spec)
   (:import-from #:cl-spec/src/introspection #:spec-data #:property-data #:function-spec-data)
   (:import-from #:cl-spec/src/normalize #:normalize-spec-form)
   (:import-from #:cl-spec/src/schema
-                #:definition-digest #:definition-description #:definition-constraints
+                #:definition-digest #:definition-digest-for-comparison
+                #:definition-description #:definition-constraints
                 #:schema-info)
   (:import-from #:cl-spec/src/property-runner #:run-property #:result-data)
   (:import-from #:cl-spec/src/function-spec #:check-function)
@@ -155,16 +157,44 @@
   (let ((*registry* (make-hash-table-registry)))
     (defspec digest-leaf (range integer 0 10))
     (defspec digest-root (tuple digest-leaf (nullable digest-leaf)))
-    (ok (equal "fnv1a64-v1:f123648fe7d686f0"
-               (definition-digest 'digest-root :entity-kind :spec)))
-    (ok (equal "fnv1a64-v1:c30ab4af3e1875c2"
-               (definition-digest 'digest-leaf :entity-kind :spec)))))
+    (dolist (entry '((digest-root . "fnv1a64-v1:f123648fe7d686f0")
+                     (digest-leaf . "fnv1a64-v1:c30ab4af3e1875c2")))
+      (destructuring-bind (name . expected) entry
+        (ok (equal expected
+                   (definition-digest-for-comparison (find-spec name) expected *registry*)))))))
 
 (deftest unconstrained-collections-keep-their-version-one-digest
   (let ((*registry* (make-hash-table-registry)))
     (defspec digest-collection (list-of integer))
-    (ok (equal "fnv1a64-v1:34cd9f98f3185457"
-               (definition-digest 'digest-collection :entity-kind :spec)))))
+    (let ((expected "fnv1a64-v1:34cd9f98f3185457"))
+      (ok (equal expected
+                 (definition-digest-for-comparison (find-spec 'digest-collection)
+                                                   expected *registry*))))))
+
+(deftest definition-digest-agrees-across-source-and-fasl-loads
+  (with-temporary-file (:stream stream :pathname source :type "lisp" :direction :output)
+    (write-line "(in-package #:cl-spec/tests/schema-test)
+(defspec-function clamp-length
+  (:args (string string) (width (range integer 0 40)))
+  (:returns (values integer))
+  (:post-values (n)
+    (<= n (length string))
+    (<= n width)
+    (= n (min width (length string)))))" stream)
+    :close-stream
+    (let ((fasl (compile-file-pathname source)))
+      (unwind-protect
+           (flet ((digest-after-load (path)
+                    (let ((*registry* (make-hash-table-registry)))
+                      (load path :verbose nil :print nil)
+                      (definition-digest 'clamp-length :entity-kind :function-spec))))
+             (let ((source-digest (digest-after-load source))
+                   (fasl-digest
+                     (digest-after-load
+                      (compile-file source :output-file fasl :verbose nil :print nil))))
+               (ok (and source-digest fasl-digest (equal source-digest fasl-digest)))
+               (ok (eql 0 (and source-digest (search "fnv1a64-v2:" source-digest))))))
+        (when (probe-file fasl) (delete-file fasl))))))
 
 (deftest digests-include-clos-description-fields
   (flet ((spec (text)
@@ -258,17 +288,34 @@
   (ok (null (cl-spec/src/schema::canonical-digest
              (loop repeat 150 for value = '(0) then (list value) finally (return value))))))
 
+(deftest canonical-digests-ignore-acyclic-sharing
+  (let ((shared-cons (list :child))
+        (shared-array (vector :child)))
+    (ok (equal (cl-spec/src/schema::canonical-digest (list shared-cons shared-cons))
+               (cl-spec/src/schema::canonical-digest (list (list :child) (list :child)))))
+    (ok (equal (cl-spec/src/schema::canonical-digest (vector shared-array shared-array))
+               (cl-spec/src/schema::canonical-digest (vector (vector :child) (vector :child)))))))
+
+(deftest canonical-digests-bound-shared-data-expansion
+  (let ((value :leaf))
+    (dotimes (i 20)
+      (setf value (vector value value)))
+    (ok (null (cl-spec/src/schema::canonical-digest value)))))
+
 (deftest canonical-digests-handle-graphs-and-printer-settings
-  (flet ((graph ()
-           (let* ((tail (list 1/3 2.5d0 #\Space #(1 2)))
+  (flet ((graph (&optional (marker 1))
+           (let* ((array (vector marker nil))
+                  (tail (list 1/3 2.5d0 array))
                   (head (cons tail tail)))
-             (setf (cdddr tail) head)
+             (setf (cdddr tail) head
+                   (aref array 1) tail)
              head)))
     (let ((expected (cl-spec/src/schema::canonical-digest (graph)))
           (*print-readably* nil) (*print-pretty* t) (*print-base* 16)
           (*print-case* :downcase) (*print-circle* nil))
       (ok (stringp expected))
       (ok (equal expected (cl-spec/src/schema::canonical-digest (graph))))
+      (ok (not (equal expected (cl-spec/src/schema::canonical-digest (graph 2)))))
       (ok (not (equal (cl-spec/src/schema::canonical-digest #(1 2))
                       (cl-spec/src/schema::canonical-digest #(1 3))))))))
 

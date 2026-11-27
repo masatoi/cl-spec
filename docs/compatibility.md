@@ -156,12 +156,15 @@ without generation or shrinking. Ordinary artifacts require
 Fixture artifacts require `:state-policy :fixture` and a matching fixture
 version, and rebuild state from the saved recipe. A declaration digest covers
 declarations and registered dependencies. Application implementations, external
-state and backend settings are separate from the digest. The digest also
-captures sharing within a declaration. A compiler can coalesce literal objects,
-so loading a compiled definition and evaluating the same source in a REPL can
-produce different digests. A target repair may change the recheck verdict while
-keeping the declaration identical.
+state and backend settings are separate from the digest. A target repair may
+change the recheck verdict while keeping the declaration identical.
 [Artifact recheck](../README.md#persisting-and-directly-rechecking-a-counterexample)
+
+New `fnv1a64-v2:` digests are stable when a compiler coalesces identical acyclic
+literals. Counterexample rechecks and fixture-result replay select the algorithm
+from the saved digest. Saved `fnv1a64-v1:` digests still depend on the sharing
+present at load time. For replay tools that compare digest strings across load
+methods, record a fresh v2 digest from the unchanged declaration.
 
 Seed replay regenerates a trial sequence. Integer-seeded replay with the bundled
 backend is supported on SBCL. Reproduce a run with the same Lisp implementation

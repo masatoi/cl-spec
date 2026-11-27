@@ -11,7 +11,8 @@
   (:import-from #:cl-spec/src/call-outcome
                 #:call-outcome-kind #:call-outcome-values #:call-outcome-condition)
   (:import-from #:cl-spec/src/execution #:evaluate-trial)
-  (:import-from #:cl-spec/src/schema #:definition-digest))
+  (:import-from #:cl-spec/src/registry #:make-hash-table-registry)
+  (:import-from #:cl-spec/src/schema #:definition-digest-for-comparison))
 (in-package #:cl-spec/tests/function-outcome-test)
 
 (defvar *calls* 0)
@@ -34,8 +35,10 @@
 
 (deftest adapter-ir-does-not-change-existing-digest-bytes
   (let ((contract (make-instance 'function-spec :name 'identity
-                                 :argument-specs '((car integer)) :return-spec 'integer)))
-    (ok (equal "fnv1a64-v1:e7e7e6ce92aa950f" (definition-digest contract)))))
+                                 :argument-specs '((car integer)) :return-spec 'integer))
+        (expected "fnv1a64-v1:e7e7e6ce92aa950f"))
+    (ok (equal expected (definition-digest-for-comparison
+                         contract expected (make-hash-table-registry))))))
 
 (deftest precondition-refusal-has-no-invoked-outcome
   (let ((*calls* 0) (*order* nil) (*mode* :multiple))

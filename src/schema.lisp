@@ -42,7 +42,8 @@
                 #:custom-generator #:custom-generator-name #:custom-generator-source-form
                 #:custom-generator-documentation #:custom-generator-shrinker)
   (:import-from #:cl-spec/src/generator #:*generator-backend* #:backend-capabilities)
-  (:export #:schema-info #:definition-digest #:definition-metadata #:definition-graph
+  (:export #:schema-info #:definition-digest #:definition-digest-for-comparison
+           #:definition-metadata #:definition-graph
            #:definition-description #:definition-entity-kind #:definition-generation-schema
            #:resolve-definition #:definition-shrink-enabled-p
            #:definition-constraints #:definition-description-complete-p
@@ -51,8 +52,10 @@
 
 (in-package #:cl-spec/src/schema)
 
+(defconstant +definition-digest-algorithm+ :fnv1a64-v2)
+
 (defun digest-exclusions ()
-  "Return a fresh list of the intentional version-one digest exclusions."
+  "Return a fresh list of the intentional definition digest exclusions."
   (list :target-implementation :helper-implementations :captured-state
         :external-state :source-location :backend))
 
@@ -111,7 +114,7 @@ Every call returns a fresh copy, so a caller may change what it is given."
          :capture-value-states '(:collected :unavailable)
          :capture-value-keys '(:name :availability :value :reason :type)
          :capture-value-type-forms '(:named :anonymous-class :unknown)
-         :digest-algorithm :fnv1a64-v1
+         :digest-algorithm +definition-digest-algorithm+
          :digest-covers :declaration-and-registered-dependencies
          :digest-excludes (digest-exclusions)
          :capability-states '(:available :unavailable :unknown :none))))
@@ -296,7 +299,7 @@ holds under the same name.")
     (declare (ignore definition))
     nil))
 
-(defun canonical-digest (value)
+(defun canonical-digest (value &optional (algorithm +definition-digest-algorithm+))
   "Hash a tagged graph without Lisp printer settings or unreadable object addresses.
 At most 100000 nodes, 1000000 characters and 128 nested CAR/array levels are walked.
 Return NIL rather than a fingerprint of a truncated or opaque representation."
@@ -305,11 +308,12 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
           (hash 14695981039346656037)
           (characters 0) (nodes 0)
           (seen (make-hash-table :test #'eq))
-          (pending (list (cons value 0))))
+          (next-id 0)
+          (legacy-p (eq algorithm :fnv1a64-v1)))
       (labels ((emit (text)
                  (incf characters (length text))
                  (when (> characters 1000000) (return-from hashing nil))
-                 ;; Four little-endian octets per character code define v1's encoding.
+                 ;; Four little-endian octets per character code in both versions.
                  (loop for char across text
                        for code = (char-code char)
                        do (dotimes (i 4)
@@ -320,13 +324,14 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
                  (when (> (integer-length integer) 65536) (return-from hashing nil))
                  (write-to-string integer :base 10 :radix nil :pretty nil))
                (token (tag text)
-                 (emit tag) (emit (number-text (length text))) (emit ":") (emit text)))
-        (loop while pending
-              for entry = (pop pending)
-              for item = (car entry)
-              for depth = (cdr entry)
-              do (when (or (> (incf nodes) 100000) (> depth 128))
-                   (return-from hashing nil))
+                 (emit tag) (emit (number-text (length text))) (emit ":") (emit text))
+               (enter (item)
+                 ;; V1 retains every visit. V2 keeps only active ancestors in SEEN.
+                 (let ((id (gethash item seen)))
+                   (if id
+                       (progn (token "@" (number-text id)) nil)
+                       (progn (setf (gethash item seen) next-id) (incf next-id) t))))
+               (walk-atom (item depth)
                  (cond
                    ((null item) (emit "N;"))
                    ((symbolp item)
@@ -339,42 +344,47 @@ Return NIL rather than a fingerprint of a truncated or opaque representation."
                     (token "/" (number-text (denominator item))))
                    ((floatp item)
                     (destructuring-bind (significand exponent sign)
-                         (handler-case (multiple-value-list (integer-decode-float item))
-                           ;; Non-finite floats have no portable INTEGER-DECODE-FLOAT encoding.
-                           ;; Keep this handler on the primitive, not on extension methods.
-                           (error () (return-from hashing nil)))
+                        (handler-case (multiple-value-list (integer-decode-float item))
+                          ;; Non-finite floats have no portable encoding.
+                          (error () (return-from hashing nil)))
                       (emit "F")
-                      (push (cons (list (type-of item) significand exponent sign
-                                        (float-radix item) (float-digits item))
-                                  (1+ depth))
-                            pending)))
+                      (walk (list (type-of item) significand exponent sign
+                                  (float-radix item) (float-digits item))
+                            (1+ depth))))
                    ((characterp item) (token "C" (number-text (char-code item))))
                    ((stringp item) (token "T" item))
-                   ((or (consp item) (arrayp item))
-                    (multiple-value-bind (id found) (gethash item seen)
-                      (if found
-                          (token "@" (number-text id))
-                          (progn
-                            (setf (gethash item seen) (hash-table-count seen))
-                            (if (consp item)
-                                (progn
-                                  (emit "(")
-                                  (push (cons (cdr item) depth) pending)
-                                  (push (cons (car item) (1+ depth)) pending))
-                                (progn
-                                  (emit "A")
-                                  (when (> (array-total-size item) 100000)
-                                    (return-from hashing nil))
-                                  (loop for i downfrom (1- (array-total-size item)) to 0
-                                        do (push (cons (row-major-aref item i) (1+ depth)) pending))
-                                  (push (cons (list (array-dimensions item)
-                                                    (array-element-type item)
-                                                    (when (array-has-fill-pointer-p item)
-                                                      (fill-pointer item)))
-                                              (1+ depth))
-                                        pending)))))))
+                   ((arrayp item)
+                    (when (enter item)
+                      (emit "A")
+                      (let ((size (array-total-size item)))
+                        (when (> size 100000) (return-from hashing nil))
+                        (walk (list (array-dimensions item)
+                                    (array-element-type item)
+                                    (when (array-has-fill-pointer-p item)
+                                      (fill-pointer item)))
+                              (1+ depth))
+                        (dotimes (index size)
+                          (walk (row-major-aref item index) (1+ depth))))
+                      (unless legacy-p (remhash item seen))))
                    (t (return-from hashing nil))))
-        (format nil "fnv1a64-v1:~(~16,'0X~)" hash)))))
+               (walk (item depth)
+                 (let ((spine nil))
+                   ;; CDR chains share a stack frame, with each cons active until the tail ends.
+                   (loop
+                     (when (or (> (incf nodes) 100000) (> depth 128))
+                       (return-from hashing nil))
+                     (unless (consp item)
+                       (walk-atom item depth)
+                       (return))
+                     (unless (enter item) (return))
+                     (unless legacy-p (push item spine))
+                     (emit "(")
+                     (walk (car item) (1+ depth))
+                     (setf item (cdr item)))
+                   (dolist (cell spine)
+                     (remhash cell seen)))))
+        (walk value 0)
+        (format nil "~(~A~):~(~16,'0X~)" (symbol-name algorithm) hash)))))
 
 (defun digest-omission (kind path target reason)
   "Construct one stable explanation of declaration data absent from a digest."
@@ -522,9 +532,32 @@ registry dependencies. Opaque scalar values remain available for local compariso
       (collect-definition-graph root registry resolve-links-p)
     (values (when complete records) complete omissions)))
 
+(defun compute-definition-digest (definition registry algorithm)
+  (multiple-value-bind (records complete omissions)
+      (collect-definition-graph definition registry t)
+    (let* ((digest (when complete (canonical-digest records algorithm)))
+           (value-omissions
+             (unless digest
+               (or (canonical-value-omissions records)
+                   (when complete
+                     (list (digest-omission :resource-limit '(:declarations) nil
+                                            :canonical-encoding-limit)))))))
+      (values digest (not (null digest)) (append omissions value-omissions)))))
+
+(defun definition-digest-for-comparison (definition saved-digest registry)
+  "Compute a digest for comparison, using the legacy algorithm for a saved v1 digest."
+  (let ((legacy-prefix "fnv1a64-v1:"))
+    (compute-definition-digest
+     definition registry
+     (if (and (stringp saved-digest)
+              (>= (length saved-digest) (length legacy-prefix))
+              (string= legacy-prefix saved-digest :end2 (length legacy-prefix)))
+         :fnv1a64-v1
+         +definition-digest-algorithm+))))
+
 (defun definition-digest (designator &key entity-kind (registry *registry*))
   "Return DIGEST, COMPLETE-P and a stable list of digest omission records.
-The first two values retain their version-one meaning and complete digest bytes.
+The fnv1a64-v2 format hashes acyclic substructures by content.
 Missing or opaque declarations return NIL/NIL with explanatory omissions.
 Extension programming errors propagate rather than becoming incompleteness."
   (when (symbolp designator)
@@ -543,17 +576,7 @@ Extension programming errors propagate rather than becoming incompleteness."
       (return-from definition-digest
         (values nil nil (list (digest-omission :unresolved-reference nil designator
                                               :definition-missing)))))
-    (multiple-value-bind (records complete omissions)
-        (collect-definition-graph root registry t)
-      (let* ((digest (when complete (canonical-digest records)))
-             (value-omissions
-               (unless digest
-                 (or (canonical-value-omissions records)
-                     (when complete
-                       (list (digest-omission :resource-limit '(:declarations) nil
-                                             :canonical-encoding-limit)))))))
-        (values (when complete digest) (and complete (not (null digest)))
-                (append omissions value-omissions))))))
+    (compute-definition-digest root registry +definition-digest-algorithm+)))
 
 (defgeneric definition-instrumentation-capability (definition)
   (:documentation "Return :AVAILABLE or :UNAVAILABLE for runtime instrumentation support.

@@ -1248,8 +1248,10 @@ implementations, captured/external state, source locations and backend settings.
 It is a bounded, non-cryptographic change detector; it does not prove that a run
 is reproducible. Missing dependencies, opaque values or exceeded limits produce
 NIL with `:definition-digest-complete NIL`, never a trusted partial digest.
-`definition-digest` returns `(values digest complete-p omissions)`; existing digest
-bytes and the first two values retain their meaning. Each omission is
+`definition-digest` returns `(values digest complete-p omissions)`. New digests
+use `fnv1a64-v2:`. Acyclic declaration substructures are hashed by content, so
+coalescing them during compilation preserves the digest. Cycles use deterministic
+references to ancestors. Each omission is
 `(:kind KIND :path PATH :target SYMBOL-OR-NIL :reason REASON)`. Kinds are
 `:unresolved-reference`, `:opaque-definition`, `:missing-source`, `:opaque-value`,
 `:uninterned-symbol` and `:resource-limit`. Stable traversal paths identify the

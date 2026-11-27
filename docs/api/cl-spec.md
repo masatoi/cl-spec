@@ -585,7 +585,7 @@ Return *GENERATOR-BACKEND*, signalling NO-GENERATOR-BACKEND when it is NIL.
 *Function* · `(designator &key entity-kind (registry *registry*))`
 
 Return DIGEST, COMPLETE-P and a stable list of digest omission records.
-The first two values retain their version-one meaning and complete digest bytes.
+The fnv1a64-v2 format hashes acyclic substructures by content.
 Missing or opaque declarations return NIL/NIL with explanatory omissions.
 Extension programming errors propagate rather than becoming incompleteness.
 
