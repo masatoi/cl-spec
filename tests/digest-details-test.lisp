@@ -4,7 +4,8 @@
   (:use #:cl)
   (:import-from #:rove #:deftest #:ok)
   (:import-from #:cl-spec/src/schema
-                #:definition-digest #:definition-metadata #:definition-graph #:definition-description #:schema-info)
+                #:definition-digest #:definition-digest-for-comparison
+                #:definition-metadata #:definition-graph #:definition-description #:schema-info)
   (:import-from #:cl-spec/src/ir #:type-spec #:predicate-spec)
   (:import-from #:cl-spec/src/property #:property)
   (:import-from #:cl-spec/src/generator-definition #:custom-generator)
@@ -41,7 +42,7 @@
 (deftest complete-digest-details
   (let ((spec (normalize-spec-form 'integer)))
     (multiple-value-bind (digest complete omissions) (definition-digest spec)
-      (ok (equal "fnv1a64-v1:a1252f5eb6a5ce86" digest))
+      (ok (equal "fnv1a64-v2:a1252f5eb6a5ce86" digest))
       (ok complete)
       (ok (null omissions)))
     (let ((metadata (definition-metadata spec :capabilities nil)))
@@ -69,7 +70,9 @@
          (spec (make-instance 'cl-spec/src/call-schema:call-arguments-spec :layout layout))
          (fields (getf (definition-description spec) :fields))
          (attributes (cl-spec/src/introspection::node-attributes spec)))
-    (ok (equal "fnv1a64-v1:3ed76928338f73e3" (definition-digest spec)))
+    (let ((expected "fnv1a64-v1:3ed76928338f73e3"))
+      (ok (equal expected (definition-digest-for-comparison
+                           spec expected (make-hash-table-registry)))))
     (ok (equal (butlast fields) (getf attributes :bindings)))
     (ok (equal (car (last fields)) (cddr attributes)))
     (ok (equal '(:key-arguments t :allow-other-keys t) (cddr attributes)))))
@@ -90,9 +93,9 @@
     (unwind-protect
          (progn
            (setf (symbol-function 'cl-spec/src/schema::canonical-digest)
-                 (lambda (value)
+                 (lambda (&rest arguments)
                    (incf hash-calls)
-                   (funcall original value)))
+                   (apply original arguments)))
            (multiple-value-bind (digest complete omissions) (definition-digest spec)
              (ok (null digest))
              (ok (null complete))

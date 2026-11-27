@@ -26,7 +26,7 @@
                 #:trial-observation-lifecycle #:trial-observation-call-evidence #:same-value-p)
   (:export #:property-result-run-error #:prepare-property-run
            #:run-property-with-result-constructor)
-  (:import-from #:cl-spec/src/schema #:definition-metadata
+  (:import-from #:cl-spec/src/schema #:definition-metadata #:definition-digest-for-comparison
                 #:definition-state-constraints)
   (:import-from #:cl-spec/src/property
                 #:property
@@ -441,22 +441,20 @@ stays the way to borrow a random stream on purpose.  NIL is accepted."
 The refusal's reason names the cause: :INCOMPARABLE-DEFINITION, :DEFINITION-MISMATCH
 or :RUN-OPTIONS-MISMATCH."
   (let* ((saved (property-result-schema-metadata result))
-         (current (definition-metadata property :registry registry
-                                       :capabilities '(:generation :unknown
-                                                       :shrinking :unknown)))
-         (reason (cond ((not (eq :fixture-recipe (getf saved :input-kind)))
-                        :definition-mismatch)
-                       ((not (and (getf saved :definition-digest-complete)
-                                  (getf current :definition-digest-complete)))
-                        :incomparable-definition)
-                       ((not (equal (getf saved :definition-digest)
-                                    (getf current :definition-digest)))
-                        :definition-mismatch)
-                       ((not (same-value-p options (property-result-options result)))
-                        :run-options-mismatch))))
-    (when reason
-      (error 'unsupported-stateful-operation :operation :replay
-             :function (property-name property) :reason reason))))
+         (saved-digest (getf saved :definition-digest)))
+    (multiple-value-bind (digest complete)
+        (definition-digest-for-comparison property saved-digest registry)
+      (let ((reason (cond ((not (eq :fixture-recipe (getf saved :input-kind)))
+                           :definition-mismatch)
+                          ((not (and complete (getf saved :definition-digest-complete)))
+                           :incomparable-definition)
+                          ((not (equal digest saved-digest))
+                           :definition-mismatch)
+                          ((not (same-value-p options (property-result-options result)))
+                           :run-options-mismatch))))
+        (when reason
+          (error 'unsupported-stateful-operation :operation :replay
+                 :function (property-name property) :reason reason))))))
 
 (defun validate-replay-state (property result options registry)
   "Check the saved input kind and any state reconstruction requirements before execution."

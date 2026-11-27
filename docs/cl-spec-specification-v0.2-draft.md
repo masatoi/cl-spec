@@ -3355,7 +3355,7 @@ Introspection-firstの原則はconsumer側にも及ぶ。consumerはregistryが 
 | `:schema-version` | 整数`1`。Lisp protocolのversion |
 | `:record-kind` | `:definition`または`:result` |
 | `:entity-kind` | `:spec`、`:property`、`:function-spec`。名前のnamespaceを区別 |
-| `:definition-digest` | `fnv1a64-v1:`で始まる文字列、または比較不能を表す`NIL` |
+| `:definition-digest` | 新規出力は`fnv1a64-v2:`で始まる文字列。比較不能なら`NIL` |
 | `:definition-digest-complete` | 保存された宣言と登録依存先を全て表現できた場合`T`、他は`NIL` |
 | `:definition-digest-covers` | `:declaration-and-registered-dependencies` |
 | `:capabilities` | `:generation`、`:shrinking`、`:instrumentation`のplist |
@@ -3393,7 +3393,9 @@ versionの無い旧recordは旧protocolとして扱う。新しい省略可能�
 
 `definition-digest`はdefinition object、または`(definition-digest name :entity-kind kind
 :registry registry)`を受け取り、`(values digest complete-p omissions)`を返す。
-先頭2値の意味と完全なdigestのbytesは従来どおりである。
+digestの符号化方式はschemaやartifactのversionとは独立している。
+`schema-info`の`:digest-algorithm`は現在の符号化方式`:fnv1a64-v2`を返す。
+保存済み反例の再チェックとfixture結果のreplayでは、保存されたdigestの接頭辞で符号化方式を選ぶ。
 同名のspec/property/function-specは独立したnamespaceである。
 `definition-metadata`はspec・property・function-spec objectから上表のメタデータを返す。
 custom-generatorはdigestの依存先としては扱うが、v1の独立したmetadata recordではない。
@@ -3426,9 +3428,12 @@ digestに含めない。`:definition-digest-complete T`はこの限定された�
 :external-state :source-location :backend)`を返す。この意図した除外はomissionではなく、完全性を
 `NIL`に変えない。
 
-v1はpackage-qualified symbol・整数・有理数・浮動小数点数・文字・文字列・cons・配列をタグ付きで
-符号化する。cons/配列の共有と循環は参照番号で表す。printer設定やユーザーpretty printerに依存せず、
-各character codeを4個のlittle-endian octetとしてFNV-1a 64-bitに入力する。暗号学的hashではない。
+v2はpackage-qualified symbol・整数・有理数・浮動小数点数・文字・文字列・cons・配列をタグ付きで
+符号化する。consと配列は各出現箇所で内容を符号化し、走査中の祖先への参照だけを参照番号で表す。
+したがって、同じ非循環リテラルをコンパイラが共有してもdigestは変わらない。
+保存済みの`fnv1a64-v1:`の照合では、共有と循環の両方を参照番号で表す従来の方式を使う。
+どちらもprinter設定やユーザーpretty printerに依存せず、各character codeを4個のlittle-endian
+octetとしてFNV-1a 64-bitに入力する。暗号学的hashではない。
 不透明なオブジェクト、非interned symbol、移植可能に符号化できないNaN/無限大は比較不能。
 definition objectは10,000個まで、符号化は
 100,000ノード・1,000,000文字・CAR/配列の入れ子128段まで。長いCDR列は反復処理する。
